@@ -35,6 +35,9 @@
 //   contact; 2 caps the side rule's turn at 30 degrees (sin = 1 / factor).
 // - `moving_friends_push` (D-beta): moving friends push each other by priority (true), or each
 //   yields its own approach (false).
+// - `nudge_engaged_along_ring` (deviation D-delta, Q0095): allies may nudge an engaged melee unit
+//   along its attack ring (its correction keeps only the part along the ring's tangent), never out
+//   of range, never by enemies, never on Hold Position. On when absent.
 // Validated at load: iterations >= 1, 0 < dead_band_permille < moving_overlap_permille < 1000,
 // side_horizon_factor >= 1.
 (
@@ -45,11 +48,12 @@
         acquire_leash_radius: 21,
     ),
     contact: (
-        pipeline: Legacy,
+        pipeline: Solver,
         iterations: 21,
         dead_band_permille: 10,
         moving_overlap_permille: 50,
         side_horizon_factor: 2,
         moving_friends_push: true,
+        nudge_engaged_along_ring: true,
     ),
 )

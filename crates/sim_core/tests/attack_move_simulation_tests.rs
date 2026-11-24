@@ -799,8 +799,13 @@ fn march_ticks_for(max_speed: SimScalar) -> u32 {
         .saturating_to_u32()
 }
 
-/// Test: Units commanded via Move advance towards destination, fan out laterally around
-/// blocking center obstacles via unified local steering, and settle without overlapping or gridlocking.
+/// Test: units ordered to a point an immobile friend occupies fan out round it and settle without
+/// overlap or gridlock. Restated at the switch-over (plan `2026-11-20-contact-solver` WP6,
+/// Amendment 4 item 4, evidence §6.4): the property is judged on the settled clump, not on a
+/// spread at a fixed tick, which measured the legacy pipeline's blocking. Every unit completes
+/// its order touching the clump (an edge gap below a quarter of a world unit, the harness's near
+/// pair); the clump surrounds the point (no empty arc of bearings from it of a half-turn or more);
+/// and no pair overlaps beyond D-α's 1 % at rest.
 #[test]
 fn test_move_command_units_fan_out_and_surround_target_point() {
     let width = 64;
@@ -812,13 +817,13 @@ fn test_move_command_units_fan_out_and_surround_target_point() {
     let pulse_id = world.catalog.id_by_slug("pulse_bot").expect("pulse_bot");
     let target_pos = SimVec2::new(SimScalar::from_num(30), SimScalar::from_num(30));
 
-    // Spawn an immobile center obstacle / dummy unit at (30.0, 30.0)
+    // An immobile friend occupies the point.
     let center_id = world
         .spawn_unit(pulse_id, PlayerId(0), target_pos)
         .expect("spawn center");
     world.entities.get_mut(&center_id).unwrap().is_immobile = true;
 
-    // Spawn 8 units in a cluster/line at x=22, y=26..34
+    // Eight units in a line at x = 22, y = 26 to 34, each with its own Move to the point.
     let mut squad = Vec::new();
     for i in 0..8 {
         let spawn_pos = SimVec2::new(
@@ -837,60 +842,66 @@ fn test_move_command_units_fan_out_and_surround_target_point() {
         squad.push(id);
     }
 
-    // March for the time the squad needs to walk MARCH_DISTANCE at its catalog speed, so the
-    // test checks the fan-out geometry and not a timing tied to one speed value.
+    // Long enough to settle: the march, then as long again.
     let march_ticks = march_ticks_for(world.catalog.get(pulse_id).unwrap().max_speed);
-    for tick in 1..=march_ticks {
+    for tick in 1..=2 * march_ticks + 100 {
         world.step(&empty_bundle(tick));
     }
 
-    // Assertions:
-    // 1. All units have moved significantly closer to (30, 30) (from initial distance ~8.0)
+    let radius = world
+        .catalog
+        .get(pulse_id)
+        .unwrap()
+        .collision_radius
+        .to_f32();
+    let mut clump = squad.clone();
+    clump.push(center_id);
+    let position = |id: &EntityId| world.entities.get(id).unwrap().position;
+    let mut bearings = Vec::new();
     for &id in &squad {
-        let pos = world.entities.get(&id).unwrap().position;
-        let dist = (pos - target_pos).length();
+        let entity = world.entities.get(&id).unwrap();
         assert!(
-            dist < SimScalar::from_num(6),
-            "Unit {:?} should have advanced toward target, dist = {}",
-            id,
-            dist
+            entity.order_queue.is_empty(),
+            "unit {id:?} did not complete its order"
         );
+        // 1. It touches the clump round the point.
+        let nearest_gap = clump
+            .iter()
+            .filter(|&&other| other != id)
+            .map(|other| (position(other) - position(&id)).length().to_f32() - 2.0 * radius)
+            .fold(f32::MAX, f32::min);
+        assert!(
+            nearest_gap < 0.25,
+            "unit {id:?} is off the clump by {nearest_gap}"
+        );
+        let offset = position(&id) - target_pos;
+        bearings.push(offset.y.to_f32().atan2(offset.x.to_f32()).to_degrees());
     }
-
-    // 2. Units fan out around the center unit: check that they spread along Y
-    let min_y = squad
-        .iter()
-        .map(|id| world.entities.get(id).unwrap().position.y)
-        .min()
-        .unwrap();
-    let max_y = squad
-        .iter()
-        .map(|id| world.entities.get(id).unwrap().position.y)
-        .max()
-        .unwrap();
+    // 2. The clump surrounds the point: no empty arc of bearings spans a half-turn.
+    bearings.sort_by(f32::total_cmp);
+    let widest_gap = bearings
+        .windows(2)
+        .map(|pair| pair[1] - pair[0])
+        .chain(std::iter::once(
+            bearings[0] + 360.0 - bearings[bearings.len() - 1],
+        ))
+        .fold(0.0_f32, f32::max);
     assert!(
-        max_y - min_y >= SimScalar::from_num(3),
-        "Units should fan out laterally around the center, spread = {}",
-        max_y - min_y
+        widest_gap < 180.0,
+        "the clump leaves an empty arc of {widest_gap}°"
     );
-
-    // 3. No units overlap: pairwise distance >= sum of collision radiuses (with small numerical tolerance)
-    let pulse_arch = world.catalog.get(pulse_id).unwrap();
-    let collision_radius = pulse_arch.collision_radius;
-    let min_dist = (collision_radius + collision_radius) * SimScalar::from_f32_lossy(0.85);
-
-    for i in 0..squad.len() {
-        for j in (i + 1)..squad.len() {
-            let u1 = world.entities.get(&squad[i]).unwrap();
-            let u2 = world.entities.get(&squad[j]).unwrap();
-            let dist = (u1.position - u2.position).length();
+    // 3. No pair overlaps beyond D-α at rest (1 % of the radius sum).
+    for i in 0..clump.len() {
+        for j in (i + 1)..clump.len() {
+            let distance = (position(&clump[i]) - position(&clump[j]))
+                .length()
+                .to_f32();
+            let overlap = (2.0 * radius - distance) / (2.0 * radius);
             assert!(
-                dist >= min_dist,
-                "Units {:?} and {:?} are overlapping! dist = {}, min = {}",
-                squad[i],
-                squad[j],
-                dist,
-                min_dist
+                overlap <= 0.01,
+                "{:?} and {:?} overlap by {overlap}",
+                clump[i],
+                clump[j]
             );
         }
     }

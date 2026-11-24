@@ -1618,3 +1618,637 @@ M1, M2, overlaps and on gap and cross completion.
 band's tangent (they keep range but can be nudged sideways), which departs from SC-8. That is the owner's call:
 [Q0095](../questions/closed/0095-engaged-units-nudged-sideways.md), default **no** (engaged units stay fixed; the miss
 stays a reported figure).
+
+## Amendment 12 (orchestrator, 2026-11-23): steps 0 and 1 adopted; P2 stopped; a contact-threat defect fix; the wavefront fallback
+
+**Adopted.** Step 0 (D-S and the trace) and step 1 (P1 exact blocking geometry, P7 no enemy dead band), commits
+`47b996f0` to `8b404be7`. On development, arc T5 and arc T7 now hold (fill 0.967 / 5th percentile 0.857; 1 and 0
+scenes over the friend and enemy bounds), arc give-ups fall from 1,208 to 305, and nothing is worse beyond noise.
+
+**P2 is stopped.** Amendment 8's step rule binds every step, and P2 breaks it: arc M1-hi 0.192 → 8.15, corridor M1
+0 → 12.96 and give-ups 20 → 618. Meeting P2's own two criteria (give-ups, fill) does not override the step rule;
+those criteria decide only whether P2 is worth keeping once the step rule holds. Its traces show two mechanisms:
+a two-tick limit cycle between the detour and the ring rule (arc seed 150), and detour points inside terrain
+(corridor seed 976). Patching either would be a new rule on a failed step; P2 stays on `contact-solver-p2-wip`
+for the record.
+
+**Step 1b, a defect fix found by step 0 (before the fallback).** The diagnostics traced every one of 1,069 arc
+reversals on development seeds 563, 498 and 698 to one mechanism: `intent.rs:threat_of` returns no threat once a
+body is in contact (`gap_sq <= 0`), so at contact the committed side partner drops out and the earliest threat
+becomes a body on the other side; the side flips every tick. A body in contact and still closing is the most
+urgent threat, not none: ORCA's colliding case (van den Berg, Guy, Lin & Manocha 2011, §5.1) keeps such a neighbour
+and resolves it within the time step. **Change:** a body in contact whose relative velocity still closes is a
+threat with time to contact zero; a body in contact that is not closing remains no threat, as today. Its test is
+red before the change (a gap walker touching a front-rank body keeps its committed side over consecutive ticks).
+Judged under Amendment 8's rule against step 1.
+
+**Step 2′, the wavefront fallback, run once** (Amendment 11 step 2's fallback; P2 has failed). One integer
+wavefront (breadth-first distance field) per contested target per tick, on a local grid over the target's ring
+band and its approach, seeded from the free ring angles that step 1's exact intervals report, with cells blocked
+by terrain and by the discs of bodies that do not yield (engaged, holding, anchored, enemies) inflated by the
+walker's radius. A walker in its approach steps toward the lowest neighbouring cell; once its straight segment to
+the gap point is clear, the existing aim applies unchanged. Sources: Barraquand & Latombe 1991; Emerson, flow
+fields, *Game AI Pro* ch. 23. It has no local minima and respects terrain by construction, which answers both P2
+traces. Requirements:
+- **Deterministic and stateless:** integer distances, a fixed neighbour order, ties broken by cell index; nothing
+  remembered between ticks.
+- **Grid resolution and extent are derived** from the radii and the band (stated with their derivation in the
+  amendment's implementation note), not tuned.
+- **Cost:** one field per contested target, shared by all its walkers; reported in the cost split, judged by
+  Q0093 (c) at step 6.
+- **Judged** under Amendment 8's step rule against step 1b, and by P2's two criteria (arc give-ups fall beyond
+  noise; arc fill without give-ups ≥ 0.85).
+
+**If step 2′ also fails** (the step rule or its criteria), stop and report (Amendment 11, Limits): the remaining
+steps are not run, and the trade-off goes to the owner with step 1b's figures.
+
+**If step 2′ passes,** continue with Amendment 11 steps 3 to 7 unchanged.
+
+## Amendment 13 (orchestrator, 2026-11-23): step 1b stopped; step 2′ is measured on step 1
+
+**Step 1b is stopped** by Amendment 8's step rule (evidence §13.4). It does what it was meant to do where a unit
+touches one body: arc give-ups 305 → 2 and corridor give-ups 20 → 0. Where several bodies touch, it breaks T1 and
+T8: arc M1-hi rises from 0.192 to 5.21, corner and gap reversals rise, and cross give-ups rise. The traces show why.
+Several touching, closing bodies tie at time to contact zero, so the side partner changes as contacts come and go.
+The tangent of a disc a unit already overlaps is perpendicular to the line between them, so each change of partner
+is a 90° sideways step that contact pushes back. Recorded on `contact-solver-1b-wip` (`56cb6c1d`). No variant is
+tried: a tie-break or a contact-only rule would be a new rule on a failed step.
+
+**Step 2′ stays the one fallback of Amendment 11 step 2.** It addresses R1 (the goal attractor behind the front
+rank), not 1b's mechanism, and does not depend on 1b. It is rebased onto step 1, without `56cb6c1d`, and measured
+once under Amendment 8's step rule against step 1 and by P2's two criteria. The outcomes are as Amendment 12 states:
+if it fails, stop and report; if it passes, continue with Amendment 11 steps 3 to 7, handing back before the fresh
+acceptance run.
+
+## Amendment 14 (orchestrator, 2026-11-23): P8 adopted; the side-rule review; ablation A0 registered; rule S planned, pending Q0097
+
+**P8 is adopted** (`31218814`). It changes no behaviour: the development corpus is byte-identical and a tick-by-tick
+on/off test passes. The 64 × 64 melee is at +61.2 % instructions against Legacy, against Q0093 (c)'s +60 %. The
+contact solver itself (+3.4 G) and target acquisition (+1.9 G) remain. Q0097, filed for the owner, records this.
+
+**A third independent review** examined the side rule (the intent layer) and recommends replacing the one-partner
+rule (I-3, I-3b, I-3c and `SideMemory`). Its reasons:
+- **The one-partner rule is the common mechanism of the stopped steps.** Steps 1b, P2 and 2′ all stopped on it.
+- **What the rule buys is unmeasured.** The traces log only the reversals it costs.
+- **The earlier summed term (step 3, Amendment 9) failed for three removable reasons:**
+  1. a bang-bang lateral sign, largest where it is undefined;
+  2. renormalisation to full speed;
+  3. a tangential push at contact that fights the solver's radial correction.
+- **ORCA is rejected** for four reasons:
+  - its colliding case duplicates the solver;
+  - its side keeping reads the solver-jittered current velocity;
+  - dense rings are infeasible and need a discontinuous relaxed LP;
+  - full responsibility against static bodies brings corner deadlocks, and the cost is +1 to +3 G.
+
+**A0, ablation (registered now, a measurement, not a rule).** A scratch build in which intent returns the preferred
+velocity and writes no memory. It is run on development seeds 1–1,000 against step 1 + P8 and reported with every
+T-figure, D-S and the cost split. Nothing is committed to the pipeline. Predictions, written before the run:
+- arc and gap T1 fall;
+- cross T4, M4 and T7 rise, because collinear head-on pairs stall;
+- the 64 × 64 cost falls by about 1 G.
+
+A0 is the reference any replacement must beat on the ring families. If A0 itself passes the step rule, it goes to
+the owner as a candidate, since it departs from SC-2's "turn the same way".
+
+**Rule S (planned; implemented only if the owner's answer to Q0097 calls for a further design round).** A smooth,
+memoryless, contact-continuous velocity correction (Guy & Karamouzas, *Game AI Pro 2* ch. 19, eq. 19.5; Karamouzas,
+Skinner & Guy 2014; Weiss et al. 2019; van den Berg et al. 2011 for ρ = ½). It lifts Amendment 9's rejection of the
+summed term on the three grounds above.
+- **Direction.** Each threat pushes along the predicted relative position at collision; at contact this is the line
+  of centres.
+- **Size.** The push removes only the approach (`max(0, −v·n)`), weighted `1 − τ/H`.
+- **Responsibility.** ½ against movers running the same rule, 1 against standing, engaged or holding bodies.
+- **Right-hand bias.** Small and antisymmetric, near head-on only, derived from I-3a.
+- **Combining.** Jacobi-averaged, never renormalised.
+- **Clamps:** no step backward, at most full speed, and a turn of at most `asin(1/h)`.
+- **Output.** Intent returns a velocity, not a heading.
+- **Memory.** `SideMemory` is deleted (next free schema at merge, proved as in Amendment 10).
+
+Tests red before the change:
+- continuity across contact;
+- a head-on pair passes right to right, and its mirror does the same;
+- no backward step when pressed onto an engaged body;
+- relabelling invariance.
+
+S is judged under Amendment 8's rule against step 1 + P8. On a stop it is reported, with no variant tried. If it
+passes, the already built wavefront (`75871a42`) may be re-measured once on top of it, by a further registering
+amendment. **Barred as fitting:** choosing h, ρ, the bias or the weight after seeing figures; per-family switches;
+any tie-break or hysteresis added after a trace.
+
+## Amendment 15 (orchestrator, 2026-11-23): the owner's answers to Q0095 and Q0097; the final design round
+
+**Owner rulings.**
+- **[Q0097](../questions/closed/0097-movement-solver-next-step.md), option (a), capped at one design round.** The round
+  is rule S of Amendment 14 (not ORCA), together with a fix for the overlap oscillation that ablation A0 exposed. If
+  the round cleanly beats step 1 + P8 on crossings, arcs and the Q0093 (c) cost, the held-out seeds are run and the
+  Solver switches over (WP6). If it stalls or regresses without a clear win, the work falls back to option (b): switch
+  over with step 1 + P8 and sanction the remaining failures. There is no further loop.
+- **[Q0095](../questions/closed/0095-engaged-units-nudged-sideways.md), option (b): deviation D-δ (Q0052 addendum).**
+  Allies who need room may nudge an attacking melee unit sideways along its attack ring. It is a data switch
+  (`contact.nudge_engaged_along_ring`), default on. The unit is never pushed out of attack range and never by enemies.
+  A unit on Hold Position is never nudged.
+
+**The round, in order.** Each step runs on development seeds 1–1,000 under Amendment 8's step rule against its
+predecessor, with a test that is red before the change. A stop means reporting, never a variant.
+
+1. **O1, the overlap oscillation (a solver defect; A0's traces).** For two idle units left deeply overlapped (gaps
+   −0.19 to −1.17), the solver's correction alternates sign every tick, moving them ±0.4 a tick from a zero proposal.
+   Diagnose the mechanism in `solver.rs` (a Jacobi overshoot for deep or near-coincident pairs, or the coincident-centre
+   direction) and fix it as a defect. The correction must be monotone: a pair's overlap never grows from one iteration
+   to the next, and the separation direction is stable across ticks for a static pair. Test: two idle units placed
+   overlapping by 0.8 separate monotonically, with no sign change. It runs first because S relies on the solver
+   settling contacts.
+2. **S, rule S as specified in Amendment 14**, with its four red-before tests and the mechanism check on the named
+   trace seeds. The parameters (h, ρ, the bias, the weight shape) are fixed by the amendment's derivation before any
+   run.
+3. **N, nudge D-δ**, only if S passes. Under the Solver, an engaged melee unit that is not on Hold Position takes a
+   share along its ring's tangent in friend pairs. Its radial share stays 0, so it is never pushed out of range. Enemies
+   never move it. The data switch is off in a test that proves bit-identity with step S. The corridor two-abreast figure
+   is reported, but it is not a T-figure, as before.
+4. **W, the wavefront** (`75871a42`), re-measured once on top of S (and N), by Amendment 14's provision.
+5. **Cost:** Q0093 (c) on the three throughput scenarios.
+6. **The fresh acceptance run** (200,001–201,000), once, both pipelines from one binary. Then report to the
+   orchestrator, who decides on WP6 by the owner's rule.
+
+**Fallback.** If S stops at step 2, report with figures. The orchestrator then proceeds to option (b) on step 1 + P8
+with O1 (if O1 passed): a cost step or an owner sanction for the 64 × 64 cost, then held-out, then switch-over. N is
+built under either branch, since the owner sanctioned it independently, and it is judged by the step rule like any
+step.
+
+## Amendment 16 (orchestrator, 2026-11-23): O1 adopted; rule S stopped; the owner's fallback, option (b)
+
+**O1 is adopted** (`1b676582`; evidence §13.9).
+- **The defect:** the summed hard-friend pass gave an idle unit a walker's whole overlap, which carried it past its idle
+  partner, so a pressed column swapped places every tick.
+- **The fix:** in that pass, a body no longer takes a step that closes on a body it already overlaps.
+- **Development, against step 1 + P8:** only arc's standing friend share is worse beyond noise (0.011 % → 0.020 %,
+  inside T7). Arc T7 now holds.
+
+**Rule S is stopped** by Amendment 8's step rule (evidence §13.9; recorded on `contact-solver-s-wip`, `5b7571d8`).
+- **What it gained:** it removes the oscillation everywhere. T1 holds in every family and M1 falls by 80–95 %.
+  Corridor E1 now holds.
+- **What it lost:**
+  - Arc give-ups rise from 309 to 507, and arc fill falls to 0.947 / 0.818, still inside T5.
+  - Corner give-ups rise from 7 to 18.
+  - Cross T7 starts failing: 3 scenes over the friend maximum.
+- **Why (traces):** S removes a walker's whole approach toward the standing front rank, and nothing replaces the
+  sideways slide the old side rule gave. Gap walkers stop short of their gap and give up.
+
+**The owner's rule applies.** The answer to Q0097 says: "if it stalls or regresses without a clear win, fall back to
+Option (b) rather than looping further". S is not a clean win on arcs or crossings, so no further variant of S is
+tried. Option (b) proceeds on **step 1 + P8 + O1** (the plan branch head).
+
+**Option (b), in order** (no further behaviour rule beyond N):
+
+1. **N, nudge D-δ** (Q0095), as specified in Amendment 15 step 3. It is judged under Amendment 8's step rule against
+   O1, with the corridor two-abreast figure reported. If N stops, it is recorded and the switch-over proceeds without
+   it. D-δ stays sanctioned for a later bug package.
+2. **Cost against Q0093 (c)** on the three throughput scenarios, measured with instructions retired, on the head after
+   step 1.
+   - **If 64 × 64 exceeds +60 %:** only behaviour-preserving optimisation is allowed, proved byte-identical on the
+     development corpus with a test as for P8. Examples are data layout, avoiding recomputation in the solver's pair
+     loop, or sharing acquisition work.
+   - **If the bar still fails after that:** report the split and stop. The orchestrator takes it to the owner.
+3. **WP6, switch-over,** as §7 states, with three changes:
+   - **Held-out run:** both pipelines, once. It **confirms** the development table (evidence §13.6, updated for O1 and
+     N) rather than requiring T1 to T9. A held-out figure worse than its development counterpart beyond the noise
+     rule is a stop for review.
+   - **Sanctioned failures:** each T-figure that still fails under the Solver is recorded as an open bug in
+     `DESIGN.md` §4 (or as a deviation where Q0052 covers it), with its development and held-out figures.
+   - **Throughput:** WP6's "+10 % stop" is replaced by Q0093 (c).
+4. **WP7, deletion** of the legacy pipeline, unchanged. The schema takes the next free number at merge.
+
+The fresh acceptance range 200,001–201,000 is not run under (b): the held-out run is the confirmation the owner named.
+
+## Amendment 17 (planning agent, 2026-11-24, at the orchestrator's direction): the held-out stop reviewed; R10 and step G-6′ (WP6a); battle 26 to the owner (Q0103)
+
+**Sources.** Evidence §13.11 (the held-out stop) and §13.12 (its diagnosis), with the raw outputs in
+`~/scratch/contact-solver/wp4b/diag/`; Q0052 (D-δ), Q0093 (c), Q0095 (b), Q0097, Q0102 (open). Code read at plan
+head `1b552e41`: `movement/ring.rs`, `movement/locomotion.rs` (`prepare_pursuit`, `start_pursuit`, `pursuit_band`,
+`MotionProposal`), `target_acquisition.rs` (`decide_acquisition`, `scan_candidates`, `engage`), `entity.rs`
+(`MovementMemory`).
+
+### 17.1 The §13.12 diagnosis: accepted, with three corrections and one open point
+
+I re-ran the counts and the ring occupancy from the saved CSVs (`seeds.csv` of each configuration;
+`py/ringfree.py` and a per-angle variant on `u-solver/28…/seed_1_units.csv`). The mechanism stands. The corrections:
+
+1. **Counterfactual counts in battle 28 mix wins and unresolved seeds.** Strict zergling wins (zerglings alive,
+   immortals dead) are: Legacy 24, Solver 5, D-δ off **1** (and 2 seeds unresolved at the tick limit with zerglings
+   alive), D-β off **7** (and 1 unresolved). §13.12's "3 of 24" and "8 of 24" count the unresolved seeds as wins. The
+   conclusion (D-δ and D-β both help the zerglings here) is unchanged. Battle 26's counts (Legacy 1, Solver 20,
+   D-δ off 0, D-β off 1) are strict wins and are confirmed.
+2. **The western column has five immortals, not four:** 101, 103, 105, 107, 109. Immortal 103 has no zergling in
+   band, none targeting it, and 0° to 10° free (a sliver at 171°–180°, on the zerglings' side). It does not change
+   the reading.
+3. **Where the free arcs are.** The eastern immortals' free arcs (98° to 166° each at tick 150) all lie on the
+   **far, east side**, centred on 0°. They are free; §13.12 also calls them "reachable round the ends of the block",
+   but no tool measured that. The ring rule's admissibility (`RingWalk::reaches`) tests terrain only, and the chase
+   then aims straight at the gap point (R1): that chord runs through both columns.
+
+**Open point, carried into the stop rules below.** G-6′ will hand the standing zerglings a free rear slot. Whether
+they then *reach* it, sliding round the enemy block rather than pressing into it, is R1's question again, with an
+enemy front instead of a friendly one. P2 and 2′ (the detours) are stopped. The constructed test in 17.3 decides it:
+if retargeting alone does not bring attackers onto the rear rings, G-6′ stops; no detour is added in this amendment.
+
+Battle 26 (D-δ, not a regression of the solver) and the cross give-ups (scene mix) are accepted as diagnosed.
+
+### 17.2 Held-out verdict (Amendment 16, WP6)
+
+**The held-out run confirms the development table.** Of the three held-out figures worse than development beyond
+the noise rule:
+- arc M4 and arc moving-friend overlap stay well inside T3 and T7;
+- cross give-ups (2 → 6) come from scene mix: one configuration absent from development (θ 180°, n 14, r 1) gives 4
+  of the 6, including one duplicated scene.
+
+The comparator's noise rule resamples scenes within a range and does not cover the difference between two ranges'
+scene mixes. Legacy's own shifts between the ranges show that difference has the same size and runs both ways:
+- gap give-ups 454 → 354;
+- cross give-ups 152 → 100;
+- corridor give-ups 275 → 345;
+- arc fill 0.980 → 0.977.
+
+**Against Legacy,** Solver is worse beyond noise on the same figures in both ranges and on no other:
+- M4 in gap, cross and corner, within T3 for both pipelines;
+- arc give-ups and arc fill, with T5 holding for both;
+- corridor fill (Q0095's two-abreast miss; no T-figure);
+- corner give-ups and completion.
+
+The stop is lifted. Amendment 16's held-out rule is read from now on with this caveat: a held-out shift that
+Legacy shows to the same size between the same ranges is scene mix, not a stop.
+
+**Open bugs** (`DESIGN.md` §4, numbers assigned at merge). Each row carries its development and held-out figures
+from §13.11:
+
+| Row | T-figure | Families (development / held-out) |
+|---|---|---|
+| B-next | T1, oscillation | gap M1 1.09 / 1.10, M1-hi 0.267 / 0.257; arc M1 2.36 / 2.46; cross M1 1.19 / 1.20, M1-hi 0.485 / 0.475 |
+| B-next | T4, give-ups and completion | gap 50, 97.4 % / 29, 98.3 %; cross 2, 99.8 % / 6, 99.6 % (R4 and the head-on residual of the side rule); corner 7, 99.7 % / 5, 99.8 % |
+| B-next | E1, give-ups with room | arc 309 / 268; corridor 20 / 25 |
+| B-next | T7, friend maximum | gap 231 / 224 scenes over; corner 9 / 5 |
+
+- **R10** gets its own B-next row only if G-6′ (17.3) stops. If WP6a lands, R10 is fixed in the same package and needs no row.
+- The corridor two-abreast miss is a reported figure, not a T-figure. It stays R8 under Q0095 and gets no row.
+
+### 17.3 R10 and step G-6′ (WP6a)
+
+**R10 (new).** An automatic chase whose target's ring has no admissible free angle stands (G-6). It stands even
+when another enemy within its acquisition range has one. Under Legacy, the crowd-edge walk carried such units round
+the block, and the nearest-enemy rescan handed them over. Under Solver nothing moves them, so acquisition keeps
+choosing the nearest, saturated target.
+
+**G-6′. Rule.** Under the Solver pipeline, when the ring rule answers *Stand* for a pursuit whose order is an
+`AttackTarget` with `AttackOrigin::Acquired`, the unit re-runs acquisition for itself before it stands:
+- **Same candidates.** Every enemy that `scan_candidates` would admit for it: the same visibility, targetability,
+  weapon-against-plane, target flags, minimum range, `abandoned_target` and scan-range tests.
+- **Same order.** The same `TargetPriorityKey` order (threat, attack target priority, primary weapon, the archetype's
+  tie-break, entity id), its current target left out.
+- **Same leash.** The same `leash_origin` and acquire leash.
+- **The pick.** The first candidate in key order on which the ring rule does not stand becomes the unit's target this
+  tick. Only if no candidate qualifies does the unit stand as G-6 says.
+
+The rule has no constant to choose. Its switch is data: `contact.retarget_from_full_ring` in `movement_rules.ron`,
+default on, and absent means on. It exists for the bit-identity proof and for owner review; it is not a tuning knob.
+
+**Where it lives.**
+1. **`movement/ring.rs`: `SimWorld::ring_retarget`.** It takes the `MotionEntry`, the tick-start position, the
+   current target and the leash, and returns `Result<Option<(EntityId, RingAim, i128)>, MovementInvariant>` (the new
+   target, its aim, its band edge). For each candidate in key order it computes the band through the existing
+   `pursuit_band`, so the weapon against that candidate's plane decides it. It then calls `ring_aim` with
+   `kept: None`.
+   - **A candidate qualifies** on `Gap`, or on `Straight` because the unit's bearing point is free and admissible or
+     the unit is already in that band.
+   - **The extra variant.** To tell those cases apart, `ring_aim_with`'s "rule does not apply" returns, where the
+     bearing point fails the leash or terrain test, get their own variant, `RingAim::Unruled`. `prepare_pursuit`
+     treats it exactly as `Straight` today, so nothing else changes. G-6′ does not accept `Unruled`: a candidate whose
+     own bearing point is beyond the leash or inside terrain is not a slot.
+2. **`target_acquisition.rs`.** The per-candidate test and key of `scan_candidates` move into one function. Both
+   acquisition and `ring_retarget` call it, so "same priorities, same range" is one code path.
+   - **Positions as arguments.** It takes the chooser's and the candidate's positions as arguments. Acquisition
+     passes `entity.position`; movement passes `tick_start_position`, because actors commit one by one during phase
+     5.
+   - **Neighbour set.** It comes from `spatial_hash`. Phase 4 builds it from the same positions, and nothing rebuilds
+     it before movement.
+   - **Order.** The ranked list is sorted into a retained scratch vector, with no allocation in steady state.
+3. **`locomotion.rs::prepare_pursuit`.** On `RingAim::Stand` for an `Acquired` origin with the switch on, it calls
+   `ring_retarget`.
+   - On a pick, it rebuilds the `Pursuit` for the new target (`start_pursuit`) and continues with the pick's aim, as
+     for any `Gap` or `Straight`.
+   - The stand/retarget branch is a helper of its own, so `prepare_pursuit` stays under the line limit.
+4. **`MotionProposal` gains `ring_retarget: Option<EntityId>`.** `commit` applies it:
+   - it replaces the front `AttackTarget { target, origin: Acquired }` in place and sets `current_target`;
+   - it drops the route;
+   - it restarts the memory **but keeps `leash_origin`**, because the retarget is the same automatic chase, so G-6′
+     never lengthens a leash;
+   - it records the new gap as `slot`.
+5. **`MovementMemory` gains `ring_retarget: Option<EntityId>`,** the target G-6′ chose. It is hashed and takes the
+   next free schema at merge, proved as in Amendment 10. `restart` clears it, and so does any change of target.
+   - **Acquisition reads it** in `decide_acquisition`: an `Acquired` target equal to `ring_retarget` is kept unless a
+     candidate **outranks** it (`rank()`, not the tie-break). That is the rule acquisition already applies to a valid
+     target in reach (invariant 3).
+   - **Why the field is needed.** Without it, phase 4 would hand the unit back to the nearest, saturated enemy every
+     tick, and the two phases would fight: a restart and a route search every tick.
+   - **When the retarget lapses.** When the chosen ring fills in turn, G-6′ runs again from there, and the original
+     target is again a candidate if it now has room. This is the same hysteresis the kept gap has.
+
+**Determinism, no float.** Every input is a tick-start position, the phase-4 spatial hash, the vision maps and the
+static map. Candidates are taken in a total order that ends in the entity id. The ring rule is Q32.32 with
+`SimAngle` binary angles, as today. No float, no map iteration order and no other unit's decision this tick enters,
+so the result does not depend on the order pursuers are processed in.
+
+**Cost under P8.** G-6′ runs only for a standing automatic chaser. Each run costs:
+- one candidate scan, the same as the acquisition scan the unit already makes each tick while out of reach;
+- per candidate examined, one `ring_aim`. The intervals of each (target, radius, ρ) are scanned once per tick by
+  P8 and copied per asker, and the ring walk runs only where a free angle exists.
+
+It stops at the first candidate that qualifies, so the worst case is a standing unit among saturated candidates:
+O(candidates × bodies near a ring) per tick. If the 64 × 64 instructions rise beyond noise, one behaviour-preserving
+step is allowed. P8's cache entry records whether its intervals cover the whole ring, so a covered ring answers Stand
+at once for a unit that has no interval of its own on it. It is proved byte-identical with the cache switch off, as
+P8 was. No other cost step is allowed here.
+
+**Orders and planes.**
+- **Explicit `Attack` on a unit:** never retargeted. The player's order is never rewritten (acquisition invariant 1);
+  G-6 stands as today.
+- **Hold Position:** a holder never pursues (`Engagement::Hold` scans only targets in reach), so neither G-6 nor
+  G-6′ is reached. A held unit is never moved by G-6′. Tracking weapons (`Engagement::Track`, turret wind-up D-4)
+  likewise never pursue.
+- **Leash:** a candidate is judged with the chase's own `leash_origin`. A slot beyond the leash is inadmissible, and
+  a candidate whose bearing point is beyond it is `Unruled` and does not qualify. `beyond_leash` still ends the
+  chase.
+- **Air and ground:** the candidate set follows the weapon that would be used against each candidate's plane,
+  exactly as acquisition does. Each candidate's ring is built from bodies of the **chaser's** body class, as the ring
+  rule already does. An air chaser is never saturated by ground bodies, nor the reverse.
+- **Defensive acquire level** (workers): G-6′ runs only under an `Acquired` attack, which acquisition already
+  re-scans for such units. It adds no acquisition that their level forbids.
+- **Legacy pipeline:** untouched.
+
+**StarCraft II grounding.** Nothing found settles how the game's automatic acquisition treats a target whose contact
+surface is full. Searched: Blizzard's game guides, Liquipedia, TL.net, SC2Mapster. Sources:
+- [Liquipedia, Automatic Targeting](https://liquipedia.net/starcraft2/Automatic_Targeting), already cited by
+  `target_acquisition.rs`. It covers keeping a target while it is in reach and the tie-breaks, not saturation. The
+  page refused a fetch today (HTTP 429), so I rely on the code's reading of it.
+- [Blizzard, Game Guide: Unit Positioning](https://news.blizzard.com/en-us/article/6640646/game-guide-unit-positioning)
+  (SC-10). It says "minimize the number of idle units behind the curve" and "if too many units are trapped outside of
+  the concave, select the units and move them slightly forward before attack-moving once again". The game therefore
+  lets some units idle behind a full front. The same guide says zealots win by "preventing the zerglings from
+  surrounding" them, so zerglings surround by default when there is room.
+- [Liquipedia, Micro](https://liquipedia.net/starcraft2/Micro_(StarCraft)): players order a surround by moving
+  through the enemy and then attacking, so the automatic behaviour does not always complete a surround.
+
+Neither source says that a unit stands while a reachable, free enemy is within its acquisition range. G-6′ is
+recorded as a **minor deviation that allows more, behind a data switch** (charter §8): **D-ε**, "an automatic chase
+whose target's ring is full takes, by the normal acquisition order, the next enemy in range that has room". It is
+added to §4's table and listed for the owner in Q0103's background. The owner may switch it off without code.
+
+**Tests first** (each red on the plan head before the change, except the guards):
+1. **`a_full_ring_hands_an_automatic_chaser_to_a_free_one`** (`crates/sim_core/tests/`). The scene uses scratch
+   archetypes and names no catalog unit.
+   - **The block:** two touching columns of three stationary enemy bodies of radius `R`, on Hold Position and
+     unarmed, column spacing `2R`.
+   - **The attackers:** `N` melee attackers of radius `r` attack-move at the block from one side. `N` is at least
+     twice the near column's ring capacity from §4's capacity formula, so the near rings saturate by construction.
+   - **Asserts,** within a time derived from the path round the block (half the block's perimeter plus the ring
+     radius, over the attackers' speed, times two):
+     - at least one attacker is in band of a far-column body;
+     - no attacker stands under G-6 while a far-column ring has an admissible free angle within its scan range.
+   - **Mirrored** (approach from the other side) and **relabelled** (attackers inserted in reverse id order): the
+     same assertions hold.
+2. **`an_explicit_attack_on_a_full_ring_stands`** (guard, green before and after): the same scene, the attackers
+   under explicit `Attack` on one near body, stand and keep their order.
+3. **`a_retarget_never_lengthens_the_leash`:** the only free ring lies beyond the leash from `leash_origin`; the
+   attacker stands. A second case checks that `leash_origin` survives a retarget.
+4. **`a_retargeted_chase_keeps_its_target_until_outranked`** (acquisition): the nearer, saturated target is not taken
+   back next tick; a higher-ranked candidate (threat) still takes over.
+5. **`the_full_ring_switch_off_is_bit_identical`:** with the switch off, a tick-by-tick checksum equals the plan
+   head's on the test-1 scene and on a matrix battle.
+6. **Unit test in `ring.rs`:** `Unruled` against `Straight`, so a bearing point beyond the leash is not a slot.
+
+The rule is general: test 1's geometry is derived from the radii and the capacity formula, not taken from battle 28.
+
+**Measurement** (one binary per arm, as before):
+1. **Harness families,** development seeds 1–1,000, under Amendment 8's step rule against the head
+   (step 1 + P8 + O1 + N).
+   - **Expected byte-identical:** arc and corridor (one target, so no other candidate), and gap, cross and corner
+     (`Move` scenes).
+   - **The mirror may move;** T9 is judged there.
+   - **D-R10** (new diagnostic, reported, not a threshold): unit-ticks standing under G-6 on an automatic chase
+     while another enemy in scan range has an admissible free angle. Measured on the head and on G-6′.
+2. **Switch off:** all CSVs byte-identical to the head.
+3. **Battles 26 and 28 on the 24 seeds of §13.12,** with the same contact/blocked table and ring occupancy, and
+   switches and give-ups per seed.
+4. **The full matrix on 20 seeds.**
+5. **Throughput,** the three scenarios, instructions against Legacy and ticks per second, judged against Q0093 (c).
+   The 64 × 64 figure goes to Q0102 as an update, so the owner answers on the final cost.
+
+**Stop rules** (a stop is reported with traces; no variant is tried):
+- **Test 1 is green on the head:** the mechanism is not R10 as diagnosed. Stop before any code change.
+- **Test 1 stays red after G-6′ because retargeted attackers press into the near column and stall or give up**
+  (R1 with an enemy front): stop. G-6′ is then recorded on a `-wip` branch, R10 becomes a B-next row, and WP6
+  proceeds without it. No detour rule is added.
+- **A family expected to be byte-identical is not:** a defect. Stop and find it.
+- **Amendment 8's step rule fails on the mirror,** or D-S rises beyond noise anywhere: stop.
+- **A matrix battle other than 26 and 28 leaves its range:** stop for review. It is not restated in this step.
+- **Battle 28 does not return to zergling wins on the seeds of record:** stop for review, with the ring occupancy
+  table.
+- **Any throughput scenario falls below 50 ticks per second, or 64 × 64 instructions rise beyond noise after the
+  one allowed cost step:** stop and report the split.
+- **Not allowed:** a cap on candidates examined, a hysteresis margin, a per-unit or per-battle switch, or any
+  parameter chosen after seeing figures.
+
+### 17.4 Battle 26: the expectation stays; the claim goes to the owner (Q0103)
+
+Battle 26's expectation (colossi win, 2 or more left) is **not restated** by the implementer or the orchestrator.
+- The matrix test stays red on battle 26 on the plan branch until Q0103 is answered.
+- A red test cannot be merged, so the merge to `main` needs Q0103's answer as well as Q0102's.
+- G-6′ is expected to favour the zerglings further, because it also hands the standing zerglings to the rear
+  colossi. Its battle 26 figures are added to Q0103 as an update before the owner is asked to choose.
+
+The draft below is filed as `docs/questions/open/0103-colossi-against-zerglings-claim.md` by the orchestrator. 0103
+is free on `origin/main` at `36b914fd`: the open questions end at 0102, and no branch carries 0103.
+
+#### Draft Q0103
+
+```markdown
+# Q0103: Six colossi no longer beat a hundred zerglings. Change the claim, call it a bug, or switch the nudge off?
+
+- **Asked:** 2026-11-24
+- **Blocking:** the merge of the new movement solver (together with Q0102). Work continues meanwhile.
+- **Default until answered:** (a), applied only when you answer or at the merge, whichever comes first. Until then
+  the test keeps the old expectation and fails on this one battle.
+
+## Background
+
+The test suite has a "matchup matrix": fixed battles with a claim about who wins. Battle 26 claims **"Six colossi
+vaporize a hundred zerglings."** With the old movement code the colossi won 23 of 24 test runs. With the new
+movement solver the zerglings win 20 of 24.
+
+The cause is the nudge you approved in Q0095 (deviation D-δ in Q0052). Zerglings attacking a colossus may slide
+sideways along it when other zerglings need room. So more zerglings fit round each colossus and attack at once,
+10 round the first colossus against 3 before, and the colossi die before their sweeps kill enough zerglings.
+
+| Version | Zergling wins (24 runs) |
+|---|---:|
+| Old movement code | 1 |
+| New solver, nudge on (as you chose) | 20 |
+| New solver, nudge off | 0 |
+
+We checked that nothing else is broken:
+- the colossi fire as often as before, and each shot hits slightly more zerglings, not fewer;
+- no unit overlaps an enemy more than before.
+
+The claim was already fragile. A test with a change of one part in four billion to one movement constant made the
+zerglings win one of the recorded runs (run 33). The test file says that if the zerglings ever won a recorded run,
+the claim itself should be re-examined. Now they win three of the four recorded runs.
+
+We found no published StarCraft II test of exactly 100 zerglings against 6 colossi. For scale only, in the game
+100 zerglings cost 2,500 minerals and 50 supply, and 6 colossi cost 1,800 minerals, 1,200 gas and 36 supply.
+
+A second fix now being built, D-ε, will move zerglings that are stuck behind a fully surrounded enemy to another
+enemy that still has room. It is expected to help the zerglings here too; its figures will be added below before
+the merge.
+
+## Options
+
+- **(a) Restate the claim to what is measured** (zerglings mostly win), with a comment in the test that cites the
+  nudge D-δ as the reason. Default.
+- **(b) Keep the claim and treat the result as a bug,** to be fixed in a later package without turning the nudge off.
+- **(c) Make the nudge off by default.** Your Q0095 choice is reversed: attacking units are again not pushed
+  sideways, as in StarCraft II. The colossi win again (0 of 24 for the zerglings), and the corridor and choke
+  benefits you wanted from the nudge are lost. Battle 28 (100 zerglings against 10 immortals, where the zerglings
+  should win) gets harder for the zerglings too.
+
+## Answer
+```
+
+### 17.5 Order of work after this amendment
+
+1. **WP6a, G-6′,** as 17.3: tests first, then the rule, then the measurements, under its stop rules.
+2. **Finish WP6** on the resulting head:
+   - throughput in `DESIGN.md` §5;
+   - the §4 bug rows of 17.2 (and R10's if G-6′ stopped), and D-ε's deviation row;
+   - the Movement row;
+   - the amendment listing the matrix restatements (33, 36b, 38b of §13.11, and whatever G-6′ moves within the
+     stop rules; battle 26 only by Q0103);
+   - `cargo gate quick` and the client battle targets.
+3. **File Q0103** (17.4) when WP6a's battle 26 figures are in, and update Q0102 with G-6′'s cost.
+4. **The merge to `main` waits for Q0102's answer,** and for Q0103's, since battle 26 must be green to merge. WP7
+   is unchanged.
+
+## Amendment 18 (implementer, 2026-11-24, at the orchestrator's direction): WP6a stopped for review; WP6's matrix ranges and bug rows
+
+**WP6a, G-6′ (§17.3), is stopped by its matrix rule** and kept on the branch `contact-solver-g6p-wip`
+(`2cfb880f`, pushed). Evidence §13.13 has the figures.
+- **Tests:** tests 1 and 4 of §17.3 were red on the plan head and are green with G-6′; the guards 2 and 3 are
+  green on both.
+- **Switch off:** bit-identical to the plan head. On the test-1 scene and on battle 28's first seed of record, a
+  scratch build with `ring_retarget` unhashed at schema 40 reproduces the head's per-tick checksum digests, and
+  every harness CSV is byte-identical to the head's.
+- **Battle 28:** returns to zergling wins on all 24 seeds.
+- **The stop:** battles 33, 38a and 38b leave their ranges on seeds of record, which §17.3 makes a stop for
+  review.
+  - 33: the zealots win 21 of 24, and 5 survive on seed 33 against the range's 0 to 3.
+  - 38a: 10 zerglings survive on the first seed of record against 3 to 8.
+  - 38b: 2 marines survive on the first seed of record against 4 to 8, and the zerglings win 9 of 24.
+- **Not restated.** Per §17.3, none of these battles is restated in this step.
+- **What follows from the stop:**
+  - R10 becomes the bug row B-192 of `DESIGN.md` §4.
+  - D-ε gets no deviation row.
+  - WP6 is finished without G-6′.
+  - Battle 28 stays a winner flip on the plan branch, so the matrix test is red on battles 26 (Q0103) and 28
+    (B-192).
+- **A second finding is registered as B-193.** Enemy contact moves engaged units. C-8 lets enemies separate evenly,
+  and the solver passes a crowd's press through the front rank, so engaged immortals move 3.61 world units while in
+  contact on battle 28's seed 1 (Legacy 0.85). With G-6′, whose surround presses from every side, they move 94.6.
+
+**Matrix ranges restated for WP6** (20 seeds under the solver pipeline, §13.11, commit `96d668fb`). Only the
+numbers changed; every claim still holds.
+
+| Battle | Old | New |
+|---|---|---|
+| 33_24_marines_vs_12_zealots | blue 0..13 | blue 0..16 |
+| 36b_marines_beat_zealots_without_storm | red 9..12 | red 9..13 |
+| 38b_marines_beat_zerglings_without_fungal | blue 1..1, red 5..8 | blue 0..1, red 4..8 |
+
+**Not restated:**
+- Battle 26 waits for Q0103.
+- Battle 28 waits for R10 (B-192).
+- Battle 33's claim still says "narrowly", though under the solver the marines win all 20 seeds by 8 to 16. That
+  is reported in §13.11 and left for the review.
+
+**Bug rows** (`DESIGN.md` §4; B-182 to B-187 are taken on `main` at `cff46b37` and by the attack-orders plan): B-188 to B-191 as §17.2 lists them, B-192 (R10), B-193 (enemy
+contact). B-157 is marked fixed: T9 holds on both ranges. B-158 is narrowed to B-189.
+
+## Amendment 19 (implementer, 2026-11-24, at the orchestrator's direction): the owner's answers to Q0102 and Q0103; known-bug battles in the matchup matrix
+
+**Answers.**
+- **Q0102: (a).** The 64 × 64 cost is accepted. It measured +66.8 % instructions on this tree (§13.13, `DESIGN.md`
+  §5), and every scenario runs at 80 ticks per second or more.
+- **Q0103, battle 26: (a).** The claim is restated to what is measured, citing the D-δ nudge (Q0095).
+  - New claim: "A hundred zerglings that pack round each colossus mostly overwhelm six colossi; when the colossi
+    win, they win narrowly".
+  - New expectation: blue 0..31, red 0..3 (was blue 0..0, red 2..999). It covers the seeds of record and seeds 1 to
+    20 under the solver pipeline: the zerglings win 20 of 24 with 10 to 31 left, the colossi 4 with 1 to 3 left.
+  - The fixture comment cites D-δ, Q0095 and Q0103.
+- **Q0103, battle 28: (b).** The StarCraft II claim stays, and the solver merges with battle 28 marked as an expected
+  failure for B-192. B-192 (retargeting round a surrounded front row) and B-193 (enemy shoving) stay open for a
+  dedicated follow-up. Its starting point is the stopped G-6′ on `contact-solver-g6p-wip` (Amendment 18).
+
+**The expected-failure mechanism (data, not code per battle).**
+- **The marker.** A battle of `matchup_matrix.ron` may carry `known_bug: Some("B-…")`, an open row of `DESIGN.md`'s
+  bug register. Absent, it means `None`.
+- **The verdict.** `Battle::verdict` (`sim_fixtures::matchup`) judges a battle's seeds of record:
+
+  | Verdict | When | The matrix test |
+  |---|---|---|
+  | `Holds` | no marker, every seed holds the claim | passes |
+  | `Broken` | no marker, some seed breaks the claim | fails |
+  | `ExpectedFailure` | marked, some seed breaks the claim | passes, and lists the battle apart, tagged with its bug |
+  | `StaleKnownBug` | marked, every seed holds the claim | fails: the bug is to be closed and the marker removed |
+
+  So a marker cannot outlive its bug.
+- **The register check.** `every_known_bug_marker_names_an_open_bug_of_the_register` checks that each marker names
+  a row of `DESIGN.md`'s register that is not marked fixed.
+- **The trace tool.** Its whole-matrix mode tags the failures of a marked battle with its bug.
+- **Tests first.** `matchup::tests::a_known_bug_turns_a_broken_claim_into_an_expected_failure_and_goes_stale_when_it_holds`
+  and `the_fixture_reads_a_known_bug_marker` were red (they did not compile, then the fixture had no marker) before
+  the mechanism and the marker.
+- **Battle 28** carries `known_bug: Some("B-192")`.
+
+**The merge** of `main` and the one golden re-record wait for the orchestrator's word: main is about to take schemas
+44 and 45.
+
+## Amendment 20 (implementer, 2026-11-24, at the orchestrator's direction): merge with main `8a15bff9`, schema 46, follow-ups unblocked
+
+**Merge.** Main `8a15bff9` (hidden-harvesters, schema 44; cliff-vision; fire-rules, schema 45) is merged. The plan
+branch adds no hashed field. It takes **schema 46**, which changes no encoding: it only marks the default pipeline
+switching. The number 42, once reserved for this plan's G-6′, stays unused.
+
+**Golden proof.**
+- **Legacy reproduces main.** A git-archive copy of the merged tree, with the pipeline at Legacy and built in a
+  fresh target directory at schema 45, reproduces main's schema-45 golden lists and `DEFAULT_SANDBOX_CHECKSUM`. It
+  does so on native debug and release and on `wasm32-wasip1` release and debug.
+- **Re-recorded once at 46** under the solver, with a proof header in each fixture. At schema 45 the solver's first
+  changed checkpoint is 0 in `golden_replay` and 2 in `golden_replay_orders`.
+
+**Matrix on the merged tree** (evidence §13.14).
+- Battle 26 holds its restated range, and battle 28 is B-192's expected failure.
+- **Battle 35 (vikings against colossi) breaks on its first seed of record:** all six colossi die under the solver.
+  Legacy on the merged tree breaks the same way on seed 19.
+- **Restated** at the orchestrator's decision, as a minor deviation under the owner's AGENTS.md §8 guidance (Q0103),
+  not a bug. It is close-battle variation: a colossus that has not been hit itself does not flee, and a unit flees
+  only from an attacker it cannot hit back, as in StarCraft II. Legacy misses the same way on seed 19.
+  - Expectation red 1..3 → **red 0..3**, blue unchanged.
+  - Claim: "Vikings lose nothing; colossi that flee out of the vikings' sight usually survive, though on a close
+    run all six fall (5.0.14 TargetFilters Visible)".
+  - The fixture comment keeps the old range and cites §8, §13.14 and this amendment.
+
+**Follow-ups unblocked by the merge of this plan.** They waited for the solver to become the default:
+- turret-wind-up WP3, the wind-up hold under `movement/`;
+- attack-orders WP5;
+- weapon-validation WP7 (B-195);
+- hidden-harvesters WP5;
+- fire-rules WP6, which reads the chase from the pursuit;
+- the B-192 and B-193 plan, on branch `solver-followup-plan`. It starts from G-6′ on `contact-solver-g6p-wip`
+  (Amendment 18). It has the owner's §8 guidance (Q0103): a close battle a movement fix moves is restated, and only
+  broken behaviour is a bug.

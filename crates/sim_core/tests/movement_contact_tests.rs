@@ -1286,6 +1286,15 @@ fn units_blocked_by_a_holding_line_never_reverse() -> TestResult {
             GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0)))?,
             SEED,
         );
+        // The legacy form of this test (plan `2026-11-20-contact-solver` §8.1: restated for the solver
+        // in `solver_pipeline_tests.rs`); it runs the legacy pipeline until WP7 deletes it.
+        let rules = world.catalog.movement_rules();
+        world
+            .catalog
+            .set_movement_rules(rules.with_contact(sim_core::catalog::ContactRules {
+                pipeline: sim_core::catalog::MovementPipeline::Legacy,
+                ..rules.contact()
+            })?);
         let kind = small_unit(&world)?;
         let radius = world.catalog.get(kind)?.collision_radius.to_f32();
         let spacing = 2.0 * f64::from(radius);

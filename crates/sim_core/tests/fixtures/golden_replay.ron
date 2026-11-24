@@ -444,8 +444,16 @@
 // field of every entity is equal on all 1000 ticks. The other rules of the plan (WP2, WP3) move
 // nothing here. Native debug and release and wasm32-wasip1 release and debug agree on the list
 // below.
+// Re-recorded for plan 2026-11-20-contact-solver WP6 on its merge with main 8a15bff9 (checksum
+// schema 45 -> 46, no encoding change): the contact solver is the default movement pipeline
+// (`contact.pipeline: Solver`). Proof: with the pipeline left at Legacy, a git-archive copy of the
+// merged tree, built in a fresh target directory at schema 45, reproduces main's schema-45 lists of
+// both fixtures and DEFAULT_SANDBOX_CHECKSUM on native debug and release and wasm32-wasip1 release
+// and debug. Under the solver at schema 45 the first changed checkpoint is 0 (ticks 1 to 50); at
+// schema 46 every checkpoint changes, the schema being encoded. Native debug and release and
+// wasm32-wasip1 release and debug agree on the list below.
 (
-    checksum_schema: 45,
+    checksum_schema: 46,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -471,25 +479,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0xbbed2112c18e50c8,
-        0xf3ab7a13ec8efb5a,
-        0xddc307db80d858b1,
-        0x13b8c4175468fb98,
-        0xed98284f85e1af6b,
-        0x56e5a135bed11379,
-        0x0e8df53ddcebcfca,
-        0x2f00acdf37c5165a,
-        0x6da930c972122aa0,
-        0x89b67b97ecc491f6,
-        0x0fa9d89f6ed974ea,
-        0x96810b3d8b1c3e7f,
-        0x5714505680a60523,
-        0xd0755ebc47dfca67,
-        0x56b715150f51ed86,
-        0xb9d9e61ba90b59c3,
-        0x2f55d8ef82764851,
-        0x356ee0af2edc518b,
-        0xe4b2be72bec59311,
-        0xe0ede2d7abdf5012,
+        0x920010601dbaae7f,
+        0x803cbe6daa5c8511,
+        0xbeff44a6fa0b63ff,
+        0x4153942439264b03,
+        0xd2f4fdbc70fc17e1,
+        0x54a784c859111734,
+        0x22fcfcc70986cc22,
+        0x8ded64eb22bf425d,
+        0x18df3efe29db0de4,
+        0xc0f95ccaed604677,
+        0x695cdf4a7bd346b4,
+        0xf14cfc7ab87b365d,
+        0x134d1719fb56d928,
+        0xb3f96336bec7d519,
+        0xd57b9ecce6da8dcb,
+        0xb0704e3a9795cd36,
+        0x3fd2e8bb6a50b1ec,
+        0x06128fb56ff90175,
+        0x9dcb0061bc943b20,
+        0x8cfe1ab77ea98948,
     ],
 )

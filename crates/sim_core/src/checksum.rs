@@ -113,7 +113,11 @@ use std::collections::BTreeMap;
 /// entity's own weapon target, `Entity::weapon_target`, after `current_target` (plan
 /// `2026-11-24-fire-rules` D-8). Number 44 is the hidden-harvesters
 /// plan's, merged first.
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 45;
+/// Schema 46 changes no encoding: it marks the contact solver becoming the default movement
+/// pipeline (plan `2026-11-20-contact-solver` WP6), so a replay recorded under the legacy
+/// pipeline is refused by its schema instead of diverging at its first contact. Number 42, once
+/// reserved for this plan, stays unused (its retarget field, G-6′, was stopped, Amendment 18).
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 46;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.

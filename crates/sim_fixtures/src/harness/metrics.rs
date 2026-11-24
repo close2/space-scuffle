@@ -33,6 +33,11 @@ use sim_types::{EntityId, SimScalar, SimVec2, UnitOrder};
 
 /// Ticks per second, the length of a window of M2 and M4.
 pub const WINDOW_TICKS: u32 = 25;
+/// D-S: the stall window, ten seconds, the stall rule's own (`STALL_ABANDON_TICKS`).
+pub const STUCK_TICKS: u32 = 250;
+/// D-S: the gain in potential that counts as progress, world units (the stall rule's
+/// `STALL_PROGRESS`).
+pub const STUCK_PROGRESS: f64 = 0.1;
 
 /// Ticks at the end of a scene over which M3 measures standing waste (10 s).
 pub const TAIL_TICKS: u32 = 250;
@@ -129,6 +134,10 @@ pub struct ScenarioRow {
     pub rev_amp_idle: u32,
     /// M1 split (E4): the moving unit-ticks of [`Self::moving_ticks`] on which the unit was idle.
     pub moving_ticks_idle: u32,
+    /// D-S (plan Amendment 11): ring-family unit-ticks of attackers under an order that have not
+    /// gained [`STUCK_PROGRESS`] of potential for [`STUCK_TICKS`] while an admissible free angle
+    /// exists on their ring ("stuck with room").
+    pub stuck_with_room: u32,
 }
 
 impl ScenarioRow {
@@ -138,14 +147,14 @@ impl ScenarioRow {
         progress_windows,through,in_range,throughput,fo_move_max,fo_rest_max,fo_move_over,\
         fo_rest_over,pair_ticks_move,pair_ticks_rest,enemy_ov_max,terrain_pen_max,mean_done_tick,\
         standing_wasted,diagnostics,contact_ticks,contact_iterations,iteration_ticks,rev_amp_idle,\
-        moving_ticks_idle";
+        moving_ticks_idle,stuck_with_room";
 
     /// The row as one CSV line, without a line end.
     #[must_use]
     pub fn to_csv(&self) -> String {
         format!(
             "{},{},{},{},{},{},{},{},{},{},{},{},{:.4},{:.4},{},{},{},{},{},{},{:.4},{:.5},{:.5},\
-             {},{},{},{},{:.5},{:.5},{:.1},{:.4},{},{},{},{},{},{}",
+             {},{},{},{},{:.5},{:.5},{:.1},{:.4},{},{},{},{},{},{},{}",
             self.family,
             self.seed,
             u8::from(self.relabel),
@@ -187,6 +196,7 @@ impl ScenarioRow {
                 .join("/"),
             self.rev_amp_idle,
             self.moving_ticks_idle,
+            self.stuck_with_room,
         )
     }
 }
@@ -265,6 +275,8 @@ struct Track {
     done_tick: Option<u32>,
     gave_up: bool,
     crossed: Option<u32>,
+    /// D-S: the lowest potential reached under the current order, and the tick it was reached.
+    progress: (f64, u32),
 }
 
 /// The scene facts the meter judges against.
@@ -346,6 +358,7 @@ impl ScenarioMeter {
                 done_tick: None,
                 gave_up: false,
                 crossed: None,
+                progress: (f64::INFINITY, 0),
             });
         }
         let judge = Judge {
@@ -436,6 +449,7 @@ impl ScenarioMeter {
             self.observe_unit(world, index);
         }
         self.observe_pairs();
+        self.observe_stuck(world);
         if self.tick.is_multiple_of(WINDOW_TICKS) {
             self.close_windows(world);
         }
@@ -519,6 +533,73 @@ impl ScenarioMeter {
         self.judge
             .pillar
             .is_some_and(|(_, centre, _)| dist(at, centre) <= self.judge.band + 1e-9)
+    }
+
+    /// D-S over the ring families' attackers (see [`ScenarioRow::stuck_with_room`]).
+    fn observe_stuck(&mut self, world: &SimWorld) {
+        if self.judge.pillar.is_none() {
+            return;
+        }
+        for index in 0..self.tracks.len() {
+            let track = &self.tracks[index];
+            let under_order = world
+                .entities
+                .get(&track.id)
+                .is_some_and(|e| e.is_alive() && !e.order_queue.is_empty());
+            if track.role != Role::Attack || !under_order {
+                continue;
+            }
+            let phi = self.potential(track, track.position);
+            let (best, since) = track.progress;
+            if phi + STUCK_PROGRESS <= best {
+                self.tracks[index].progress = (phi, self.tick);
+                continue;
+            }
+            if phi > 0.0 && self.tick - since >= STUCK_TICKS && self.ring_has_room(world, index) {
+                self.row.stuck_with_room += 1;
+            }
+        }
+    }
+
+    /// Whether the ring (the band's outer edge round the pillar) holds a point, reachable from
+    /// the unit's bearing along the ring without its terrain disc entering terrain, at which no
+    /// other body's disc touches the unit's (D-S). Sampled every half radius of arc.
+    fn ring_has_room(&self, world: &SimWorld, index: usize) -> bool {
+        let Some((pillar, centre, _)) = self.judge.pillar else {
+            return false;
+        };
+        let track = &self.tracks[index];
+        let rho = self.judge.band;
+        let at = sub(track.position, centre);
+        let bearing = at.1.atan2(at.0);
+        let step = (track.radius / 2.0 / rho).max(1e-3);
+        let others: Vec<(Point, f64)> = self
+            .tracks
+            .iter()
+            .filter(|other| other.id != track.id && other.id != pillar)
+            .filter(|other| {
+                world
+                    .entities
+                    .get(&other.id)
+                    .is_some_and(sim_core::Entity::is_alive)
+            })
+            .map(|other| (other.position, other.radius))
+            .collect();
+        for sign in [1.0, -1.0] {
+            let mut angle = 0.0;
+            while angle <= std::f64::consts::PI {
+                let theta = bearing + sign * angle;
+                let p = (centre.0 + rho * theta.cos(), centre.1 + rho * theta.sin());
+                if self.terrain_depth(p, track.terrain) > 0.0 {
+                    break;
+                }
+                if others.iter().all(|&(q, r)| dist(p, q) >= track.radius + r) {
+                    return true;
+                }
+                angle += step;
+            }
+        }
+        false
     }
 
     /// How deep a terrain disc of radius `radius` at `at` reaches into blocked cells or past the

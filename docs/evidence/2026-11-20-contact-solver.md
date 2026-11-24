@@ -941,3 +941,987 @@ the run's instructions retired.
 
 The ring rule raises the 64 × 64 battle from +55 % (WP3) to +71 %. Every scenario still runs faster than real time
 (ticks per second at the median: 71, 132 and 72).
+
+## 13. Amendment 11: the second review's steps
+
+Base: `contact-solver-plan` at `e6ceed93` (main `091b85cc` merged, schema 35). Development range only (seeds 1 to
+1,000). The fresh acceptance range, 200,001 to 201,000, is untouched. The baseline of every step comparison is the
+previous step's development run; the first baseline is WP5's run, `wp4b/runs/w5-1`. Data:
+`~/scratch/contact-solver/wp4b/`.
+
+### 13.1 Step 0: diagnostics (no behaviour change)
+
+- **D-S in the harness** (`ScenarioRow::stuck_with_room`, CSV column `stuck_with_room`, table row "Stuck with room").
+  - It counts ring-family unit-ticks of attackers under an order whose potential has not fallen by 0.1 for 250
+    ticks, while a point of the ring, reachable from the unit's bearing without its terrain disc entering terrain,
+    has no other body's disc touching the unit's.
+  - Test: `an_attacker_held_short_of_an_empty_ring_is_stuck_with_room`.
+- **Per-tick log** (scratch tool `trace/zz_wp4b_trace.rs`, not committed). For each reversal it logs:
+  - the remembered gap (the ring decision);
+  - the side commitment;
+  - the proposed step (`SimWorld::proposed_step`);
+  - the solver's correction (the achieved step less the proposal);
+  - the gaps to the bodies near the unit.
+- **The ±0.04 alternation of acceptance seed 100804 reproduces on development seeds 563, 498 and 698**
+  (`trace/d0/`).
+  - It is the same mechanism in every one of their 1,069 reversals:
+    - the unit is a gap walker;
+    - it touches a body (gap between −0.03 and 0);
+    - its committed side partner changes from tick to tick (for example 22 → 16 → 22) with the side flipping;
+    - the proposal swings by about 90° between ticks (for example (0.024, −0.097) → (−0.042, −0.091)), and the
+      solver's correction pushes back.
+  - Of the three candidates it is the second: **the side rule switches off at contact.** `threat_of` drops a body
+    whose gap is at most zero, so the earliest threat becomes another body on the other side, the commitment moves
+    to it and the side flips. Contact then separates the pair, and the first body is a threat again.
+  - The aim–contact cycle is how the swing becomes a reversal, but the swing comes from the side rule.
+  - The hard pass does not appear: the corrections are friendly and averaged.
+
+### 13.2 Step 1: P1 exact blocking geometry, P7 no enemy dead band (`f27acf84`, `0cc50327`)
+
+- **P1.** `blocking_interval` takes the exact half-width `acos((ρ² + d² − R²) / (2ρd))`.
+  - Test `a_ring_filled_greedily_holds_its_capacity` runs over all 175 arc rings and is red before (for example
+    P 0.5, R 0.1, r 0.5625: 4 placed against a capacity of 6).
+- **P7.** Enemy pairs take no dead band.
+  - Test `enemy_pairs_take_no_dead_band` is red before: a 0.8 % enemy overlap stays.
+  - The slide test now allows the wall rule's rounding, which the enemy's last word reaches.
+
+**Development, against WP5** (`runs/w5-1` → `runs/p17-1`): nothing is worse beyond noise.
+
+| Family | Figure | WP5 | Step 1 |
+|---|---|---:|---:|
+| arc | M1 / M1-hi | 3.64 / 0.223 | **2.48 / 0.192** |
+| arc | give-ups (E1) | 1,208 | **305** |
+| arc | fill mean / 5th (T5) | 0.805 / 0.600 | **0.967 / 0.857** |
+| arc | fill, scenes without give-ups | 0.804 | 0.979 |
+| arc | M4 | 0.052 % | 0.006 % |
+| arc | scenes over the friend / enemy bound | 32 / 25 | **1 / 0** |
+| arc | D-S, unit-ticks | — | 102,537 |
+| corridor | fill / give-ups | 0.869 / 16 | 0.908 / 20 |
+| corridor | D-S | — | 2,502 |
+| gap, cross, corner | | | byte-identical |
+| mirror | blue share | 0.506 [0.403, 0.608] | 0.554 [0.453, 0.652] |
+
+Against WP3's thresholds, arc T5 and arc T7 now hold on development. Arc M1-hi (0.192) is within T1's 0.25, but arc M1
+(2.48) still fails T1's 1.0. `cargo gate quick` is green on this tree.
+
+### 13.3 Step 2: P2, the detour for gap walkers: stopped by Amendment 8's rule (side branch `contact-solver-p2-wip`)
+
+**Built.**
+- When the segment from a gap walker to its gap point passes a tick-start body closer than the two radii, the unit
+  aims at the point of the outer circle of radius `max(|x − T|, ρ + r + r_max)` one diameter of arc on from its
+  bearing toward the gap, never past the gap.
+- Its progress is still measured to the gap point. It dives in once the way is clear.
+- The design is stateless.
+
+**Development, against step 1** (`runs/p2-1`).
+
+| Family | Figure | Step 1 | P2 | Verdict |
+|---|---|---:|---:|---|
+| arc | give-ups (E1) | 305 | **1** | P2 criterion met: falls beyond noise |
+| arc | fill, scenes without give-ups | 0.979 | 0.924 | P2 criterion met: at least 0.85 |
+| arc | fill mean / 5th | 0.967 / 0.857 | 0.924 / 0.786 | worse, still within T5 |
+| arc | D-S | 102,537 | 4,588 | |
+| arc | M1 / M1-hi (T1) | 2.48 / 0.192 | **9.85 / 8.15** | **stop**: arc M1-hi fails T1 and is worse than WP3's 0.71 |
+| arc | M4 | 0.006 % | 0.231 % | within T3 |
+| corridor | M1 / give-ups / D-S | 0.00 / 20 / 2,502 | **12.96 / 618 / 53,260** | far worse than step 1; not worse than WP3 |
+| corridor | scenes over the friend / enemy bound | 0 / 0 | **114 / 16** | |
+| gap, cross, corner | | | | byte-identical |
+
+**Traces** (`trace/p2/`).
+- **Arc, seed 150** (M1-hi 0 → 934): units 5 and 2 alternate every tick between two states.
+  - One tick they are a gap walker on a detour: their bearing point is blocked and they step out along the outer
+    circle at full speed, proposal (0.033, −0.184).
+  - The next tick their bearing point is free, so they chase straight in: no gap, proposal (−0.041, 0.183).
+  - The detour step itself moves the bearing onto a free point, and the straight chase moves it back.
+  - This is a two-tick limit cycle between the detour and the ring rule's "own bearing free, chase straight". Each
+    swing is a full-speed reversal.
+- **Corridor, seed 976** (M1-hi 0 → 283, give-ups 0 → 2):
+  - In the corridor the outer circle lies in the walls beyond the corridor's width.
+  - Gap walkers aim at points they cannot reach, are corrected back (corrections up to 0.14 a tick), and stall into
+    give-ups.
+  - The detour has no terrain test.
+
+**Reading.**
+- P2 meets the two stop criteria that Amendment 11 gives it.
+- But under Amendment 8's rule it stops: arc T1 (M1-hi) gets worse than WP3.
+- The wavefront fallback is conditional on P2's own criteria failing, and they did not fail, so it was not run.
+- Hand-back point (orchestrator's request): after step 2's verdict.
+
+### 13.4 Step 1b (Amendment 12): a closing body in contact stays a threat: stopped by the step rule (side branch `contact-solver-1b-wip`)
+
+**Built** (`56cb6c1d` on the side branch).
+- `threat_of` returns a body in contact that the unit still closes on as a threat with time to contact zero (ORCA's
+  colliding case). A body in contact that the unit moves away from stays no threat.
+- Test `a_closing_body_in_contact_stays_the_threat` is red before.
+
+**Development, against step 1** (`runs/p17-1` → `runs/p1b-1`).
+
+| Family | Figure | Step 1 | 1b | Rule |
+|---|---|---:|---:|---|
+| arc | give-ups (E1) | 305 | **2** | better |
+| arc | D-S | 102,537 | 19,626 | |
+| arc | M1 / M1-hi (T1) | 2.48 / 0.192 | **7.86 / 5.21** | **stop**: M1-hi passed T1 and now fails |
+| arc | relabel p, completion (T8) | 0.871 | **0.001** | **stop**: T8 passed and now fails |
+| gap | M1 / M1-hi (T1, WP3 fails) | 1.11 / 0.283 | **3.64 / 2.17** | **stop**: worse |
+| cross | M1 / M1-hi (T1, WP3 fails) | 1.19 / 0.486 | **2.42 / 1.88** | **stop**: worse |
+| cross | give-ups (T4, WP3 fails) | 2 | **16** | **stop**: worse |
+| corner | M1 / M1-hi (T1) | 0.499 / 0.111 | **1.95 / 1.11** | **stop**: T1 passed and now fails |
+| corridor | give-ups | 20 | 0 | better |
+
+**Trace** (`trace/1b/`; gap seed 481, cross seed 721, corner seed 852, the largest rises in M1-hi).
+- **Counts:** 581 of the 642 reversals are units touching a body (gap −0.05 to 0), and 483 come after a change of
+  side partner or side since the unit's previous reversal.
+- **Ties at contact.** In a dense crowd (the gap mouth, the corner, two groups meeting head-on) a unit touches
+  several bodies it still closes on. Every one is now a threat with time to contact zero. The earliest threat is a
+  tie, decided by the smallest id, so the partner and its geometric side change as contacts come and go.
+- **A full right angle at contact.** `tangent_heading` turns onto the tangent of a disc the unit already overlaps,
+  which is the perpendicular to the line of centres (sin α clamps to 1). So each change of partner is a 90° sideways
+  step, which contact pushes back. For example, gap seed 481 unit 16: proposal (0, 0.099), correction (0, −0.069).
+
+**Reading.**
+- The fix removes the arc give-ups (305 → 2), as step 0's diagnosis predicted for the ring families.
+- But treating contact as a threat with time zero hands the one-partner rule a tie wherever several bodies touch,
+  and the rule then turns fully sideways. That defect is outside the ring families' single-contact case.
+- By Amendment 12, this is a stop.
+- Step 2′ (the wavefront) is built (`contact-solver-1b-wip`, commit after `56cb6c1d`) on top of 1b, but was not
+  measured: its baseline step stopped, and a run on top of 1b would be confounded. The run started in the queue was
+  cancelled.
+
+### 13.5 Step 2′ (Amendments 12 and 13): the wavefront fallback, measured once on step 1: stopped by the step rule (side branch `contact-solver-w2-wip`)
+
+**Built** (`75871a42` on the side branch; module `movement/wavefront.rs`).
+- **Field:** one integer breadth-first distance field per contested target and walker radius per tick, built on
+  first request and shared.
+  - Cell size `h = r/2`. Square of half-size `ρ + 3r + 2·r_max`, at most 512 cells a side.
+  - Seeded from the free ring points of step 1's exact intervals.
+  - Cells blocked by terrain and by the inflated discs of the target, enemies and anchored friends.
+  - 4-connected spread; the walker steps to the lowest of its 8 neighbours, ties in a fixed order.
+- **Use:** only while the walker's straight segment to its gap point is blocked. Progress is measured to the gap.
+- **Tests:** `the_wave_goes_round_a_wall_and_the_walker_follows_it`, `a_disc_blocks_the_cells_inside_it`.
+
+**Development, against step 1** (`runs/p17-1` → `runs/w2b-1`).
+
+| Family | Figure | Step 1 | 2′ | Verdict |
+|---|---|---:|---:|---|
+| arc | give-ups (E1) | 305 | **2** | P2 criterion met: falls beyond noise |
+| arc | fill, scenes without give-ups | 0.979 | 0.957 | P2 criterion met: at least 0.85 |
+| arc | D-S | 102,537 | 4,396 | |
+| arc | M1 / M1-hi (T1) | 2.48 / 0.192 | 2.40 / **1.28** | **stop**: M1-hi passed T1 and now fails (worse than WP3's 0.71) |
+| arc | fill mean / 5th (T5) | 0.967 / 0.857 | 0.957 / 0.857 | holds |
+| corridor | M1 / M1-hi (T1) | 0 / 0 | **1.58 / 1.54** | **stop**: T1 passed and now fails |
+| corridor | give-ups / D-S | 20 / 2,502 | 12 / 6,365 | |
+| gap, cross, corner | | | | byte-identical |
+| mirror | blue share | 0.554 [0.453, 0.652] | 0.463 [0.418, 0.508], draws 529 | holds |
+
+**Traces** (`trace/w2/`).
+- **Arc, seed 211** (M1-hi 0 → 32): a gap walker following the field along the front rank touches its bodies (gap
+  −0.016 to 0). Its side partner switches between 3 and 9, and the proposal reverses each tick.
+- **Corridor, seed 458** (M1-hi 0 → 655): 655 of the 656 reversals are gap walkers with a fixed gap point. The
+  side partner of the touching body (gap 0.000) comes and goes (None ↔ 2), and the proposal flips between two
+  directions each tick.
+- Both are step 0's mechanism, the side rule switching at contact. The field brings walkers to the front rank's
+  edge, where that mechanism operates far more often. Step 1b, the fix for it, was stopped (§13.4).
+
+**Cost** (release benchmark, 400 units, 300 ticks, instructions retired; `Legacy` re-measured on this tree, whose
+catalog has changed since §12.6).
+
+| Scenario | Legacy | Step 1 | Step 2′ | Q0093 (c): ≤ +60 % and ≥ 50 ticks per second |
+|---|---:|---:|---:|---|
+| 64 × 64, armies meet | 10.35 G | 17.06 G (+65 %, 98 tps) | 25.22 G (**+144 %**, 65 tps) | step 1 fails by 5 points |
+| 128 × 128, armies apart | 10.74 G | 11.49 G (+7 %, 171 tps) | 11.49 G (+7 %, 161 tps) | holds |
+| showcase canyon | 18.03 G | 27.75 G (+54 %, 78 tps) | 27.74 G (+54 %, 82 tps) | holds |
+
+**The field's share on 64 × 64** (`perf record`, inclusive cycles of the run):
+- the bodies' discs: `block_holding_bodies` 11.4 % with `block_disc` 11.2 %;
+- cell centres: 6.4 %;
+- the spread: 3.8 %;
+- seeding: 1.8 %.
+
+That is about 35 % of the run, roughly +8.2 G.
+
+**Reading.** Step 2′ meets P2's two criteria but stops under Amendment 8's rule. By Amendments 12 and 13 the
+remaining steps are not run, and the trade-off goes to the owner with step 1's figures.
+
+### 13.6 Legacy against step 1 on the development range (for the owner)
+
+**Runs.** Development seeds 1 to 1,000 per family, each scene family also relabelled, mirror 1 to 1,000.
+- **Legacy:** run on this tree, plan head `dd9118ab` (`runs/legacy-head-1`). Its rows reproduce WP1's baseline
+  (gap M1 17.70, M1-hi 3.79, give-ups 454).
+- **Step 1:** P1 and P7 on WP5's Solver (`runs/p17-1`). Main's later merges change no movement code.
+
+**How the table is judged.**
+- Verdicts are the harness's (`movement_harness --aggregate`), with E1 added to T4. Relative thresholds compare with
+  Legacy.
+- "Worse than Legacy" means beyond §6.4's noise rule: outside Legacy's 95 % bootstrap interval (comparator rules of
+  §10). Maxima are read through the number of scenes over the bound.
+
+| T | Threshold | Family | Legacy | | Step 1 | | Step 1 worse than Legacy beyond noise |
+|---|---|---|---|---|---|---|---|
+| T1 | M1 ≤ 1.0, M1-hi ≤ 0.25, M1 not above Legacy | gap | 17.70 / 3.79 | fail | 1.11 / 0.28 | fail | no (much better) |
+| | | arc | 3.20 / 1.98 | fail | 2.48 / 0.19 | fail | no |
+| | | cross | 4.27 / 1.36 | fail | 1.19 / 0.49 | fail | no |
+| | | corridor | 8.77 / 2.82 | fail | 0.00 / 0.00 | pass | no |
+| | | corner | 20.94 / 4.60 | fail | 0.50 / 0.11 | pass | no |
+| T2 | M2 not above Legacy; M3 ≤ 0.5 | gap | 0.0634 / 0.004 | pass | 0.0286 / 0.000 | pass | no |
+| | | arc | 0.0991 / 2.15 | fail | 0.0487 / 0.034 | pass | no |
+| | | cross | 0.0344 / 0.001 | pass | 0.0216 / 0.000 | pass | no |
+| | | corridor | 0.0437 / 0.56 | fail | 0.0040 / 0.000 | pass | no |
+| | | corner | 0.0617 / 0.000 | pass | 0.0186 / 0.000 | pass | no |
+| T3 | M4 ≤ 1 % | gap | 0.01 % | pass | 0.21 % | pass | **yes** (0.009 → 0.214 %, within T3) |
+| | | arc | 1.99 % | fail | 0.01 % | pass | no |
+| | | cross | 0.00 % | pass | 0.50 % | pass | **yes** (0.0006 → 0.499 %, within T3) |
+| | | corridor | 0.52 % | pass | 0.00 % | pass | no |
+| | | corner | 0.00 % | pass | 0.04 % | pass | **yes** (0.003 → 0.041 %, within T3) |
+| T4 | 0 deadlocks and give-ups, ≥ 99.5 % complete, no wrong pass | gap | 459 / 454, 80.5 % | fail | 46 / 46, 97.8 % | fail | no |
+| | | cross | 152 / 152, 94.6 % | fail | 2 / 2, 99.8 % | fail | no |
+| | | corner | 0 / 0, 100 % | pass | 7 / 7, 99.7 % | fail | **yes** (0 → 7 give-ups) |
+| | E1: 0 give-ups | arc | 25 | fail | 305 | fail | **yes** (25 → 305) |
+| | | corridor | 275 | fail | 20 | fail | no |
+| T5 | fill mean ≥ 0.90, 5th ≥ 0.7476 | arc | 0.980 / 0.889 | pass | 0.967 / 0.857 | pass | **yes** (0.980 → 0.967; 0.889 → 0.857, both within T5) |
+| T6 | η median ≥ 0.5, 5th ≥ 0.25, no drop | gap | 0.655 / 0.300 / 0 | pass | 0.784 / 0.381 / 0 | pass | no |
+| T7 | enemy ≤ 0.5 %; terrain ≤ 2⁻¹⁰; friends > 5 % moving ≤ 0.1 %, > 1 % standing ≤ 0.1 %, max ≤ 15 % | gap | 0 / 0.00008 / 14.68 % / 5.59 % / 0.742 | fail | 0 / 0.00002 / 1.62 % / 0.02 % / 0.958 | fail | no (scenes over the friend maximum 907 → 242) |
+| | | arc | 0.0183 / 0 / 1.32 % / 0.22 % / 0.597 | fail | 0 / 0 / 0.01 % / 0.01 % / 0.300 | fail (1 scene over max) | no (274 → 1 scene) |
+| | | cross | 0 / 0 / 3.78 % / 1.35 % / 0.537 | fail | 0 / 0 / 0.00 % / 0.00 % / 0.098 | pass | no |
+| | | corridor | 0.0398 / 0.00008 / 7.35 % / 3.88 % / 0.988 | fail | 0 / 0 / 0.00 % / 0.00 % / 0.010 | pass | no |
+| | | corner | 0 / 0 / 14.89 % / 5.23 % / 0.554 | fail | 0 / 0 / 0.03 % / 0.01 % / 0.520 | fail | no (920 → 23 scenes) |
+| T8 | relabel sign tests p ≥ 0.01 | gap | 0.436 / 0.248 | pass | 0.198 / 0.041 | pass | no |
+| | | arc | 0.968 / 0.134 | pass | 0.597 / 0.871 | pass | no |
+| | | cross | 0.031 / **0.000** | fail | 1.000 / 0.180 | pass | no |
+| | | corridor | **0.004** / 0.911 | fail | 1.000 / 1.000 | pass | no |
+| | | corner | 0.711 / 0.715 | pass | 0.948 / 0.560 | pass | no |
+| T9 | blue share's 95 % Wilson interval contains 0.5 | mirror | 0.438 [0.400, 0.476], 356 draws | fail | 0.554 [0.453, 0.652], 908 draws | pass | no |
+| D-S | stuck with room, unit-ticks (reported) | arc | 10,959 | — | 102,537 | — | **yes** |
+| | | corridor | 5,624 | — | 2,502 | — | no |
+
+**Totals:**
+- **Legacy** passes 13 of the 33 rows judged against a threshold.
+- **Step 1** passes 22.
+- **Step 1 fails, which Legacy passes:**
+  - T4 on corner;
+  - T7 maximum on arc (one scene);
+  - E1 on arc, which both fail, though step 1 is much further from zero.
+- **Legacy fails, which step 1 passes:**
+  - T1 on corridor and corner;
+  - T2 on arc and corridor;
+  - T3 on arc;
+  - T7 on cross and corridor;
+  - T8 on cross and corridor;
+  - T9.
+
+**Step 1 is worse than Legacy beyond noise on these figures only:**
+- arc give-ups (E1): 25 → 305;
+- arc fill: 0.980 / 0.889 → 0.967 / 0.857 (T5 holds for both);
+- arc D-S: 10,959 → 102,537;
+- corner T4: 0 → 7 give-ups, 100 % → 99.7 % complete;
+- M4 in gap, cross and corner (within T3 for both);
+- corridor fill: 0.955 → 0.908 (no T-figure; the two-abreast miss, Q0095).
+
+**Cost** (release benchmark, 400 units, 300 ticks, instructions retired, this tree; §13.5). The Q0093 (c) bar is at
+most +60 % instructions and at least 50 ticks per second.
+
+| Scenario | Legacy | Step 1 | Bar |
+|---|---:|---:|---|
+| 64 × 64, armies meet | 10.35 G | 17.06 G (+65 %), 98 ticks per second | **fails** (+65 % > +60 %) |
+| 128 × 128, armies apart | 10.74 G | 11.49 G (+7 %), 171 ticks per second | holds |
+| showcase canyon | 18.03 G | 27.75 G (+54 %), 78 ticks per second | holds |
+
+### 13.7 Step 6, P8: the ring interval cache (Q0097's default)
+
+**Built.**
+- The ring rule's blocking intervals are computed once per (target, walker radius, ring radius) per tick, every
+  body's but the target's, each tagged with its body. A chaser copies them less its own interval.
+- The grid query is the scan's own, so the order and the first-fault rule are the scan's.
+- `SimWorld::set_ring_interval_cache` switches the cache off for the test that proves it exact.
+
+**Exactness.**
+- Test `the_ring_interval_cache_changes_nothing`: arc seeds 1, 5 and 563 and corridor seed 4 give the same
+  positions and checksum on every tick, with the cache on and off. A deliberately broken cache, keeping the walker's
+  own interval, fails the test.
+- The development corpus (`runs/p8-1`): all 11 CSVs are byte-identical to step 1's (`runs/p17-1`).
+
+**Cost** (release benchmark, 400 units, 300 ticks, `perf stat -e instructions:u`, under the gate lock, Legacy on the
+same tree).
+- Ticks per second come from a second measurement, taken while the shared machine's load was 23 and then 15. The
+  first measurement, at load 240, read 46, 84 and 52 for the Solver, so wall-clock figures move with other agents'
+  load. Instructions repeat to within a few thousand.
+
+| Scenario | Legacy | Step 1 | Step 1 + P8 | Q0093 (c): ≤ +60 % and ≥ 50 ticks per second |
+|---|---:|---:|---:|---|
+| 64 × 64, armies meet | 10.35 G, 164 tps | 17.06 G (+64.8 %) | **16.69 G (+61.2 %)**, 104 tps | **fails** on instructions, by 1.2 points; holds on speed |
+| 128 × 128, armies apart | 10.74 G, 161 tps | 11.49 G (+7.0 %) | 11.49 G (+7.0 %), 154 tps | holds |
+| showcase canyon | 18.03 G, 123 tps | 27.75 G (+53.9 %) | 27.75 G (+53.9 %), 80 tps | holds |
+
+**Split on 64 × 64.** `perf record --call-graph=dwarf`, inclusive cycles, each share scaled by the run's
+instructions retired.
+
+| Part | Legacy | Solver + P8 | Change |
+|---|---:|---:|---:|
+| Contact (`resolve_collisions_and_push`; the solver is 20.7 % of the run) | 0.20 G | 3.60 G | +3.40 G |
+| Target acquisition | 4.73 G | 6.61 G | +1.88 G |
+| Movement phase | 3.27 G | 4.56 G | +1.29 G |
+| — of which intent | — | 1.08 G | |
+| — of which the ring scan, cached (≈ 0.95 G before P8) | — | 0.52 G | |
+| Total | 10.35 G | 16.69 G | +6.34 G |
+
+**Reading.**
+- P8 saves 0.37 G on the 64 × 64 battle and changes nothing.
+- The battle stays 1.2 points above Q0093 (c)'s +60 %.
+- What remains is the contact solver (+3.4 G), which Amendment 11 did not touch (no over-relaxation), and target
+  acquisition (+1.9 G), a behaviour effect of denser packing.
+- No further change is made (Q0097).
+
+### 13.8 Ablation A0 (Amendment 14): intent is the preferred velocity: a measurement, stopped by the step rule
+
+**Build.**
+- A scratch build on `contact-solver-a0-wip` (`b714b294`): under the solver pipeline, `proposed_heading` returns
+  the straight heading to the next point, with no side rule and no side memory. Nothing is committed to the pipeline.
+- **Baseline:** step 1 + P8 (`runs/p8-1`). The plan head reproduces its first 20 seeds per family byte for byte.
+
+**Development (seeds 1 to 1,000), against step 1 + P8 and against the thresholds.**
+
+| Family | Figure | Step 1 + P8 | A0 | Prediction | Step rule |
+|---|---|---:|---:|---|---|
+| arc | M1 / M1-hi (T1) | 2.48 / 0.192 | **0.06 / 0.010** | falls: **yes** | T1 now holds |
+| arc | give-ups (E1) | 305 | 61 | | better, still fails |
+| arc | fill / 5th (T5) | 0.967 / 0.857 | 0.984 / 0.889 | | holds, better |
+| arc | friends > 5 % moving / > 1 % standing | 0.009 % / 0.011 % | 0.027 % / 0.029 % | | worse beyond noise, within T7 |
+| arc | max / T7 | 0.300, fails | 0.149, **holds** | | |
+| arc | D-S | 102,537 | 67,398 | | |
+| gap | M1 / M1-hi (T1) | 1.11 / 0.283 | **0.51 / 0.247** | falls: **yes** | T1 now holds |
+| gap | give-ups (T4, WP3 fails) | 46 | **124** | | **stop**: worse |
+| gap | scenes over the friend max (T7, WP3 fails) | 242 | **277** | | **stop**: worse |
+| gap | η 5th | 0.381 | 0.359 | | worse, within T6 |
+| cross | M1 / M1-hi (T1, WP3 fails) | 1.19 / 0.49 | **25.61 / 25.42** | | **stop**: worse |
+| cross | M3 (T2, passes) | 0.000 | **0.692** | | **stop**: now fails |
+| cross | M4 (T3, passes) | 0.50 % | **1.58 %** | rises: **yes** | **stop**: now fails |
+| cross | give-ups (T4) | 2 | **1,274** | rises: **yes** | **stop**: worse |
+| cross | friends > 5 % moving; max (T7, passes) | 0.001 %; 0.098 | **6.33 %; 0.990** | rises: **yes** | **stop**: now fails |
+| corridor | give-ups (E1) | 20 | **0** | | holds |
+| corridor | D-S | 2,502 | 29,128 | | |
+| corner | M1 (T1) | 0.50 | 0.14 | | holds |
+| corner | friend max (T7) | 0.520 | 0.991 | | fails both |
+| all | T8 | | | | holds everywhere |
+| mirror | blue share (T9) | 0.554 [0.453, 0.652] | 0.589 [0.474, 0.695] | | holds |
+
+**Verdict.**
+- Every prediction is borne out: arc and gap T1 fall; cross T4, M4 and T7 rise.
+- But A0 **fails the step rule** on:
+  - cross T1 to T4 and T7;
+  - gap T4 and T7.
+- It is not a candidate on its own.
+
+**Cost** (release benchmark, 400 units, 300 ticks, instructions retired, the same tree for all three).
+- Ticks per second are not reliable here: the shared machine's load average was 42 to 70.
+
+| Scenario | Legacy | Step 1 + P8 | A0 | A0 against Legacy |
+|---|---:|---:|---:|---|
+| 64 × 64, armies meet | 10.35 G | 16.69 G (+61.2 %) | **16.00 G** | +54.6 % (within +60 %) |
+| 128 × 128, armies apart | 10.74 G | 11.49 G (+7.0 %) | 10.90 G | +1.5 % |
+| showcase canyon | 18.03 G | 27.75 G (+53.9 %) | 26.60 G | +47.5 % |
+
+The prediction for 64 × 64 was about −1 G; the measured change is −0.69 G.
+
+**Split on 64 × 64** (A0, inclusive cycles scaled by instructions).
+
+| Part | Step 1 + P8 | A0 |
+|---|---:|---:|
+| Contact | 3.60 G | 3.99 G |
+| Target acquisition | 6.61 G | 6.36 G |
+| Movement phase | 4.56 G | 3.66 G (no intent) |
+| Ring scan (cached) | 0.52 G | 0.60 G |
+
+**Traces** (`trace/a0/`).
+- **Cross, seed 967** (θ 180°, n 12; give-ups 0 → 24, M1-hi 2,064 reversals). All 1,274 cross give-ups are in the
+  180° scenes.
+  - The two columns meet head-on. Bodies on the line of centres have no sideways component, so contact cannot pass
+    them, and the walkers give up with `NoProgress` at tick 341.
+  - The idle units they leave are deeply overlapped (gaps −0.58 to −1.17).
+  - With a zero proposal, the solver moves them ±0.41 per tick, back and forth, from tick 350 to 607: the solver's
+    correction of coincident idle pairs alternates sign every tick.
+- **Gap, seed 463** (w 2, r 0.75, n 24; give-ups 0 → 10): the same mechanism. Walkers queue in the narrow gap and
+  give up with `NoProgress`. Their idle bodies, deeply overlapped (−0.19 to −1.05), are moved ±0.45 per tick.
+
+**Reading.**
+- Without a side rule the ring families improve on every figure but D-S. The side rule costs arc and gap their T1.
+- Some anticipation is needed for head-on crossings, as the review expected. Without it, collinear pairs stall,
+  give up and are left deeply overlapped.
+- A second mechanism shows up here: a limit cycle of the solver for deeply overlapped idle pairs (±0.4 a tick).
+- Rule S waits for Q0097.
+
+### 13.9 Amendment 15: O1 adopted; rule S stopped by the step rule (side branch `contact-solver-s-wip`)
+
+**O1, the overlap oscillation** (`1b676582`, committed).
+- **Mechanism.** A0's knot (development seed 967, tick 370) is a column of walker, idle, idle, walker of radius
+  0.875, its centres 0.584 apart. The two idle units swapped places every tick.
+  - With no proposals, the solver alone separates the column monotonically.
+  - Skipping the summed hard-friend pass removes the swap.
+  - So it is that pass: each walker–idle pair has one share zero and is summed, not averaged. It gives the idle body
+    the walker's whole overlap, 1.17, and carries it across its idle partner, 0.584 away. The next tick does the
+    same in reverse.
+- **Fix.** In the hard-friend pass, a body whose summed step closes on a body it already overlaps does not take
+  that step. No overlap grows in that pass and no pair's order reverses. The enemy-and-fixed pass keeps its
+  unbounded last word: D-α never relaxes enemies, and a body may close on a friend to clear one.
+- **Tests:**
+  - `a_pressed_column_keeps_its_order_and_settles` is red before: the pair swapped every tick.
+  - The amendment's own `an_overlapped_idle_pair_separates_monotonically` was already green: a lone pair never
+    oscillated.
+- **Development, against step 1 + P8:**
+  - The only figure worse beyond noise is arc's standing friend share, 0.011 % → 0.020 % (T7's bound is 0.1 %).
+  - Arc T7 now holds (no scene over the friend maximum).
+  - Corner scenes over the friend maximum fall from 23 to 9.
+
+**Rule S** (`5b7571d8` on the side branch). Built as Amendment 14 specifies, with the parameters fixed by its
+derivation before the run:
+- `h` = `contact.side_horizon_factor` (2), with the horizon of I-3a;
+- weight `1 − τ/H`;
+- responsibility ½ against a body that moves under an order and does not hold its ground, 1 otherwise;
+- direction along the predicted line of centres at collision; size `max(0, −v·n)`;
+- right-hand bias `ρ·w·(|v|/h)·(1 − m/R)⁺` on the right normal of the relative velocity;
+- Jacobi mean over the candidates, never renormalised;
+- clamps: no backward component, at most the step, a turn of at most `asin(1/h)`;
+- output a velocity as a fraction of the step;
+- `SideMemory`, `side_partner` and `side_left` deleted.
+
+**Tests:**
+- `the_velocity_is_continuous_through_contact`: red before (the old rule jumped by 0.165 a tick at contact).
+- `relabelling_changes_nothing`: red before (an exact tie between two threats was broken by id).
+- `a_head_on_pair_passes_right_to_right_and_mirrors` and `no_backward_step_onto_an_engaged_body`: already green
+  under the old rule.
+- `the_clamps_hold_and_friends_moving_along_add_nothing`.
+
+**Development, against O1** (`runs/o1-1` → `runs/s-1`).
+
+| Family | Figure | O1 | S | Rule |
+|---|---|---:|---:|---|
+| gap | M1 / M1-hi (T1) | 1.09 / 0.267 | **0.26 / 0.067** | T1 now holds |
+| arc | M1 / M1-hi (T1) | 2.36 / 0.184 | **0.13 / 0.003** | T1 now holds |
+| cross | M1 / M1-hi (T1) | 1.19 / 0.485 | **0.08 / 0.004** | T1 now holds |
+| corner | M1 (T1) | 0.49 | 0.10 | holds |
+| cross | M4 (T3) | 0.50 % | 0.23 % | better |
+| arc | give-ups (E1, already failing) | 309 [259, 367] | **507** | **stop**: worse |
+| arc | fill / 5th (T5) | 0.967 / 0.857 | 0.947 / 0.818 | worse, still within T5 |
+| arc | D-S | 103,433 | 147,319 | |
+| corner | give-ups (T4, already failing) | 7 [0, 17] | **18** | **stop**: worse |
+| cross | friend max (T7, passing) | 0.098 | **0.209** (3 scenes over 0.15) | **stop**: now fails |
+| corridor | give-ups (E1) | 20 | **0** | E1 now holds |
+| gap | give-ups (T4) | 50 | 62 | within noise |
+| all | T2, T3, T8 | | | hold |
+| mirror | blue share (T9) | 0.515 [0.419, 0.610] | 0.581 [0.476, 0.680] | holds |
+
+**Traces** (`trace/s/`).
+- **Arc, seed 809** (give-ups 0 → 6).
+  - The abandoners are gap walkers standing still (velocity 0), 0.4 to 1.15 from the ring, their bearing point
+    blocked by two bodies, with 12 of 19 places taken.
+  - S removes their whole approach toward the standing or engaged front-rank bodies in their way. The right-hand
+    bias acts only near head-on, and a backward step is clamped away, so they stop dead. They abandon after 10 s
+    (ticks 481 and 782).
+  - The one-partner rule had turned them along the rank toward their gap.
+- **Cross, seed 620** (θ 90°; friend maximum 0.010 → 0.209): an arrived idle unit is pressed to 0.157 by walkers
+  passing it. Idle friends that step aside are not candidates (L6, unchanged), so S walkers press into them, as
+  before; S no longer turns them aside.
+- **Corner, seed 267** (give-ups 0 → 7): walkers at the mouth give up with `NoProgress` while moving slowly
+  (0.016 to 0.36 a tick). The idle units they leave are then pressed above 0.15 (0.159).
+
+**Reading.**
+- Rule S does what Amendment 14 expected of it on oscillation: T1 holds in every family, and M1 falls by 80 to
+  95 %.
+- But it removes the sideways motion that let gap walkers reach their gaps, so arc E1 and T5 lose ground and corner
+  give-ups rise.
+- By Amendment 15, S is stopped, and the orchestrator takes the fallback, option (b), on step 1 + P8 + O1.
+
+### 13.10 Amendment 16, option (b): N adopted; the cost bar is still missed by 2.6 points
+
+**Merges.** Main `d71f7153` (schema 38) and then `e212ca44` (schema 39) are merged into the plan branch. The plan
+branch adds no hashed state of its own.
+
+**N, deviation D-δ** (`b53c076c`, committed).
+- **Rule:** under the Solver, an engaged melee unit that is not on Hold Position (nor immobile or unpushable) is
+  shared with friends as if not engaged. It takes only the part of its correction along its ring's tangent: never
+  out of range, never by enemies.
+- **Switch:** `contact.nudge_engaged_along_ring` in `movement_rules.ron`, on by default (absent means on). The
+  catalog is not hashed, so no schema change.
+- **Tests:**
+  - `a_nudged_attacker_slides_along_its_ring_only` is red before (the engaged unit took no share);
+  - `the_nudge_switch_defaults_on_and_can_be_switched_off`.
+- **Development:**
+  - With the switch off, all 11 CSVs are byte-identical to O1's.
+  - With it on, the five scene families are byte-identical: the harness's scratch attackers are ranged, so D-δ does
+    not reach them.
+  - The mirror moves to blue 0.538 [0.448, 0.626] with 883 draws; T9 holds. Nothing is worse beyond noise.
+  - **The corridor two-abreast figure is unchanged** (301 of 301 capacity-2 scenes missed): those attackers are
+    ranged, and D-δ applies to melee units only, as the owner worded it.
+
+**Cost against Q0093 (c).** Head `1b3c33ed` (step 1 + P8 + O1 + N, main merged); release benchmark, 400 units, 300
+ticks, `perf stat -e instructions:u`, under the gate lock. The machine was shared (load 24 to 50), so ticks per
+second are indicative only; §13.7's quieter reading of the same code was 104, 154 and 80.
+
+| Scenario | Legacy | Solver | Change | Ticks per second (Solver) | Bar |
+|---|---:|---:|---:|---:|---|
+| 64 × 64, armies meet | 10.35 G | 16.83 G | **+62.6 %** | 65 (104 quiet) | **fails** (+60 %) |
+| 128 × 128, armies apart | 10.74 G | 11.51 G | +7.2 % | 92 (154 quiet) | holds |
+| showcase canyon | 18.03 G | 27.88 G | +54.7 % | 65 (80 quiet) | holds |
+
+**Split on 64 × 64** (`perf record --call-graph=dwarf`, inclusive cycles, each share scaled by the run's
+instructions).
+
+| Part | Legacy | Solver | Change |
+|---|---:|---:|---:|
+| Contact (`resolve_collisions_and_push`) | 0.32 G | 4.02 G | +3.70 G |
+| — the solver | — | 3.82 G | |
+| — of which the pair sums | — | 1.60 G | |
+| — of which the terrain steps | — | 1.39 G | |
+| — of which the pair builds | — | 0.77 G | |
+| Target acquisition | 4.74 G | 6.17 G | +1.43 G |
+| Movement phase | 3.42 G | 4.54 G | +1.12 G |
+| — of which intent | — | 0.82 G | |
+| — of which the ring scan | — | 0.62 G | |
+| Total | 10.35 G | 16.83 G | +6.48 G |
+
+**Behaviour-preserving optimisation tried.**
+- **Bar arithmetic:** reaching +60 % needs 0.27 G off the Solver alone. Work shared with Legacy, chiefly target
+  acquisition's distances (u128 roots, 5.4 % of either run), lowers both runs and raises the ratio.
+- **The one Solver-only candidate measured:** intent's two `SimScalar::sqrt` calls, replaced by the movement
+  module's exact `integer_sqrt`, tested equal on 100,000 values. It saved 5.4 M instructions (0.03 %) and was not
+  kept.
+- **No other exact change was found** that removes 0.27 G without changing results. The solver's own cost (pair
+  sums, terrain steps, pair builds) is the Jacobi solve itself.
+- **By Amendment 16, step 2, this is a stop:** the bar fails by 2.6 points, and the split goes to the orchestrator
+  for the owner.
+
+### 13.11 WP6 preparation (Q0102's default): the held-out run is a stop for review
+
+**Merge.** Main `36b914fd` (schema 40) is merged into the plan branch (`23c4a002`) before any golden is re-recorded,
+so they are re-recorded once. The plan branch adds no hashed state of its own.
+
+**Held-out run** (Amendment 16, option (b)). Seeds 9,000,001 to 9,001,000 per family, each scene family also
+relabelled, mirror 9,000,001 to 9,001,000; both pipelines from one harness binary of the plan branch with N
+(`runs/held-legacy-9000001`, `runs/held-solver-9000001`, each keeping its binary). Each was run once.
+
+*Solver: held-out against development* (development is §13.10's head: step 1 + P8 + O1 + N). The comparator's
+noise rule (§10) marks only these worse:
+
+| Figure | Development | Held-out | T-figure |
+|---|---:|---:|---|
+| arc M4 | 0.0052 % [0.0031, 0.0073] | 0.0074 % [0.0050, 0.0101] | T3 (≤ 1 %) holds on both |
+| arc friend overlap > 5 % while moving | 0.0012 % [0.0005, 0.0020] | 0.0024 % [0.0012, 0.0039] | T7 (≤ 0.1 %) holds on both |
+| cross give-ups = deadlocks | 2 [0, 5] | 6 [1, 13] | T4 (0) fails on both |
+
+Every other figure lies within noise, or is better: gap M2 and moving overlap, corner M1-hi and M2, cross resting
+overlap. The mirror is blue 0.523 [0.430, 0.613] with 889 draws (development 0.538 [0.448, 0.626], 883 draws); T9
+holds. Arc's relabel p for M1 is 0.011 (development 0.250), still above T8's 0.01.
+
+**By Amendment 16 this is a stop:** a held-out figure is worse than its development counterpart beyond the noise
+rule. Two of the three stay well inside their thresholds. The third, cross give-ups, fails T4 on both ranges.
+
+*The cross give-ups traced.* The four held-out cross scenes that give up are seeds 9,000,180, 9,000,353, 9,000,475
+and 9,000,606; the development scenes are 704 and 900. Seed 9,000,353 (θ 180°, 14 units a side, r 1) is traced in
+`trace/held/cross9000353.txt`. At tick 348, units 8 and 22 give up with NoProgress:
+- velocity 0;
+- 7.56 and 19.03 from their rings;
+- two bodies on the bearing point, two units in the band.
+
+This is the head-on stall that remains of WP3's side rule (§13.9: rule S, which aimed at it, was stopped). It is
+not a new mechanism; the held-out range has more head-on scenes that meet it.
+
+*Legacy on the held-out range, and Solver against Legacy there.* Solver is worse than Legacy beyond noise on the
+same figures as on the development range (§13.6), and on no other:
+- M4 in gap, cross and corner (within T3 for both);
+- arc give-ups 24 → 268, arc fill 0.977 / 0.889 → 0.970 / 0.857 (T5 holds for both);
+- corridor fill 0.972 → 0.910 (no T-figure; Q0095's two-abreast miss);
+- corner give-ups 0 → 5, completion 100 % → 99.8 %.
+
+Legacy's held-out mirror is blue 0.419 [0.383, 0.457] with 325 draws: it fails T9 there too.
+
+*Legacy: held-out against development* (`runs/legacy-head-1`), for scale. The held-out range differs from the
+development range for Legacy too. Beyond noise, Legacy is worse on arc fill (0.980 → 0.977) and corridor give-ups
+(275 → 345), and better on gap give-ups (454 → 354), cross give-ups (152 → 100) and five other figures. The
+comparator's noise rule draws on scene sampling within a range only. It does not cover differences between the
+two ranges' scene mixes, which Legacy shows here.
+
+**Held-out T-figures that still fail under Solver** (development figure in brackets):
+- T1: gap M1 1.10 / M1-hi 0.257 (1.09 / 0.267), arc 2.46 / 0.198 (2.36 / 0.184), cross 1.20 / 0.475 (1.19 / 0.485);
+- T4: gap 29 give-ups, 98.3 % complete (50, 97.4 %); cross 6, 99.6 % (2, 99.8 %); corner 5, 99.8 % (7, 99.7 %);
+- E1: arc 268 (309), corridor 25 (20);
+- T7 friend maximum: gap 224 scenes over (231), corner 5 (9).
+
+**WP6 work done before the stop** (commits `a639e0a3`, `96d668fb`):
+- **Default:** `pipeline: Solver` in `movement_rules.ron`.
+- **Tests restated** per §8.1 and Amendment 4 item 4:
+  - `the_shipped_rules_run_the_solver_pipeline_since_the_switch_over`;
+  - the fan-out test on the settled clump;
+  - two legacy-form tests pinned to Legacy until WP7;
+  - two internals tests over both pipelines, with a Solver twin for the off-map tick start.
+- **Goldens:** `golden_replay` (first change at checkpoint 0) and `golden_replay_orders` (checkpoint 2) are
+  re-recorded under Solver.
+  - Proof: with `pipeline: Legacy` the merged tree reproduces main's lists and `DEFAULT_SANDBOX_CHECKSUM` on native
+    debug and release and on `wasm32-wasip1` release and debug.
+  - The new lists agree on all four builds.
+  - `DEFAULT_SANDBOX_CHECKSUM` does not move.
+- **Matrix** (20 seeds under Solver):
+  - restated: 33 blue 0..13 → 0..16; 36b red 9..12 → 9..13; 38b blue 1..1 → 0..1 and red 5..8 → 4..8;
+  - **two winner flips, reported and not restated:** battle 26 (colossi against zerglings: zerglings win 17 of 20,
+    against 1 of 20 under Legacy) and battle 28 (immortals win 15 of 20, against 0 of 20). The matrix test fails on
+    them until the orchestrator decides.
+  - Battle 33's claim reads "narrowly"; under Solver the marines win all 20 seeds by 8 to 16.
+- **Showcase:**
+  - `route_trace` under Solver: player 1 still wins the lane fight; the viewer's last unit dies at tick 691 (663
+    before), the workers at ticks 1,091 and 1,128 (1,059 and 1,102), the hall at tick 2,505 (2,622).
+  - `clash` is lengthened from 375 to 400 frames.
+  - Render on the RX 580 under radv (`showcase render --driver radv`, one `with-gpu-lock` per take): `battle` take
+    165.6 s, `effects` take 591 frames in 74.6 s.
+    - `clash` runs from tick 297 to 697, past the last death;
+    - `march` ends on combat at the viewer's base at tick 1,010;
+    - `assault` (to about tick 1,410) covers both worker deaths.
+  - `showcase_storyboard_tests` (7) and `showcase_tests` (2) pass.
+
+**Not done, pending the review of this stop:**
+- throughput in `DESIGN.md` §5;
+- the §4 bug rows for the failing T-figures, and the Movement row;
+- the amendment listing the matrix restatements;
+- `cargo gate quick` and the client battle targets.
+
+### 13.12 Diagnosis of the two matrix flips and the held-out cross give-ups (no code change)
+
+**Tools.** The battle trace runner (`crates/sim_core/examples/matchup_trace.rs`, release) at plan head `96df6dda`.
+- **Runs:** battles 26 and 28 on the four seeds of record plus seeds 1 to 20 (24 seeds) under each pipeline. Legacy
+  is a scratch catalog with `pipeline: Legacy`; nothing else differs.
+- **Unit-level traces:** battle 28 seed 1 (an immortal win under Solver) and battle 26 seed 3203386110 (of record; a
+  zergling win under Solver).
+- **Counterfactuals:** scratch catalogs with `nudge_engaged_along_ring: false` (D-δ off) or `moving_friends_push:
+  false` (D-β off).
+- **Ring occupancy** is computed from the unit CSV. For each enemy unit:
+  - the zerglings inside its band (centre distance ≤ 1.225 against an immortal, ≤ 1.475 against a colossus);
+  - the free part of its ring, in degrees: ring points no other body's disc covers.
+
+No instrumented build was needed, so no new branch exists. Outputs are in `~/scratch/contact-solver/wp4b/diag/`.
+
+#### Battle 28 (100 zerglings against 10 immortals): G-6 stands the zerglings at saturated rings
+
+**Outcome:** Legacy 24 of 24 zergling wins; Solver 5 of 24 (seeds of record: 3203386110 and 33 won, 11 and 22 lost).
+
+**Zerglings in contact over time** (mean over the 24 seeds; in contact / blocked; a finished seed counts 0):
+
+| Tick | 100 | 150 | 200 | 250 | 300 | 350 | 400 | 500 | 600 |
+|---|---|---|---|---|---|---|---|---|---|
+| Legacy | 8.5 / 11.9 | 14.4 / 10.8 | 20.0 / 8.3 | 24.5 / 5.7 | 24.9 / 5.4 | 22.4 / 3.2 | 18.7 / 2.7 | 16.3 / 1.4 | 9.5 / 1.3 |
+| Solver | 11.1 / 39.6 | 11.9 / 58.1 | 11.9 / 52.6 | 12.2 / 46.0 | 11.6 / 37.2 | 12.4 / 28.6 | 13.7 / 21.9 | 13.3 / 10.9 | 10.6 / 4.8 |
+
+Under Solver the zerglings in contact level off at about 12. The rest stand "blocked": they have a target outside
+their band and do not move.
+
+| Seed 1, whole battle | Legacy | Solver |
+|---|---|---|
+| zergling-seconds blocked | 105 | 678 |
+| zergling-seconds flanking | 437 | 44 |
+| target switches | 491 | 40 |
+
+Every switch, under either pipeline, moves to a nearer enemy. Under Legacy, 453 of 491 come while flanking.
+
+**Where they stand** (seed 1, Solver). The immortals stand in two touching columns (spacing 1.5 = 2 × 0.75). The
+western column (ids 101, 105, 107, 109) faces the zerglings; the eastern column is 102 to 110.
+
+| Tick | Western column: in band / free ring | Eastern column: in band / free ring | Blocked zerglings |
+|---|---|---|---|
+| 150 | 5, 2, 2, 3 / 0° each | 0 each / 98° to 166° | 70, all targeting western immortals, median 2.6 beyond the band |
+| 250 | 4, 2, 1, 2 / 0° | 0 each / 98° to 154° | 35 |
+| 350 | 2, 1, 4 / 0° | 0 each / 62° to 180° | 34 |
+
+Under Legacy at tick 250, every immortal except 107 has 2 to 5 zerglings in band, the eastern column included, and
+only 3 zerglings are blocked.
+
+**Mechanism.** The zerglings acquire the nearest immortals, the western column. Each western ring is saturated:
+zerglings on the west face, the touching neighbours to north and south, the eastern twin behind. The ring rule then
+finds no free angle and applies **G-6: stand, keep the order, accrue no stall** (`movement/ring.rs`, Q0089).
+- A standing zergling never comes nearer to another immortal, so acquisition never switches it.
+- The eastern column's free rings (about 100° to 180° each) stay empty for the whole fight.
+- Under Legacy the crowd-edge walk carries the zerglings round the block, and the nearest-enemy rescan hands them
+  to the eastern immortals.
+
+**What it is not:**
+- *Give-ups:* G-6 accrues no stall.
+- *A ring slot missed by the P8 cache:* P8 was proved byte-identical, and the eastern rings are free in the snapshot
+  itself.
+- *O1:* the blocked zerglings stand 2 to 5 beyond the band, out of contact with the engaged rank's hard pairs.
+- *D-δ:* with it off, the zerglings win 3 of 24 instead of 5, so D-δ helps them here.
+- *D-β:* with it off, they win 8 of 24.
+
+**R-number.** It is new: none of R1 to R9 covers it.
+- R1 is the chord into the engaged rank when the target's ring *has* a gap. Here the ring has none.
+- D-S ("stuck with room") counts room on the same target's ring.
+- **Proposed R10:** an automatic chase whose target's ring is saturated stands (G-6) although another enemy within
+  the acquisition range has a free, reachable ring slot.
+
+**Against StarCraft II.** I judge this a real regression, though no source in the plan settles it.
+- SC-10 ("units outside the concave stand") describes a contact surface that is full. Here two fifths or more of the
+  eastern immortals' rings are free and reachable round the ends of the block.
+- The game's zerglings visibly spread round a clump of ranged units, and the claim "without splash, immortals are
+  overrun" rests on that.
+- The plan's sources do not describe how the game's acquisition treats a target with no free slot.
+
+**Candidate fix, not fitted to the test (proposed G-6′).** When an *automatic* chase (attack-move or auto-acquire;
+not an explicit Attack on a unit) finds no free slot on its target's ring, acquisition retargets:
+- It runs the unit's normal acquisition (same priorities, same scan range, same leash), skipping enemies whose ring
+  has no admissible free slot for this unit.
+- It takes the best remaining enemy. Only if none has a slot does the unit stand as G-6 says.
+
+Properties:
+- Deterministic and order-free: read from the snapshot, like G-2.
+- Cheap: the P8 cache already holds each (target, radius, ρ) ring per tick.
+- Generic: it names no unit and no battle, and states one rule for every melee and ranged chaser.
+
+It is a new mechanic, so it needs a plan amendment. Its SC2 source is to be cited, or it is to be recorded as a
+deviation. Expected side effects:
+- the harness's single-target families (arc, corridor) have no other enemy, so their figures should not move;
+- battle 26 would also gain zerglings (see below);
+- the cost is one extra ring query per standing chaser and tick.
+
+#### Battle 26 (100 zerglings against 6 colossi): D-δ puts more zerglings on the front colossi
+
+**Outcome:** Legacy 1 of 24 zergling wins (seed 16, not of record, as the fixture's watch item says); Solver 20 of
+24. Of the seeds of record, Solver loses only 33, the seed the placebo finding is about.
+
+**Zerglings in contact over time** (mean over 24 seeds; in contact / blocked):
+
+| Tick | 50 | 100 | 150 | 200 | 250 | 300 |
+|---|---|---|---|---|---|---|
+| Legacy | 5.8 / 6.9 | 12.1 / 5.4 | 17.8 / 3.2 | 18.8 / 2.0 | 13.9 / 1.6 | 9.6 / 0.4 |
+| Solver | 12.5 / 13.2 | 20.1 / 26.0 | 20.0 / 16.3 | 16.7 / 8.1 | 18.2 / 6.0 | 12.9 / 5.0 |
+
+**Ring occupancy** (seed 3203386110, tick 125):
+
+| Pipeline | Front colossi (101, 103, 105): in band / free ring | Rear colossi | Zerglings |
+|---|---|---|---|
+| Solver | 10, 5, 5 / 0° | 88° to 124° free | 44 blocked: the same G-6 stand as battle 28 |
+| Legacy | 3, 2, 4 / 32°, 32°, 0° | — | 26 flanking |
+
+**The two artefacts named for review are both absent:**
+- *Zerglings spread wider than the sweep reaches:* a colossus shot costs the zerglings 48.7 health under Solver and
+  41.8 under Legacy (1.28 against 1.17 deaths per shot). The zerglings are hit more densely, not less.
+- *The colossus target or line changing because of packing:*
+  - the colossi fire 0.920 shots per colossus-second under Solver and 0.910 under Legacy, with no target switch
+    under either pipeline;
+  - zergling hits per engaged zergling-second are equal (2.138 against 2.134);
+  - largest enemy overlap is 2.7 % of a zergling diameter under Solver, 2.1 % under Legacy.
+- *Side observation:* the zerglings' crowd presses the colossi and immortals back (red unit-ticks pushed in contact:
+  195 against 4 in battle 26; 131 against 3 in battle 28). C-8 lets enemies separate evenly under both pipelines; the
+  Solver passes the press of the rear ranks through the front rank. This does not reduce the colossi's fire.
+
+**Mechanism: D-δ.** With `nudge_engaged_along_ring: false` the zerglings win **0 of 24** (mean in contact 8.6). With
+`moving_friends_push: false` they win 1 of 24. D-δ (N, adopted by Amendment 16) lets an engaged zergling slide along
+its ring when friends press it, so a front colossus's ring packs to capacity: 10 zerglings round colossus 101 against
+3 under Legacy. The first colossi die sooner, and the fight ends before the sweeps kill enough zerglings.
+
+**Against StarCraft II.** This is the deviation D-δ, as the owner sanctioned it, doing what it was adopted for:
+zerglings pack their target's contact surface, and the game's zerglings do too. I do not judge it a regression.
+- The claim "six colossi vaporize a hundred zerglings" was already within noise on seed 33: a raw-unit placebo
+  flipped it (fixture comment, plan 2026-11-19-crowd-slide §2.3).
+- The fixture comment says a lost seed of record means the claim itself is re-examined. Three of the four seeds of
+  record are now lost.
+- G-6′ above would put the standing zerglings on the rear colossi as well, which favours them further.
+
+**Candidate fix:** none for the movement. The claim, or its expected range, is the owner's to re-examine. It is not
+a range to be widened by the implementer.
+
+#### Held-out cross give-ups (6 against 2): partly the same mechanism, and a scene-mix difference
+
+All eight give-ups, development and held-out, are the same rule firing: a plain `Move` is given up after 10 s
+without progress (R4), at ticks 348 to 437, inside the jam where the two groups cross.
+
+| Seed | Range | θ, n, r, v | Units given up | Trace |
+|---|---|---|---|---|
+| 704 | development | 135°, 13, 0.75, 0.1 | 1 | velocity 0, 23.5 from its goal |
+| 900 | development | 90°, 14, 0.875, 0.1 | 1 | velocity 0, 20.6 from its goal |
+| 9,000,180 | held-out | 90°, 13, 0.75, 0.1 | 1 | velocity 0, 17.2 from its goal: as in the development range |
+| 9,000,353 | held-out | 180°, 14, 1, 0.125 | 2 | velocity 0, two bodies on the line ahead (§13.11) |
+| 9,000,606 | held-out | 180°, 14, 1, 0.125 | 2 | the same scene as 9,000,353: its trace is identical line for line |
+| 9,000,475 | held-out | 180°, 12, 0.875, 0.1 | 1 | 0.71 from its goal, three units in its way |
+
+**The difference is in the scenes drawn, not in a new behaviour:**
+- The cross family draws its scenes from a finite grid: θ, n, radius, speed and a starting heading.
+- Four of the six held-out give-ups come from one configuration (180°, 14, 1, 0.125). Development has no scene of
+  that configuration; held-out has three, and two of them are the same scene.
+- Head-on scenes (θ 180°) give 5 of the 6 held-out give-ups and none of development's, although each range has about
+  345 head-on scenes.
+- Every other held-out give-up configuration appears in development at most twice; one of those development scenes
+  gives up.
+- The bootstrap behind the noise rule resamples scenes within a range. It cannot cover a configuration that one range
+  lacks.
+- Legacy moves between the ranges just as much and the other way: 152 give-ups in development, 100 held-out. By θ:
+  - 180°: 98 → 49;
+  - 135°: 41 → 51;
+  - 90°: 13 → 0.
+
+**Correction to §13.11.** Not all held-out give-ups are head-on: 9,000,180 is a 90° jam like the development pair.
+The head-on cases (9,000,353, its duplicate 9,000,606, and 9,000,475) show WP3's side-rule residual. The development
+range met that residual already: cross 967, θ 180°, in §13.8's A0 trace.
+
+**Verdict.** This is no regression of the solver between ranges. The development range under-samples the large
+head-on configurations, and T4's cross failure (give-ups > 0) is the same open failure on both ranges.
+
+### 13.13 WP6a, G-6′ (Amendment 17 §17.3): stopped by the matrix rule; WP6 finished without it
+
+**Code** (branch `contact-solver-g6p-wip`, `2cfb880f`, pushed; plan Amendment 18):
+- **Switch:** `contact.retarget_from_full_ring`, on when absent.
+- **`RingAim::Unruled`:** the bearing point lies beyond the leash or in terrain. It is chased as `Straight` but
+  never counts as a slot.
+- **`SimWorld::ring_retarget`:** acquisition's own candidate test and key (`candidate_key`, shared with
+  `scan_candidates`), read at tick-start positions. It takes the first ring that the rule does not stand on.
+- **The hand-over in `prepare_pursuit`:** it drops the route and restarts the memory but keeps the leash origin.
+  `MotionProposal::ring_retarget` rewrites the front acquired attack on commit.
+- **Memory:** `MovementMemory::ring_retarget`, hashed at schema 42. Acquisition keeps it unless a candidate outranks
+  it.
+- **The mirror's D-R10 column** (`harness/room.rs`). It counts unit-ticks in which a unit stands, out of its band, on
+  an automatic chase while another enemy within its scan range has room on its ring. Measured at tick-start
+  positions with exact blocked arcs in `f64`; the leash and terrain are not modelled. Only the mirror has automatic
+  chases: the scene families use player `Attack` and `Move` orders, so their D-R10 is 0 by construction.
+
+**Tests** (`crates/sim_core/tests/ring_retarget_tests.rs`, scratch archetypes, geometry from the capacity formula:
+r 0.375, R 0.75, range 0.1, C = 10, N = 60):
+
+| Test | Plan head | G-6′ |
+|---|---|---|
+| 1 `a_full_ring_hands_an_automatic_chaser_to_a_free_one` (plain, mirrored, relabelled) | red: at tick 93 attacker 11 stands at full ring 3 while far ring 2 in its scan range has room | green |
+| 2 `an_explicit_attack_on_a_full_ring_stands` (guard) | green | green |
+| 3 `a_retarget_never_lengthens_the_leash` (leash 2) and `a_retarget_keeps_the_leash_origin` | first green; second red (no hand-over happens) | green |
+| 4 `a_retargeted_chase_keeps_its_target_until_outranked` | red (no hand-over) | green |
+| 5 `the_full_ring_switch_off_is_bit_identical` | — | green |
+| 6 `ring::tests::a_bearing_point_beyond_the_leash_is_unruled` | — | green |
+
+**Switch off: bit-identical to the plan head.** Per-tick checksum digests (FNV-1a) of test 1's scene (400 ticks)
+and of battle 28 on its first seed of record:
+
+| Build | Test-1 scene | Battle 28 |
+|---|---|---|
+| Plan head `9fccdcab` (no switch) | `0x0931bd388fcef5c7` | `0x19eff3295cc2c0df` |
+| G-6′, switch off, `ring_retarget` unhashed, schema 40 (scratch) | `0x0931bd388fcef5c7` | `0x19eff3295cc2c0df` |
+| G-6′, switch off, schema 42 (pinned in test 5) | `0xcc46f75ff253c4fd` | `0x819f469ee6dbe465` |
+
+**Harness, development seeds 1 to 1,000, under Amendment 8's step rule against the head** (`runs/non-1`, step 1 +
+P8 + O1 + N):
+- **Scene families:** gap, arc, cross, corridor and corner are byte-identical to the head with the switch on, every
+  CSV and its relabelled twin. This is as §17.3 expected: they have no automatic chase.
+- **Mirror:** blue 0.568 [0.478, 0.654] with 882 draws (head 0.538 [0.448, 0.626], 883). T9 holds and nothing is
+  worse beyond noise.
+- **D-S:** unchanged, because the arc and corridor files are byte-identical.
+- **D-R10 on the mirror:** 5,993 unit-ticks in 207 scenes under G-6′, against 7,761 in 215 with the switch off
+  (the head's behaviour). The cases left are those the measure does not model: the leash, terrain, and candidates
+  whose bearing point is unruled.
+- **Switch off** (`runs/g6poff-1`): every scene CSV and its relabelled twin is byte-identical to the head's. So is the
+  mirror CSV in all of the head's columns; the only addition is the new D-R10 column.
+
+| Figure | Head | G-6′ | Step rule |
+|---|---|---|---|
+| T1 to T8, every scene family | (§13.10) | byte-identical | holds |
+| T9 mirror | 0.538 [0.448, 0.626] | 0.568 [0.478, 0.654] | holds |
+| D-S (arc, corridor) | 102,537 / 2,502 | identical | holds |
+| D-R10 (mirror) | 7,761 in 215 scenes (switch off) | 5,993 in 207 scenes | reported |
+
+**Battles 28 and 26 on the 24 seeds of §13.12** (`diag/g6p`):
+
+| Battle | Legacy | Solver (head) | G-6′ |
+|---|---|---|---|
+| 28, strict zergling wins | 24 | 5 | **24** (survivors 44 to 52 on the seeds of record) |
+| 26, strict zergling wins (for Q0103) | 1 | 20 | **22**, all four seeds of record (4, 31, 27 and 7 left) |
+
+Zerglings in contact / blocked in battle 28, mean over the 24 seeds:
+
+| Tick | 100 | 150 | 200 | 250 | 300 | 350 | 400 |
+|---|---|---|---|---|---|---|---|
+| Legacy | 8.5 / 11.9 | 14.4 / 10.8 | 20.0 / 8.3 | 24.5 / 5.7 | 24.9 / 5.4 | 22.4 / 3.2 | 18.7 / 2.7 |
+| Solver | 11.1 / 39.6 | 11.9 / 58.1 | 11.9 / 52.6 | 12.2 / 46.0 | 11.6 / 37.2 | 12.4 / 28.6 | 13.7 / 21.9 |
+| G-6′ | 15.2 / 7.5 | 28.2 / 8.2 | 40.9 / 6.5 | 46.8 / 4.4 | 37.6 / 4.8 | 25.7 / 10.7 | 14.3 / 20.2 |
+
+**Ring occupancy, battle 28 seed 1, tick 250, under G-6′:**
+- In band: every immortal has 1 to 8 zerglings, the far column included.
+- Blocked: 11 zerglings.
+- Target switches over the battle: 404, of which 84 are to a nearer enemy; the rest are G-6′'s hand-overs.
+
+**Battle 26 seed 3203386110, tick 125, under G-6′:** the front colossi have 10, 4 and 3 zerglings in band, and only
+1 zergling is blocked (44 under the head).
+
+**Finding: enemy contact moves engaged units** (B-193). Distance moved while in contact, in world units on seed 1
+of battle 28, the immortals' total:
+
+| Legacy | Solver (head) | G-6′ |
+|---|---|---|
+| 0.85 | 3.61 | 94.6 |
+
+On battle 26's seed of record, the colossi's total is 0.45, 8.32 and 44.3. C-8 lets enemies separate evenly, and the
+solver passes a crowd's press through its front rank. Under G-6′'s surround the press comes from every side, and the
+immortals are shoved several world units. Whether the game lets units push enemies at all is **verify**.
+
+**The full matrix, 24 seeds (seeds of record plus 1 to 20), G-6′** (`matrix/g6p`). Against the head's solver run,
+outcomes changed only in battles of zerglings or zealots against a clump: 26, 27, 28, 29, 32, 33, 36a, 36b, 38a and
+38b. Leaving their ranges on seeds of record:
+
+| Battle | Range | G-6′ on the seeds of record | All 24 seeds |
+|---|---|---|---|
+| 33_24_marines_vs_12_zealots | blue 0..16, red 0..3 | seed 33: red 5 left | zealots win 21 (head: marines 20 of 20) |
+| 38a_fungal_turns_zerglings | blue 3..8 | 3203386110: 10 zerglings left | 7 of 24 within range |
+| 38b_marines_beat_zerglings_without_fungal | blue 0..1, red 4..8 | 3203386110: 2 marines left | zerglings win 9 |
+
+36a and 36b return inside their ranges on all seeds. 27 and 29 move within their ranges. 32, 35 and 39a fail on
+non-record seeds, as under the head.
+
+**By §17.3 this is a stop for review:** a matrix battle other than 26 and 28 leaves its range. No battle is
+restated, and no variant was tried.
+
+**Cost** (release benchmarks, `perf stat -e instructions:u`, under the gate lock; ticks per second on the shared
+server):
+
+| Scenario | Legacy, plan head | Solver, plan head | G-6′ build, Legacy | G-6′ |
+|---|---:|---:|---:|---:|
+| 64 × 64 | 9.47 G | 15.79 G (+66.8 %), 111/s | 10.64 G | 17.18 G (+61.4 % on its own Legacy, +81.4 % on the plan head's), 108/s |
+| 128 × 128 | 10.06 G | 10.83 G (+7.6 %), 183/s | 10.91 G | 11.69 G (+7.1 %), 176/s |
+| canyon | 17.16 G | 27.04 G (+57.6 %), 80/s | 18.26 G | 28.14 G (+54.1 %), 79/s |
+
+- **Why the G-6′ build's Legacy costs 1.17 G more.** The shared `candidate_key` refactor costs acquisition 33.4 %
+  of that build's instructions, against 25.1 % for the plan head's `scan_candidates` (`perf record -e
+  instructions:u`). Behaviour is identical: the switch-off proof above covers it.
+- **Not optimised.** The stop came first, and §17.3 allows one cost step only after a pass.
+- **Plan head's 64 × 64 figure.** It is +66.8 % since main's merge (`36b914fd`), against +62.6 % before it. The
+  merge lowered both pipelines, Legacy more (10.35 → 9.47 G). This goes to Q0102.
+
+**WP6 finished without G-6′** (Amendment 18):
+- **Bug rows B-188 to B-193:** the four of §17.2, R10 and the enemy-contact finding.
+- **B-157 fixed, B-158 narrowed.**
+- **The Movement row.**
+- **`DESIGN.md` §5's throughput table.**
+- **The matrix amendment.**
+- **The matrix test stays red** on battles 26 (Q0103) and 28 (B-192) on the plan branch.
+
+### 13.14 The merge with main `8a15bff9` (Amendment 20): goldens at schema 46; battle 35 leaves its range
+
+**Golden proof.** I made a git-archive copy of the merged tree, set the pipeline to Legacy, kept schema 45 and built
+in a fresh target directory (`~/scratch/contact-solver/proof45`). It reproduces main's schema-45 golden lists and
+`DEFAULT_SANDBOX_CHECKSUM` (4 + 3 tests passed on each build) on native debug and release and on `wasm32-wasip1`
+release and debug. Under the solver at schema 45, the first changed checkpoint is 0 in `golden_replay` and 2 in
+`golden_replay_orders`. The lists are re-recorded once, at schema 46.
+
+**Matrix under the solver on the merged tree** (the test's four seeds of record):
+- **Battle 26** holds its restated range.
+- **Battle 28** is an expected failure for B-192, on seeds 11 and 22 (4 and 3 immortals left).
+- **Battle 35 breaks on the first seed of record.** This is battle 35_12_vikings_vs_6_colossi: "Vikings lose nothing;
+  colossi that flee out of their sight survive", expectation blue 12..12, red 1..3. On seed 3203386110 the vikings
+  kill all six colossi by tick 267.
+
+Before the merge this seed held under the solver. The merged rules (cliff-vision, fire-rules, weapon validation's
+TargetFilters Visible from main) and the solver move this battle together.
+
+Battle 35 per seed (colossi left at the end; blue keeps all 12 on every seed under both pipelines):
+
+| Pipeline (merged tree) | 3203386110 | 11 | 22 | 33 | Seeds 1 to 20 |
+|---|---|---|---|---|---|
+| Solver | **0** (tick 267) | 2 | 2 | 1 | 1 to 3 on all 20 |
+| Legacy | 1 | 1 | 2 | 3 | 1 to 3, except seed 19: **0** (tick 260) |
+
+**The failing seed traced** (`diag/merged/u-solver`):
+- Under the solver, colossus 18 stands idle at full life at (29.3, 51.1) from tick 190 to 220. That is about 5 from
+  the vikings' centroid, inside their sight of 10, while the vikings kill colossi 14 and 16.
+- Its flight then starts late, 5 at a time from each hit, and it dies at tick 267 at (29.0, 56.5).
+- Under Legacy on the same seed, the last colossus had walked east of the vikings by tick 150 and flees out of sight.
+
+The outcome depends on where each colossus stands when the vikings turn to it, and Legacy shows the same miss on
+seed 19. **Restated** at the orchestrator's decision under the owner's §8 guidance (Q0103) as close-battle variation:
+a colossus that has not been hit itself does not flee, as in StarCraft II. The expectation is red 0..3 (was 1..3);
+see Amendment 20.

@@ -21,11 +21,14 @@
 //! - The simulation draws no randomness in these battles, so a seed alone would replay the
 //!   same fight. Every seed after the first therefore also nudges each spawn point, which
 //!   shows whether an outcome is a property of the units or of one exact formation.
-//! - An outcome must hold on every seed.
+//! - An outcome must hold on every seed, unless the battle names a known bug of `DESIGN.md`'s
+//!   register (`known_bug`, plan `2026-11-20-contact-solver` Amendment 19, Q0103): it is then
+//!   reported as an expected failure while its claim breaks, and fails once the claim holds on
+//!   every seed, so the marker cannot outlive its bug.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
-use sim_fixtures::matchup::{Battle, BattleRun, Jitter, Matrix, Outcome, MATRIX_RON};
+use sim_fixtures::matchup::{Battle, BattleRun, Jitter, Matrix, Outcome, Verdict, MATRIX_RON};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 
@@ -48,17 +51,51 @@ fn play(battle: &Battle, seed: u64, spawn_jitter: f32) -> Outcome {
     Outcome::of(&run)
 }
 
-/// Plays `battle` on every seed, recording each outcome that breaks the fixture.
-fn check_battle(matrix: &Matrix, battle: &Battle, failures: &mut Vec<String>) {
+/// Plays `battle` on every seed and judges it ([`Battle::verdict`]); each outcome that breaks
+/// the claim is described.
+fn check_battle(matrix: &Matrix, battle: &Battle) -> (Verdict, Vec<String>) {
+    let mut results = Vec::with_capacity(matrix.seeds.len());
+    let mut broken = Vec::new();
     for (index, &seed) in matrix.seeds.iter().enumerate() {
         let jitter = if index == 0 { 0.0 } else { matrix.spawn_jitter };
         let outcome = play(battle, seed, jitter);
-        if !battle.expect.holds(&outcome) {
-            failures.push(format!(
+        let held = battle.expect.holds(&outcome);
+        if !held {
+            broken.push(format!(
                 "{} seed {seed}: {outcome:?}, expected {:?}. Claim: {}",
                 battle.name, battle.expect, battle.claim
             ));
         }
+        results.push((seed, held));
+    }
+    (battle.verdict(&results), broken)
+}
+
+/// The report lines of one battle's verdict: failures (a broken claim without a known bug, or a
+/// stale marker) and expected failures, which are listed apart and do not fail the suite.
+fn report_lines(
+    battle: &Battle,
+    verdict: &Verdict,
+    broken: Vec<String>,
+) -> (Vec<String>, Vec<String>) {
+    match verdict {
+        Verdict::Holds => (Vec::new(), Vec::new()),
+        Verdict::Broken(_) => (broken, Vec::new()),
+        Verdict::ExpectedFailure { bug, .. } => (
+            Vec::new(),
+            broken
+                .into_iter()
+                .map(|line| format!("[{bug}] {line}"))
+                .collect(),
+        ),
+        Verdict::StaleKnownBug(bug) => (
+            vec![format!(
+                "{} holds its claim on every seed, yet is marked with known bug {bug}: close the \
+                 bug and remove the marker",
+                battle.name
+            )],
+            Vec::new(),
+        ),
     }
 }
 
@@ -75,27 +112,41 @@ fn every_battle_keeps_its_recorded_outcome_on_every_seed() {
     let next_battle = AtomicUsize::new(0);
     let matrix_ref = &matrix;
     let next_ref = &next_battle;
-    let mut failures: Vec<String> = thread::scope(|scope| {
+    let (mut failures, mut expected): (Vec<String>, Vec<String>) = thread::scope(|scope| {
         let workers: Vec<_> = (0..WORKERS)
             .map(|_| {
                 scope.spawn(move || {
-                    let mut failures = Vec::new();
+                    let (mut failures, mut expected) = (Vec::new(), Vec::new());
                     while let Some(battle) = matrix_ref
                         .battles
                         .get(next_ref.fetch_add(1, Ordering::Relaxed))
                     {
-                        check_battle(matrix_ref, battle, &mut failures);
+                        let (verdict, broken) = check_battle(matrix_ref, battle);
+                        let (failed, known) = report_lines(battle, &verdict, broken);
+                        failures.extend(failed);
+                        expected.extend(known);
                     }
-                    failures
+                    (failures, expected)
                 })
             })
             .collect();
         workers
             .into_iter()
-            .flat_map(|worker| worker.join().expect("matrix worker must not panic"))
-            .collect()
+            .map(|worker| worker.join().expect("matrix worker must not panic"))
+            .fold((Vec::new(), Vec::new()), |(mut f, mut e), (wf, we)| {
+                f.extend(wf);
+                e.extend(we);
+                (f, e)
+            })
     });
     failures.sort();
+    expected.sort();
+    if !expected.is_empty() {
+        println!(
+            "expected failures (known bugs, not counted):\n{}",
+            expected.join("\n")
+        );
+    }
     let report = failures.join("\n");
     assert!(report.is_empty(), "matchup outcomes changed:\n{report}");
 }
@@ -109,6 +160,28 @@ fn battles_are_named_uniquely_and_state_their_claim() {
     names.dedup();
     assert_eq!(names.len(), matrix.battles.len());
     assert!(matrix.battles.iter().all(|b| !b.claim.is_empty()));
+}
+
+/// A known-bug marker names an open row of `DESIGN.md`'s bug register, so it is tracked there
+/// and goes when the row is fixed (plan `2026-11-20-contact-solver` Amendment 19).
+#[test]
+fn every_known_bug_marker_names_an_open_bug_of_the_register() {
+    let matrix: Matrix = Matrix::from_ron_str(MATRIX_RON).expect("matrix fixture parses");
+    let design = include_str!("../../../DESIGN.md");
+    for battle in &matrix.battles {
+        let Some(bug) = battle.known_bug.as_deref() else {
+            continue;
+        };
+        let row = design
+            .lines()
+            .find(|line| line.starts_with(&format!("| {bug} |")))
+            .unwrap_or_else(|| panic!("{}: {bug} is not in DESIGN.md's register", battle.name));
+        assert!(
+            !row.contains("**fixed**"),
+            "{}: {bug} is marked fixed; remove the marker",
+            battle.name
+        );
+    }
 }
 
 /// A seed that changes nothing would make "several seeds" an empty claim.

@@ -148,6 +148,46 @@ fn a_mirrored_pair_reaches_range_and_fires_on_the_same_tick() -> TestResult {
     Ok(())
 }
 
+/// P8 (plan Amendment 11): the ring interval cache is exact. Ring scenes of the arc and corridor
+/// families play to the same positions and the same checksum on every tick with the cache on and
+/// off.
+#[test]
+fn the_ring_interval_cache_changes_nothing() -> TestResult {
+    use sim_fixtures::harness::corpus::generate;
+    use sim_fixtures::harness::{build_world, opening_commands};
+    let options = solver_options()?;
+    for (family, seed) in [
+        (Family::Arc, 1),
+        (Family::Arc, 5),
+        (Family::Arc, 563),
+        (Family::Corridor, 4),
+    ] {
+        let scene = generate(family, seed, false);
+        let mut runs = Vec::new();
+        for cached in [true, false] {
+            let (mut world, ids) = build_world(&scene, &options)?;
+            world.set_ring_interval_cache(cached);
+            let mut commands = opening_commands(&scene, &ids);
+            let mut trace = Vec::new();
+            for _ in 0..scene.ticks.min(600) {
+                step(&mut world, std::mem::take(&mut commands));
+                trace.push(world.last_checksum());
+                trace.extend(ids.iter().filter_map(|id| {
+                    world.entities.get(id).map(|e| {
+                        e.position.x.raw().unsigned_abs() ^ e.position.y.raw().unsigned_abs() << 1
+                    })
+                }));
+            }
+            runs.push(trace);
+        }
+        assert!(
+            runs[0] == runs[1],
+            "{family:?} seed {seed} differs with the cache off"
+        );
+    }
+    Ok(())
+}
+
 /// The shipped catalog on a flat 64 × 64 map with the rules switched to the solver pipeline,
 /// D-β as `push`.
 fn solver_world(seed: u64, push: bool) -> Result<SimWorld, Box<dyn std::error::Error>> {
@@ -267,6 +307,7 @@ fn a_waiting_friend_takes_at_most_half() {
         engaged: false,
         idle: false,
         moving: true,
+        nudge: None,
     };
     let waiting = ContactParty {
         moving: false,

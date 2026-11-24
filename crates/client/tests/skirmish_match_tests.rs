@@ -1414,6 +1414,24 @@ fn the_opponent_sees_nothing_of_switches_under_its_fog() {
     }
 }
 
+/// Asserts that `unit` stands at least two world units inside `watcher`'s sight radius.
+fn assert_well_in_sight(harness: &Harness, unit: EntityId, watcher: EntityId) {
+    let world = harness.world();
+    let sight = world
+        .catalog
+        .get(world.entities[&watcher].unit_type_id)
+        .expect("the watcher's archetype")
+        .sight_radius
+        .to_f32();
+    let apart = harness
+        .simulated_position(unit)
+        .distance(harness.simulated_position(watcher));
+    assert!(
+        apart < sight - 2.0,
+        "precondition: {unit:?} stands well inside the sight of {watcher:?} ({apart} of {sight})"
+    );
+}
+
 /// D-5 end to end, the opponent's side: an enemy spotter sees the burrow begin (the dig is held
 /// while the digging unit is still in plain sight), loses the unit with all its looks when its
 /// concealment flips, and a detector brings it back settled in its mound, with no cover look,
@@ -1425,8 +1443,11 @@ fn the_opponent_sees_a_burrowed_unit_only_where_it_detects_it() {
     let (burrower_type, burrowed_mode) = mode_unit(&harness, ModeKind::Burrow);
     let (tank_type, siege_mode) = mode_unit(&harness, ModeKind::Siege);
     let burrower = spawn_near(&mut harness, home, 4.0, burrower_type, LOCAL_PLAYER);
-    let tank = spawn_near(&mut harness, home, 7.0, tank_type, LOCAL_PLAYER);
     let at = harness.simulated_position(burrower);
+    // The tank stands near the burrower, so it stays well inside the spotter's sight however the
+    // air bodies spawned onto one point below (spotter and detector) separate; not on their point,
+    // so a click on it selects the tank.
+    let tank = spawn_near(&mut harness, at, 5.0, tank_type, LOCAL_PLAYER);
     let spotter_type = spotter_type(&harness);
     let spotter = spawn_near(&mut harness, at, 3.0, spotter_type, OPPONENT);
 
@@ -1498,6 +1519,7 @@ fn the_opponent_sees_a_burrowed_unit_only_where_it_detects_it() {
     );
 
     // The siege, ordered by key, in the spotter's sight.
+    assert_well_in_sight(&harness, tank, spotter);
     present_to(&mut harness, LOCAL_PLAYER);
     harness.select(tank);
     tap_mode_key(&mut harness, ModeDirection::Enter);

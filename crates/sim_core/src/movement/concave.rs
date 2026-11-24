@@ -45,9 +45,14 @@ impl ArcInterval {
 }
 
 /// The interval that a body of radius `other_radius` at `other` blocks for a unit of radius
-/// `radius` on the circle of radius `rho` round `target`, or `None` when the body's centre lies
-/// farther than `radius + other_radius` from the circle (G-2). The half-width is
-/// `asin((r + r_o) / ρ)`, computed as `atan2(s, √(1 − s²))`.
+/// `radius` on the circle of radius `rho` round `target`, or `None` when it blocks no point of it
+/// (G-2, exact since plan Amendment 11, P1).
+///
+/// A point of the circle at angle `φ` is blocked when the unit's disc there would overlap the
+/// body's: `ρ² + d² − 2ρd·cos(φ − β) < R²`, with `d` the body's distance from the target, `β` its
+/// bearing and `R = r + r_o`. The blocked arc is `β ± acos(c)` with `c = (ρ² + d² − R²) / (2ρd)`:
+/// the whole circle when `c ≤ −1`, nothing when `c ≥ 1`. The half-width is computed as
+/// `atan2(√(1 − c²), c)`, so no trigonometric table is involved.
 ///
 /// # Errors
 /// An unrepresentable distance or ratio.
@@ -58,38 +63,50 @@ pub(crate) fn blocking_interval(
     other: SimVec2,
     other_radius: SimScalar,
 ) -> Result<Option<ArcInterval>, MovementMathError> {
+    let unrepresentable = || MovementMathError::Unrepresentable;
     let reach = radius
         .checked_add(other_radius)
-        .ok_or(MovementMathError::Unrepresentable)?;
-    let distance =
-        super::checked_distance(other, target).ok_or(MovementMathError::Unrepresentable)?;
-    let off_circle = distance
-        .checked_sub(rho)
-        .ok_or(MovementMathError::Unrepresentable)?;
-    if off_circle.abs() > reach {
+        .ok_or_else(unrepresentable)?;
+    let distance = super::checked_distance(other, target).ok_or_else(unrepresentable)?;
+    let off_circle = distance.checked_sub(rho).ok_or_else(unrepresentable)?;
+    if off_circle.abs() >= reach {
         return Ok(None);
     }
     let centre = SimAngle::atan2(
         other.y.saturating_sub(target.y),
         other.x.saturating_sub(target.x),
     );
-    if rho <= reach {
-        return Ok(Some(ArcInterval {
-            centre,
-            half: HALF_TURN,
-        }));
+    let whole = Some(ArcInterval {
+        centre,
+        half: HALF_TURN,
+    });
+    if distance == SimScalar::ZERO {
+        return Ok(whole);
     }
-    let sine = reach
-        .checked_div(rho)
-        .ok_or(MovementMathError::Unrepresentable)?;
-    let cosine = SimScalar::ONE
-        .checked_sub(
-            sine.checked_mul(sine)
-                .ok_or(MovementMathError::Unrepresentable)?,
-        )
-        .ok_or(MovementMathError::Unrepresentable)?
+    let square = |v: SimScalar| v.checked_mul(v).ok_or_else(unrepresentable);
+    let numerator = square(rho)?
+        .checked_add(square(distance)?)
+        .and_then(|sum| sum.checked_sub(square(reach).ok()?))
+        .ok_or_else(unrepresentable)?;
+    let denominator = rho
+        .checked_mul(distance)
+        .and_then(|product| product.checked_mul(SimScalar::from_num(2)))
+        .ok_or_else(unrepresentable)?;
+    let cosine = numerator
+        .checked_div(denominator)
+        .ok_or_else(unrepresentable)?;
+    if cosine <= -SimScalar::ONE {
+        return Ok(whole);
+    }
+    if cosine >= SimScalar::ONE {
+        return Ok(None);
+    }
+    let sine = SimScalar::ONE
+        .checked_sub(square(cosine)?)
+        .ok_or_else(unrepresentable)?
+        .max(SimScalar::ZERO)
         .sqrt()
-        .map_err(|_| MovementMathError::Unrepresentable)?;
+        .map_err(|_| unrepresentable())?;
     Ok(Some(ArcInterval {
         centre,
         half: SimAngle::atan2(sine, cosine).raw(),
@@ -162,25 +179,26 @@ mod tests {
         SimAngle::from_degrees(value)
     }
 
-    /// G-2 against a hand-built ring: on a circle of radius 2 round the origin, a unit of radius
-    /// 0.5 is blocked by bodies of radius 0.5 within asin(1/2) = 30° of their bearings, and not by
-    /// a body off the circle.
+    /// G-2 against a hand-built ring (exact geometry, plan Amendment 11, P1): on a circle of
+    /// radius 2 round the origin, a unit of radius 0.5 is blocked by a body of radius 0.5 on the
+    /// circle within `acos(7/8)` ≈ 28.96° of its bearing (the angle at which the two discs touch),
+    /// and not by a body off the circle.
     #[test]
     fn free_intervals_match_a_hand_built_ring() -> Result<(), Box<dyn std::error::Error>> {
         let (rho, r) = (SimScalar::from_num(2), SimScalar::HALF);
         let east = blocking_interval(SimVec2::ZERO, rho, r, at(2.0, 0.0), r)?.ok_or("east")?;
         let north = blocking_interval(SimVec2::ZERO, rho, r, at(0.0, 2.0), r)?.ok_or("north")?;
         assert!(blocking_interval(SimVec2::ZERO, rho, r, at(4.5, 0.0), r)?.is_none());
-        // asin(1/2) is 30°: 5461 or 5462 binary units.
-        assert!((5460..=5462).contains(&east.half), "{}", east.half);
+        // acos(7/8) is 28.955°: 5271 or 5272 binary units.
+        assert!((5270..=5273).contains(&east.half), "{}", east.half);
         let intervals = [east, north];
         for (angle, free) in [
             (0, false),
-            (29, false),
-            (31, true),
+            (28, false),
+            (30, true),
             (45, true),
-            (59, true),
-            (61, false),
+            (60, true),
+            (62, false),
             (180, true),
         ] {
             assert_eq!(is_free(degrees(angle), &intervals), free, "{angle}°");
@@ -188,6 +206,52 @@ mod tests {
         // A ring too small for the pair blocks everything.
         let whole = blocking_interval(SimVec2::ZERO, SimScalar::HALF, r, at(0.5, 0.0), r)?;
         assert_eq!(whole.map(|i| i.half), Some(HALF_TURN));
+        Ok(())
+    }
+
+    /// P1 against §4's capacity: filling a ring one body at a time, each at the free angle nearest
+    /// the last, places `C = ⌊π / asin(r / ρ)⌋` bodies, for every ring the arc family draws
+    /// (`ρ = P + r + R`). The old half-width `asin(2r / ρ)` placed fewer, and none beyond one at
+    /// `ρ ≤ 2r`.
+    #[test]
+    fn a_ring_filled_greedily_holds_its_capacity() -> Result<(), Box<dyn std::error::Error>> {
+        let mut checked = 0;
+        for pillar in [0.5_f64, 1.0, 1.5, 2.0, 2.5] {
+            for range in [0.1, 0.5, 1.0, 2.0, 4.0] {
+                for radius in [0.375, 0.5, 0.5625, 0.625, 0.75, 0.875, 1.0] {
+                    let rho = pillar + radius + range;
+                    let half = (radius / rho).asin();
+                    let capacity = (1_u32..=256)
+                        .take_while(|&k| f64::from(k) * half <= std::f64::consts::PI)
+                        .count();
+                    let (rho, r) = (SimScalar::from_num(rho), SimScalar::from_num(radius));
+                    let mut placed: Vec<SimVec2> = Vec::new();
+                    let mut bearing = SimAngle::from_raw(0);
+                    loop {
+                        let intervals = placed
+                            .iter()
+                            .map(|&p| blocking_interval(SimVec2::ZERO, rho, r, p, r))
+                            .collect::<Result<Vec<_>, _>>()?
+                            .into_iter()
+                            .flatten()
+                            .collect::<Vec<_>>();
+                        let Some(angle) = choose_slot(bearing, &intervals, |_| true) else {
+                            break;
+                        };
+                        placed.push(slot_point(SimVec2::ZERO, rho, angle)?);
+                        bearing = angle;
+                    }
+                    // Q32.32 rounding may cost the last place when the fit is within a hair.
+                    assert!(
+                        placed.len() == capacity || placed.len() + 1 == capacity,
+                        "P {pillar} R {range} r {radius}: {} placed, capacity {capacity}",
+                        placed.len()
+                    );
+                    checked += 1;
+                }
+            }
+        }
+        assert_eq!(checked, 175);
         Ok(())
     }
 

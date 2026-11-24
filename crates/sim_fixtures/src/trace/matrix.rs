@@ -685,7 +685,12 @@ fn failures_section(matrix: &Matrix, failures: &[&MatrixRow]) -> String {
     for row in failures {
         let expected = matrix.battle(&row.battle).map_or_else(
             |_| "battle not in the fixture".to_owned(),
-            |b| expected_cell(&b.expect),
+            |b| match b.known_bug.as_deref() {
+                // An expected failure of the matrix test (plan `2026-11-20-contact-solver`
+                // Amendment 19): listed with its bug, so a reader does not take it for news.
+                Some(bug) => format!("{} (known bug {bug})", expected_cell(&b.expect)),
+                None => expected_cell(&b.expect),
+            },
         );
         push(
             &mut out,

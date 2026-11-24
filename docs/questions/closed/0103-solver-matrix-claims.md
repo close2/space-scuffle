@@ -1,7 +1,7 @@
 # Q0103: With the new movement solver, two battle claims break. Change the claims, call them bugs, or switch the nudge off?
 
 - **Asked:** 2026-11-24
-- **Blocking:** the merge of the new movement solver, together with [Q0102](../closed/0102-solver-cost-gap.md). Other work
+- **Blocking:** the merge of the new movement solver, together with [Q0102](0102-solver-cost-gap.md). Other work
   continues meanwhile.
 - **Default until answered:** (a) for battle 26 and (b) for battle 28. These are applied when you answer, or at the
   merge if that comes first. Until then the solver branch keeps the old expectations, and its battle test fails on
@@ -80,3 +80,21 @@ Battle 26 with the fix: the zerglings win 22 of 24.
 - **Battle 28 — Option (b):** Keep the StarCraft II claim (zerglings overrun immortals) and merge the movement solver with Battle 28 marked as an expected failure for known bug `B-192`, so `B-192` (retargeting around a surrounded front row) and `B-193` (enemy shoving) remain tracked for a dedicated follow-up fix.
 
 **Standing guidance (recorded in `AGENTS.md` §8):** Good, natural pathing and movement outweigh locking in the exact winner of close matchups. When a movement improvement shifts a close battle's winner (even across all runs, e.g. Battle 26 or close battles like 33/38a/38b when evaluating `D-ε`), restate the claim as a minor deviation rather than halting work; treat a shift as a bug only when the underlying behaviour itself is broken or unexpected (such as `B-192`'s stalled rear Zerglings in Battle 28 or `B-193`'s enemy shoving).
+
+## Resolution
+
+Applied on `contact-solver-plan` (plan [`2026-11-20-contact-solver`](../../plans/2026-11-20-contact-solver.md)
+Amendments 19 and 20; mechanism and fixture `a2b420c9`; merged with main `8a15bff9` and the goldens re-recorded at
+checksum schema 46).
+- **Battle 26, (a).** The claim now reads "A hundred zerglings that pack round each colossus mostly overwhelm six
+  colossi; when the colossi win, they win narrowly".
+  - The expectation is blue 0..31, red 0..3. It was measured under the solver on the seeds of record and seeds 1 to
+    20, where the zerglings win 20 of 24.
+  - The fixture comment cites D-δ ([Q0095](0095-engaged-units-nudged-sideways.md)) and this question.
+- **Battle 28, (b).** The StarCraft II claim stays.
+  - The battle carries `known_bug: Some("B-192")` in `matchup_matrix.ron`.
+  - The matrix test reports it as an expected failure while its claim breaks. It fails once the claim holds on
+    every seed of record, so the marker is removed when B-192 is fixed.
+  - A second test requires every marker to name an open row of `DESIGN.md`'s bug register.
+  - B-192 (retargeting round a surrounded front row) and B-193 (enemy shoving) stay open for a dedicated follow-up
+    (branch `solver-followup-plan`). It starts from the stopped G-6′ on `contact-solver-g6p-wip`.

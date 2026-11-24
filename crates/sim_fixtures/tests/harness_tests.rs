@@ -311,3 +311,32 @@ fn ring_give_ups_fail_t4_and_m1_splits_by_order() {
     let failed = verdicts(&[run("today", 0), run("new", 1)]);
     assert!(failed.contains("| T4 | arc | **fails** |"), "{failed}");
 }
+
+/// D-S (plan Amendment 11): an attacker under its order that makes no progress for ten seconds
+/// while its ring is empty counts as stuck with room, from the 250th tick on; an attacker
+/// without an order never counts.
+#[test]
+fn an_attacker_held_short_of_an_empty_ring_is_stuck_with_room() -> TestResult {
+    let scene = generate(Family::Arc, 3, false);
+    let (mut world, ids) = build_world(&scene, &RunOptions::default())?;
+    let mut idle = ScenarioMeter::new(&world, &scene, &ids);
+    for _ in 0..260 {
+        idle.observe(&world);
+    }
+    assert_eq!(idle.finish().stuck_with_room, 0);
+    world.step(&TickBundle {
+        tick: Tick(world.current_tick),
+        commands: sim_fixtures::harness::opening_commands(&scene, &ids),
+        state_checksum: None,
+    });
+    // Held where it stands: the world is not stepped again, so no attacker moves.
+    let mut meter = ScenarioMeter::new(&world, &scene, &ids);
+    for _ in 0..260 {
+        meter.observe(&world);
+    }
+    let attackers = u32::try_from(ids.len() - 1)?;
+    // Progress is set on the first tick observed (tick 1), so ticks 251 to 260 count: ten per
+    // attacker.
+    assert_eq!(meter.finish().stuck_with_room, attackers * 10);
+    Ok(())
+}
