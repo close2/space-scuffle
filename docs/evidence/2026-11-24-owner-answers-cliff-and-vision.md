@@ -145,3 +145,18 @@ owner's answer 2(b) would leave that turret unable to fire. The rule is one para
 
 Before WP4 no shipped detector could reach the case (§3 item 6: detection equalled sight, along the same rays), and
 probe (c) counted zero such checks in every world.
+
+## WP6: the final tree
+
+**Merge.** `main` at `6291223b` (question answers and closures, docs only) merged as `e3843faa`; nothing to re-run
+for it.
+
+**Client skirmish.** `skirmish_match_tests` in release on `radv` (`scripts/client.sh`), on WP0's tree (`064642ec`)
+and on the final tree (`e3843faa`): 7 passed, 1 ignored, both times. The two stage logs (`client-wp0/stages.txt`,
+`client-final/stages.txt`, 42 lines each) hold the same lines; only their order differs, as the lines of tests
+running in parallel threads interleave differently (sorted, they are identical). No line names a detector.
+
+**Slow targets the plan names.** `golden_replay_tests` (release: both goldens reproduce every checkpoint unchanged,
+schema 43), `full_match_tests`, `damage_and_shields_tests`, `vision_tests`, `ramp_vision_tests` and every
+`sim_fixtures` target (the sandbox) pass. `cargo gate quick` is green on the merged tree, `workspace_checks`
+included.
