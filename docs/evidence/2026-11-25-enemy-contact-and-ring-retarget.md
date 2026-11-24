@@ -2,7 +2,8 @@
 
 Measurements of plan [`2026-11-25-enemy-contact-and-ring-retarget`](../plans/2026-11-25-enemy-contact-and-ring-retarget.md),
 packages P1 (WP0) and P2 (WP1, WP2). Branch `enemy-contact-plan`, cut from `main` `a59368a3`, `main` `802df056`
-merged before measurement (plan Amendment 1, item 1). Raw outputs are under `~/scratch/enemy-contact/` (`matrix/`,
+merged before measurement (plan Amendment 1, item 1); `main` `4b3f0c7d` (the snapshot cap, presentation only) merged
+afterwards, with E2-T8's switch-off digests unchanged. Raw outputs are under `~/scratch/enemy-contact/` (`matrix/`,
 `perf/`, `runs/`, `red/`, `scripts/`, `trees/`).
 
 **Outcome: P2 stops before WP3 under §7.5.** E-2 removes every enemy overlap (0.00 % in every battle and seed,
@@ -136,7 +137,18 @@ enemy overlap 0.00 % in every battle (base up to 3.23 %, 38b). No claim was rest
 
 ### 4.6 Harness
 
-PENDING-HARNESS
+Development seeds 1 to 1,000, Solver pipeline (`runs/wp0m-1`, `runs/wp2m-1`; `harness-wp2m-vs-wp0m.md`):
+
+- **Enemy-free families byte-identical:** `gap`, `cross` and `corner` (and their relabelled runs) are byte-identical
+  to the base's, so also to WP1's (with one owner E-2 is skipped, and the base equals WP2), and `corridor` too.
+- **Arc** (enemy pillar): M1 2.40 → 2.42 per 1,000 moving unit-ticks (inside the base's interval [1.97, 2.97]),
+  give-ups 318 → 318, fill unchanged, enemy overlap 0.0000 in both, friend overlap unchanged.
+- **Mirror:** D-SHOVE-E 0.0362 → 0.0045 per scene (D-SHOVE 0.255 → 0.183); decisive battles 116 → 90, blue share
+  0.543 → 0.578 (T9 holds).
+- Under Amendment 8's step rule no T-figure the base passes fails, and none the base fails (T1, T4, T7 on the same
+  families, by the same values) gets worse.
+- Not run: the WP1 and switch-off harness arms and the held-out range (9,000,001 to 9,001,000), stopped once the
+  package had stopped; the enemy-free identity above covers §7.5's harness stop rule.
 
 ### 4.7 Throughput
 
