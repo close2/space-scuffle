@@ -32,3 +32,8 @@ Options:
 - **Option (a): Adopt the inferred hand-off delay** (`2` ticks on a mineral field, `1` tick on a geyser, authored in the catalog as `handoff_ticks`).
 
 **Reasoning:** Closely matches StarCraft II's 3-worker saturation economy (~144.2 vs ~143 minerals/min; ~166.7 vs ~163 gas/min, and fits gold fields) while keeping the value cleanly data-authored if ever refined.
+
+## Resolution
+
+Already in place: the default (a) was built by plan `2026-11-23-harvest-handoff` and merged as `e212ca44`
+(`handoff_ticks`: 2 on a mineral field, 1 on a geyser, authored in the catalog). Nothing further changes.
