@@ -13,6 +13,9 @@
 //! - Commands are handled in bundle order, and each command's outcome carries its index in the
 //!   bundle.
 //! - No command writes carrier links, so one transport validation covers the whole phase.
+//! - No command reaches a unit inside a structure (plan `2026-11-24-hidden-harvesters` D-8,
+//!   Q0108's default (a)): such a recipient is dropped from the command, and a command left with
+//!   no recipient is refused with `GameCommandError::HousedRecipient`.
 
 use crate::economy::{GameCommandError, GameCommandOutcome};
 use crate::movement::{MovementInvariant, MovementOutcome};
@@ -49,6 +52,65 @@ impl SimWorld {
             });
             return;
         }
+        if cmd.entities.iter().any(|id| self.is_housed_unit(*id)) {
+            self.dispatch_without_housed(command_index, cmd);
+            return;
+        }
+        self.route_command(command_index, cmd);
+    }
+
+    /// Whether `id` is a unit inside a structure, gathering (plan `2026-11-24-hidden-harvesters`
+    /// D-3).
+    fn is_housed_unit(&self, id: EntityId) -> bool {
+        self.entities
+            .get(&id)
+            .is_some_and(crate::entity::Entity::is_housed)
+    }
+
+    /// Dispatches `cmd` without its housed recipients: no order reaches a unit while it is inside
+    /// a structure (plan `2026-11-24-hidden-harvesters` D-8, Q0108's default (a)), whether the
+    /// command is immediate or queued, so the unit's gather runs its time. The command reaches
+    /// the others; with no other recipient it is refused with
+    /// [`GameCommandError::HousedRecipient`] naming the first housed one.
+    ///
+    /// The client sends no order to a housed unit, but a unit may go inside between the frame
+    /// a command was given and the tick that runs it; dropping the unit rather than refusing the
+    /// whole command keeps a group order from failing on that race.
+    // PERFORMANCE RATIONALE:
+    // Why: A command's recipients are borrowed from the tick bundle and cannot be edited there.
+    // What: A command that names a housed unit is rebuilt once without it.
+    // Trade-off: One allocation for such a command, rare and outside the steady state; a
+    //            command naming no housed unit is routed as it is.
+    fn dispatch_without_housed(&mut self, command_index: usize, cmd: &PlayerCommand) {
+        let entities: Vec<EntityId> = cmd
+            .entities
+            .iter()
+            .copied()
+            .filter(|id| !self.is_housed_unit(*id))
+            .collect();
+        if entities.is_empty() {
+            if let Some(&first) = cmd.entities.first() {
+                self.economy.outcomes.push(GameCommandOutcome {
+                    tick: Tick(self.current_tick),
+                    command_index,
+                    player: cmd.player_id,
+                    result: Err(GameCommandError::HousedRecipient(first)),
+                });
+            }
+            return;
+        }
+        let admitted = PlayerCommand {
+            player_id: cmd.player_id,
+            entities,
+            order: cmd.order.clone(),
+            queue: cmd.queue,
+        };
+        self.route_command(command_index, &admitted);
+    }
+
+    /// Routes a command whose recipients are all outside structures to the subsystem that
+    /// admits it.
+    fn route_command(&mut self, command_index: usize, cmd: &PlayerCommand) {
         if matches!(
             cmd.order,
             UnitOrder::Build { .. }

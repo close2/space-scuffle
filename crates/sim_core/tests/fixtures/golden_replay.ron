@@ -417,8 +417,16 @@
 // WP3 in the plan's evidence), and no unit ever stands in a blocker cell that an enemy's ground
 // sight reached from outside (WP0's probe c). Native debug and release and wasm32-wasip1
 // release and debug agree on the list below.
+// Re-recorded for plan 2026-11-24-hidden-harvesters WP2 (checksum schema 41 -> 44; 42 and 43 are
+// reserved by other branches): each unit task also encodes its housing structure,
+// `UnitTask::housed_in`, so every checkpoint changed. No behaviour did: with the field left out of
+// the encoding at schema 41, both fixtures reproduce as recorded for plan
+// 2026-11-23-vision-and-detection WP4 (schema 40 -> 41), on native debug and release and
+// wasm32-wasip1 release and debug. Nothing in this replay harvests, so the field is `None` on
+// every unit at every checkpoint. Native debug and release and wasm32-wasip1 release and debug
+// agree on the list below.
 (
-    checksum_schema: 41,
+    checksum_schema: 44,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -444,25 +452,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x410cb1802a2a5704,
-        0x79c5f4dcc31e186c,
-        0xc40990429d527ec7,
-        0x5abc2595a55aa989,
-        0x4f4327c551abdf7a,
-        0x5ec5cd505da9d893,
-        0x95a7710bb875c919,
-        0x4676c35106b590df,
-        0x6dfc46826162791e,
-        0x59e7a26e80190dd3,
-        0xd80539e9086dba12,
-        0x474dca9c3e6512ed,
-        0xbcaf08cc5aa4fb9d,
-        0x4cbb1611394a8dfc,
-        0xa5c008af10052625,
-        0x831bd6d70db17501,
-        0xcd82443fb06ec558,
-        0x888cb129ea737d54,
-        0x8343773c2f82b838,
-        0x37d263264d1d1e9a,
+        0xa9b969762912178d,
+        0xfacc21b9ce3889d6,
+        0xd9fa16aa8e7c7ba1,
+        0x37ec941a4af2e588,
+        0xfd2348c4da74471a,
+        0x92dcd7259b827d91,
+        0x6137fee4b431f894,
+        0x1f3d2c8ba10bc65b,
+        0xaa6e10229cb96856,
+        0xef9dd115957b7ae7,
+        0x8a43f761f74d6569,
+        0xb1917fcebb0a86fc,
+        0x52853b7ee6c3384a,
+        0xcd863229bd81529d,
+        0x07175a9dff413587,
+        0xe4fb8ec11373935e,
+        0xc2d0e02cd2fa2ce8,
+        0x9e11417cc36798bc,
+        0x91e6366670aaa135,
+        0x24b9613cf20fa2c3,
     ],
 )

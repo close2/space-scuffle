@@ -183,6 +183,8 @@ fn every_public_entity_field_changes_the_world_checksum() {
             task => sim_core::UnitTask { legs: 2, ..Default::default() },
             // Plan `2026-11-22-harvest-timing` D-5: the return-delay countdown.
             task => sim_core::UnitTask { return_ticks: 3, ..Default::default() },
+            // Plan `2026-11-24-hidden-harvesters` D-3, P-8: the housing structure.
+            task => sim_core::UnitTask { housed_in: Some(EntityId(2)), ..Default::default() },
             cargo => Some(sim_core::Cargo { kind: ResourceKind::Gas, amount: 5 }),
             construction => Some(sim_core::production::construction::Construction {
                 remaining_ticks: 3,

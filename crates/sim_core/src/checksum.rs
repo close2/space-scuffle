@@ -99,7 +99,10 @@ use std::collections::BTreeMap;
 /// after `displacement`, and each weapon's attack visibility (0 snapshot, 1 visible with its
 /// reveal ticks, 2 hidden), `WeaponSpec::attack_visibility`, after `melee` (plan
 /// `2026-11-23-vision-and-detection` D-7).
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 41;
+/// Schema 44 adds each unit task's housing structure, `UnitTask::housed_in`, after `last_node`
+/// (plan `2026-11-24-hidden-harvesters` D-3). Schemas 42 and 43 are reserved by other branches
+/// in flight; the merge takes the next free number.
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 44;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.

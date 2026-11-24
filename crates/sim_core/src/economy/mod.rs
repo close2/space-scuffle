@@ -82,6 +82,10 @@ pub enum GameCommandError {
     /// A selected entity is inside a carrier.
     #[error("selected entity {0:?} is carried")]
     LoadedRecipient(EntityId),
+    /// A selected entity is inside a structure, gathering (plan `2026-11-24-hidden-harvesters`
+    /// D-8, Q0108's default): no order reaches it until it comes out.
+    #[error("selected entity {0:?} is inside a structure")]
+    HousedRecipient(EntityId),
     /// A structure cannot be started; see the reason.
     #[error(transparent)]
     Build(#[from] BuildRejection),
@@ -235,8 +239,11 @@ pub struct TaskEvent {
 //      fresh vectors would allocate on each of those ticks.
 // What: The claims, the per-node tally and the waiting claimants are retained buffers, cleared
 //      and refilled in place; none is read across ticks.
+//      The gatherers whose housing structure died are gathered into a retained list too (plan
+//      `2026-11-24-hidden-harvesters` D-5), since they cannot be changed while the entities are
+//      iterated.
 // Trade-off: They keep their high-water capacity (the most claims of a tick, the map's node
-//      count) for the world's lifetime.
+//      count, the most gatherers released at once) for the world's lifetime.
 #[derive(Default)]
 pub(crate) struct EconomyWorkspace {
     pub outcomes: Vec<GameCommandOutcome>,
@@ -250,6 +257,9 @@ pub(crate) struct EconomyWorkspace {
     tally: Vec<harvest::NodeTally>,
     /// The claimants of a tick that were not granted their node.
     waiting: Vec<harvest::Claim>,
+    /// The gatherers whose housing structure is dead or gone, in entity-ID order (plan
+    /// `2026-11-24-hidden-harvesters` D-5); cleared every reap, never hashed.
+    released: Vec<EntityId>,
 }
 
 /// A rectangle of grid cells, a building's or a resource node's.
@@ -756,6 +766,7 @@ pub(crate) const fn fresh_leg(task: UnitTask) -> UnitTask {
         wait_ticks: 0,
         depot: None,
         last_node: task.last_node,
+        housed_in: None,
     }
 }
 

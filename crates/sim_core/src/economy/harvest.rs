@@ -55,6 +55,18 @@
 //!   rebuilt; a geyser stays. The map keeps every node in its list so identifiers hold.
 //! - Gas yields only through a completed extractor owned by the harvester's player, standing
 //!   over the node. Workers gather from the extractor's edge.
+//!
+//! # Inside the extractor (plan `2026-11-24-hidden-harvesters` D-2 to D-7, B-161)
+//! - A worker granted a node whose gather site is a structure that hides its harvesters
+//!   (`ArchetypeCapabilities::hides_harvesters`, 5.0.14 `Flags HideHarvesters`) is inside it for
+//!   its gather: [`UnitTask::housed_in`](crate::entity::UnitTask::housed_in) names the
+//!   structure from the grant to the tick before the take. It is then in the engine's `Hidden`
+//!   state ([`Entity::is_hidden`](crate::entity::Entity::is_hidden)).
+//! - It leaves at the take, on any new leg (`fresh_leg`), and when the structure dies
+//!   ([`SimWorld::release_housed_harvesters`], in the reap phase). Its position never changes
+//!   while it is inside, so it comes out where it went in (Q0107 defaults). A worker waiting
+//!   in the line is outside, and a mineral field has no structure, so its gatherers are never
+//!   inside.
 //! - A unit holding cargo delivers before it gathers again, so cargo of the other kind is
 //!   never thrown away.
 //! - With no depot left, the order ends and the cargo stays on the unit.
@@ -82,6 +94,9 @@ pub(crate) struct Claim {
     worker: EntityId,
     /// How long a gather takes at the node, ticks: its kind's `harvest_time_ticks`.
     time_ticks: u16,
+    /// The structure the worker goes inside if it is granted the node: the gather site's
+    /// structure when it hides its harvesters (plan `2026-11-24-hidden-harvesters` D-2).
+    housing: Option<EntityId>,
 }
 
 /// What a tick with claims knows of one node (D-1): derived from the tick's task units, never
@@ -134,6 +149,25 @@ impl SimWorld {
                 })?
             }
         }
+    }
+
+    /// The structure a gatherer of `node` goes inside while it gathers: the live structure over
+    /// the node when its archetype hides its harvesters (plan `2026-11-24-hidden-harvesters`
+    /// D-1, D-2); `None` for a mineral field or an extractor that does not hide them.
+    fn hiding_structure(&self, node: ResourceNodeId) -> Option<EntityId> {
+        let resource = self.map.resources().get(node.0 as usize)?;
+        let structure = self
+            .map
+            .cell(resource.cell.0, resource.cell.1)
+            .ok()?
+            .occupying_structure?;
+        let site = self.entities.get(&structure)?;
+        let hides = site.is_alive()
+            && self
+                .catalog
+                .get(site.unit_type_id)
+                .is_ok_and(|arch| arch.capabilities.hides_harvesters);
+        hides.then_some(structure)
     }
 
     /// Whether `player` sees `cell` at this moment.
@@ -222,6 +256,7 @@ impl SimWorld {
         let position = actor.position;
         if actor.cargo.is_some() {
             actor.task.gather_ticks = 0;
+            actor.task.housed_in = None;
             if actor.task.return_ticks > 0 {
                 actor.task.return_ticks -= 1;
                 return;
@@ -290,10 +325,12 @@ impl SimWorld {
                         actor.task.wait_ticks = actor.task.wait_ticks.saturating_add(1);
                         actor.current_anim = AnimState::Idle;
                     }
+                    let housing = self.hiding_structure(target);
                     self.economy.claims.push(Claim {
                         node: target,
                         worker: id,
                         time_ticks: harvest.time_ticks,
+                        housing,
                     });
                 }
             }
@@ -306,6 +343,9 @@ impl SimWorld {
         if actor.task.gather_ticks > 0 {
             return;
         }
+        // The take: the worker comes out where it went in (plan `2026-11-24-hidden-harvesters`
+        // D-2, D-7).
+        actor.task.housed_in = None;
         let Some(node) = self.map.resources_mut().get_mut(target.0 as usize) else {
             return;
         };
@@ -442,6 +482,8 @@ impl SimWorld {
 
     /// Grants each unoccupied node to its first claimant of `claims` (sorted by node, then the
     /// line's key); every other claimant goes to `waiting`. Every claimed node is marked claimed.
+    /// A granted worker goes inside its claim's housing structure, if any (plan
+    /// `2026-11-24-hidden-harvesters` D-2).
     fn grant_claims(
         &mut self,
         claims: &[Claim],
@@ -462,6 +504,7 @@ impl SimWorld {
             if let Some(actor) = self.entities.get_mut(&claim.worker) {
                 actor.task.gather_ticks = claim.time_ticks;
                 actor.task.wait_ticks = 0;
+                actor.task.housed_in = claim.housing;
                 actor.current_anim = AnimState::Cast;
             }
         }
@@ -536,6 +579,36 @@ impl SimWorld {
             // Still harvesting: it walks through other units as before (R-5).
             actor.is_mineral_walking = true;
         }
+    }
+
+    /// Reap phase: brings out every gatherer whose housing structure is dead or gone, in
+    /// entity-ID order, before the dead are removed (plan `2026-11-24-hidden-harvesters` D-5,
+    /// Q0107's default (1a)). The worker survives where it went in, seen and damageable at the end
+    /// of the tick, its gather lost; its next task step finds no gather site and ends the order
+    /// with [`TaskEventKind::ExtractorLost`].
+    // PERFORMANCE RATIONALE:
+    // Why: The released workers cannot be changed while the entities are iterated, and a fresh
+    //      list each tick would allocate.
+    // What: One pass over the entities fills a retained list, then each listed worker is
+    //      released; a tick without a housed worker whose structure died writes nothing.
+    // Trade-off: An O(N) scan of the entities each tick, and the list's high-water capacity.
+    pub(crate) fn release_housed_harvesters(&mut self) {
+        let mut released = std::mem::take(&mut self.economy.released);
+        released.clear();
+        released.extend(self.entities.values().filter_map(|actor| {
+            let structure = actor.housing()?;
+            let standing = self
+                .entities
+                .get(&structure)
+                .is_some_and(crate::entity::Entity::is_alive);
+            (!standing).then_some(actor.id)
+        }));
+        for id in &released {
+            if let Some(actor) = self.entities.get_mut(id) {
+                actor.task.housed_in = None;
+            }
+        }
+        self.economy.released = released;
     }
 
     /// The completed friendly depot nearest `from`; the lowest ID wins a tie.

@@ -3207,3 +3207,97 @@ fn hiding_harvesters_is_read_at_run_time() -> TestResult {
     bundle.finish()?;
     Ok(())
 }
+
+/// Whether a worker of slot 0 gathering gas on a flat map with `catalogs` loaded is hidden for
+/// its whole first gather (`Some(true)`), seen for all of it (`Some(false)`), or neither.
+fn gas_gatherer_hidden(
+    catalogs: RuntimeCatalogs,
+) -> Result<Option<bool>, Box<dyn std::error::Error>> {
+    let geyser = (20_u32, 6_u32);
+    let map = GameMap::from_cells(
+        40,
+        40,
+        vec![MapCell::default_ground(CliffLevel(0)); 1600],
+        vec![sim_map::ResourceNode {
+            pos: SimVec2::new(
+                SimScalar::from_num(geyser.0) + SimScalar::HALF,
+                SimScalar::from_num(geyser.1) + SimScalar::HALF,
+            ),
+            kind: sim_types::ResourceKind::Gas,
+            remaining: 5_000,
+            cell: geyser,
+            placed: None,
+        }],
+        Vec::new(),
+    )?;
+    let mut world = SimWorld::with_catalogs(map, 7, catalogs.units, catalogs.upgrades)?;
+    let find = |test: &dyn Fn(&sim_core::UnitArchetype) -> bool| {
+        world
+            .catalog
+            .archetypes()
+            .find(|arch| test(arch))
+            .map(|arch| arch.unit_type_id)
+    };
+    let worker_type = find(&|arch| arch.capabilities.harvester.is_some()).ok_or("a harvester")?;
+    let hall_type = find(&|arch| arch.is_resource_dropoff && arch.requires_structures.is_empty())
+        .ok_or("a depot")?;
+    let extractor_type = find(&|arch| arch.capabilities.is_gas_extractor).ok_or("an extractor")?;
+    world.spawn_structure(hall_type, PlayerId(0), 2, 2)?;
+    world.spawn_structure(extractor_type, PlayerId(0), geyser.0 - 1, geyser.1 - 1)?;
+    let worker = world.spawn_unit(
+        worker_type,
+        PlayerId(0),
+        SimVec2::new(SimScalar::from_num(15), SimScalar::from_num(6)),
+    )?;
+    let mut commands = vec![sim_types::PlayerCommand {
+        player_id: PlayerId(0),
+        entities: vec![worker],
+        order: sim_types::UnitOrder::Harvest {
+            target: sim_types::ResourceNodeId(0),
+        },
+        queue: false,
+    }];
+    let mut seen = Vec::new();
+    for _ in 0..1_000 {
+        let now = world.current_tick;
+        world.step(&sim_types::TickBundle {
+            tick: sim_types::Tick(now),
+            commands: std::mem::take(&mut commands),
+            state_checksum: None,
+        });
+        let actor = &world.entities[&worker];
+        if actor.task.gather_ticks > 0 {
+            seen.push(
+                actor.is_hidden() && !world.is_entity_available_for_combat(PlayerId(1), worker),
+            );
+        } else if !seen.is_empty() {
+            break;
+        }
+    }
+    Ok(if seen.iter().all(|hidden| *hidden) && !seen.is_empty() {
+        Some(true)
+    } else if seen.iter().all(|hidden| !*hidden) && !seen.is_empty() {
+        Some(false)
+    } else {
+        None
+    })
+}
+
+/// Plan `2026-11-24-hidden-harvesters` P-1 (charter §3.3, C6), the behaviour half: with the
+/// shipped catalog a gas gatherer is hidden for its whole gather; with every extractor's
+/// `hides_harvesters` set to false at run time it is seen and targetable for all of it, with no
+/// rebuild.
+#[test]
+fn an_extractor_edited_not_to_hide_leaves_its_gatherer_seen() -> TestResult {
+    let bundle = Bundle::new("hides-harvesters-behaviour")?;
+    assert_eq!(gas_gatherer_hidden(bundle.load()?)?, Some(true), "shipped");
+    let path = bundle.directory.join(FILES[1]);
+    let text = std::fs::read_to_string(&path)?;
+    std::fs::write(
+        &path,
+        text.replace("hides_harvesters: true,", "hides_harvesters: false,"),
+    )?;
+    assert_eq!(gas_gatherer_hidden(bundle.load()?)?, Some(false), "edited");
+    bundle.finish()?;
+    Ok(())
+}
