@@ -127,7 +127,11 @@ use std::path::PathBuf;
 /// pipeline; the sandbox is checked before its first tick, so only the encoded schema number moves
 /// it. A copy of the merged tree at schema 45 with the pipeline at Legacy reproduces
 /// `6_724_706_104_475_870_814` on all four builds.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 9_879_951_760_932_463_822;
+/// Re-recorded for checksum schema 47, provisional (plan `2026-11-24-weapon-validation` WP7,
+/// Amendment 2, on its merge with `main` `a59368a3`), which encodes each unit's last seen point of
+/// its attack order's target; a copy of the merged tree that leaves it unhashed and keeps schema
+/// 46 reproduces `9_879_951_760_932_463_822` on all four builds.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 16_195_585_963_966_674_183;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")
