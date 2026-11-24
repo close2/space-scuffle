@@ -34,3 +34,7 @@ onto a unit out of range with Zerglings at its gate.
 
 ## Answer
 
+- **1(a):** The Hellion's turret (`LockTurretWhileFiring`) stays locked from the start of the attack through the end of its follow-through (~1 s).
+- **2(a):** Turrets (`FaceTargetWhileInCooldown`) keep following their target between shots so the next shot fires as soon as ready.
+- **3(a):** Units with "Only Fire At Attack Target" off (Phoenix, Immortal, Colossus, Planetary Fortress) fire at another enemy only while the ordered target is out of range or sight, always prioritizing the ordered target whenever it is reachable.
+- **4(a):** A Planetary Fortress ordered to attack a unit out of range or out of sight drops the order at once (matching other immobile units).
