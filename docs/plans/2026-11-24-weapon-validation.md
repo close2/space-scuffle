@@ -60,7 +60,7 @@ move by behaviour, and work across `sim_types`, `sim_core`, the catalog and the 
 | Q0061: implementation agents hand back after `cargo gate quick`; a verifier runs `cargo gate package` | Standing rule | §11 |
 | Q0101: vision and detection details (an attack reveal shows the attacker to the struck player only) | Open; defaults built | D-4 ("seen" includes the reveal, as built) |
 | The owner's guidance: no fitting to fixed seed sets; judge on principled properties | Followed | §6, §7 |
-| **Draft, not filed:** "When a target leaves vision, what counts as a teleport, and what part of a unit must be seen" | Proposed for the orchestrator to file as Q0106 (§15); defaults followed meanwhile | D-4, D-5, D-7, WP7 |
+| **Q0106** ([filed](../questions/open/0106-weapon-targets-leaving-vision.md)): "When a target leaves vision, what counts as a teleport, and what part of a unit must be seen" | Filed; defaults followed meanwhile | D-4, D-5, D-7, WP7 |
 
 ---
 
