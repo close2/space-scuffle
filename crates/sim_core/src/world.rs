@@ -483,8 +483,11 @@ impl SimWorld {
                 .map_or(0, |archetype| archetype.stationary_turn_rate.raw());
         }
     }
-    /// Phase 8: Reap destroyed entities and emit death shatter visuals.
+
+    /// Phase 8: Reap destroyed entities and emit death shatter visuals. A gatherer inside a
+    /// structure that died comes out first (plan `2026-11-24-hidden-harvesters` D-5).
     pub fn reap_dead_and_emit_shatter(&mut self) {
+        self.release_housed_harvesters();
         self.reap_transport_groups();
         self.update_match_state();
     }

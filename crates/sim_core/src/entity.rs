@@ -365,6 +365,14 @@ pub struct UnitTask {
     pub depot: Option<EntityId>,
     /// Node last gathered from, where `ReturnCargo` resumes. Outlives orders.
     pub last_node: Option<ResourceNodeId>,
+    /// The structure this gatherer is inside, hidden, while it gathers (plan
+    /// `2026-11-24-hidden-harvesters` D-2, D-3); `None` otherwise.
+    ///
+    /// **Invariant:** `Some(s)` implies that the front order is `Harvest`, that `gather_ticks`
+    /// is above 0, and that `s` is alive and its archetype hides its harvesters. The line sets it
+    /// when it grants the node; the take, every new leg ([`crate::economy`]'s `fresh_leg`) and
+    /// the structure's death clear it.
+    pub housed_in: Option<EntityId>,
 }
 
 /// The state of a unit's damage-absorbing barrier ([`BarrierSpec`], B-41).
@@ -787,6 +795,32 @@ impl Entity {
     #[must_use]
     pub const fn is_loaded_in_transport(&self) -> bool {
         self.transport_carrier.is_some()
+    }
+
+    /// The structure this unit is inside while it gathers, if any (plan
+    /// `2026-11-24-hidden-harvesters` D-3); see [`UnitTask::housed_in`].
+    #[must_use]
+    pub const fn housing(&self) -> Option<EntityId> {
+        self.task.housed_in
+    }
+
+    /// Whether this unit is inside a structure that hides its harvesters, gathering (plan
+    /// `2026-11-24-hidden-harvesters` D-2).
+    #[must_use]
+    pub const fn is_housed(&self) -> bool {
+        self.task.housed_in.is_some()
+    }
+
+    /// Whether this unit is in the editor's filter state `Hidden` (plan
+    /// `2026-11-24-hidden-harvesters` D-4): carried in a transport, or inside a structure that
+    /// hides its harvesters. In `StarCraft` II 5.0.14 weapons (144 of 146 `TargetFilters`),
+    /// acquisition (`AcquireFilters`), effect searches (199 of 247 `SearchFilters`), loading and
+    /// the `CasterIsNotHidden` validator exclude `Hidden` units, so a hidden unit is not
+    /// acquired, attacked, splashed, found by a search or loaded, and it casts, acquires and
+    /// sees nothing.
+    #[must_use]
+    pub const fn is_hidden(&self) -> bool {
+        self.is_loaded_in_transport() || self.is_housed()
     }
 
     /// Whether the front order is a task, which [`crate::economy`] drives instead of movement.

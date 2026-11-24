@@ -92,7 +92,7 @@ impl SimWorld {
     fn attack_dash_ready(&self, entity: &Entity) -> Option<AttackDashSpec> {
         if !entity.is_alive()
             || !entity.is_completed
-            || entity.is_loaded_in_transport()
+            || entity.is_hidden()
             || entity.channeling_remaining_ticks > 0
             || entity.is_action_locked()
             || entity.attack_dash_cooldown > 0

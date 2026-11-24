@@ -817,8 +817,8 @@ fn step_windup(
 /// `target_opt` is the available enemy this weapon should work against; during a swing the
 /// caller passes the swing's bound target. `mandate` says why: under an attack order (or a hold)
 /// the mount turns towards the target, outside one a hull weapon never turns the hull
-/// ([`Mandate`]). Returns true when a shot discharges this tick. A carried actor returns false
-/// without changing any field, including cooldown.
+/// ([`Mandate`]). Returns true when a shot discharges this tick. A hidden actor (carried, or inside
+/// a structure while it gathers) returns false without changing any field, including cooldown.
 ///
 /// The attack cycle is `weapon.period_ticks` for every damage point: a swing that starts on
 /// tick T releases on T + `damage_point_ticks` (on T itself for a damage point of 0) and charges
@@ -829,8 +829,10 @@ pub fn step_entity_weapon(
     target_opt: Option<WeaponTarget>,
     mandate: Mandate,
 ) -> bool {
-    // Valid cargo has no weapon participation; even cooldown/phase remain frozen.
-    if entity.is_loaded_in_transport() {
+    // A hidden unit (valid cargo, or a gatherer inside a structure; plan
+    // `2026-11-24-hidden-harvesters` D-4) has no weapon participation; even cooldown/phase
+    // remain frozen.
+    if entity.is_hidden() {
         return false;
     }
     // A weapon working against another target, or none, is no longer engaged (B-29).
