@@ -276,3 +276,10 @@ that side no order; the check then passes.
 - `sim_core`: `stance_orders_tests` 13, `checked_movement_tests` 19, `rally_tests` 13, `transport_ownership_tests`
   15, `scenario_tests` 29, `attack_move_simulation_tests` 9, `friendly_attack_tests` 2, `full_match_tests` 2; all
   passed.
+- `cargo gate quick` on `5df2b542`: red in `sim_core/multi_strike_timing_tests` (the `AttackMove` cases of
+  `q0058_an_explicit_order_ends_a_channeled_burst` and `an_order_in_the_delay_ends_a_channeled_burst`, damage 20
+  where the order should have ended the burst): the bench's shooter was anchored at spawn, so D-9 filtered the
+  order away. `6e8ae947` frees the live shooter in `Bench::let_shooter_walk` (As built item 14); the target then
+  passes 19 of 19, and `cargo gate quick` is green. `attack_dash_tests` 12, `checked_movement_tests` 19,
+  `cluster_arrival_tests` 6, `collision_and_immobility_tests` 10 and `movement_layers_tests` 16 (the other targets
+  that edit a speed at run time and send an `AttackMove`) pass.
