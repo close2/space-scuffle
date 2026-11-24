@@ -23,6 +23,10 @@
 //!   its player's vision walks to where the target was last seen and ends there, and resumes if
 //!   the target is seen before; "seen" is the cell at the target's centre (Q0106 part 4 (a)). A
 //!   target never seen under the order is followed and held fire on, as before.
+//! - Plan `2026-11-25-wind-up-and-hold-facing` D-1 (A-3, A-5; B-207): a wind-up whose target
+//!   fails the same availability test before a tick starts (it boarded, cloaked unrevealed, or
+//!   left its player's sight) has ended before that tick's movement phase and holds nothing; a
+//!   lost swing charges no cooldown and draws no random delay.
 //!
 //! # How it fits
 //! The teleport count (`Entity::teleport_count`) is written by `Entity::teleport_to`, which every
@@ -1583,4 +1587,169 @@ fn a_sieged_tank_needs_a_spotter_beyond_its_sight() -> TestResult {
         }
     }
     Err("the tank shells the target once a spotter sees it".into())
+}
+
+/// How the target of [`walk_after_a_loss`] is lost between the combat phase of tick T and the
+/// movement phase of tick T + 1 (plan `2026-11-25-wind-up-and-hold-facing` A-3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Loss {
+    /// Not lost: the control, a live swing.
+    Kept,
+    /// The target boards a transport.
+    Boards,
+    /// The target becomes cloaked, and no detector of the attacker's player covers it.
+    Cloaks,
+    /// The only unit of the attacker's player that saw the target dies, so the vision update
+    /// of T + 1 leaves the target in fog.
+    LosesItsSpotter,
+}
+
+/// A-3: the distance, in world units, a shooter under a move order walks on tick T + 1 when the
+/// target of its wind-up (weapon `Stopped`, damage point 6) is lost as `loss` says after tick T.
+///
+/// The target, an unarmed dummy of player 1, stands beyond the shooter's sight, seen through a
+/// spotter of player 0 beside it; a dummy of player 1 waits to carry it. The shooter walks two
+/// ticks, is put into a wind-up against the target, the loss happens, and one full tick runs.
+fn walk_after_a_loss(loss: Loss) -> Result<SimScalar, Box<dyn std::error::Error>> {
+    let mut arena = arena(0xA3, instant_archetype, |weapon| {
+        weapon.allowed_movement = sim_types::AllowedMovement::Stopped;
+        weapon.damage_point_ticks = 6;
+        weapon.period_ticks = weapon.period_ticks.max(12);
+    })?;
+    let unseen = arena.unseen();
+    let target = arena.dummy_at(1, unseen)?;
+    let spotter = arena.dummy_at(0, ahead(arena.sight_cells + 4))?;
+    let carrier = arena.dummy_at(
+        1,
+        cell_centre(SHOOTER_CELL.0 + arena.sight_cells + 2, SHOOTER_CELL.1 + 3),
+    )?;
+    arena.order(
+        arena.shooter,
+        UnitOrder::Move {
+            target: cell_centre(2, SHOOTER_CELL.1),
+        },
+    )?;
+    steps(&mut arena.world, 1, 2);
+    let before = {
+        let shooter = arena
+            .world
+            .entities
+            .get_mut(&arena.shooter)
+            .ok_or("the shooter")?;
+        shooter.weapon_phase = sim_core::WeaponPhase::Windup {
+            target_id: target,
+            remaining_ticks: 6,
+        };
+        shooter.position
+    };
+    assert!(
+        arena
+            .world
+            .is_entity_available_for_combat(PlayerId(0), target),
+        "premise: the spotter shows the target at the end of tick T"
+    );
+    match loss {
+        Loss::Kept => {}
+        Loss::Boards => {
+            arena.world.try_load_unit_into_transport(target, carrier)?;
+        }
+        Loss::Cloaks => {
+            arena
+                .world
+                .entities
+                .get_mut(&target)
+                .ok_or("the target")?
+                .is_cloaked = true;
+        }
+        Loss::LosesItsSpotter => {
+            arena
+                .world
+                .entities
+                .get_mut(&spotter)
+                .ok_or("the spotter")?
+                .hp = SimScalar::ZERO;
+            arena.world.reap_dead_and_emit_shatter();
+        }
+    }
+    arena.world.step(&bundle(3));
+    assert_eq!(arena.world.diagnostics(), []);
+    Ok(arena.world.entities[&arena.shooter]
+        .position
+        .distance(before))
+}
+
+/// A-3 of plan `2026-11-25-wind-up-and-hold-facing` (D-1, B-207): a wind-up whose target is
+/// lost before the tick starts (it boards a transport, cloaks unrevealed, or leaves its player's
+/// sight when the spotter dies) has ended before the movement phase and holds nothing: the
+/// shooter walks on under its move order. A live swing still holds it (the control).
+#[test]
+fn a_wind_up_whose_target_is_lost_before_the_tick_holds_nothing() -> TestResult {
+    assert_eq!(
+        walk_after_a_loss(Loss::Kept)?,
+        SimScalar::ZERO,
+        "the live swing of a `Stopped` weapon holds its unit"
+    );
+    for loss in [Loss::Boards, Loss::Cloaks, Loss::LosesItsSpotter] {
+        assert!(
+            walk_after_a_loss(loss)? > SimScalar::ZERO,
+            "{loss:?}: the lost swing holds nothing"
+        );
+    }
+    Ok(())
+}
+
+/// A-5 of plan `2026-11-25-wind-up-and-hold-facing`: the shooter's weapon phase, cooldown and
+/// the world generator's position after tick T + 1, when the target of its wind-up was killed
+/// and reaped on tick T (`in_wind_up`), or when the shooter never started a swing. The weapon
+/// draws a random delay on every release.
+fn after_a_lost_swing(
+    in_wind_up: bool,
+) -> Result<(sim_core::WeaponPhase, u16, u128), Box<dyn std::error::Error>> {
+    let mut arena = arena(0xA5, instant_archetype, |weapon| {
+        weapon.damage_point_ticks = 6;
+        weapon.period_ticks = weapon.period_ticks.max(12);
+        weapon.random_delay_min = SimScalar::ZERO;
+        weapon.random_delay_max = SimScalar::from_i32(2);
+    })?;
+    let seen = arena.seen();
+    let victim = arena.dummy_at(1, seen)?;
+    arena.dummy_at(1, cell_centre(ARENA - 2, ARENA - 2))?;
+    steps(&mut arena.world, 1, 2);
+    arena
+        .world
+        .entities
+        .get_mut(&victim)
+        .ok_or("the victim")?
+        .hp = SimScalar::ZERO;
+    arena.world.reap_dead_and_emit_shatter();
+    if in_wind_up {
+        arena
+            .world
+            .entities
+            .get_mut(&arena.shooter)
+            .ok_or("the shooter")?
+            .weapon_phase = sim_core::WeaponPhase::Windup {
+            target_id: victim,
+            remaining_ticks: 6,
+        };
+    }
+    arena.world.step(&bundle(3));
+    let shooter = &arena.world.entities[&arena.shooter];
+    Ok((
+        shooter.weapon_phase.clone(),
+        shooter.weapon_cooldown_remaining,
+        arena.world.rng.get_word_pos(),
+    ))
+}
+
+/// A-5 of plan `2026-11-25-wind-up-and-hold-facing` (D-1): a swing whose target was killed
+/// before its release ends in `Ready` and charges nothing: no cooldown and no random delay
+/// draw; the generator stands where it stands in a world where the swing never started.
+#[test]
+fn a_lost_swing_charges_no_cooldown_and_draws_nothing() -> TestResult {
+    let lost = after_a_lost_swing(true)?;
+    let never = after_a_lost_swing(false)?;
+    assert_eq!(lost.0, sim_core::WeaponPhase::Ready);
+    assert_eq!(lost, never);
+    Ok(())
 }
