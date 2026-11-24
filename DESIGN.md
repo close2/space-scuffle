@@ -372,7 +372,7 @@ under the gate lock on the shared server. The owner's bar (Q0093 (c)) is at most
 Before main's turret wind-up merge (`36b914fd`), the same code measured +62.6 %, +7.2 % and +54.7 % (evidence §13.10).
 The split and the behaviour-preserving optimisations tried are in
 [evidence](docs/evidence/2026-11-20-contact-solver.md) §13.10 and §13.13; the owner's decision on the 64x64 figure is
-[Q0102](docs/questions/open/0102-solver-cost-gap.md).
+[Q0102](docs/questions/closed/0102-solver-cost-gap.md).
 
 A seventh row (plan `2026-11-10-spellcaster-mechanics` WP6) adds 67 spellcasters to the 64x64 battle of 400
 units, casting Blinding Cloud, Psionic Storm and Fungal Growth throughout (13.7 live areas and 101 statuses per

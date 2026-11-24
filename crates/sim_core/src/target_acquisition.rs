@@ -1114,7 +1114,11 @@ mod chase_reading_tests {
     //! target the two agree on every constructed case, the band's edge included. A target that
     //! crosses the edge in the movement phase before its attacker's pursuit runs (the legacy
     //! pipeline moves units one by one) splits them for that tick: that is the gate mismatch
-    //! that starts the plan's WP6, which reads the chase from pursuit itself.
+    //! that starts the plan's WP6, which reads the chase from pursuit itself. Under the solver
+    //! pipeline, the default since plan `2026-11-20-contact-solver` WP6, pursuit reads its
+    //! target's tick-start position (that plan's WP5), the positions acquisition saw, so the two
+    //! readings agree on crossing targets too; the split is pinned on the legacy pipeline.
+    use crate::catalog::{ContactRules, MovementPipeline};
     use crate::test_support::world;
     use crate::world::SimWorld;
     use sim_map::{CliffLevel, GameMap, MapCell};
@@ -1152,10 +1156,21 @@ mod chase_reading_tests {
     /// One case: a unit at (10, 20) under a player's attack on a unit of its kind standing
     /// `offset` beyond its reach in +x, holding (`walk` 0) or walking towards +x (`walk` 1) or
     /// −x (`walk` −1), spawned first so that the movement phase moves it before the attacker.
-    /// Returns (reaches before the tick, stood on the tick).
-    fn case(offset: f64, walk: i32) -> Result<(bool, bool), Box<dyn std::error::Error>> {
+    /// Returns (reaches before the tick, stood on the tick), under `pipeline`.
+    fn case(
+        offset: f64,
+        walk: i32,
+        pipeline: MovementPipeline,
+    ) -> Result<(bool, bool), Box<dyn std::error::Error>> {
         let map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0)))?;
         let mut world = world(map, 11);
+        let rules = world.catalog.movement_rules();
+        world
+            .catalog
+            .set_movement_rules(rules.with_contact(ContactRules {
+                pipeline,
+                ..rules.contact()
+            })?);
         let (kind, reach) = ranged(&world)?;
         let at = SimVec2::new(
             SimScalar::from_i32(10) + reach + SimScalar::from_num(offset),
@@ -1196,7 +1211,12 @@ mod chase_reading_tests {
     #[test]
     fn reach_agrees_with_pursuit_for_a_standing_target() -> TestResult {
         for offset in [-0.5, -0.01, 0.0, 0.01, 0.5] {
-            let (reaches, stood) = case(offset, 0)?;
+            let (reaches, stood) = case(offset, 0, MovementPipeline::Solver)?;
+            assert_eq!(
+                (reaches, stood),
+                case(offset, 0, MovementPipeline::Legacy)?,
+                "offset {offset}: both pipelines"
+            );
             assert_eq!(reaches, offset <= 0.0, "premise: offset {offset}");
             assert_eq!(
                 reaches, stood,
@@ -1208,18 +1228,45 @@ mod chase_reading_tests {
 
     #[test]
     fn a_target_that_crosses_the_band_edge_first_splits_the_readings() -> TestResult {
+        let legacy = MovementPipeline::Legacy;
         assert_eq!(
-            case(-0.05, 1)?,
+            case(-0.05, 1, legacy)?,
             (true, false),
             "walking out: in reach for acquisition, chased by pursuit"
         );
         assert_eq!(
-            case(0.05, -1)?,
+            case(0.05, -1, legacy)?,
             (false, true),
             "walking in: out of reach for acquisition, stood by pursuit"
         );
-        assert_eq!(case(-0.5, 1)?, (true, true), "well inside, both stand");
-        assert_eq!(case(0.5, -1)?, (false, false), "well outside, both chase");
+        assert_eq!(
+            case(-0.5, 1, legacy)?,
+            (true, true),
+            "well inside, both stand"
+        );
+        assert_eq!(
+            case(0.5, -1, legacy)?,
+            (false, false),
+            "well outside, both chase"
+        );
+        Ok(())
+    }
+
+    /// Under the solver pipeline pursuit reads the target's tick-start position, so a target that
+    /// crosses the band's edge in the movement phase does not split the readings.
+    #[test]
+    fn under_the_solver_a_crossing_target_does_not_split_the_readings() -> TestResult {
+        let solver = MovementPipeline::Solver;
+        assert_eq!(
+            case(-0.05, 1, solver)?,
+            (true, true),
+            "walking out: both stand"
+        );
+        assert_eq!(
+            case(0.05, -1, solver)?,
+            (false, false),
+            "walking in: both chase"
+        );
         Ok(())
     }
 }

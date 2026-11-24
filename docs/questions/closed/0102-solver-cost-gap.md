@@ -67,4 +67,4 @@ Two battle claims break under the solver; they are asked about separately in
 
 Accepted (a): the instruction bar no longer blocks the switch-over. The solver's WP6 (plan
 `2026-11-20-contact-solver`, Amendments 17 and 18, branch `contact-solver-plan`) now waits only on
-[Q0103](../open/0103-solver-matrix-claims.md). No overlap tolerance or iteration count is changed for cost.
+[Q0103](0103-solver-matrix-claims.md). No overlap tolerance or iteration count is changed for cost.

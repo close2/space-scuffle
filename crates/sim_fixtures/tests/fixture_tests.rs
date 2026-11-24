@@ -122,7 +122,12 @@ use std::path::PathBuf;
 /// target; a scratch build that leaves them unhashed and keeps schema 44 reproduces
 /// `8_410_876_910_713_629_694`. No turret moves in the sandbox, so the plan's other rules change
 /// nothing here.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 6_724_706_104_475_870_814;
+/// Re-recorded for checksum schema 46 (plan `2026-11-20-contact-solver` WP6, on its merge with
+/// `main` `8a15bff9`), which encodes nothing new and marks the solver becoming the default
+/// pipeline; the sandbox is checked before its first tick, so only the encoded schema number moves
+/// it. A copy of the merged tree at schema 45 with the pipeline at Legacy reproduces
+/// `6_724_706_104_475_870_814` on all four builds.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 9_879_951_760_932_463_822;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

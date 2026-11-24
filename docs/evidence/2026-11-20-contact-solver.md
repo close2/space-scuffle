@@ -1889,3 +1889,39 @@ server):
 - **`DESIGN.md` §5's throughput table.**
 - **The matrix amendment.**
 - **The matrix test stays red** on battles 26 (Q0103) and 28 (B-192) on the plan branch.
+
+### 13.14 The merge with main `8a15bff9` (Amendment 20): goldens at schema 46; battle 35 leaves its range
+
+**Golden proof.** I made a git-archive copy of the merged tree, set the pipeline to Legacy, kept schema 45 and built
+in a fresh target directory (`~/scratch/contact-solver/proof45`). It reproduces main's schema-45 golden lists and
+`DEFAULT_SANDBOX_CHECKSUM` (4 + 3 tests passed on each build) on native debug and release and on `wasm32-wasip1`
+release and debug. Under the solver at schema 45, the first changed checkpoint is 0 in `golden_replay` and 2 in
+`golden_replay_orders`. The lists are re-recorded once, at schema 46.
+
+**Matrix under the solver on the merged tree** (the test's four seeds of record):
+- **Battle 26** holds its restated range.
+- **Battle 28** is an expected failure for B-192, on seeds 11 and 22 (4 and 3 immortals left).
+- **Battle 35 breaks on the first seed of record.** This is battle 35_12_vikings_vs_6_colossi: "Vikings lose nothing;
+  colossi that flee out of their sight survive", expectation blue 12..12, red 1..3. On seed 3203386110 the vikings
+  kill all six colossi by tick 267.
+
+Before the merge this seed held under the solver. The merged rules (cliff-vision, fire-rules, weapon validation's
+TargetFilters Visible from main) and the solver move this battle together.
+
+Battle 35 per seed (colossi left at the end; blue keeps all 12 on every seed under both pipelines):
+
+| Pipeline (merged tree) | 3203386110 | 11 | 22 | 33 | Seeds 1 to 20 |
+|---|---|---|---|---|---|
+| Solver | **0** (tick 267) | 2 | 2 | 1 | 1 to 3 on all 20 |
+| Legacy | 1 | 1 | 2 | 3 | 1 to 3, except seed 19: **0** (tick 260) |
+
+**The failing seed traced** (`diag/merged/u-solver`):
+- Under the solver, colossus 18 stands idle at full life at (29.3, 51.1) from tick 190 to 220. That is about 5 from
+  the vikings' centroid, inside their sight of 10, while the vikings kill colossi 14 and 16.
+- Its flight then starts late, 5 at a time from each hit, and it dies at tick 267 at (29.0, 56.5).
+- Under Legacy on the same seed, the last colossus had walked east of the vikings by tick 150 and flees out of sight.
+
+The outcome depends on where each colossus stands when the vikings turn to it, and Legacy shows the same miss on
+seed 19. Whether that is close-battle variation or broken behaviour, such as a helpless colossus standing idle while
+its neighbours are shot, is not settled. **Not restated; reported for review** under the owner's §8 guidance
+(Q0103).

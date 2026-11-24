@@ -2217,3 +2217,32 @@ contact). B-157 is marked fixed: T9 holds on both ranges. B-158 is narrowed to B
 
 **The merge** of `main` and the one golden re-record wait for the orchestrator's word: main is about to take schemas
 44 and 45.
+
+## Amendment 20 (implementer, 2026-11-24, at the orchestrator's direction): merge with main `8a15bff9`, schema 46, follow-ups unblocked
+
+**Merge.** Main `8a15bff9` (hidden-harvesters, schema 44; cliff-vision; fire-rules, schema 45) is merged. The plan
+branch adds no hashed field. It takes **schema 46**, which changes no encoding: it only marks the default pipeline
+switching. The number 42, once reserved for this plan's G-6′, stays unused.
+
+**Golden proof.**
+- **Legacy reproduces main.** A git-archive copy of the merged tree, with the pipeline at Legacy and built in a
+  fresh target directory at schema 45, reproduces main's schema-45 golden lists and `DEFAULT_SANDBOX_CHECKSUM`. It
+  does so on native debug and release and on `wasm32-wasip1` release and debug.
+- **Re-recorded once at 46** under the solver, with a proof header in each fixture. At schema 45 the solver's first
+  changed checkpoint is 0 in `golden_replay` and 2 in `golden_replay_orders`.
+
+**Matrix on the merged tree** (evidence §13.14).
+- Battle 26 holds its restated range, and battle 28 is B-192's expected failure.
+- **Battle 35 (vikings against colossi) breaks on its first seed of record:** all six colossi die under the solver.
+  Legacy on the merged tree breaks the same way on seed 19.
+- It is reported for review, not restated. The matrix test is red on battle 35 until the orchestrator decides.
+
+**Follow-ups unblocked by the merge of this plan.** They waited for the solver to become the default:
+- turret-wind-up WP3, the wind-up hold under `movement/`;
+- attack-orders WP5;
+- weapon-validation WP7 (B-195);
+- hidden-harvesters WP5;
+- fire-rules WP6, which reads the chase from the pursuit;
+- the B-192 and B-193 plan, on branch `solver-followup-plan`. It starts from G-6′ on `contact-solver-g6p-wip`
+  (Amendment 18). It has the owner's §8 guidance (Q0103): a close battle a movement fix moves is restated, and only
+  broken behaviour is a bug.
