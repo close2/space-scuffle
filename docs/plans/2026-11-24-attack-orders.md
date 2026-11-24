@@ -853,8 +853,10 @@ unburrowed Lurker.
 ## As built
 
 WP0 to WP4 on branch `attack-orders-plan`, one commit each: WP0 `e97c2e82`, WP1 `1d353ed4`, WP2 `5e5b4fe8`,
-WP3 `86189817`, WP4 (this section and the records). WP5 waits for the contact solver (D-9). Measurements, red runs
-and rewritten tests are in the [evidence](../evidence/2026-11-24-attack-orders.md).
+WP3 `86189817`, WP4 (this section and the records). WP5 on branch `attack-orders-wp5`, cut from `main` at
+`6b813f1e` after the contact solver merged and merged with `main` at `708576ac`: `2174010b` (D-9 and its tests),
+`31210942` (battle 21's fixture order), `6e8ae947` (a test bench made honest, item 14), and the records. Measurements, red runs and rewritten tests are in the
+[evidence](../evidence/2026-11-24-attack-orders.md).
 
 1. **B-numbers.** B-186 and B-187 kept: `main` ended at B-185 when this branch merged it (the vision branch took
    B-182 to B-185). They are marked "next free at merge" in their rows.
@@ -889,3 +891,23 @@ and rewritten tests are in the [evidence](../evidence/2026-11-24-attack-orders.m
 11. **The S8 join** found what the plan's §16 described, with two notes recorded in the evidence: the Bunker's
     redirect is a `CAbilRedirect`, so it does not appear, and `WarpPrismPhasing` carries `AttackWarpPrism`, which
     excludes every alliance (S4).
+12. **WP5 (D-9) as planned.** D-9 was re-read against the merged `movement/mod.rs` and fit unchanged.
+    `validate_movement_order` skips, for an `AttackMove`, each recipient that `takes_attack_move` refuses (anchored
+    by `Entity::immobile_after_channel`, or `Entity::settled_attack_command` is `None`) after the selection's own
+    checks (existence, owner, alive, not carried), so a refused recipient's domain is not asked;
+    `issue_movement_prevalidated` drops the same recipients from its retained buffer before committing, so the
+    receipt counts the units that took the order and a route group forms from them only. A command left with no
+    recipient is `Ok` with `recipient_count` 0 and changes nothing. `Move` is unchanged (B-176's own half).
+13. **The plan's "no fixture sends such a command" was wrong for one battle.** P-9's extended check (an
+    `AttackMove` names only units mobile in their settled stance with an A command, and each took it) named
+    `21_lurker_vs_6_marines`: its Lurker side burrows on the first tick and was then given an attack-move, which D-9
+    now filters away. The order changed nothing observable: the matrix, battles 31 and 33 and the showcases are
+    byte-identical to `main` (483 of 483 files), and battle 21's tick and unit traces on its 20 seeds are identical
+    too. Under §8 rule 2 the fixture was made honest, not fitted: the side now gives no order (`order: None`), and
+    the measurements repeat byte for byte on that tree. The orchestrator may prefer another fixture shape.
+14. **One test bench rewritten under §8 rule 4.** `multi_strike_timing_tests`' bench spawns its shooter without a
+    speed and then gives its archetype one, so the live unit stayed anchored (`Entity::is_immobile`, set at spawn);
+    the `AttackMove` case of `q0058_an_explicit_order_ends_a_channeled_burst` and
+    `an_order_in_the_delay_ends_a_channeled_burst` then reached no shooter under D-9 (red in `cargo gate quick`).
+    `Bench::let_shooter_walk` now also clears the live flag, and the between-strikes bench calls it, so every order
+    of the Q0058 list reaches the shooter, as the bench's comment states. No expectation changed.

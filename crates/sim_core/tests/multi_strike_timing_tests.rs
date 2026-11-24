@@ -399,8 +399,7 @@ fn damage_after_order_between_strikes(
     // D-1, D-2), so the bench's shooter is given a speed here: every order of
     // `overriding_orders` then reaches it, and it stands still because nothing tells it to walk
     // before the order under test.
-    let shooter_type = bench.world.entities[&bench.shooter].unit_type_id;
-    bench.world.catalog.get_mut(shooter_type)?.max_speed = SimScalar::from_num(0.1);
+    bench.let_shooter_walk()?;
     for _ in 0..30 {
         bench.step();
         if bench.damage_taken()? > 0.0 {
@@ -575,6 +574,13 @@ impl Bench {
     fn let_shooter_walk(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let shooter_type = self.world.entities[&self.shooter].unit_type_id;
         self.world.catalog.get_mut(shooter_type)?.max_speed = SimScalar::from_num(0.1);
+        // The shooter was spawned without a speed, so it was anchored at spawn; an anchored
+        // unit takes no attack-move (plan 2026-11-24-attack-orders D-9), so it is freed too.
+        self.world
+            .entities
+            .get_mut(&self.shooter)
+            .ok_or("the shooter")?
+            .is_immobile = false;
         Ok(())
     }
 }
