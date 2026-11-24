@@ -203,13 +203,19 @@ fn first_swing(frames: &[Frame]) -> Result<(usize, usize), Box<dyn std::error::E
 /// player's attack on an enemy 4 south of it, which walks east across its front. Returns one
 /// frame per tick, from tick 0, for `ticks` ticks.
 fn play_lock_scene(lock: bool, ticks: u32) -> Result<Vec<Frame>, Box<dyn std::error::Error>> {
+    play_lock_scene_with(ticks, |weapon| weapon.locks_turret_while_firing = lock)
+}
+
+/// [`play_lock_scene`] with the locking weapon changed by `edit` in the world's catalog.
+fn play_lock_scene_with(
+    ticks: u32,
+    edit: impl Fn(&mut WeaponSpec),
+) -> Result<Vec<Frame>, Box<dyn std::error::Error>> {
     let mut world = shipped_world()?;
     let attacker_type = find(&world, MoverType::Ground, |weapon| {
         weapon.has_turret && weapon.locks_turret_while_firing
     })?;
-    edit_weapons(&mut world, attacker_type, |weapon| {
-        weapon.locks_turret_while_firing = lock;
-    })?;
+    edit_weapons(&mut world, attacker_type, edit)?;
     let weapon = weapons(world.catalog.get(attacker_type)?)
         .find(|weapon| weapon.has_turret)
         .ok_or("the attacker's turreted weapon")?
@@ -781,5 +787,165 @@ fn an_immobile_units_order_on_an_unworkable_target_ends() -> TestResult {
         "the order ends"
     );
     assert_eq!(unit.weapon_target, None);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------------------------
+// Turrets between shots (B-197, D-3) and the lock's backswing half (D-2)
+// ---------------------------------------------------------------------------------------------
+
+/// The first tick at or after `from` whose phase `pick` chooses.
+fn first_from(
+    frames: &[Frame],
+    from: usize,
+    pick: impl Fn(&WeaponPhase) -> bool,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    Ok(from
+        + frames[from..]
+            .iter()
+            .position(|frame| pick(&frame.phase))
+            .ok_or("the phase never comes")?)
+}
+
+/// P-2: a turret that locks while firing also holds through its backswing; once the backswing
+/// ends, it follows its target through the rest of the cooldown, as every turret does.
+#[test]
+fn a_locked_turret_holds_through_its_backswing() -> TestResult {
+    let frames = play_lock_scene(true, 60)?;
+    let (start, release) = first_swing(&frames)?;
+    let backswing_end = first_from(&frames, release, |phase| {
+        !matches!(phase, WeaponPhase::Backswing { .. })
+    })?;
+    assert!(
+        matches!(frames[release].phase, WeaponPhase::Backswing { .. }),
+        "premise: the weapon follows through"
+    );
+    for tick in start..backswing_end {
+        assert_eq!(
+            frames[tick].turret, frames[start].turret,
+            "tick {tick}: the locked turret holds from the swing's start ({start}) to the end \
+             of its backswing ({backswing_end})"
+        );
+    }
+    assert_eq!(frames[backswing_end].phase, WeaponPhase::Cooldown);
+    let next = first_from(&frames, backswing_end, |phase| {
+        !matches!(phase, WeaponPhase::Cooldown)
+    })?;
+    assert!(
+        (backswing_end..next).any(|tick| frames[tick].turret != frames[start].turret),
+        "the turret follows its target in the cooldown ({backswing_end} to {next})"
+    );
+    Ok(())
+}
+
+/// P-2: a swing that starts out of the backswing (here a backswing longer than the cooldown, in
+/// the world's copy of the catalog) ends the lock: the turret turns on its first tick.
+#[test]
+fn a_swing_out_of_the_backswing_turns_it() -> TestResult {
+    let frames = play_lock_scene_with(80, |weapon| {
+        weapon.locks_turret_while_firing = true;
+        weapon.backswing_ticks = weapon.period_ticks + 10;
+    })?;
+    let (start, release) = first_swing(&frames)?;
+    let out = first_from(&frames, release, |phase| {
+        !matches!(phase, WeaponPhase::Backswing { .. })
+    })?;
+    assert!(
+        matches!(
+            frames[out].phase,
+            WeaponPhase::Windup { .. } | WeaponPhase::RotatingToTarget { .. }
+        ),
+        "premise: the next swing starts out of the backswing: {:?}",
+        frames[out].phase
+    );
+    for tick in start..out {
+        assert_eq!(
+            frames[tick].turret, frames[start].turret,
+            "tick {tick}: locked"
+        );
+    }
+    assert_ne!(
+        frames[out].turret,
+        frames[out - 1].turret,
+        "tick {out}: the new swing turns the turret on its first tick"
+    );
+    Ok(())
+}
+
+/// P-13: a turreted weapon whose engaged arc is narrower than its target's change of bearing
+/// during the cooldown starts its next swing on the tick its cooldown ends, its turret having
+/// followed the target between shots: it never rotates after the cooldown.
+#[test]
+fn the_next_swing_starts_no_later() -> TestResult {
+    let mut world = shipped_world()?;
+    let shooter_type = find(&world, MoverType::Ground, |weapon| {
+        weapon.has_turret
+            && !weapon.locks_turret_while_firing
+            && weapon.firing_arc < SimAngle::from_degrees(20)
+    })?;
+    edit_weapons(&mut world, shooter_type, |weapon| {
+        weapon.random_delay_min = SimScalar::ZERO;
+        weapon.random_delay_max = SimScalar::ZERO;
+    })?;
+    let walker = scratch_dummy(&mut world, MoverType::Ground, 20, 1)?;
+    let shooter = spawn_facing_south(&mut world, shooter_type, 0, point(20, 20))?;
+    // The target passes 2 south of the shooter, east to west: its bearing turns by more than
+    // the turret's rate plus its arc during one cooldown.
+    let target = world.spawn_unit(walker, PlayerId(1), point(23, 22))?;
+    step(
+        &mut world,
+        0,
+        vec![
+            order(0, shooter, attack(target)),
+            order(
+                1,
+                target,
+                UnitOrder::Move {
+                    target: point(8, 22),
+                },
+            ),
+        ],
+    );
+    let mut frames = Vec::new();
+    let mut cooldowns = Vec::new();
+    for tick in 1..60 {
+        step(&mut world, tick, Vec::new());
+        frames.push(Frame::of(&world, shooter)?);
+        let unit = world.entities.get(&shooter).ok_or("shooter")?;
+        cooldowns.push(unit.weapon_cooldown_remaining);
+    }
+    let (_, release) = first_swing(&frames)?;
+    let next = first_from(&frames, release, |phase| {
+        matches!(phase, WeaponPhase::Windup { .. })
+    })?;
+    let ready = release
+        + cooldowns[release..]
+            .iter()
+            .position(|&left| left <= 1)
+            .ok_or("the cooldown ends")?
+        + 1;
+    let rate = weapons(world.catalog.get(shooter_type)?)
+        .find(|weapon| weapon.has_turret)
+        .map(|weapon| (weapon.turret_turn_rate, weapon.firing_arc))
+        .ok_or("the turret")?;
+    let turned = frames[release]
+        .turret
+        .diff(frames[next].turret)
+        .unsigned_abs();
+    assert!(
+        turned > rate.0.raw().saturating_add(rate.1.raw()),
+        "premise: the bearing turned by more than one tick's turn plus the arc between the \
+         shots ({turned})"
+    );
+    assert!(
+        !frames[release..next]
+            .iter()
+            .any(|frame| matches!(frame.phase, WeaponPhase::RotatingToTarget { .. })),
+        "the weapon never rotates after its cooldown"
+    );
+    assert_eq!(
+        next, ready,
+        "the next swing starts on the tick the cooldown ends"
+    );
     Ok(())
 }

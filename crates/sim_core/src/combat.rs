@@ -17,7 +17,11 @@
 //!    ([`fires_without_attack_order`]), and then a hull weapon never turns the hull: it fires at
 //!    what lies in its arc ([`Mandate::OwnInitiative`], plan `2026-11-23-turret-wind-up` D-5).
 //! 6. A turret whose weapon locks it while firing ([`WeaponSpec::locks_turret_while_firing`])
-//!    does not turn from the start of a swing to its release (plan `2026-11-24-fire-rules` D-2).
+//!    does not turn from the start of a swing to the end of its backswing, or until a new swing
+//!    starts out of the backswing (plan `2026-11-24-fire-rules` D-2).
+//! 7. Between shots (backswing and cooldown) every other turret faces its target at its own
+//!    rate, so the next swing never waits for a turn the cooldown left undone (D-3, B-197); a
+//!    turret never turns by more than its rate in one tick.
 
 use crate::catalog::{AcquireLevel, SplashSpec, UnitArchetype, WeaponSpec};
 use crate::entity::{Entity, WeaponPhase};
@@ -900,14 +904,37 @@ pub fn step_entity_weapon(
             remaining_ticks,
             mandate,
         ),
-        WeaponPhase::Cooldown => false,
+        WeaponPhase::Cooldown => {
+            face_target_between_shots(entity, weapon, target_opt);
+            false
+        }
+    }
+}
+
+/// Turns a turret towards its target between shots, at its own rate, without changing the
+/// weapon's phase (plan `2026-11-24-fire-rules` D-3, B-197): 5.0.14's `CWeaponLegacy` default
+/// `LegacyOptions FaceTargetWhileInCooldown 1` (`core` WeaponData:34), which no weapon clears.
+/// A hull weapon's hull is left to pursuit, which aims it in its band.
+fn face_target_between_shots(
+    entity: &mut Entity,
+    weapon: &WeaponSpec,
+    target_opt: Option<WeaponTarget>,
+) {
+    if !weapon.has_turret {
+        return;
+    }
+    if let Some(target) = target_opt {
+        let delta = target.position - entity.position;
+        slew_towards(entity, weapon, SimAngle::atan2(delta.y, delta.x));
     }
 }
 
 /// Steps a backswing: a lock on orders that never delays the next attack.
 ///
 /// The backswing loses one tick. While the cooldown runs, it is only the follow-through of the
-/// last shot: it ends in `Cooldown`, or carries on. Once the cooldown has run out, the weapon
+/// last shot: it ends in `Cooldown`, or carries on, and a turret faces its target meanwhile
+/// ([`face_target_between_shots`]) unless its weapon locks it while firing (plan
+/// `2026-11-24-fire-rules` D-2, D-3). Once the cooldown has run out, the weapon
 /// steps exactly as a `Ready` weapon would this tick. If that starts a swing or turns the
 /// weapon towards `target_opt`, the backswing has ended; if nothing starts (no target, or the
 /// target is out of the engagement band), the backswing runs on to its end as before, so the
@@ -936,6 +963,11 @@ fn step_backswing(
                 return released;
             }
         }
+    }
+    // Nothing started, so the ready step turned nothing: the turret faces its target as between
+    // any two shots, unless its weapon locks it until the follow-through ends (D-2).
+    if !weapon.locks_turret_while_firing {
+        face_target_between_shots(entity, weapon, target_opt);
     }
     entity.weapon_phase = match (remaining_ticks, entity.weapon_cooldown_remaining) {
         (0, 0) => WeaponPhase::Ready,

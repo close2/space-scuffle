@@ -431,6 +431,15 @@
 // reads the fields yet, and with them left out of the encoding at schema 43 both fixtures
 // reproduce as recorded, on native debug and release and wasm32-wasip1 release and debug. Native
 // debug and release and wasm32-wasip1 release and debug agree on the list below.
+// Re-recorded for plan 2026-11-24-fire-rules WP4 (B-197, D-3; 5.0.14 FaceTargetWhileInCooldown):
+// a turret faces its target through its backswing and cooldown. Only the turret angles of
+// "red_siege" (entities 33 to 35, the unsieged tanks, 180-degree arc) differ: on 273 entity-ticks
+// from tick 181 (entity 33 in its backswing turns 1 binary unit towards entity 16) to tick 549,
+// every other field of every entity is equal on every one of the 1000 ticks (per-tick dumps of
+// the trees before and after), as WP0's probe (c) counted (273 shadow angle differences, no
+// delay). The checkpoints at ticks 250, 300, 450 and 500 (5, 6, 9 and 10) changed; the others
+// hold the WP1 values. Native debug and release and wasm32-wasip1 release and debug agree on the
+// list below.
 (
     checksum_schema: 45,
     seed: 0x5EED_0F_5CAFF1E,
@@ -462,12 +471,12 @@
         0x68d9266895ff1d70,
         0x099d0f598fcb4995,
         0x27b9fdd4abe23e1c,
-        0xd28ef1162bf9261b,
-        0x987427305da37a6f,
+        0x82ac6680c02d2051,
+        0x97f7a6a7246adf54,
         0x14204033c81229c7,
         0xe0653111908af73b,
-        0x650123a450b07cc6,
-        0x035c3e5409bd7fe8,
+        0x1fa364cd092159c9,
+        0x529209e4ce5f26e4,
         0x68581d3207545d23,
         0xf6b3a51fc570c070,
         0x014a757b793d32e9,
