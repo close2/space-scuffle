@@ -51,7 +51,7 @@ impl Fixture {
         arch.hp_regen_per_tick = SimScalar::ONE;
         arch.energy_regen_per_tick = SimScalar::ONE;
         arch.sight_radius = SimScalar::from_num(3);
-        arch.is_detector = true;
+        arch.detection_radius = Some(arch.sight_radius);
         arch.scan_range = SimScalar::ZERO;
         arch.supply_cost = 2;
         arch.supply_provided = 80;

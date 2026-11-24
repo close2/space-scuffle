@@ -196,7 +196,7 @@ impl Harness {
         self.world()
             .catalog
             .archetypes()
-            .find(|arch| arch.is_detector && arch.max_speed > SimScalar::ZERO)
+            .find(|arch| arch.is_detector() && arch.max_speed > SimScalar::ZERO)
             .expect("the shipped catalog has a mobile detector")
             .unit_type_id
     }

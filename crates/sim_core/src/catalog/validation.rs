@@ -20,9 +20,9 @@ use crate::movement::tuning::STALL_REPATH_TICKS;
 use crate::weapon_timing::AttackRate;
 use sim_map::MAX_SIGHT_RADIUS_CELLS;
 use sim_types::{
-    AbilityEffectSpec, AbilitySpec, AbilityTargetKind, AttackCommand, Attribute, AttributeFlags,
-    MoverType, PlacementFlag, ProjectileTargetLossBehavior, ResourceKind, ShapeKind, SimAngle,
-    SimScalar, SplashCliff, SplashImpact, WeaponVisualKind,
+    AbilityEffectSpec, AbilitySpec, AbilityTargetKind, AttackCommand, AttackVisibility, Attribute,
+    AttributeFlags, MoverType, PlacementFlag, ProjectileTargetLossBehavior, ResourceKind,
+    ShapeKind, SimAngle, SimScalar, SplashCliff, SplashImpact, WeaponVisualKind,
 };
 
 fn invalid(definition: &str, field: &str, reason: &'static str) -> SimCoreError {
@@ -93,6 +93,23 @@ fn sight(definition: &str, field: &str, value: f64) -> SimResult<()> {
             definition,
             field,
             "must not exceed the maximum sight radius supported by vision",
+        ));
+    }
+    Ok(())
+}
+
+/// Rejects an authored detection radius that is not above zero once quantized, or that vision
+/// would have to shorten (plan `2026-11-23-vision-and-detection` D-2). `None` detects nothing.
+fn detection(definition: &str, value: Option<f64>) -> SimResult<()> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    sight(definition, "detection_radius", value)?;
+    if SimScalar::from_num(value) <= SimScalar::ZERO {
+        return Err(invalid(
+            definition,
+            "detection_radius",
+            "must lie above zero; omit the field for a unit that does not detect",
         ));
     }
     Ok(())
@@ -633,6 +650,7 @@ impl UnitArchetypeDef {
             nonnegative(&self.slug, field, f64::from(value))?;
         }
         sight(&self.slug, "sight_radius", f64::from(self.sight_radius))?;
+        detection(&self.slug, self.detection_radius.map(f64::from))?;
         start_energy(
             &self.slug,
             f64::from(self.start_energy),
@@ -980,6 +998,13 @@ impl WeaponSpecDef {
             ));
         }
         self.validate_cadence(definition, prefix)?;
+        if self.attack_visibility == (AttackVisibility::Visible { reveal_ticks: 0 }) {
+            return Err(invalid(
+                definition,
+                &format!("{prefix}.attack_visibility"),
+                "a visible attack reveals its attacker for at least one tick",
+            ));
+        }
         self.validate_random_delay(definition, prefix)?;
         self.validate_strikes(definition, prefix)?;
         self.validate_attribute_bonuses(definition, prefix)?;
@@ -1375,6 +1400,7 @@ impl StructureArchetypeDef {
         self.validate_footprint_shape()?;
         self.validate_radius()?;
         sight(&self.slug, "sight_radius", self.sight_radius)?;
+        detection(&self.slug, self.detection_radius)?;
         structure_scan_range(
             &self.slug,
             self.ground_weapon.is_some() || self.air_weapon.is_some(),
@@ -4263,6 +4289,113 @@ mod weapon_movement_tests {
             }
         }
         assert!(checked > 0, "premise: the catalog has weapons");
+        Ok(())
+    }
+}
+
+/// Detection radii (plan `2026-11-23-vision-and-detection` D-2): a unit or structure row that
+/// detects authors a radius above zero and at most the vision bound; every refusal names
+/// `detection_radius`.
+#[cfg(test)]
+mod detection_tests {
+    use crate::catalog::{CatalogFile, StructureCatalogFile};
+    use crate::error::{SimCoreError, SimResult};
+    use sim_map::MAX_SIGHT_RADIUS_CELLS;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    fn refused_field(result: &SimResult<()>) -> Option<&str> {
+        match result {
+            Err(SimCoreError::CatalogInvalidValue { field, .. }) => Some(field.as_str()),
+            _ => None,
+        }
+    }
+
+    fn refused_radii() -> [f64; 4] {
+        [0.0, -1.0, f64::from(MAX_SIGHT_RADIUS_CELLS) + 0.5, f64::NAN]
+    }
+
+    #[test]
+    fn a_unit_detection_radius_lies_above_zero_within_vision() -> TestResult {
+        let file: CatalogFile =
+            ron::from_str(include_str!("../../../../assets/catalog/units.ron"))?;
+        let mut unit = file.units.into_iter().next().ok_or("shipped units")?;
+        for radius in refused_radii() {
+            #[allow(clippy::cast_possible_truncation, reason = "test values are small")]
+            let radius = radius as f32;
+            unit.detection_radius = Some(radius);
+            assert_eq!(
+                refused_field(&unit.validate()),
+                Some("detection_radius"),
+                "unit radius {radius}"
+            );
+        }
+        unit.detection_radius = Some(11.0);
+        unit.validate()?;
+        unit.detection_radius = None;
+        unit.validate()?;
+        Ok(())
+    }
+
+    #[test]
+    fn a_structure_detection_radius_lies_above_zero_within_vision() -> TestResult {
+        let file: StructureCatalogFile =
+            ron::from_str(include_str!("../../../../assets/catalog/structures.ron"))?;
+        let mut structure = file
+            .structures
+            .into_iter()
+            .next()
+            .ok_or("shipped structures")?;
+        for radius in refused_radii() {
+            structure.detection_radius = Some(radius);
+            assert_eq!(
+                refused_field(&structure.validate()),
+                Some("detection_radius"),
+                "structure radius {radius}"
+            );
+        }
+        structure.detection_radius = Some(11.0);
+        structure.validate()?;
+        Ok(())
+    }
+}
+
+/// Attack visibility (plan `2026-11-23-vision-and-detection` D-4): a `Visible` weapon reveals its
+/// attacker for at least one tick; zero is refused naming the field.
+#[cfg(test)]
+mod attack_visibility_tests {
+    use crate::catalog::CatalogFile;
+    use crate::error::SimCoreError;
+    use sim_types::AttackVisibility;
+
+    #[test]
+    fn a_visible_weapon_reveals_for_at_least_a_tick() -> Result<(), Box<dyn std::error::Error>> {
+        let file: CatalogFile =
+            ron::from_str(include_str!("../../../../assets/catalog/units.ron"))?;
+        let mut unit = file
+            .units
+            .into_iter()
+            .find(|unit| unit.ground_weapon.is_some())
+            .ok_or("a shipped unit with a ground weapon")?;
+        let weapon = unit
+            .ground_weapon
+            .as_mut()
+            .ok_or("invariant: the unit was chosen for its ground weapon")?;
+        weapon.attack_visibility = AttackVisibility::Visible { reveal_ticks: 0 };
+        let refused = match unit.validate() {
+            Err(SimCoreError::CatalogInvalidValue { field, .. }) => Some(field),
+            _ => None,
+        };
+        assert!(
+            refused
+                .as_deref()
+                .is_some_and(|field| field.ends_with("attack_visibility")),
+            "a zero reveal is refused naming the field, got {refused:?}"
+        );
+        if let Some(weapon) = unit.ground_weapon.as_mut() {
+            weapon.attack_visibility = AttackVisibility::Visible { reveal_ticks: 54 };
+        }
+        unit.validate()?;
         Ok(())
     }
 }

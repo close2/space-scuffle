@@ -164,7 +164,7 @@ impl ScratchArchetype {
             push_priority: {priority}, sight_radius: 9.0, scan_range: 5.5,
             attack_target_priority: 20, primary_weapon: Either, acquire_tie_break: Closest,
             mineral_cost: 50, gas_cost: 0, supply_cost: 1, supply_provided: 0,
-            build_time_ticks: 100, weapon: {weapon}, is_detector: false)"#,
+            build_time_ticks: 100, weapon: {weapon})"#,
             speed = self.speed,
             priority = self.priority,
         )

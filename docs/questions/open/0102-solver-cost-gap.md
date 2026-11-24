@@ -40,4 +40,21 @@ in the test harness use ranged attackers, so the two-abreast miss there is uncha
   re-deriving it, and some figures would move.
 - **(c) Keep the bar strict and keep Legacy** until a later attempt (all solver branches are kept on GitHub).
 
+## Update, 2026-11-24
+
+The gap is now larger, though the solver has not changed. Main's turret wind-up merge made the old movement
+code cheaper (10.35 G to 9.47 G instructions on 64 × 64), so the same solver now measures **+66.8 %**
+(15.79 G). Speed still holds on every scenario:
+
+| Scenario | Instructions against Legacy | Ticks per second |
+|---|---:|---:|
+| 400 units, 64 × 64, armies meet | +66.8 % | 111 |
+| 128 × 128, armies apart | +7.6 % | 183 |
+| Showcase canyon | +57.6 % | 80 |
+
+The held-out run (seeds never used before) confirmed the development table: the solver is worse than the old
+code on the same figures in both seed ranges, and on no others. Those figures are now open bugs B-188 to B-191.
+Two battle claims break under the solver; they are asked about separately in
+[Q0103](0103-solver-matrix-claims.md). The merge waits for both answers.
+
 ## Answer

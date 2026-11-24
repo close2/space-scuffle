@@ -94,7 +94,6 @@ fn scratch_unit(slug: &str, id: u16, radius: f32) -> String {
             supply_provided: 0,
             build_time_ticks: 100,
             weapon: None,
-            is_detector: false,
         )"#
     )
 }

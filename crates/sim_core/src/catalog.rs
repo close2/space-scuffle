@@ -24,9 +24,9 @@ use serde::{Deserialize, Serialize};
 use sim_map::MAX_SIGHT_RADIUS_CELLS;
 use sim_types::{
     default_projectile_lifetime_ticks, AbilitySpec, AllowedMovement, AnimState,
-    ArchetypeCapabilities, ArmorClassId, AttackCommand, AttackDashSpec, Attribute,
-    AttributeBonuses, AttributeFlags, AutoRallySpec, BarrierSpec, FactionId, FootprintShape,
-    HarvesterSpec, MoverType, OverclockSpec, PlacementFlag, PlacementFlags,
+    ArchetypeCapabilities, ArmorClassId, AttackCommand, AttackDashSpec, AttackVisibility,
+    Attribute, AttributeBonuses, AttributeFlags, AutoRallySpec, BarrierSpec, FactionId,
+    FootprintShape, HarvesterSpec, MoverType, OverclockSpec, PlacementFlag, PlacementFlags,
     ProjectileTargetLossBehavior, ResourceKind, ResourceKindSet, ShapeKind, SilhouetteClass,
     SimAngle, SimScalar, SplashCliff, SplashImpact, SplashLine, SplashLineAxis, SplashLineOrigin,
     SplashShape, StanceOrders, StructureStrike, TurretIdle, UnitModeSpec, UnitTypeId,
@@ -249,8 +249,11 @@ pub struct UnitArchetype {
     /// Primary weapon configuration, if equipped (mirrors `ground_weapon` for backwards compatibility).
     #[serde(default)]
     pub weapon: Option<WeaponSpec>,
-    /// Whether this entity detects cloaked / burrowed units.
-    pub is_detector: bool,
+    /// Detection radius in world units, `None` for an archetype that detects nothing: the
+    /// `Detect` of 5.0.14's `Detector11`-style behaviour, separate from `sight_radius` (plan
+    /// `2026-11-23-vision-and-detection` D-2). Cast along the unit's line of sight; sight
+    /// upgrades do not change it.
+    pub detection_radius: Option<SimScalar>,
     /// Active tactical abilities and spells.
     #[serde(default)]
     pub abilities: Vec<AbilitySpec>,
@@ -421,6 +424,12 @@ impl UnitArchetype {
             PrimaryWeapon::Air => matches!(target_mover, MoverType::Air | MoverType::CliffWalker),
             PrimaryWeapon::Ground => target_mover != MoverType::Air,
         }
+    }
+
+    /// Whether this archetype detects cloaked and burrowed units: it has a detection radius.
+    #[must_use]
+    pub fn is_detector(&self) -> bool {
+        self.detection_radius.is_some()
     }
 
     /// Selects the optimal weapon against a target with specified locomotion and optional siege stance weapon.
@@ -1448,6 +1457,10 @@ struct WeaponSpecDef {
     /// `2026-11-10-spellcaster-mechanics` D-14).
     #[serde(default)]
     pub(crate) melee: bool,
+    /// What the weapon's damage shows of its attacker to the player it strikes (plan
+    /// `2026-11-23-vision-and-detection` D-4); omitted, a snapshot.
+    #[serde(default)]
+    pub(crate) attack_visibility: AttackVisibility,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1541,7 +1554,9 @@ struct UnitArchetypeDef {
     air_weapon: Option<WeaponSpecDef>,
     #[serde(default)]
     weapon: Option<WeaponSpecDef>,
-    is_detector: bool,
+    /// Detection radius in world units; omitted for a unit that detects nothing.
+    #[serde(default)]
+    detection_radius: Option<f32>,
     #[serde(default)]
     capabilities: CapabilitiesDef,
     #[serde(default)]
@@ -1672,6 +1687,7 @@ impl UnitArchetypeDef {
             suicide_on_attack: w.suicide_on_attack,
             structure_strike: w.structure_strike,
             melee: w.melee,
+            attack_visibility: w.attack_visibility,
         })
     }
 
@@ -1830,7 +1846,7 @@ impl UnitArchetypeDef {
             ground_weapon,
             air_weapon,
             weapon,
-            is_detector: self.is_detector,
+            detection_radius: self.detection_radius.map(SimScalar::from_f32_lossy),
             abilities,
             requires_structures: self.requires_structures,
             trains_units: self.trains_units,
@@ -1982,8 +1998,10 @@ struct StructureArchetypeDef {
     pub auto_rally: Option<AutoRallySpecDef>,
     /// Whether this structure extracts vespene gas.
     pub is_gas_extractor: bool,
-    /// Whether this structure detects cloaked / burrowed units.
-    pub is_detector: bool,
+    /// Detection radius in world units; omitted for a structure that detects nothing (plan
+    /// `2026-11-23-vision-and-detection` D-2).
+    #[serde(default)]
+    pub detection_radius: Option<f64>,
     /// Prerequisite structure slugs required before construction can begin.
     #[serde(default)]
     pub requires_structures: Vec<String>,
@@ -2130,7 +2148,7 @@ impl StructureArchetypeDef {
             ground_weapon,
             air_weapon,
             weapon,
-            is_detector: self.is_detector,
+            detection_radius: self.detection_radius.map(SimScalar::from_num),
             abilities: self.abilities,
             requires_structures: self.requires_structures,
             trains_units: self.trains_units,

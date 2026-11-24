@@ -25,6 +25,11 @@
 //!    is below it; otherwise it searches nothing and publishes nothing (D-3).
 //! 6. An area whose `cliff` is `Same` strikes only units on the cliff level of a search point
 //!    that reaches them (plan `2026-11-23-splash-cliff-levels` D-1).
+//! 7. A projectile whose target is lost lands at the last tracked point unless its weapon says
+//!    `Fizzle` (plan `2026-11-23-vision-and-detection` D-1).
+//! 8. A strike by a `Visible` weapon reveals its attacker to the struck unit's owner for the
+//!    weapon's `reveal_ticks`, recorded before the strike's retaliation runs, so the response
+//!    of the same tick sees it (plan `2026-11-23-vision-and-detection` D-5).
 
 use crate::catalog::UnitCatalog;
 use crate::catalog::{SplashSpec, UnitArchetype, WeaponSpec};
@@ -40,10 +45,10 @@ use crate::world::presentation::{weapon_source, PresentationWorkspace};
 use crate::world::SimWorld;
 use sim_map::{CliffLevel, PlayerVisionMap, SimMap};
 use sim_types::{
-    AbilitySource, CombatEventVisual, EffectContext, EffectSource, EffectTarget, EntityId,
-    LineView, MoverType, PerPlayer, PlayerId, PlayerUpgradeState, ProjectileTargetLossBehavior,
-    SimAngle, SimScalar, SimVec2, SplashCliff, SplashImpact, SplashShape, StrikeEnds, Tick,
-    UnitOrder, UnitTypeId, WeaponVisualKind,
+    AbilitySource, AttackVisibility, CombatEventVisual, EffectContext, EffectSource, EffectTarget,
+    EntityId, LineView, MoverType, PerPlayer, PlayerId, PlayerUpgradeState,
+    ProjectileTargetLossBehavior, SimAngle, SimScalar, SimVec2, SplashCliff, SplashImpact,
+    SplashShape, StrikeEnds, Tick, UnitOrder, UnitTypeId, WeaponVisualKind,
 };
 
 /// Lowest impact distance used for flight timing, so a point-blank launch still takes a tick.
@@ -998,11 +1003,43 @@ impl SimWorld {
                 &mut self.presentation,
             );
         }
+        self.record_attack_reveal(source, target_id);
         if let Some(attacker) = source.attacker {
             self.apply_combat_retaliation_prevalidated(target_id, attacker);
         }
         self.run_weapon_hit_effects(source, target_id, hit.position);
         Some(hit)
+    }
+
+    /// Records that a strike of `source` landed on `victim_id`: a weapon whose attack visibility
+    /// is `Visible` reveals its attacker to the victim's owner for its reveal ticks, raising the
+    /// attacker's counter for that player to them and never lowering it (`StarCraft` II's
+    /// `AttackReveal`, plan `2026-11-23-vision-and-detection` D-5). A strike reduced to nothing
+    /// by a barrier, shields or armour still counts, as the damage effect ran. Nothing happens
+    /// for another weapon, a victim of the attacker's own player, or an attacker that is gone
+    /// or dead.
+    fn record_attack_reveal(&mut self, source: HitSource<'_>, victim_id: EntityId) {
+        let AttackVisibility::Visible { reveal_ticks } = source.weapon.attack_visibility else {
+            return;
+        };
+        let Some(viewer) = self
+            .entities
+            .get(&victim_id)
+            .map(|victim| victim.owner)
+            .filter(|&owner| owner != source.owner)
+        else {
+            return;
+        };
+        let Some(attacker) = source
+            .attacker
+            .and_then(|id| self.entities.get_mut(&id))
+            .filter(|attacker| attacker.is_alive())
+        else {
+            return;
+        };
+        if let Some(ticks) = attacker.attack_reveal_ticks.get_mut(viewer) {
+            *ticks = (*ticks).max(reveal_ticks);
+        }
     }
 
     /// Runs on `target_id` every weapon hit effect an upgrade the attacker's owner completed
@@ -1316,6 +1353,7 @@ impl SimWorld {
             if let Some(struck) = struck.as_deref_mut() {
                 struck.push(id);
             }
+            self.record_attack_reveal(source, id);
             if let Some(attacker) = source.attacker {
                 self.apply_combat_retaliation_prevalidated(id, attacker);
             }

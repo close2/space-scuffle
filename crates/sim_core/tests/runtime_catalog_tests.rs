@@ -2772,3 +2772,364 @@ fn an_anchoring_mode_authored_without_attack_refuses_an_attack() -> TestResult {
     bundle.finish()?;
     Ok(())
 }
+
+/// The shipped archetype carrying a splash missile, and that weapon.
+fn splash_missile_archetype(
+    catalogs: &RuntimeCatalogs,
+) -> Option<(sim_core::UnitArchetype, sim_core::WeaponSpec)> {
+    catalogs.units.archetypes().find_map(|arch| {
+        [&arch.weapon, &arch.ground_weapon, &arch.air_weapon]
+            .into_iter()
+            .flatten()
+            .find(|w| w.splash.is_some() && w.projectile_speed.is_some())
+            .map(|w| (arch.clone(), w.clone()))
+    })
+}
+
+/// Fires `catalogs`' splash missile at an unarmed target, kills the target in flight, and
+/// returns whether a bystander beside the target was struck by the area at the point.
+fn lost_splash_strikes(catalogs: RuntimeCatalogs) -> Result<bool, Box<dyn std::error::Error>> {
+    let (shooter_arch, weapon) =
+        splash_missile_archetype(&catalogs).ok_or("a shipped weapon is a splash missile")?;
+    let plane = if shooter_arch.air_weapon.as_ref() == Some(&weapon) {
+        sim_types::MoverType::Air
+    } else {
+        sim_types::MoverType::Ground
+    };
+    let mut target_arch = catalogs
+        .units
+        .archetypes()
+        .find(|arch| {
+            arch.mover_type == plane
+                && arch.max_speed > SimScalar::ZERO
+                && weapon.target_flags.intersects(arch.attributes)
+        })
+        .cloned()
+        .ok_or("an archetype on the weapon's plane")?;
+    let mut units = catalogs.units;
+    let dummy = UnitTypeId(
+        units
+            .archetypes()
+            .map(|a| a.unit_type_id.0)
+            .max()
+            .unwrap_or(0)
+            + 1,
+    );
+    target_arch.unit_type_id = dummy;
+    "scratch_unarmed_target".clone_into(&mut target_arch.slug);
+    target_arch.weapon = None;
+    target_arch.ground_weapon = None;
+    target_arch.air_weapon = None;
+    units.register(target_arch);
+    let mut world = SimWorld::with_catalogs(
+        GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?,
+        41,
+        units,
+        catalogs.upgrades,
+    )?;
+    let shooter = world.spawn_unit(
+        shooter_arch.unit_type_id,
+        PlayerId(0),
+        SimVec2::from_i32(13, 16),
+    )?;
+    let target = world.spawn_unit(dummy, PlayerId(1), SimVec2::from_i32(16, 16))?;
+    let bystander = world.spawn_unit(
+        dummy,
+        PlayerId(1),
+        SimVec2::new(SimScalar::from_i32(16), SimScalar::from_num(16.5)),
+    )?;
+    let vitals = |world: &SimWorld| world.entities.get(&bystander).map(|b| (b.hp, b.shields));
+    let full = vitals(&world);
+    world
+        .entities
+        .get_mut(&shooter)
+        .ok_or("spawned")?
+        .issue_order(sim_types::UnitOrder::attack(target), false)
+        .map_err(|error| format!("{error:?}"))?;
+    let step = |world: &mut SimWorld, tick: u32| {
+        world.step(&sim_types::TickBundle {
+            tick: sim_types::Tick(tick),
+            commands: Vec::new(),
+            state_checksum: None,
+        });
+    };
+    let mut tick = 1;
+    while world.projectiles.is_empty() {
+        assert!(tick < 100, "the missile launched within 100 ticks");
+        step(&mut world, tick);
+        tick += 1;
+    }
+    world.entities.get_mut(&target).ok_or("in flight")?.hp = SimScalar::ZERO;
+    // Stop once the missile is spent: later the shooter acquires the bystander itself.
+    for later in tick..tick + 200 {
+        step(&mut world, later);
+        if world.projectiles.is_empty() {
+            break;
+        }
+    }
+    Ok(vitals(&world) != full)
+}
+
+/// P-3 (plan `2026-11-23-vision-and-detection` D-1): authoring `target_loss_behavior: Fizzle`
+/// on the shipped splash missile restores the vanishing missile, with no area at the point, in
+/// the same binary.
+#[test]
+fn an_authored_fizzle_drops_a_lost_missiles_area() -> TestResult {
+    let bundle = Bundle::new("fizzle")?;
+    let shipped = bundle.load()?;
+    let (arch, _) = splash_missile_archetype(&shipped).ok_or("a splash missile is shipped")?;
+    let units = std::fs::read_to_string(bundle.directory.join(FILES[0]))?;
+    let row = units
+        .find(&format!("slug: \"{}\"", arch.slug))
+        .ok_or("the archetype's row")?;
+    let field = row
+        + units[row..]
+            .find("projectile_speed: Some(")
+            .ok_or("the row's missile speed")?;
+    let edited_text = format!(
+        "{}target_loss_behavior: Fizzle,\n                {}",
+        &units[..field],
+        &units[field..]
+    );
+    std::fs::write(bundle.directory.join(FILES[0]), edited_text)?;
+    let edited = bundle.load()?;
+    let (_, edited_weapon) =
+        splash_missile_archetype(&edited).ok_or("the edited missile is still shipped")?;
+    assert_eq!(
+        edited_weapon.target_loss_behavior,
+        sim_types::ProjectileTargetLossBehavior::Fizzle,
+        "premise: the edit reached the splash missile"
+    );
+    assert!(
+        lost_splash_strikes(shipped)?,
+        "the shipped missile lands on the point and its area strikes"
+    );
+    assert!(
+        !lost_splash_strikes(edited)?,
+        "the authored fizzle vanishes without an area"
+    );
+    bundle.finish()?;
+    Ok(())
+}
+
+/// P-7 (plan `2026-11-23-vision-and-detection` D-2, §2.4): exactly five shipped archetypes
+/// detect (the Observer, Raven, Missile Turret, Photon Cannon and Spore Crawler analogues), each
+/// with 5.0.14's `Detector11` radius, which equals its sight radius.
+#[test]
+fn detection_radius_follows_starcraft() -> TestResult {
+    let catalogs = RuntimeCatalogs::load_from_directory(catalog_directory())?;
+    let detectors: Vec<_> = catalogs
+        .units
+        .archetypes()
+        .filter(|arch| arch.detection_radius.is_some())
+        .collect();
+    assert_eq!(detectors.len(), 5, "five detectors are shipped");
+    for arch in detectors {
+        assert!(arch.is_detector());
+        assert_eq!(arch.detection_radius, Some(SimScalar::from_i32(11)));
+        assert_eq!(arch.detection_radius, Some(arch.sight_radius));
+    }
+    Ok(())
+}
+
+/// Whether a mobile detector of player 0 standing 8 from a cloaked enemy lets its player attack
+/// that enemy, with `catalogs`.
+fn detector_reveals_at_eight(
+    catalogs: RuntimeCatalogs,
+    detector: UnitTypeId,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let enemy_type = catalogs
+        .units
+        .archetypes()
+        .find(|arch| {
+            arch.mover_type == sim_types::MoverType::Ground
+                && arch.max_speed > SimScalar::ZERO
+                && !arch.is_detector()
+        })
+        .map(|arch| arch.unit_type_id)
+        .ok_or("a mobile ground archetype")?;
+    let mut world = SimWorld::with_catalogs(
+        GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?,
+        5,
+        catalogs.units,
+        catalogs.upgrades,
+    )?;
+    world.spawn_unit(detector, PlayerId(0), SimVec2::from_i32(10, 16))?;
+    let enemy = world.spawn_unit(enemy_type, PlayerId(1), SimVec2::from_i32(18, 16))?;
+    world.entities.get_mut(&enemy).ok_or("spawned")?.is_cloaked = true;
+    world.step(&sim_types::TickBundle {
+        tick: sim_types::Tick(0),
+        commands: Vec::new(),
+        state_checksum: None,
+    });
+    Ok(world.is_entity_available_for_combat(PlayerId(0), enemy))
+}
+
+/// Zero recompilation for B-56: a catalog copy that shortens a mobile detector's detection
+/// radius to 6 loses a cloaked enemy at 8 that the shipped radius 11 reveals, while its sight
+/// still covers the enemy's cell.
+#[test]
+fn an_edited_detection_radius_loses_a_cloaked_enemy() -> TestResult {
+    let bundle = Bundle::new("detection")?;
+    let shipped = bundle.load()?;
+    let detector = shipped
+        .units
+        .archetypes()
+        .find(|arch| arch.is_detector() && arch.max_speed > SimScalar::ZERO)
+        .cloned()
+        .ok_or("a mobile detector is shipped")?;
+    let units = std::fs::read_to_string(bundle.directory.join(FILES[0]))?;
+    let row = units
+        .find(&format!("slug: \"{}\"", detector.slug))
+        .ok_or("the detector's row")?;
+    let edited_text = format!(
+        "{}{}",
+        &units[..row],
+        replace_first_field(&units[row..], "detection_radius", "Some(6.0)")
+    );
+    std::fs::write(bundle.directory.join(FILES[0]), edited_text)?;
+    let edited = bundle.load()?;
+    assert_eq!(
+        edited.units.get(detector.unit_type_id)?.detection_radius,
+        Some(SimScalar::from_i32(6)),
+        "premise: the edit reached the detector"
+    );
+    assert!(detector_reveals_at_eight(shipped, detector.unit_type_id)?);
+    assert!(!detector_reveals_at_eight(edited, detector.unit_type_id)?);
+    bundle.finish()?;
+    Ok(())
+}
+
+/// Whether a holding ground unit of player 1 that hits air ever targets an air unit of
+/// `attacker` striking it from over a plateau it cannot see, within 100 ticks, in `catalogs`.
+fn victim_answers_from_below(
+    catalogs: RuntimeCatalogs,
+    attacker: UnitTypeId,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let victim_arch = catalogs
+        .units
+        .archetypes()
+        .find(|arch| {
+            arch.mover_type == sim_types::MoverType::Ground
+                && arch.max_speed > SimScalar::ZERO
+                && !arch.is_detector()
+                && arch
+                    .weapon_against(sim_types::MoverType::Air, None)
+                    .is_some_and(|w| w.max_range >= SimScalar::from_i32(4))
+        })
+        .cloned()
+        .ok_or("a ground unit that hits air")?;
+    let attacker_arch = catalogs.units.get(attacker)?.clone();
+    let reach = attacker_arch
+        .weapon_against(sim_types::MoverType::Ground, None)
+        .ok_or("the attacker hits ground")?
+        .max_range
+        .min(
+            victim_arch
+                .weapon_against(sim_types::MoverType::Air, None)
+                .ok_or("the victim hits air")?
+                .max_range,
+        )
+        + attacker_arch.collision_radius
+        + victim_arch.collision_radius
+        - SimScalar::from_num(0.25);
+    let mut map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?;
+    for y in 0..32 {
+        for x in 16..32 {
+            map.cell_mut(x, y)?.cliff_level = CliffLevel(1);
+        }
+    }
+    let mut world = SimWorld::with_catalogs(map, 9, catalogs.units, catalogs.upgrades)?;
+    let over = SimVec2::new(SimScalar::from_num(16.5), SimScalar::from_num(16.5));
+    let shooter = world.spawn_unit(attacker, PlayerId(0), over)?;
+    let victim = world.spawn_unit(
+        victim_arch.unit_type_id,
+        PlayerId(1),
+        SimVec2::new(over.x - reach, over.y),
+    )?;
+    let mut commands = vec![
+        sim_types::PlayerCommand {
+            player_id: PlayerId(0),
+            entities: vec![shooter],
+            order: sim_types::UnitOrder::attack(victim),
+            queue: false,
+        },
+        sim_types::PlayerCommand {
+            player_id: PlayerId(1),
+            entities: vec![victim],
+            order: sim_types::UnitOrder::HoldPosition,
+            queue: false,
+        },
+    ];
+    for tick in 0..100_u32 {
+        world.step(&sim_types::TickBundle {
+            tick: sim_types::Tick(tick),
+            commands: std::mem::take(&mut commands),
+            state_checksum: None,
+        });
+        if world
+            .entities
+            .get(&victim)
+            .is_some_and(|v| v.current_target == Some(shooter))
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// P-16 (plan `2026-11-23-vision-and-detection` D-4): a catalog copy that makes an air unit's
+/// weapons `Snapshot` keeps it hidden from the ground unit it strikes from over a plateau, which
+/// the shipped `Visible` weapons reveal, in the same binary.
+#[test]
+fn an_edited_attack_visibility_hides_an_air_attacker() -> TestResult {
+    let bundle = Bundle::new("attack-visibility")?;
+    let shipped = bundle.load()?;
+    let attacker = shipped
+        .units
+        .archetypes()
+        .find(|arch| {
+            arch.mover_type == sim_types::MoverType::Air
+                && arch.max_speed > SimScalar::ZERO
+                && arch
+                    .weapon_against(sim_types::MoverType::Ground, None)
+                    .is_some_and(|w| {
+                        w.splash.is_none()
+                            && matches!(
+                                w.attack_visibility,
+                                sim_types::AttackVisibility::Visible { .. }
+                            )
+                    })
+        })
+        .cloned()
+        .ok_or("a shipped air unit with a Visible weapon against ground")?;
+    let units = std::fs::read_to_string(bundle.directory.join(FILES[0]))?;
+    let row = units
+        .find(&format!("slug: \"{}\"", attacker.slug))
+        .ok_or("the attacker's row")?;
+    let end = units[row + 1..]
+        .find("slug: \"")
+        .map_or(units.len(), |next| row + 1 + next);
+    let edited_row = units[row..end].replace(
+        "attack_visibility: Visible(reveal_ticks: 54)",
+        "attack_visibility: Snapshot",
+    );
+    std::fs::write(
+        bundle.directory.join(FILES[0]),
+        format!("{}{edited_row}{}", &units[..row], &units[end..]),
+    )?;
+    let edited = bundle.load()?;
+    assert_eq!(
+        edited
+            .units
+            .get(attacker.unit_type_id)?
+            .weapon_against(sim_types::MoverType::Ground, None)
+            .map(|w| w.attack_visibility),
+        Some(sim_types::AttackVisibility::Snapshot),
+        "premise: the edit reached the weapon"
+    );
+    assert!(victim_answers_from_below(shipped, attacker.unit_type_id)?);
+    assert!(!victim_answers_from_below(edited, attacker.unit_type_id)?);
+    bundle.finish()?;
+    Ok(())
+}

@@ -321,10 +321,10 @@ recorded". Nothing is guessed.
 | U-8 | Can a unit stim at life equal to or below the cost? (answered: no, [Q0053](../questions/closed/0053-stimpack-at-low-life.md)) | B-33 | WP3 |
 | U-9 | Does a life-cost ability restart regeneration delays? (life-regeneration F-2) | B-37 | WP15 |
 | U-10 | Do unfinished structures regenerate life? (life-regeneration F-4) | B-36 | WP15 |
-| U-11 | Projectile lifetime; does cloaking or burrowing dodge a missile in flight? | B-53, B-54 | WP14 |
-| U-12 | Is a shooter on high ground or in fog revealed to its victim, and for how long? | B-55 | WP14 |
-| U-13 | Detection radius per detector | B-56 | WP14 |
-| U-14 | Does a sight blocker hide its edge cell? | B-57 | WP14 |
+| U-11 | Projectile lifetime; does cloaking or burrowing dodge a missile in flight? | B-53, B-54 | WP14; taken up by plan [`2026-11-23-vision-and-detection`](2026-11-23-vision-and-detection.md) (cloak half) |
+| U-12 | Is a shooter on high ground or in fog revealed to its victim, and for how long? | B-55 | WP14; taken up by plan [`2026-11-23-vision-and-detection`](2026-11-23-vision-and-detection.md) |
+| U-13 | Detection radius per detector | B-56 | WP14; taken up by plan [`2026-11-23-vision-and-detection`](2026-11-23-vision-and-detection.md) |
+| U-14 | Does a sight blocker hide its edge cell? | B-57 | WP14; taken up by plan [`2026-11-23-vision-and-detection`](2026-11-23-vision-and-detection.md) |
 | U-15 | Movers with several phases (Viking, Liberator, Banshee, Missile Turret, Phoenix); the High Templar and Spine Crawler movers | B-52 | WP14 |
 | U-16 | Does the target's radius count toward weapon range? (investigation §1.11) | — (ours counts it) | WP9 research |
 | U-17 | Are shots fired in one game loop at a target killed earlier in that loop wasted? | — (ours wastes them) | WP14 |
@@ -657,6 +657,9 @@ problem (charter §6).
 Research first, then one rule commit each for what is sourced. Expected not to touch the matrix (verify by
 measurement).
 
+The vision half (B-54 to B-57, U-11's cloak half, U-12 to U-14) is taken up by plan [`2026-11-23-vision-and-detection`](2026-11-23-vision-and-detection.md): B-54 to
+B-57 fixed there, B-182 to B-185 registered.
+
 **Size.** M.
 
 ### WP15: Regeneration follow-ups (B-35 to B-38, U-9, U-10, U-21)
@@ -804,10 +807,10 @@ requires.
 | B-51 | Neosteel Armor's targets | Fixed | WP9 g5 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §10.1) |
 | B-52 | Projectile speeds with several phases; High Templar and Spine Crawler speeds | (i), narrowed | WP14, for each attack's flight time from release to impact, which delays its damage. The shape of the phases inside that time (a missile that drifts, then accelerates) is (ii): attack missiles home, so a player cannot act on the path |
 | B-53 | Attack projectiles fuel out after 125 ticks | (ii) | A safety bound no shipped attack reaches: the slowest projectile moves 0.56 per tick and the fastest unit 0.238 per tick, so a missile released within the longest weapon range (13) arrives in under 50 ticks. It returns to (i) if a catalog change makes it reachable. WP14 drops it and U-11's lifetime half |
-| B-54 | A projectile fizzles when its target cloaks | (i) | WP14 |
-| B-55 | A hidden shooter is never revealed to its victim | (i) | WP14 |
-| B-56 | Detection uses the sight radius | (i) | WP14 |
-| B-57 | The edge cell of a sight blocker is seen from outside | (i) | WP14. Kept: a unit at the edge of a blocker can be seen, which changes where units can hide |
+| B-54 | A projectile fizzles when its target cloaks | (i) | WP14; taken up by plan [`2026-11-23-vision-and-detection`](2026-11-23-vision-and-detection.md) |
+| B-55 | A hidden shooter is never revealed to its victim | (i) | WP14; taken up by plan [`2026-11-23-vision-and-detection`](2026-11-23-vision-and-detection.md) |
+| B-56 | Detection uses the sight radius | (i) | WP14; taken up by plan [`2026-11-23-vision-and-detection`](2026-11-23-vision-and-detection.md) |
+| B-57 | The edge cell of a sight blocker is seen from outside | (i) | WP14. Kept: a unit at the edge of a blocker can be seen, which changes where units can hide; taken up by plan [`2026-11-23-vision-and-detection`](2026-11-23-vision-and-detection.md) |
 | B-58 | No production queue limit | (ii) | Allows more than the game's 5 slots, which the owner allows. WP17's plan may offer the limit as a configurable option; it is not a bug |
 | B-59 | Every queued job holds supply | (i) | WP17; it may allow less than the game |
 | B-60 | No rally points | (i) | WP17 |

@@ -155,7 +155,7 @@ pub fn update_los_preview_system(
             pos,
             mover_type: MoverType::Ground,
             sight_radius,
-            is_detector: false,
+            detection_radius: SimScalar::ZERO,
         };
 
         los_state

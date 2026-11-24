@@ -1333,5 +1333,38 @@
         ),
         expect: (blue: (0, 0), red: (2, 3)),
     ),
+    // Battle 41 (plan 2026-11-23-vision-and-detection §7.4): battle 40's plateau without its ramp
+    // (every cell with x >= 47 at level 1) and an air attacker over it. The Void Ray analogue
+    // (range 6) holds over the plateau; the Hydralisk analogues (range 5, sight 9) attack-move to
+    // the foot of the cliff, where it reaches them and they would reach it, but ground sight from
+    // below never sees its plateau cell. Before the reveal (WP5's tree, B-55 open) the Hydras,
+    // struck by a Void Ray they could not see, fled as helpless out of its reach and never fired:
+    // on all 20 seeds the battle ran to tick 600 with the Void Ray untouched and 5 or 6 Hydras
+    // left. Re-recorded for WP6 (B-55 fixed): each Void Ray strike reveals it to the Hydras' player
+    // for 54 ticks; the Hydras first swing 4 or 5 ticks after its first strike, every Hydra shot
+    // falls within 10 ticks of a strike (inside the reveal window), none before the first, and
+    // they win all 20 seeds with all 6 left, ending on ticks 103 to 108.
+    (
+        name: "41_void_ray_above_a_cliff_vs_hydras",
+        claim: "A Void Ray over a plateau is revealed to the Hydras it strikes below (5.0.14 Visibility Visible, AttackReveal 3 s)",
+        map_cells: 96,
+        terrain: [
+            (from: (47, 0), to: (95, 95), level: 1),
+        ],
+        ticks: 600,
+        blue: (
+            squads: [
+                (unit: "thorn_viper", count: 6, columns: 2, origin: (38.0, 44.5), spacing: 1.0),
+            ],
+            order: AttackMove(46, 45),
+        ),
+        red: (
+            squads: [
+                (unit: "prismatic_saucer", count: 1, columns: 1, origin: (50.0, 44.0), spacing: 1.0),
+            ],
+            order: HoldPosition,
+        ),
+        expect: (blue: (6, 6), red: (0, 0)),
+    ),
     ],
 )

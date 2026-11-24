@@ -29,7 +29,7 @@ use crate::entity::Entity;
 use crate::SimWorld;
 use sim_types::{
     AbilityEffectSpec, AbilitySource, AbilitySpec, AbilityTargetKind, EffectContext, EffectTarget,
-    EntityId, PlayerCommand, PlayerId, SimScalar, SimVec2, VisibilityState,
+    EntityId, PlayerCommand, PlayerId, SimScalar, SimVec2,
 };
 
 impl SimWorld {
@@ -131,12 +131,8 @@ impl SimWorld {
     /// Whether `viewer` sees `target` well enough to aim a spell at it: its cell is visible to
     /// `viewer` (where `viewer` has a vision map) and, if concealed, detected.
     fn is_seen_by(&self, viewer: PlayerId, target: &Entity) -> bool {
-        let visible = self.vision_maps.get(viewer).is_none_or(|vision| {
-            self.map
-                .world_to_cell(target.position)
-                .is_ok_and(|(x, y)| vision.visibility_at(x, y) == VisibilityState::Visible)
-        });
-        visible && Self::is_entity_targetable(target, &self.map, &self.vision_maps, viewer)
+        Self::sees_enemy(&self.map, &self.vision_maps, viewer, target)
+            && Self::is_entity_targetable(target, &self.map, &self.vision_maps, viewer)
     }
 
     /// Whether `caster` stands in range of the cast's target (plan D-7.1, `StarCraft` II

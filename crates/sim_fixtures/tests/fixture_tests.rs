@@ -107,7 +107,10 @@ use std::path::PathBuf;
 /// Re-recorded for checksum schema 40 (plan `2026-11-23-turret-wind-up` WP1, D-9), which encodes
 /// each weapon's movement rule and whether it fires outside an attack order; a scratch build that
 /// leaves them unhashed and keeps schema 39 reproduces `8_582_058_566_732_369_859`.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 5_438_070_395_987_993_470;
+/// Re-recorded for checksum schema 41 (plan `2026-11-23-vision-and-detection` WP4, D-7), which
+/// encodes each entity's attack-reveal counters and each weapon's attack visibility; a scratch
+/// build that leaves them unhashed and keeps schema 40 reproduces `5_438_070_395_987_993_470`.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 1_550_645_596_559_574_539;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

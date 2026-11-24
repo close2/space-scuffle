@@ -95,7 +95,6 @@ fn unit_ron(slug: &str, id: u16, max_hp: f32, weapon: &str, overclock: &str) -> 
             supply_provided: 0,
             build_time_ticks: 100,
             weapon: {weapon},
-            is_detector: false,
             capabilities: (overclock: {overclock}),
         )"#
     )

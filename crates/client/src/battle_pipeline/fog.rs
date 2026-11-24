@@ -14,6 +14,11 @@
 //! one place the rule is written; the bubbles, picking, the selection panel and the bars all ask
 //! [`presence_of`].
 //!
+//! A unit of another player that the view's `attack_revealed` list names was revealed by its own
+//! attack on the viewer (an air unit's or the Colossus' damage, plan
+//! `2026-11-23-vision-and-detection` D-6): it is in sight although its cell may be fogged, and a
+//! concealed one still needs `revealed` to be detected.
+//!
 //! # How it fits
 //! The simulation writes a viewer-scoped [`PlayerView`] once per tick. The HUD copies the part
 //! presentation needs into this resource, see [`crate::battle_hud::fog`], and the tick driver and
@@ -98,6 +103,9 @@ pub struct BattleFog {
     node_present: Vec<bool>,
     /// Concealed units of other players the viewer detects, sorted, as the view listed them.
     revealed: Vec<EntityId>,
+    /// Units of other players their own attacks reveal to the viewer, sorted, as the view listed
+    /// them: in sight wherever they stand.
+    attack_revealed: Vec<EntityId>,
     /// Session, viewer and tick this fog was written for.
     written: Option<(SessionGeneration, PlayerId, Tick)>,
     /// Session whose map seeded `node_present`.
@@ -127,6 +135,11 @@ impl BattleFog {
                 "fog.revealed",
                 self.revealed.as_ptr().addr(),
                 self.revealed.capacity(),
+            ),
+            (
+                "fog.attack_revealed",
+                self.attack_revealed.as_ptr().addr(),
+                self.attack_revealed.capacity(),
             ),
         ]
         .into_iter()
@@ -186,13 +199,19 @@ impl BattleFog {
 
     /// How `bubble` may reach the screen: the one rule every reader of a unit asks (D-5).
     ///
-    /// Out of sight, a unit of another player is [`Presence::Hidden`]. In sight but undetected,
+    /// Out of sight, a unit of another player is [`Presence::Hidden`], unless its own attack
+    /// reveals it to the viewer, which puts it in sight wherever it stands. In sight but undetected,
     /// a burrowed unit is [`Presence::Hidden`] and a cloaked one [`Presence::Shimmer`]. The
     /// bubble is judged at the position it is drawn at, `world_pos`, in world units.
     #[must_use]
     pub fn presence(&self, bubble: &BubbleRenderInstance) -> Presence {
         let [x, y, _] = bubble.world_pos;
-        if !self.shows(bubble.owner, x, y) {
+        if !self.shows(bubble.owner, x, y)
+            && self
+                .attack_revealed
+                .binary_search(&bubble.entity_id)
+                .is_err()
+        {
             return Presence::Hidden;
         }
         if self.detects(bubble.owner, bubble.entity_id, bubble.concealment) {
@@ -239,7 +258,7 @@ impl BattleFog {
 
     /// Address and capacity of each retained buffer, which an allocation would move or grow.
     #[must_use]
-    pub fn buffers(&self) -> [(usize, usize); 3] {
+    pub fn buffers(&self) -> [(usize, usize); 4] {
         [
             (self.visible.as_ptr() as usize, self.visible.capacity()),
             (
@@ -247,6 +266,10 @@ impl BattleFog {
                 self.node_present.capacity(),
             ),
             (self.revealed.as_ptr() as usize, self.revealed.capacity()),
+            (
+                self.attack_revealed.as_ptr() as usize,
+                self.attack_revealed.capacity(),
+            ),
         ]
     }
 
@@ -256,6 +279,7 @@ impl BattleFog {
         self.width = 0;
         self.visible.clear();
         self.revealed.clear();
+        self.attack_revealed.clear();
         self.written = None;
     }
 
@@ -294,6 +318,10 @@ impl BattleFog {
         // The view promises a sorted list; sorting in place keeps the binary search sound if a
         // writer ever breaks that, and costs one pass over a sorted slice otherwise.
         self.revealed.sort_unstable();
+        self.attack_revealed.clear();
+        self.attack_revealed
+            .extend_from_slice(&view.attack_revealed);
+        self.attack_revealed.sort_unstable();
         for node in &view.visible_nodes {
             if let Some(present) = self.node_present.get_mut(node.id.0 as usize) {
                 *present = node.remaining > 0;
@@ -632,6 +660,23 @@ mod tests {
         view.revealed.clear();
         fog.refill(SessionGeneration::FIRST, &view, std::iter::empty());
         assert_eq!(fog.presence(&burrowed), Presence::Hidden);
+    }
+
+    /// Plan `2026-11-23-vision-and-detection` D-6: the list of attack-revealed units is copied on
+    /// every refill into the buffer it already holds.
+    #[test]
+    fn an_attack_revealed_list_is_refilled_in_place() {
+        let mut view = view();
+        view.attack_revealed = vec![EntityId(7), EntityId(3)];
+        let mut fog = fog_of(&view);
+        let warmed = fog.buffers();
+        assert_eq!(warmed.len(), 4, "the fog retains the attack-revealed list");
+        view.attack_revealed = vec![EntityId(3)];
+        fog.refill(SessionGeneration::FIRST, &view, std::iter::empty());
+        assert_eq!(fog.buffers(), warmed, "a refill reuses every buffer");
+        assert!(fog
+            .retained_buffers()
+            .any(|(name, _, _)| name == "fog.attack_revealed"));
     }
 
     #[test]
