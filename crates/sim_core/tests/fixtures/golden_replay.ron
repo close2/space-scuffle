@@ -395,8 +395,15 @@
 // 2026-11-23-strike-delays WP1 (schema 37 -> 38), on native debug and release and wasm32-wasip1
 // release and debug. Native debug and release and wasm32-wasip1 release and debug agree on the list
 // below.
+// Re-recorded for plan 2026-11-23-turret-wind-up WP1 (checksum schema 39 -> 40): each weapon also
+// encodes whether its unit may move while it attacks and whether it fires outside an attack
+// order, so every checkpoint changed. No behaviour did: with the two fields left out of the
+// encoding at schema 39, both fixtures reproduce as recorded for plan 2026-11-23-harvest-handoff
+// (schema 38 -> 39), with this plan's WP2 rules in place, on native debug and release and
+// wasm32-wasip1 release and debug. Native debug and release and wasm32-wasip1 release and debug
+// agree on the list below.
 (
-    checksum_schema: 39,
+    checksum_schema: 40,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -422,25 +429,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0xb10047865c4f0501,
-        0x819a1518e6db9a27,
-        0x7484613cf48c5b75,
-        0xa07cdc4b196ffdde,
-        0x69ab6beb77d04daf,
-        0xc2ae1ab7e6fd9728,
-        0x61bbb957ab97e27f,
-        0x2a7b36015c0c9cc9,
-        0xc3b495e42e4bca59,
-        0xc46adf1c8e6713bd,
-        0xfee6f36df893f1c8,
-        0xc2a855ab3fe86d89,
-        0x39f670f1bbdef060,
-        0xbdc81907ce378c78,
-        0xf909729ff6e286b3,
-        0x150bfe94579826ac,
-        0xa491485590836a59,
-        0x67407b5a6cc3299c,
-        0xf7d9c5cc635c3265,
-        0x98d254ec81195eaa,
+        0x4d23fe955d0bf888,
+        0xf2ff677a82127c09,
+        0xea892e4ca9c19656,
+        0x185d0e7b754ac1d2,
+        0xd180e98c043fd160,
+        0x5edf82a36d5ccbe1,
+        0x835b445606053950,
+        0x18fac8f8994d7203,
+        0xfceeaf8611574889,
+        0xb7af12a6a96deea2,
+        0x8d34e6a64ef15a2f,
+        0x0ede47caed36d83f,
+        0x8a77d612f1ecfe9b,
+        0x6d36dd4c99bb8c06,
+        0x3818f506ed1ac480,
+        0x97cbbfec92789ebe,
+        0x29d45808cd839b06,
+        0xcd7c0a9a56a7a89f,
+        0xe021183181ce99c8,
+        0xe37d10215053579c,
     ],
 )

@@ -1,145 +1,255 @@
-//! # Integration Test: Independent Turret Tracking While Retreating
+//! # Integration Test: Turrets Under a Move Order
 //!
-//! Verifies that a unit with `has_turret = true` (e.g. Siege Tank) rotates its turret
-//! independently to aim and fire at a pursuer while its hull translates in the opposite direction.
+//! A turret is a mount: it aims its weapon independently of the hull, and nothing more (plan
+//! `2026-11-23-turret-wind-up`, B-90, B-45). Whether the weapon may fire under an order that is no
+//! attack is its data, as in `StarCraft` II 5.0.14: every weapon keeps `OnlyFireWhileInAttackOrder`
+//! unless its data clears it (`fires_outside_attack_order`), and only a `Moving` weapon fires while
+//! its unit's order walks it (`allowed_movement`).
+//!
+//! These tests play the shipped catalog. They find their units by property, never by name:
+//! - a turreted ground unit whose weapon keeps both defaults (the Siege Tank's or the Hellion's
+//!   analogue), ordered to move away from an enemy it had as its target, translates exactly as it
+//!   would with no enemy there and never starts a swing;
+//! - a turreted air unit whose weapon is `Moving` and fires outside attack orders (the Phoenix's
+//!   analogue), ordered to move past an enemy air unit, turns its turret independently of its
+//!   hull and fires while it moves, its hull keeping its heading and translating on every tick
+//!   it does not wind up. The movement phase still holds it for each wind-up, because it reads
+//!   the ground-first weapon rather than the swing's (plan Amendment 1); WP3 of the plan removes
+//!   that hold for a `Moving` weapon.
+//!
+//! Positions are world units; angles are `SimAngle` binary angles.
 
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::uninlined_format_args,
-    clippy::doc_markdown,
-    clippy::too_many_lines
-)]
-
-use sim_core::WeaponPhase;
+use sim_core::catalog::UnitArchetype;
+use sim_core::{SimWorld, WeaponPhase, WeaponSpec};
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
-    PlayerCommand, PlayerId, SimAngle, SimScalar, SimVec2, Tick, TickBundle, UnitOrder,
+    AllowedMovement, EntityId, MoverType, PlayerCommand, PlayerId, SimAngle, SimScalar, SimVec2,
+    Tick, TickBundle, UnitOrder, UnitTypeId,
 };
 
-#[test]
-fn test_independent_turret_tracking_while_retreating() {
-    let default_cell = MapCell::default_ground(CliffLevel(0));
-    let map = GameMap::new(64, 64, default_cell).expect("invariant: valid map");
-    let mut world = sim_fixtures::world(map, 0x9876_5432);
+type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-    let player_blue = PlayerId(0);
-    let player_red = PlayerId(1);
+/// The weapons in an archetype's own slots.
+fn weapons(archetype: &UnitArchetype) -> impl Iterator<Item = &WeaponSpec> {
+    [
+        archetype.ground_weapon.as_ref(),
+        archetype.air_weapon.as_ref(),
+        archetype.weapon.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+}
 
-    // Tank at (20.0, 20.0)
-    let tank_pos = SimVec2::new(SimScalar::from_num(20), SimScalar::from_num(20));
-    // Pursuer enemy at (20.0, 15.0) (5.0 units North, well within 7.0 weapon range)
-    let enemy_pos = SimVec2::new(SimScalar::from_num(20), SimScalar::from_num(15));
-
-    let railgun_crawler_id = world
+/// The shipped archetype of lowest type id on `mover` that moves and has a weapon `pick` chooses.
+fn find(
+    world: &SimWorld,
+    mover: MoverType,
+    pick: impl Fn(&WeaponSpec) -> bool,
+) -> Result<UnitTypeId, Box<dyn std::error::Error>> {
+    Ok(world
         .catalog
-        .id_by_slug("railgun_crawler")
-        .expect("railgun_crawler in catalog");
-    let psi_grey_id = world
-        .catalog
-        .id_by_slug("psi_grey")
-        .expect("psi_grey in catalog");
+        .archetypes()
+        .filter(|archetype| {
+            archetype.mover_type == mover
+                && archetype.max_speed > SimScalar::ZERO
+                && weapons(archetype).any(&pick)
+        })
+        .min_by_key(|archetype| archetype.unit_type_id)
+        .ok_or("no shipped archetype has the picked property")?
+        .unit_type_id)
+}
 
-    let tank_id = world
-        .spawn_unit(railgun_crawler_id, player_blue, tank_pos)
-        .expect("invariant: spawn tank");
-    let enemy_id = world
-        .spawn_unit(psi_grey_id, player_red, enemy_pos)
-        .expect("invariant: spawn enemy Zealot");
+/// A world on a flat 64 × 64 map with the shipped catalog.
+fn shipped_world() -> Result<SimWorld, Box<dyn std::error::Error>> {
+    let map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0)))?;
+    Ok(sim_fixtures::world(map, 0x9876_5432))
+}
 
-    // Orient Tank hull and turret South (+Y direction, 90°)
-    {
-        let tank = world.entities.get_mut(&tank_id).expect("tank exists");
-        tank.heading = SimAngle::DEG_90;
-        tank.turret_angle = SimAngle::DEG_90;
-        // Set active attack target to enemy
-        tank.current_target = Some(enemy_id);
-    }
+fn point(x: i32, y: i32) -> SimVec2 {
+    SimVec2::new(SimScalar::from_i32(x), SimScalar::from_i32(y))
+}
 
-    // Issue Tank a Move order to (20.0, 30.0) (South)
-    let move_cmd = PlayerCommand {
-        player_id: player_blue,
-        entities: vec![tank_id],
-        order: UnitOrder::Move {
-            target: SimVec2::new(SimScalar::from_num(20), SimScalar::from_num(30)),
-        },
-        queue: false,
-    };
-    let bundle_0 = TickBundle {
-        tick: Tick(0),
-        commands: vec![move_cmd],
+/// Steps `world` once at `tick` with `commands`.
+fn step(world: &mut SimWorld, tick: u32, commands: Vec<PlayerCommand>) {
+    world.step(&TickBundle {
+        tick: Tick(tick),
+        commands,
         state_checksum: None,
+    });
+}
+
+/// One player's order to one unit.
+fn order(player: u8, unit: EntityId, order: UnitOrder) -> PlayerCommand {
+    PlayerCommand {
+        player_id: PlayerId(player),
+        entities: vec![unit],
+        order,
+        queue: false,
+    }
+}
+
+/// A unit of `unit_type` at (20, 20) whose hull and turret face south (+y), in `world`.
+fn spawn_facing_south(
+    world: &mut SimWorld,
+    unit_type: UnitTypeId,
+) -> Result<EntityId, Box<dyn std::error::Error>> {
+    let unit = world.spawn_unit(unit_type, PlayerId(0), point(20, 20))?;
+    let entity = world.entities.get_mut(&unit).ok_or("unit")?;
+    entity.heading = SimAngle::DEG_90;
+    entity.turret_angle = SimAngle::DEG_90;
+    Ok(unit)
+}
+
+/// B-90: a turret whose weapon needs an attack order (`OnlyFireWhileInAttackOrder`, the default)
+/// holds fire under a move away from the enemy it had as its target. Its hull translates every
+/// tick exactly as in a world without the enemy, its order stays the move, and it never winds up.
+#[test]
+fn a_turret_that_needs_an_attack_order_holds_fire_while_retreating() -> TestResult {
+    let mut world = shipped_world()?;
+    let unit_type = find(&world, MoverType::Ground, |weapon| {
+        weapon.has_turret
+            && !weapon.fires_outside_attack_order
+            && weapon.allowed_movement == AllowedMovement::Stopped
+    })?;
+    let mut reference = shipped_world()?;
+    let tank = spawn_facing_south(&mut world, unit_type)?;
+    let lone = spawn_facing_south(&mut reference, unit_type)?;
+    // The enemy 5 north, in reach, holding so that it never pushes the tank.
+    let enemy = world.spawn_unit(unit_type, PlayerId(1), point(20, 15))?;
+    world.entities.get_mut(&tank).ok_or("tank")?.current_target = Some(enemy);
+    let away = UnitOrder::Move {
+        target: point(20, 30),
     };
-
-    let tank_speed = world
-        .catalog
-        .get(railgun_crawler_id)
-        .expect("railgun_crawler archetype")
-        .max_speed;
-
-    // Step tick 1: Tank moves South, turret begins rotating towards North (270°)
-    world.step(&bundle_0);
-    {
-        let tank = world.entities.get(&tank_id).expect("tank exists");
+    step(
+        &mut world,
+        0,
+        vec![
+            order(0, tank, away.clone()),
+            order(1, enemy, UnitOrder::HoldPosition),
+        ],
+    );
+    step(&mut reference, 0, vec![order(0, lone, away.clone())]);
+    let enemy_life = |world: &SimWorld| world.entities.get(&enemy).map(|e| (e.hp, e.shields));
+    let unharmed = enemy_life(&world);
+    let mut last = point(20, 20);
+    for tick in 1..20 {
+        step(&mut world, tick, Vec::new());
+        step(&mut reference, tick, Vec::new());
+        let unit = world.entities.get(&tank).ok_or("tank")?;
+        let alone = reference.entities.get(&lone).ok_or("reference")?;
         assert_eq!(
-            tank.heading,
-            SimAngle::DEG_90,
-            "Hull must remain facing South"
-        );
-        assert_eq!(
-            tank.position.y,
-            SimScalar::from_num(20) + tank_speed,
-            "Tank must translate South at full speed"
+            unit.position, alone.position,
+            "tick {tick}: the hull translates as it would with no enemy"
         );
         assert_ne!(
-            tank.turret_angle,
-            SimAngle::DEG_90,
-            "Turret must begin independent rotation"
+            unit.position, last,
+            "tick {tick}: the hull moves every tick"
         );
-    }
-
-    let empty_bundle = |tick: u32| TickBundle {
-        tick: Tick(tick),
-        commands: Vec::new(),
-        state_checksum: None,
-    };
-
-    // Step simulation until turret aligns and fires (around tick 8-12)
-    let mut fired = false;
-    for tick in 1..20 {
-        world.step(&empty_bundle(tick));
-        let tank = world.entities.get(&tank_id).expect("tank exists");
-
-        // Hull must ALWAYS continue translating South at full speed
-        let expected_y = SimScalar::from_num(20) + tank_speed * SimScalar::from_num(tick + 1);
+        last = unit.position;
         assert_eq!(
-            tank.position.y, expected_y,
-            "Tank hull translation must never be interrupted by turret firing"
+            unit.heading,
+            SimAngle::DEG_90,
+            "tick {tick}: the hull faces its path"
         );
+        assert_eq!(
+            unit.order_queue.front(),
+            Some(&away),
+            "tick {tick}: the move stays its order"
+        );
+        assert!(
+            !matches!(
+                unit.weapon_phase,
+                WeaponPhase::Windup { .. } | WeaponPhase::Backswing { .. }
+            ),
+            "tick {tick}: no swing outside an attack order"
+        );
+    }
+    assert_eq!(
+        enemy_life(&world),
+        unharmed,
+        "the enemy took no damage from the retreating turret"
+    );
+    Ok(())
+}
 
-        if matches!(
-            tank.weapon_phase,
-            WeaponPhase::Backswing { .. } | WeaponPhase::Cooldown
-        ) {
-            fired = true;
-            break;
+/// B-45: a turret whose weapon is `Moving` and fires outside attack orders (the Phoenix's
+/// analogue) tracks an enemy air unit it passes under a move and fires at it, its turret turning
+/// independently of the hull, while its hull keeps its heading and translates on every tick it
+/// does not wind up. The wind-up still holds it (plan `2026-11-23-turret-wind-up` Amendment 1);
+/// WP3 removes that hold for a `Moving` weapon and then requires a translation on every tick.
+#[test]
+fn a_turret_that_fires_while_moving_tracks_and_fires_while_retreating() -> TestResult {
+    let mut world = shipped_world()?;
+    let free = |weapon: &WeaponSpec| {
+        weapon.has_turret
+            && weapon.fires_outside_attack_order
+            && weapon.allowed_movement == AllowedMovement::Moving
+    };
+    let unit_type = find(&world, MoverType::Air, free)?;
+    let enemy_type = find(&world, MoverType::Air, |weapon| !free(weapon))?;
+    let mut reference = shipped_world()?;
+    let flier = spawn_facing_south(&mut world, unit_type)?;
+    let lone = spawn_facing_south(&mut reference, unit_type)?;
+    // The enemy behind and beside the path, holding so that it never chases or pushes.
+    let enemy = world.spawn_unit(enemy_type, PlayerId(1), point(22, 18))?;
+    let away = UnitOrder::Move {
+        target: point(20, 40),
+    };
+    step(
+        &mut world,
+        0,
+        vec![
+            order(0, flier, away.clone()),
+            order(1, enemy, UnitOrder::HoldPosition),
+        ],
+    );
+    step(&mut reference, 0, vec![order(0, lone, away.clone())]);
+    let enemy_life = |world: &SimWorld| world.entities.get(&enemy).map(|e| (e.hp, e.shields));
+    let unharmed = enemy_life(&world);
+    let (mut fired, mut turned, mut began_in_windup) = (false, false, false);
+    let mut last = point(20, 20);
+    for tick in 1..25 {
+        step(&mut world, tick, Vec::new());
+        step(&mut reference, tick, Vec::new());
+        let unit = world.entities.get(&flier).ok_or("flier")?;
+        let alone = reference.entities.get(&lone).ok_or("reference")?;
+        if tick == 1 {
+            assert_eq!(
+                unit.position, alone.position,
+                "the hull sets off as it would with no enemy"
+            );
         }
+        // Amendment 1: the movement phase, which runs before the combat phase, still holds this
+        // unit on a tick that begins in its wind-up (WP3 removes the hold).
+        if !began_in_windup {
+            assert_ne!(
+                unit.position, last,
+                "tick {tick}: the hull moves on every tick it does not begin winding up"
+            );
+        }
+        began_in_windup = matches!(unit.weapon_phase, WeaponPhase::Windup { .. });
+        last = unit.position;
+        assert_eq!(
+            unit.heading,
+            SimAngle::DEG_90,
+            "tick {tick}: the hull faces its path"
+        );
+        assert!(
+            matches!(unit.order_queue.front(), Some(UnitOrder::Move { .. })),
+            "tick {tick}: the move stays its order"
+        );
+        turned |= unit.turret_angle != unit.heading;
+        fired |= matches!(
+            unit.weapon_phase,
+            WeaponPhase::Windup { .. } | WeaponPhase::Backswing { .. } | WeaponPhase::Cooldown
+        );
     }
-
-    assert!(
-        fired,
-        "Siege Tank must fire while continuing to retreat South at full speed"
+    assert!(turned, "the turret turns independently of the hull");
+    assert!(fired, "the weapon fires while the unit moves");
+    assert_ne!(
+        enemy_life(&world),
+        unharmed,
+        "the enemy takes damage from the passing turret"
     );
-
-    // Advance 6 more ticks for the physical 90mm shell to travel and impact target
-    for tick in 20..26 {
-        world.step(&empty_bundle(tick));
-    }
-
-    // Verify enemy took damage from the retreating tank
-    let enemy = world.entities.get(&enemy_id).expect("enemy exists");
-    assert!(
-        enemy.shields < SimScalar::from_num(50) || enemy.hp < SimScalar::from_num(100),
-        "Enemy must sustain damage from the tank's independent turret strike"
-    );
+    Ok(())
 }

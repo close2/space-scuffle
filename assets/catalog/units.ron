@@ -57,6 +57,9 @@
                 has_turret: false,
                 turret_turn_rate_deg_per_tick: 0.0,
                 turret_idle: Hold,
+                // 5.0.14 FusionCutter: AllowedMovement Slowing (voidmulti WeaponData:104); plan
+                // 2026-11-23-turret-wind-up D-7.
+                allowed_movement: Slowing,
                 base_damage: 5.0,
                 attribute_bonuses: [],
                 attacks_count: 1,
@@ -614,6 +617,10 @@
                 has_turret: true,
                 turret_turn_rate_deg_per_tick: 30.20,
                 turret_idle: ResetIfMoving(30.20),
+                // 5.0.14 IonCannons: AllowedMovement Moving (swarm WeaponData:181), OnlyFireWhileInAttackOrder 0
+                // (swarm WeaponData:177); plan 2026-11-23-turret-wind-up D-7.
+                allowed_movement: Moving,
+                fires_outside_attack_order: true,
                 base_damage: 5.0,
                 attribute_bonuses: [(Light, 5.0)],
                 attacks_count: 2,
@@ -1198,6 +1205,9 @@
                 has_turret: false,
                 turret_turn_rate_deg_per_tick: 0.0,
                 turret_idle: Hold,
+                // 5.0.14 LanzerTorpedoes: AllowedMovement Slowing (liberty WeaponData:274); plan
+                // 2026-11-23-turret-wind-up D-7.
+                allowed_movement: Slowing,
                 base_damage: 10.0,
                 attribute_bonuses: [(Armored, 4.0)],
                 attacks_count: 2,
@@ -1337,6 +1347,9 @@
                 has_turret: false,
                 turret_turn_rate_deg_per_tick: 0.0,
                 turret_idle: Hold,
+                // 5.0.14 LiberatorMissileLaunchers: AllowedMovement Slowing (void WeaponData:329); plan
+                // 2026-11-23-turret-wind-up D-7.
+                allowed_movement: Slowing,
                 base_damage: 5.0,
                 attribute_bonuses: [],
                 attacks_count: 2,
@@ -1431,6 +1444,9 @@
                 has_turret: false,
                 turret_turn_rate_deg_per_tick: 0.0,
                 turret_idle: Hold,
+                // 5.0.14 BacklashRockets: AllowedMovement Slowing (liberty WeaponData:557); plan
+                // 2026-11-23-turret-wind-up D-7.
+                allowed_movement: Slowing,
                 base_damage: 12.0,
                 attribute_bonuses: [],
                 attacks_count: 2,
@@ -1573,6 +1589,9 @@
                 has_turret: false,
                 turret_turn_rate_deg_per_tick: 0.0,
                 turret_idle: Hold,
+                // 5.0.14 ParticleBeam: AllowedMovement Slowing (voidmulti WeaponData:196); plan
+                // 2026-11-23-turret-wind-up D-7.
+                allowed_movement: Slowing,
                 base_damage: 5.0,
                 attribute_bonuses: [],
                 attacks_count: 1,
@@ -2139,6 +2158,10 @@
                 has_turret: true,
                 turret_turn_rate_deg_per_tick: 40.32,
                 turret_idle: FollowMovement(20.16),
+                // 5.0.14 PhaseDisruptors: AllowedMovement Slowing (voidmulti WeaponData:207),
+                // OnlyFireWhileInAttackOrder 0 (balancemulti WeaponData:185); plan 2026-11-23-turret-wind-up D-7.
+                allowed_movement: Slowing,
+                fires_outside_attack_order: true,
                 base_damage: 20.0,
                 attribute_bonuses: [(Armored, 30.0)],
                 attacks_count: 1,
@@ -2230,6 +2253,9 @@
                 has_turret: true,
                 turret_turn_rate_deg_per_tick: 55.99,
                 turret_idle: FollowMovement(5.04),
+                // 5.0.14 ThermalLances: no AllowedMovement, OnlyFireWhileInAttackOrder 0 (balancemulti
+                // WeaponData:229); plan 2026-11-23-turret-wind-up D-7.
+                fires_outside_attack_order: true,
                 base_damage: 10.0,
                 attribute_bonuses: [(Light, 5.0)],
                 attacks_count: 2,
@@ -2436,6 +2462,10 @@
                 has_turret: false,
                 turret_turn_rate_deg_per_tick: 0.0,
                 turret_idle: Hold,
+                // 5.0.14 VoidRaySwarm: AllowedMovement Moving (void WeaponData:176); it keeps
+                // OnlyFireWhileInAttackOrder, the options that would clear it are commented out (void
+                // WeaponData:171-174); plan 2026-11-23-turret-wind-up D-7.
+                allowed_movement: Moving,
                 base_damage: 6.0,
                 attribute_bonuses: [(Armored, 4.0)],
                 attacks_count: 1,
@@ -2461,6 +2491,10 @@
                 has_turret: false,
                 turret_turn_rate_deg_per_tick: 0.0,
                 turret_idle: Hold,
+                // 5.0.14 VoidRaySwarm: AllowedMovement Moving (void WeaponData:176); it keeps
+                // OnlyFireWhileInAttackOrder, the options that would clear it are commented out (void
+                // WeaponData:171-174); plan 2026-11-23-turret-wind-up D-7.
+                allowed_movement: Moving,
                 base_damage: 6.0,
                 attribute_bonuses: [(Armored, 4.0)],
                 attacks_count: 1,
@@ -2632,6 +2666,9 @@
                 has_turret: false,
                 turret_turn_rate_deg_per_tick: 0.0,
                 turret_idle: Hold,
+                // 5.0.14 Spines: AllowedMovement Slowing (voidmulti WeaponData:219); plan
+                // 2026-11-23-turret-wind-up D-7.
+                allowed_movement: Slowing,
                 base_damage: 5.0,
                 attribute_bonuses: [],
                 attacks_count: 1,
@@ -2810,6 +2847,9 @@
                 has_turret: false,
                 turret_turn_rate_deg_per_tick: 0.0,
                 turret_idle: Hold,
+                // 5.0.14 VolatileBurst: AllowedMovement Moving (liberty WeaponData:470); plan
+                // 2026-11-23-turret-wind-up D-7.
+                allowed_movement: Moving,
                 base_damage: 16.0,
                 attribute_bonuses: [(Light, 19.0)],
                 attacks_count: 1,
@@ -3242,6 +3282,9 @@
                 has_turret: false,
                 turret_turn_rate_deg_per_tick: 0.0,
                 turret_idle: Hold,
+                // 5.0.14 GlaiveWurm: AllowedMovement Slowing (liberty WeaponData:406); plan
+                // 2026-11-23-turret-wind-up D-7.
+                allowed_movement: Slowing,
                 base_damage: 9.0,
                 attribute_bonuses: [],
                 attacks_count: 1,
@@ -3267,6 +3310,9 @@
                 has_turret: false,
                 turret_turn_rate_deg_per_tick: 0.0,
                 turret_idle: Hold,
+                // 5.0.14 GlaiveWurm: AllowedMovement Slowing (liberty WeaponData:406); plan
+                // 2026-11-23-turret-wind-up D-7.
+                allowed_movement: Slowing,
                 base_damage: 9.0,
                 attribute_bonuses: [],
                 attacks_count: 1,
@@ -3352,6 +3398,9 @@
                 has_turret: false,
                 turret_turn_rate_deg_per_tick: 0.0,
                 turret_idle: Hold,
+                // 5.0.14 ParasiteSpore: AllowedMovement Slowing (liberty WeaponData:569); plan
+                // 2026-11-23-turret-wind-up D-7.
+                allowed_movement: Slowing,
                 base_damage: 14.0,
                 attribute_bonuses: [(Massive, 6.0)],
                 attacks_count: 1,
@@ -3435,6 +3484,9 @@
                 has_turret: false,
                 turret_turn_rate_deg_per_tick: 0.0,
                 turret_idle: Hold,
+                // 5.0.14 BroodlingStrike: AllowedMovement Slowing (liberty WeaponData:418); plan
+                // 2026-11-23-turret-wind-up D-7.
+                allowed_movement: Slowing,
                 base_damage: 20.0,
                 attribute_bonuses: [],
                 attacks_count: 2,
@@ -3460,6 +3512,9 @@
                 has_turret: false,
                 turret_turn_rate_deg_per_tick: 0.0,
                 turret_idle: Hold,
+                // 5.0.14 BroodlingStrike: AllowedMovement Slowing (liberty WeaponData:418); plan
+                // 2026-11-23-turret-wind-up D-7.
+                allowed_movement: Slowing,
                 base_damage: 20.0,
                 attribute_bonuses: [],
                 attacks_count: 2,

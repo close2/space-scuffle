@@ -45,8 +45,8 @@ pub use checksum::compute_world_checksum;
 pub use combat::{
     calculate_hit_damage, calculate_hit_damage_upgraded, calculate_splash_damage,
     calculate_splash_damage_upgraded, charge_random_delay, is_in_weapon_range, is_threat_to,
-    is_within_firing_arc, step_entity_weapon, DamageResolution, TargetPriorityKey, WeaponTarget,
-    MIN_DAMAGE_CLAMP, RELEASE_RANGE_SLOP,
+    is_within_firing_arc, step_entity_weapon, DamageResolution, Mandate, TargetPriorityKey,
+    WeaponTarget, MIN_DAMAGE_CLAMP, RELEASE_RANGE_SLOP,
 };
 pub use entity::{
     ActiveBuff, ActiveProjectile, BarrierState, Cargo, Entity, MovementMemory, PendingLine,

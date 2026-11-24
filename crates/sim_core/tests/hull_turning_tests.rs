@@ -15,6 +15,10 @@
 //! Collision pushes are not gated. Every other archetype moves along its path at once while its
 //! hull follows.
 //!
+//! A hull weapon that fires outside an attack order (plan `2026-11-23-turret-wind-up` D-5) never
+//! turns the hull: the hull belongs to the unit's order, so the weapon fires only at a target
+//! already in its arc.
+//!
 //! # How it fits
 //! The tests drive the public world API (`SimWorld::step`) on a flat map and read headings,
 //! turret angles and weapon phases between ticks, as a battle sees them.
@@ -899,5 +903,115 @@ fn a_turret_turn_that_aligns_the_weapon_starts_the_swing_on_that_tick() -> TestR
         stationary: None,
     };
     assert_eq!(first_swing_tick(shooter, 14, 17)?, Some(1));
+    Ok(())
+}
+
+/// A world for plan `2026-11-23-turret-wind-up` D-5 (P-4): the shooter at (10, 16) facing +x with
+/// a hull weapon in its air slot (range 6, a 30° half arc) that is `Moving` and fires outside an
+/// attack order, and an air target at (`target_x`, `target_y`), which flies over the shooter's
+/// path so that nothing but the weapon could turn the hull.
+fn free_fire_world(
+    target_x: i32,
+    target_y: i32,
+) -> Result<(SimWorld, EntityId, EntityId), Box<dyn std::error::Error>> {
+    let weapon = r#"Some((
+            name: "Free Rifle",
+            visual_kind: Hitscan,
+            target_flags: (bits: 255),
+            min_range: 0.0,
+            max_range: 6.0,
+            firing_arc_deg: 30.0,
+            acquire_arc_deg: 30.0,
+            has_turret: false,
+            turret_turn_rate_deg_per_tick: 0.0,
+            turret_idle: Hold,
+            allowed_movement: Moving,
+            fires_outside_attack_order: true,
+            base_damage: 1.0,
+            attribute_bonuses: [],
+            attacks_count: 1,
+            strike_interval_ticks: 0,
+            period_ticks: 20,
+            damage_point_ticks: 2,
+            backswing_ticks: 0,
+            random_delay_ticks: (0.0, 0.0),
+            splash: None,
+            projectile_speed: None,
+        ))"#;
+    let shooter = unit_ron(SHOOTER, 1, 20.0, 0.2, false, None, weapon)
+        .replace("            weapon: ", "            air_weapon: ");
+    let target = unit_ron(TARGET, 2, 180.0, 0.1, false, None, "None")
+        .replace("mover_type: Ground", "mover_type: Air");
+    let map = GameMap::new(48, 48, MapCell::default_ground(CliffLevel(0)))?;
+    let mut world = sim_fixtures::world(map, 7);
+    world.catalog = UnitCatalog::from_ron_str(
+        &sim_fixtures::shipped_factions(),
+        &format!("(units: [{shooter}, {target}])"),
+    )?;
+    let at = |x: i32, y: i32| SimVec2::new(SimScalar::from_i32(x), SimScalar::from_i32(y));
+    let shooter_type = world.catalog.id_by_slug(SHOOTER).ok_or("shooter")?;
+    let target_type = world.catalog.id_by_slug(TARGET).ok_or("target")?;
+    let shooter = world.spawn_unit(shooter_type, PlayerId(0), at(10, 16))?;
+    let target = world.spawn_unit(target_type, PlayerId(1), at(target_x, target_y))?;
+    Ok((world, shooter, target))
+}
+
+/// P-4 (plan `2026-11-23-turret-wind-up` D-5): a hull weapon firing outside an attack order never
+/// turns its unit's hull. Under a move east, the shooter's heading equals, tick by tick, its
+/// heading in a world whose target is out of reach; it fires at a target in its arc and not at
+/// one behind it.
+#[test]
+fn a_hull_weapon_outside_an_attack_order_never_turns_the_hull() -> TestResult {
+    for (x, y, in_arc) in [(15, 18, true), (5, 16, false)] {
+        let (mut world, shooter, target) = free_fire_world(x, y)?;
+        let (mut reference, reference_shooter, _) = free_fire_world(40, 40)?;
+        let mut fired = false;
+        for tick in 0..40_u32 {
+            let commands = |unit| {
+                if tick > 0 {
+                    return Vec::new();
+                }
+                vec![PlayerCommand {
+                    player_id: PlayerId(0),
+                    entities: vec![unit],
+                    order: UnitOrder::Move {
+                        target: SimVec2::new(SimScalar::from_i32(40), SimScalar::from_i32(16)),
+                    },
+                    queue: false,
+                }]
+            };
+            for (world, unit) in [(&mut world, shooter), (&mut reference, reference_shooter)] {
+                world.step(&TickBundle {
+                    tick: Tick(tick),
+                    commands: commands(unit),
+                    state_checksum: None,
+                });
+            }
+            let unit = world.entities.get(&shooter).ok_or("shooter")?;
+            let heading = reference
+                .entities
+                .get(&reference_shooter)
+                .ok_or("reference shooter")?
+                .heading;
+            assert_eq!(
+                unit.heading, heading,
+                "target at ({x}, {y}), tick {tick}: the weapon never turns the hull"
+            );
+            fired |= !matches!(
+                unit.weapon_phase,
+                WeaponPhase::Ready | WeaponPhase::RotatingToTarget { .. }
+            );
+        }
+        let hp = world.entities.get(&target).ok_or("target")?.hp;
+        assert_eq!(
+            fired, in_arc,
+            "target at ({x}, {y}): fires only at a target in its arc"
+        );
+        assert_eq!(
+            hp < SimScalar::from_i32(10_000),
+            in_arc,
+            "target at ({x}, {y}): damage"
+        );
+    }
     Ok(())
 }

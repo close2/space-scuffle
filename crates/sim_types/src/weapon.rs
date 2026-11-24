@@ -434,6 +434,19 @@ pub struct WeaponSpec {
     /// What the turret does while the weapon has no target; `TurretIdle::Hold` for a hull
     /// weapon.
     pub turret_idle: TurretIdle,
+    /// Whether the weapon's unit may move while it attacks (`StarCraft` II's `AllowedMovement`):
+    /// a wind-up holds its unit unless this is [`AllowedMovement::Moving`], and a weapon that
+    /// fires outside an attack order does so while its unit's order walks it only when it is
+    /// `Moving` (plan `2026-11-23-turret-wind-up` D-2, D-6). Independent of the mount.
+    #[serde(default)]
+    pub allowed_movement: AllowedMovement,
+    /// Whether the weapon fires when its unit is in no attack order: the inverse of `StarCraft`
+    /// II's `Options OnlyFireWhileInAttackOrder`, which every weapon sets by default (`core`
+    /// WeaponData:20), so `false` is the engine default. Such a weapon works against the target
+    /// acquisition tracks for it under its unit's other orders (plan `2026-11-23-turret-wind-up`
+    /// D-2, D-4).
+    #[serde(default)]
+    pub fires_outside_attack_order: bool,
     /// Base damage applied per hit.
     pub base_damage: SimScalar,
     /// Bonus damage per strike against each attribute the target has (`AttributeBonus`).
@@ -510,6 +523,25 @@ pub struct WeaponSpec {
     /// D-14) read it.
     #[serde(default)]
     pub melee: bool,
+}
+
+/// Whether a weapon's unit may move while it attacks: `StarCraft` II's `CWeapon`
+/// `AllowedMovement` (plan `2026-11-23-turret-wind-up` D-1).
+///
+/// No `CWeapon` default names a value, so a weapon that names none has the engine's default, a
+/// unit that stands to fire. Whether the weapon sits on a turret plays no part: the mount says
+/// how a weapon aims, this says whether its unit may be moving when it fires.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AllowedMovement {
+    /// The unit stands to fire (no `AllowedMovement`, the engine default): its wind-up holds it.
+    #[default]
+    Stopped,
+    /// The unit may still be decelerating when it fires (`Slowing`). Treated as
+    /// [`AllowedMovement::Stopped`] until the movement phase reports braking apart from pushes
+    /// (bug B-178).
+    Slowing,
+    /// The unit fires while it moves (`Moving`): its wind-up does not hold it.
+    Moving,
 }
 
 /// The strike a weapon deals to a structure in place of its usual one.

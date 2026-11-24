@@ -27,7 +27,7 @@
 
 use sim_core::catalog::UnitCatalog;
 use sim_core::{
-    is_within_firing_arc, step_entity_weapon, Entity, SimCoreError, SimWorld, WeaponPhase,
+    is_within_firing_arc, step_entity_weapon, Entity, Mandate, SimCoreError, SimWorld, WeaponPhase,
     WeaponSpec, WeaponTarget,
 };
 use sim_map::{CliffLevel, GameMap, MapCell};
@@ -492,7 +492,7 @@ fn damage_point_zero_releases_on_the_tick_its_swing_starts() -> TestResult {
     let bench = Bench::spawned(&catalog_ron(DAMAGE_POINT_ZERO, 10_000.0, None), 13)?;
     let (mut shooter, weapon, target) = bench.direct()?;
     assert!(
-        step_entity_weapon(&mut shooter, &weapon, Some(target)),
+        step_entity_weapon(&mut shooter, &weapon, Some(target), Mandate::AttackOrder),
         "the first call with the target in band and aligned must release, phase {:?}",
         shooter.weapon_phase
     );
@@ -531,7 +531,8 @@ fn damage_point_zero_after_turning_releases_on_the_tick_it_is_aligned() -> TestR
     let mut first_aligned = None;
     let mut first_release = None;
     for call in 1..=40_u32 {
-        let released = step_entity_weapon(&mut shooter, &weapon, Some(target));
+        let released =
+            step_entity_weapon(&mut shooter, &weapon, Some(target), Mandate::AttackOrder);
         assert!(!is_windup(&shooter.weapon_phase), "call {call}");
         let aligned = is_within_firing_arc(
             shooter.turret_angle,
@@ -643,7 +644,12 @@ fn a_windup_with_no_ticks_left_releases_on_its_next_step() -> TestResult {
         target_id: bench.target,
         remaining_ticks: 0,
     };
-    assert!(step_entity_weapon(&mut shooter, &weapon, Some(target)));
+    assert!(step_entity_weapon(
+        &mut shooter,
+        &weapon,
+        Some(target),
+        Mandate::AttackOrder
+    ));
     assert_eq!(shooter.weapon_cooldown_remaining, 21);
     Ok(())
 }
@@ -673,7 +679,8 @@ fn b29_a_new_target_needs_the_acquisition_arc() -> TestResult {
     let mut released_at = None;
     for call in 1..=30_u32 {
         let error = aim_error(&shooter, &target);
-        let released = step_entity_weapon(&mut shooter, &weapon, Some(target));
+        let released =
+            step_entity_weapon(&mut shooter, &weapon, Some(target), Mandate::AttackOrder);
         if released {
             released_at = Some(call);
             assert_eq!(aim_error(&shooter, &target), 0, "call {call}");
@@ -694,13 +701,18 @@ fn b29_an_engaged_weapon_fires_within_the_engaged_arc_without_turning() -> TestR
     let catalog = catalog_ron_with_mount(DAMAGE_POINT_ZERO, SPLIT_ARC_TURRET, 10_000.0, None);
     let bench = Bench::spawned(&catalog, 13)?;
     let (mut shooter, weapon, target) = bench.direct()?;
-    assert!(step_entity_weapon(&mut shooter, &weapon, Some(target)));
+    assert!(step_entity_weapon(
+        &mut shooter,
+        &weapon,
+        Some(target),
+        Mandate::AttackOrder
+    ));
     // Knock the turret 20 degrees off the target: inside the engaged arc.
     let offset = SimAngle::from_degrees(20);
     shooter.turret_angle += offset;
     let mut released = false;
     for _ in 0..21 {
-        released = step_entity_weapon(&mut shooter, &weapon, Some(target));
+        released = step_entity_weapon(&mut shooter, &weapon, Some(target), Mandate::AttackOrder);
     }
     assert!(
         released,
@@ -715,13 +727,18 @@ fn b29_a_target_that_leaves_the_engaged_arc_is_acquired_again() -> TestResult {
     let catalog = catalog_ron_with_mount(DAMAGE_POINT_ZERO, SPLIT_ARC_TURRET, 10_000.0, None);
     let bench = Bench::spawned(&catalog, 13)?;
     let (mut shooter, weapon, target) = bench.direct()?;
-    assert!(step_entity_weapon(&mut shooter, &weapon, Some(target)));
+    assert!(step_entity_weapon(
+        &mut shooter,
+        &weapon,
+        Some(target),
+        Mandate::AttackOrder
+    ));
     // 45 degrees off: outside the engaged 30, so the weapon has lost the target and must face
     // it exactly again (4 calls at 11.25 degrees) before the next swing.
     shooter.turret_angle = SimAngle::from_degrees(45);
     let mut releases = Vec::new();
     for call in 1..=30_u32 {
-        if step_entity_weapon(&mut shooter, &weapon, Some(target)) {
+        if step_entity_weapon(&mut shooter, &weapon, Some(target), Mandate::AttackOrder) {
             releases.push((call, aim_error(&shooter, &target)));
         }
     }
@@ -755,7 +772,7 @@ fn idle_turret_after(
         shooter.velocity = SimVec2::new(SimScalar::from_num(0.1), SimScalar::ZERO);
     }
     for _ in 0..calls {
-        step_entity_weapon(&mut shooter, &weapon, None);
+        step_entity_weapon(&mut shooter, &weapon, None, Mandate::AttackOrder);
     }
     Ok(shooter.turret_angle.to_degrees_f32())
 }
@@ -806,7 +823,12 @@ fn b30_a_turret_with_a_target_does_not_idle() -> TestResult {
     let catalog = catalog_ron_with_mount(DAMAGE_POINT_ZERO, &mount, 10_000.0, None);
     let bench = Bench::spawned(&catalog, 13)?;
     let (mut shooter, weapon, target) = bench.direct()?;
-    assert!(step_entity_weapon(&mut shooter, &weapon, Some(target)));
+    assert!(step_entity_weapon(
+        &mut shooter,
+        &weapon,
+        Some(target),
+        Mandate::AttackOrder
+    ));
     assert_eq!(shooter.turret_angle, SimAngle::ZERO);
     Ok(())
 }
