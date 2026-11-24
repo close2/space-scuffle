@@ -29,3 +29,9 @@ turret, Banshee and Overlord of part 2; a turret under construction next to a cl
 
 ## Answer
 
+- **1(a):** Air units and Xel'Naga towers **see into sight blockers**.
+- **2(b):** Detection **is a plain circle** (a detector detects cloaked/burrowed units within its detection radius even up cliffs or past sight blockers whenever another friendly unit grants vision there).
+- **3(b):** Detectors under construction (Missile Turret, Photon Cannon, Spore Crawler) **do NOT detect** until construction completes.
+- **4(b):** An air unit's / Colossus's attack reveal is visible to **the struck player and its allies** (shared team vision).
+
+**Reasoning:** All four choices match StarCraft II's actual behaviour (note that 2(b), 3(b), and 4(b) differ from the initial plan defaults).
