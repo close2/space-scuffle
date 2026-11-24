@@ -47,8 +47,8 @@ spans `sim_types`, `sim_core`, `assets/catalog`, `sim_fixtures` and `client`.
 | Q0002: scoping is the agent's call if written down | Standing rule | §14 |
 | Q0098: an anchored unit's Attack on the ground is refused (answered (a)) | Closed | D-4, D-9 |
 | The owner's guidance: no fitting to fixed seed sets; acceptance by principled properties | Followed | §6 |
-| **QA (draft, §15): does an A-click on one's own unit attack it, and may a unit attack itself?** | Not filed; for the orchestrator | D-3, D-5; default (a): attack it, never itself |
-| **QB (draft, §15): what does a unit do when it is A-clicked onto a unit it cannot attack?** | Not filed; for the orchestrator | D-5; default (a): it attack-moves to the point under the unit |
+| **QA = Q0104: does an A-click on one's own unit attack it, and may a unit attack itself?** | Filed (see §15) | D-3, D-5; default (a): attack it, never itself |
+| **QB = Q0105: what does a unit do when it is A-clicked onto a unit it cannot attack?** | Filed (see §15) | D-5; default (a): it attack-moves to the point under the unit |
 
 ---
 
@@ -773,11 +773,10 @@ by name, WP2 adds its row.
 
 ## 15. Draft owner questions (for the orchestrator to file; not filed by this plan)
 
-The numbers are the next free ones at filing (Q0101 appears reserved elsewhere, so they are expected to be Q0103 and
-Q0104).
+Filed as [Q0104](../questions/open/0104-attack-click-on-own-unit.md) and [Q0105](../questions/open/0105-attack-click-on-unattackable-target.md) (Q0101 and Q0103 are taken by the vision and contact-solver plans).
 
 ```markdown
-# Q0103: Does "A, then click my own unit" attack it?
+# Q0104: Does "A, then click my own unit" attack it?
 
 - **Asked:** 2026-11-24
 - **Blocking:** no
@@ -807,7 +806,7 @@ Recommendation: (a). Right-clicking your own unit is unchanged in every case.
 ```
 
 ```markdown
-# Q0104: What does a unit do when you A-click it onto a target it cannot attack?
+# Q0105: What does a unit do when you A-click it onto a target it cannot attack?
 
 - **Asked:** 2026-11-24
 - **Blocking:** no
