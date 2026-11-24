@@ -30,6 +30,8 @@
 //! 8. A strike by a `Visible` weapon reveals its attacker to the struck unit's owner for the
 //!    weapon's `reveal_ticks`, recorded before the strike's retaliation runs, so the response
 //!    of the same tick sees it (plan `2026-11-23-vision-and-detection` D-5).
+//! 9. A missile loses its target when the target teleports after the launch, unless its weapon
+//!    clears `missile_validation.teleport` (plan `2026-11-24-weapon-validation` D-4).
 
 use crate::catalog::UnitCatalog;
 use crate::catalog::{SplashSpec, UnitArchetype, WeaponSpec};
@@ -1521,12 +1523,23 @@ impl SimWorld {
 
     /// Refreshes a projectile's aim point and returns the surface radius to stop at.
     ///
+    /// The target is lost when it fails the availability gate or, if the weapon validates
+    /// teleports (`missile_validation.teleport`, 5.0.14's `ValidateTeleport`), when its
+    /// teleport count moved on since the launch. The teleport is checked before the aim point
+    /// is refreshed, so a lost missile keeps the point where the target stood before it (plan
+    /// `2026-11-24-weapon-validation` D-4).
+    ///
     /// Returns `None` when the projectile disjoints because its target was lost.
     fn track_projectile_target(&mut self, proj: &mut ActiveProjectile) -> Option<SimScalar> {
         let Some(target_id) = proj.target_id else {
             return Some(SimScalar::ZERO);
         };
-        if self.is_entity_available_for_combat(proj.owner, target_id) {
+        let teleported = proj.weapon_spec.missile_validation.teleport
+            && self
+                .entities
+                .get(&target_id)
+                .is_some_and(|target| target.teleport_count != proj.target_teleport_count);
+        if !teleported && self.is_entity_available_for_combat(proj.owner, target_id) {
             let mut radius = SimScalar::HALF;
             if let Some(target) = self.entities.get(&target_id) {
                 proj.target_pos = target.position;
@@ -1538,7 +1551,7 @@ impl SimWorld {
             return Some(radius);
         }
         // Target became unavailable (cargo loaded, cloaked without detector, invulnerable,
-        // died, or expired).
+        // died, or expired) or teleported.
         match proj.weapon_spec.target_loss_behavior {
             ProjectileTargetLossBehavior::Fizzle => None,
             ProjectileTargetLossBehavior::ImpactLastKnownPosition => {

@@ -66,3 +66,24 @@ output file is equal, and every log differs only by the probe's lines. The golde
 (every seed), battle 37a seeds 7, 11 and 14, battle 31 seeds 1, 7, 14 and 17 (and the same 14 seeds of the
 100-seed battle 31 run), every showcase effects seed, and the new battle 42. The showcase, battle 33, the goldens and
 the sandbox are expected byte-identical.
+
+## WP1: missile validation and teleport state, latent (schema 43)
+
+**Red run.** The new tests did not compile on WP0's tree: `MissileValidation`, `WeaponSpec::missile_validation`,
+`Entity::teleport_count`, `Entity::teleport_to` and `ActiveProjectile::target_teleport_count` did not exist
+(`sim_types` unit test, `checksum_state_tests`, `weapon_validation_tests`, the `entity.rs` unit tests); and
+`an_instant_weapon_authoring_missile_validation_is_refused` failed, the edited catalog loading with `Ok(())` (serde
+ignored the unknown field).
+
+**Worlds.** Every output of §7.1 is byte-identical to WP0 (`compare-wp1.txt`: 483 files, 0 differing), as §8 rule 1
+requires.
+
+## WP2: a missile drops a target that teleports (B-182)
+
+**Red run** (on WP1's tree): `a_missile_at_a_blinker_lands_where_it_stood` ("tick 5: the missile still has a
+target"), `a_splash_missile_at_a_blinker_strikes_the_old_point` (the bystander beside the old point was not struck)
+and `runtime_catalog_tests::an_authored_teleport_validation_off_follows_the_blink` (the shipped missile struck the
+blinker) failed; `a_missile_launched_after_the_blink_strikes` passed, as it should before and after.
+
+**Worlds.** Every output of §7.1 is byte-identical to WP0 (`compare-wp2.txt`: 483 files, 0 differing), as probe (d)
+predicted (no shipped Blink); both goldens and the sandbox pass unchanged on native debug.
