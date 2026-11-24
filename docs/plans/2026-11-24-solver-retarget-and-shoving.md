@@ -874,3 +874,88 @@ behaviour-preserving optimisation was already applied. [Split of the cost by pha
 | `DESIGN.md` §4, §5 and the Movement row; `docs/evidence/2026-11-24-solver-retarget-and-shoving.md` | WP0 (evidence), WP2 (all) |
 
 `DESIGN.md` §2 (crate graph) is unchanged. No crate gains a dependency.
+
+---
+
+## As built (implementation agent, 2026-11-24)
+
+Branch `solver-followup`, cut from `main` `e5f5c565` (the solver merge: contact solver default, schema 46, Legacy
+still selectable because WP7 has not landed), merged with `main` `708576ac` (attacker snapshot, turret wind-up WP3)
+at `485b27e5`, at the coordinator's request, after the first WP0 baseline. Every arm was rebuilt on the merge and
+the baseline re-derived (`b0`); the close-battle list did not change. **The package stopped at WP2** (below). Figures are in
+[`docs/evidence/2026-11-24-solver-retarget-and-shoving.md`](../evidence/2026-11-24-solver-retarget-and-shoving.md).
+
+### Drift of this plan's references against `main`
+
+- The plan was written on `contact-solver-plan` at `a2b420c9` (schema 40). On `main`, the solver merge took
+  schema 46, so this plan's one bump is **47**. The stopped branch's schema 42 and its "41 reserved" note are void.
+- `target_acquisition.rs` changed under the plan: fire-rules added the own-weapon-target scan (`ScanScope::
+  own_target`, `OwnTargetScan`), and weapon validation replaced the vision test by `sees_enemy`/`sees_point`
+  (attack reveal). The stopped branch's `candidate_key` did not apply; the shared test was rewritten on `main`'s
+  scan (§4.2 item 1), keeping its early-out order (the scan range is still tested after the visibility test, as on
+  `main`; nothing was reordered).
+- `checksum.rs`'s schema history and `movement_rules.ron`'s header had moved; the port merged by hand. `ring.rs`,
+  `locomotion.rs`, `mod.rs`, `entity.rs` and `encoding.rs` applied from `2cfb880f` unchanged.
+- `the_fixture_reads_a_known_bug_marker` (`sim_fixtures::matchup`) reads the shipped file (**verify** answered:
+  yes); it now inserts a marker into a copy of the shipped text.
+- File and test names: W0-T1 and W0-T3 live in `trace::contact_checks::tests`, not `trace::tests`; the meter is
+  one module, `trace/contact_checks.rs`.
+
+### WP0
+
+- D-SHOVE, D-R10 (four columns) and D-CHURN, as defined in the evidence's §1, in `matrix.csv`'s last 21 columns
+  (with the counters of B1, B3 and B7) and in the mirror family (`shove`, `dr10_*`). The ring geometry is the
+  stopped branch's (`harness/room.rs`, radius band − r/2), extended with the free arcs and the classifier.
+- D-R10's precedence when several candidates have room: free > unruled > terrain > leash. A candidate whose band
+  the unit is already in counts as free (G-6′ would take it, `RingAim::Straight`).
+- D-SHOVE does not reproduce §13.13's 3.61: on this base it gives 1.13 for battle 28 seed 1. Both the measure and
+  the tree differ (evidence §2.3, §3.1).
+
+### WP1 (E-1)
+
+- **E-T1's attacker speed.** At the scratch archetypes' 0.125 per tick the attackers stop at the band, 0.1 off
+  the target's disc, and the even split never moves the target: E-T1 was green on the base. With a step longer
+  than the melee gap (0.1875; the shipped zergling analogue steps 0.165), a committed step overshoots into the
+  disc, B-193's first way in (§1.2 (a)), and the base moves the target: E-T1 red, then green under E-1. Treated as
+  a test construction, not as §7's "E-T1 green on the base" stop, because the base never overlapped the target in
+  the first scene at all; recorded for review.
+- **E-T3 needs a corridor.** On open ground two lines of walkers slide past each other and never press. The test
+  runs two single-file columns head-on in a corridor one cell wide. The scene is not point-symmetric in its last
+  bits even before the columns meet (a few millionths in the walk from rest), so "½ / ½, bit-identical under
+  mirror" is checked to 1/1024 world units.
+- **Deviation from §4.1: the committed-step fallback.** In the corridor, the walls leave a residual overlap after
+  the last pass each tick; the next tick an enemy correction carries the presser back past its tick-start position,
+  so neither displacement closes and §4.1's even split hands the standing column half of the residual every tick
+  (0.21 world units over 300 ticks, a real shove). When neither displacement closed, the shares now follow the
+  committed steps (tick start to proposal) before the even split. A spawn, unload or two standing bodies still
+  split evenly. Two standing walkers after a 10 s give-up still split a carried overlap evenly (one 0.05 push in the
+  corridor); E-T3 runs inside the give-up time.
+- **The held rule** reads "refused" as: the body's last attempted step went to a target other than where it stood
+  and terrain left it in place; an application without corrections for the body (the friends' summed pass) leaves
+  the flag. Without that persistence E-T5's closer lost its flag in the friends' pass and the pair ended 18 %
+  overlapped. Both bodies refused: the closing shares apply.
+- E-T4: with the switch on, the per-tick digests equal the base's (`0xa381a7c5b8982232`, `0x6b074574a51eff4b` on
+  the merged base); the whole 24-seed matrix with the switch on is byte-identical to the base's.
+- **Matrix (judged with WP2, recorded here): E-1 alone fails B3.** The largest enemy overlap rises from about 2.6 %
+  to 12.7 % (battle 26), 10.4 % (27) and 10.5 % (29). A build with the committed-step fallback off, or the held
+  rule off, gives the same 12.7 % on battle 26 seed 19; the even split gives 1.4 %. So it is §4.1's closing shares,
+  not this package's additions. B-193's shove of battle 28's immortals is gone (0.075 per seed against Legacy's
+  0.374); the colossi (1.56 against 0.13) and ultralisks (1.07 against 0.18) are still moved.
+
+### WP2 (G-6′)
+
+- G-T1 red on WP1 (`red/wp2-gt1-4-on-wp1.log`: attacker 11 stands at full ring 3 at tick 93 while far ring 2 has
+  room), so §7's "G-T1 green on WP1" stop did not apply.
+- Switch-off proof: this tree with `ring_retarget` unhashed (`fields!` `unhashed`) at schema 46 and the switch off
+  gives WP1's digests (`0x1095d9cd774585ae`, `0x932545703fdf08ac`); G-T5 pins them at 47. E-T4 likewise: with both
+  switches at the base's behaviour, the unhashed schema-46 build gives the base's digests; it is pinned at 47.
+- G-T7's room check leaves out the asking unit, as the ring rule does (a first version counted the asker's own
+  disc and failed on a legitimate return).
+- G-T8 was added as specified (armed, non-holding block bodies with a reach of 6; no block body moves).
+- **Stopped** (evidence §4, §6): battle 28 fails on seed of record 33 (6 immortals left; zerglings win 22 of 24 and
+  21 of 24 held-out seeds hold the claim, 22 needed); §6.1's B1, B3, B4 and B7 fail on several battles; the Class R
+  battles 26, 33, 38a and 38b leave their ranges and are not restated because checks fail; no Class D battle flips.
+  Cost: Legacy rises 3.5 % on 64 × 64 between WP1 and WP2 (C-1 fails: the shared acquisition test is not
+  cost-neutral), and Solver 4.0 % over the WP0 base (C-2's 3 % fails). The code is on `solver-followup-wp2-wip`
+  (`dc3b62ab`); battle 28 keeps its marker, the goldens and the checksum encoding unit tests are not re-pinned, and
+  the harness families were not run on the merged base.

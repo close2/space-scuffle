@@ -119,3 +119,206 @@ survivors on both sides is no win, so the battles whose claims are survivor rang
   band" (`red_pushed_distance` of the battle trace, `matrix/b0-b28-s1`), gives 3.31 on this base; D-SHOVE gives
   1.16. The difference is the definition: D-SHOVE counts only ticks with an enemy body touching and no proposed
   motion, so an immortal's own steps and turns while a zergling is in its band are not counted.
+
+## 3. WP1: E-1 (binaries `b1`, merged branch head `485b27e5`)
+
+### 3.1 Tests
+
+Red on the base, green after (`red/`): E-T1, E-T2, E-T3, E-T5 red on the base; E-T4 and E-T6 need E-1's API
+(red by compilation). E-T4: with the switch on, the per-tick digests equal the base's on the merged tree
+(`0xa381a7c5b8982232`, `0x6b074574a51eff4b`). Guards green: `anchored_bodies_stay_and_enemies_separate`,
+`enemy_pairs_take_no_dead_band`, `enemy_constraints_have_the_last_word`, `a_nudged_attacker_slides_along_its_ring_only`,
+`push_priority_tests.rs`, the order-independence test with enemies under both switch values.
+
+### 3.2 Switch on: bit-identical
+
+`matrix/b1on-solver` is byte-identical to `matrix/b0-solver` (every column, 1,464 rows).
+
+### 3.3 Matrix, 24 seeds, against the base (`matrix/b1-checks.md`): **B3 fails**
+
+1,464 runs; failures of record 6 (base 2), over all seeds 45 (base 31). Held-out: 33 failures (base 20). Rows that
+moved:
+
+| Battle | Base wins b/r | Cand wins b/r | Fail of record (base→cand) | Fail all | Moved | B1 | B2 | B3 | B4 | B5 | B7 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 9a_hellion_vs_4_lings | 0/24 | 0/24 | 0→0 | 0→0 | yes | ok | FAIL | ok | ok | ok | FAIL |
+| 10_2_hellions_vs_8_lings | 0/24 | 0/24 | 0→0 | 0→0 | yes | FAIL | FAIL | ok | ok | ok | ok |
+| 23a_zealot_vs_6_lings | 0/24 | 0/24 | 0→0 | 0→0 | yes | FAIL | FAIL | ok | ok | ok | ok |
+| 23b_upgraded_zealot_vs_6_lings | 24/0 | 24/0 | 0→0 | 0→0 | yes | FAIL | ok | ok | ok | ok | ok |
+| 24a_roach_vs_5_lings | 0/24 | 0/24 | 0→0 | 0→0 | yes | ok | ok | ok | ok | ok | ok |
+| 24b_upgraded_roach_vs_5_lings | 24/0 | 24/0 | 0→0 | 0→0 | yes | ok | ok | ok | ok | ok | ok |
+| 26_100_lings_vs_6_colossi | 18/6 | 3/21 | 0→2 | 0→8 | yes | FAIL | FAIL | FAIL | ok | ok | FAIL |
+| 27_100_lings_vs_8_ultralisks | 0/24 | 0/24 | 0→0 | 0→0 | yes | FAIL | FAIL | FAIL | ok | ok | ok |
+| 28_100_lings_vs_10_immortals | 5/19 | 0/24 | 2→4 | 19→24 | yes | FAIL | FAIL | ok | ok | ok | FAIL |
+| 29_100_lings_vs_12_stalkers | 24/0 | 24/0 | 0→0 | 0→0 | yes | FAIL | FAIL | FAIL | ok | ok | ok |
+| 33_24_marines_vs_12_zealots | 24/0 | 24/0 | 0→0 | 0→1 | yes | FAIL | FAIL | ok | ok | ok | ok |
+| 36a_storm_turns_marines | 24/0 | 24/0 | 0→0 | 3→3 | yes | FAIL | FAIL | ok | ok | ok | ok |
+| 36b_marines_beat_zealots_without_storm | 0/24 | 0/24 | 0→0 | 0→0 | yes | FAIL | FAIL | ok | ok | ok | ok |
+
+Battle 28 alone is no longer a stalling case only: the zerglings win 0 of 24 (base 5); G-6′ is WP2's.
+
+**B2 by side (the shove of B-193).** The immortals of battle 28 fall from 2.94 to 0.075 per seed, below Legacy's
+0.374. The colossi of battle 26 fall from 5.21 to 1.56 and the ultralisks of 27 from 2.38 to 1.07, but both stay
+above Legacy (0.13, 0.18). The melee side rises (battle 26's zerglings 39 to 19, 28's 18 to 13.6, all far above
+Legacy's under 2): D-δ's nudges, §2.3.
+
+### 26_100_lings_vs_6_colossi
+- B1 FAIL: R10 free 60681; blocked 3600/seed vs base [3637, 4610]
+- B2 FAIL: blue 18.847 vs legacy 0.394 [0.356, 0.431]; red 1.558 vs legacy 0.130 [0.115, 0.145]
+- B3 FAIL: max 12.71 % (base 2.59 %); mean 4.652 % vs base [1.004, 1.409]; T7 0.5 %: above
+- B4 ok: unexplained 20 (base 59); mean 0.83 vs [1.71, 3.29]
+- B5 ok: give-ups 0 (base 0); mean 0.00 vs [0.00, 0.00]
+- B7 FAIL: blue 0.542/unit-s vs base [0.580, 0.617] LOWER; red 0.917/unit-s vs base [0.909, 0.918]
+### 27_100_lings_vs_8_ultralisks
+- B1 FAIL: R10 free 24508; blocked 1218/seed vs base [934, 1380]
+- B2 FAIL: blue 26.491 vs legacy 0.665 [0.600, 0.732]; red 1.066 vs legacy 0.178 [0.136, 0.239]
+- B3 FAIL: max 10.37 % (base 2.45 %); mean 2.517 % vs base [0.444, 0.825]; T7 0.5 %: above
+- B4 ok: unexplained 271 (base 242); mean 11.29 vs [7.88, 12.42]
+- B5 ok: give-ups 0 (base 0); mean 0.00 vs [0.00, 0.00]
+- B7 ok: blue 0.398/unit-s vs base [0.371, 0.406]; red 0.540/unit-s vs base [0.533, 0.557]
+### 28_100_lings_vs_10_immortals
+- B1 FAIL: R10 free 322741; blocked 16070/seed vs base [15834, 16526]
+- B2 FAIL: blue 13.580 vs legacy 0.963 [0.865, 1.075]; red 0.075 vs legacy 0.374 [0.327, 0.432]
+- B3 ok: max 1.74 % (base 1.42 %); mean 0.687 % vs base [0.490, 0.716]; T7 0.5 %: above
+- B4 ok: unexplained 61 (base 100); mean 2.54 vs [3.17, 5.25]
+- B5 ok: give-ups 0 (base 0); mean 0.00 vs [0.00, 0.00]
+- B7 FAIL: blue 0.401/unit-s vs base [0.401, 0.437] LOWER; red 0.785/unit-s vs base [0.777, 0.785]
+### 29_100_lings_vs_12_stalkers
+- B1 FAIL: R10 free 282894; blocked 19043/seed vs base [18674, 20266]
+- B2 FAIL: blue 20.443 vs legacy 1.683 [1.534, 1.826]; red 0.661 vs legacy 0.628 [0.570, 0.689]
+- B3 FAIL: max 10.51 % (base 2.77 %); mean 4.418 % vs base [0.756, 1.196]; T7 0.5 %: above
+- B4 ok: unexplained 136 (base 210); mean 5.67 vs [7.12, 10.75]
+- B5 ok: give-ups 0 (base 0); mean 0.00 vs [0.00, 0.00]
+- B7 ok: blue 0.270/unit-s vs base [0.263, 0.274]; red 0.666/unit-s vs base [0.662, 0.668]
+
+**B3, enemy overlap: E-1 itself.** The largest enemy overlap at the end of a tick rises to 12.7 % of the radius sum
+in battle 26 (base 2.6 %), 10.4 % in 27 and 10.5 % in 29. Battle 26 seed 19 (`diag/b1`, `diag/zz-*`): the worst
+pairs are a colossus walking at about 0.1 a tick into engaged zerglings round it. An experimental build of the
+same tree with environment toggles (not committed) gives 12.72 % with the committed-step fallback off, and 12.72 %
+with the held rule off, but 1.37 % with enemy pairs split evenly. So the plan's closing shares themselves leave
+the overlap, not this package's two additions. A reading, not verified: a body ringed by enemies that do not
+close takes every pair's whole correction, from both sides, and the Jacobi average and the summed enemy pass
+cannot satisfy both; the even split let the ring give way.
+
+## 4. WP2: G-6′ (binaries `b2`, the WP2 tree; branch `solver-followup-wp2-wip` `dc3b62ab`)
+
+### 4.1 Tests
+
+G-T1 red on WP1 (`red/merged-wp2-tests-on-wp1.log`: attacker 11 stands at full ring 3 at tick 93 while far ring
+2 has room), and G-T3b, G-T4, G-T5, G-T7, G-T8 red there too; G-T1 to G-T9 green on WP2. G-T7: 49 hand-overs, one
+return, after the kill, with room. G-T9: the shared admission test equals the base's scan on 40 generated scenes,
+twelve scopes each. Switch off: `matrix/b2off-solver` is byte-identical to `matrix/b1-solver`; the unhashed
+schema-46 build gives WP1's digests (`0x1095d9cd774585ae`, `0xc0e740fe07f66a90`) and, with both switches at the
+base's behaviour, the base's (`red/merged-wp2-proof-unhashed46.log`).
+
+### 4.2 Matrix, 24 seeds, against the base (`matrix/b2-checks.md`): **stop**
+
+1,464 runs; failures of record 5 (base 2): battle 26 on 3203386110 and 11, battle 28 on **33** (6 immortals
+left), 38a and 38b on 3203386110. Over all seeds 56 (base 31). Held-out 46 (base 20). Rows that moved:
+
+| Battle | Base wins b/r | Cand wins b/r | Fail of record (base→cand) | Fail all | Moved | B1 | B2 | B3 | B4 | B5 | B7 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 9a_hellion_vs_4_lings | 0/24 | 0/24 | 0→0 | 0→0 | yes | ok | FAIL | ok | ok | ok | FAIL |
+| 10_2_hellions_vs_8_lings | 0/24 | 0/24 | 0→0 | 0→0 | yes | FAIL | FAIL | ok | ok | ok | ok |
+| 23a_zealot_vs_6_lings | 0/24 | 0/24 | 0→0 | 0→0 | yes | FAIL | FAIL | ok | ok | ok | ok |
+| 23b_upgraded_zealot_vs_6_lings | 24/0 | 24/0 | 0→0 | 0→0 | yes | FAIL | ok | ok | ok | ok | ok |
+| 24a_roach_vs_5_lings | 0/24 | 0/24 | 0→0 | 0→0 | yes | ok | ok | ok | ok | ok | ok |
+| 24b_upgraded_roach_vs_5_lings | 24/0 | 24/0 | 0→0 | 0→0 | yes | ok | ok | ok | ok | ok | ok |
+| 26_100_lings_vs_6_colossi | 18/6 | 8/16 | 0→2 | 0→8 | yes | FAIL | FAIL | FAIL | ok | ok | ok |
+| 27_100_lings_vs_8_ultralisks | 0/24 | 0/24 | 0→0 | 0→0 | yes | FAIL | FAIL | FAIL | ok | ok | FAIL |
+| 28_100_lings_vs_10_immortals | 5/19 | 22/2 | 2→1 | 19→2 | yes | FAIL | FAIL | FAIL | FAIL | ok | FAIL |
+| 29_100_lings_vs_12_stalkers | 24/0 | 24/0 | 0→0 | 0→0 | yes | FAIL | FAIL | FAIL | ok | ok | FAIL |
+| 32_30_marines_vs_15_banelings | 19/3 | 17/4 | 0→0 | 1→1 | yes | FAIL | ok | ok | ok | ok | ok |
+| 33_24_marines_vs_12_zealots | 24/0 | 2/19 | 0→0 | 0→9 | yes | FAIL | FAIL | FAIL | FAIL | ok | FAIL |
+| 36a_storm_turns_marines | 24/0 | 24/0 | 0→0 | 3→0 | yes | FAIL | FAIL | ok | FAIL | ok | FAIL |
+| 36b_marines_beat_zealots_without_storm | 0/24 | 0/24 | 0→0 | 0→0 | yes | FAIL | FAIL | ok | FAIL | ok | ok |
+| 38a_fungal_turns_zerglings | 24/0 | 24/0 | 0→1 | 0→17 | yes | FAIL | FAIL | FAIL | FAIL | ok | FAIL |
+| 38b_marines_beat_zerglings_without_fungal | 0/7 | 9/1 | 0→1 | 0→11 | yes | FAIL | FAIL | FAIL | FAIL | ok | ok |
+
+Contact checks of the crowd battles under WP2:
+
+| Battle | seeds | blue/red wins | blue shove | red shove | R10 leash/terrain/unruled/free | churn expl/unexpl | blocked | give-ups | max enemy overlap % |
+|---|---|---|---|---|---|---|---|---|---|
+| 26_100_lings_vs_6_colossi | 24 | 8/16 | 28.89 | 2.89 | 0/0/0/1323 | 379/2 | 14796 | 0 | 20.59 |
+| 27_100_lings_vs_8_ultralisks | 24 | 0/24 | 34.14 | 1.71 | 0/0/0/4747 | 1160/73 | 5774 | 0 | 14.20 |
+| 28_100_lings_vs_10_immortals | 24 | 22/2 | 45.77 | 0.88 | 0/0/0/77863 | 2309/200 | 213787 | 0 | 15.61 |
+| 29_100_lings_vs_12_stalkers | 24 | 24/0 | 29.91 | 0.25 | 0/0/0/75653 | 1789/221 | 248978 | 0 | 9.21 |
+| 33_24_marines_vs_12_zealots | 24 | 2/19 | 0.00 | 2.92 | 0/0/0/889 | 75/18 | 146 | 0 | 0.31 |
+| 38a_fungal_turns_zerglings | 24 | 24/0 | 4.79 | 0.00 | 0/0/0/225 | 197/28 | 485 | 0 | 1.21 |
+| 38b_marines_beat_zerglings_without_fungal | 24 | 9/1 | 4.37 | 0.00 | 0/0/0/751 | 157/6 | 231 | 0 | 0.92 |
+
+### 26_100_lings_vs_6_colossi
+- B1 FAIL: R10 free 1323; blocked 616/seed vs base [3637, 4610]
+- B2 FAIL: blue 28.890 vs legacy 0.394 [0.356, 0.431]; red 2.890 vs legacy 0.130 [0.115, 0.145]
+- B3 FAIL: max 20.59 % (base 2.59 %); mean 7.785 % vs base [1.004, 1.409]; T7 0.5 %: above
+- B4 ok: unexplained 2 (base 59); mean 0.08 vs [1.71, 3.29]
+- B5 ok: give-ups 0 (base 0); mean 0.00 vs [0.00, 0.00]
+- B7 ok: blue 0.618/unit-s vs base [0.580, 0.617]; red 0.915/unit-s vs base [0.909, 0.918]
+### 28_100_lings_vs_10_immortals
+- B1 FAIL: R10 free 77863; blocked 8908/seed vs base [15834, 16526]
+- B2 FAIL: blue 45.774 vs legacy 0.963 [0.865, 1.075]; red 0.882 vs legacy 0.374 [0.327, 0.432]
+- B3 FAIL: max 15.61 % (base 1.42 %); mean 3.546 % vs base [0.490, 0.716]; T7 0.5 %: above
+- B4 FAIL: unexplained 200 (base 100); mean 8.33 vs [3.17, 5.25]
+- B5 ok: give-ups 0 (base 0); mean 0.00 vs [0.00, 0.00]
+- B7 FAIL: blue 0.526/unit-s vs base [0.401, 0.437]; red 0.767/unit-s vs base [0.777, 0.785] LOWER
+### 33_24_marines_vs_12_zealots
+- B1 FAIL: R10 free 889; blocked 6/seed vs base [440, 490]
+- B2 FAIL: blue 0.005 vs legacy 0.003 [0.003, 0.004]; red 2.923 vs legacy 0.031 [0.020, 0.043]
+- B3 FAIL: max 0.31 % (base 0.00 %); mean 0.024 % vs base [0.000, 0.000]; T7 0.5 %: within
+- B4 FAIL: unexplained 18 (base 0); mean 0.75 vs [0.00, 0.00]
+- B5 ok: give-ups 0 (base 0); mean 0.00 vs [0.00, 0.00]
+- B7 FAIL: blue 1.195/unit-s vs base [1.228, 1.233] LOWER; red 0.596/unit-s vs base [0.376, 0.412]
+### 38a_fungal_turns_zerglings
+- B1 FAIL: R10 free 225; blocked 20/seed vs base [374, 434]
+- B2 FAIL: blue 4.795 vs legacy 0.074 [0.047, 0.105]; red 0.000 vs legacy 0.000 [0.000, 0.000]
+- B3 FAIL: max 1.21 % (base 0.94 %); mean 0.546 % vs base [0.033, 0.283]; T7 0.5 %: above
+- B4 FAIL: unexplained 28 (base 1); mean 1.17 vs [0.00, 0.12]
+- B5 ok: give-ups 0 (base 0); mean 0.00 vs [0.00, 0.00]
+- B7 FAIL: blue 0.372/unit-s vs base [0.334, 0.343]; red 0.922/unit-s vs base [0.991, 1.008] LOWER
+### 38b_marines_beat_zerglings_without_fungal
+- B1 FAIL: R10 free 751; blocked 10/seed vs base [356, 413]
+- B2 FAIL: blue 4.371 vs legacy 0.023 [0.016, 0.031]; red 0.000 vs legacy 0.000 [0.000, 0.000]
+- B3 FAIL: max 0.92 % (base 1.19 %); mean 0.333 % vs base [0.000, 0.188]; T7 0.5 %: above
+- B4 FAIL: unexplained 6 (base 1); mean 0.25 vs [0.00, 0.12]
+- B5 ok: give-ups 0 (base 0); mean 0.00 vs [0.00, 0.00]
+- B7 ok: blue 0.534/unit-s vs base [0.318, 0.369]; red 0.960/unit-s vs base [0.839, 0.969]
+
+**Battle 28** (§6.2: must hold on every seed of record): it holds on 3 of 4; zerglings win 22 of 24 (base 5,
+Legacy 24); held-out 22 wins, the claim holding on 21 of 24 (needed: 22). Zerglings in contact / blocked, mean over
+the 24 seeds (`diag/b0-24`, `diag/b2-24`):
+
+| Tick | 100 | 150 | 200 | 250 | 300 | 350 | 400 |
+|---|---|---|---|---|---|---|---|
+| Base | 7.9 / 2.4 | 12.0 / 65.1 | 12.5 / 61.8 | 12.2 / 51.1 | 11.8 / 37.9 | 12.7 / 35.0 | 12.5 / 26.0 |
+| WP2 | 9.0 / 0.2 | 23.0 / 21.7 | 26.8 / 40.4 | 25.9 / 28.5 | 25.9 / 22.6 | 23.7 / 13.5 | 21.0 / 7.5 |
+
+Ring occupancy, seed 33 under WP2 (`diag/b2-s33`; band 1.225, a ring point free when every other body clears it):
+
+| Tick | Blocked zerglings | Immortals: zerglings in band, free ring |
+|---|---|---|
+| 150 | 8 of 86 | 101: 4, 0°; 102: 3, 80°; 103: 4, 10°; 104: 0, 136°; 105: 5, 10°; 106: 0, 98°; 107: 3, 0°; 108: 1, 0°; 109: 5, 0°; 110: 5, 0° |
+| 250 | 7 of 66 | 101: 4, 0°; 102: 4, 0°; 103: 3, 10°; 104: 2, 23°; 105: 2, 12°; 106: 1, 55°; 107: 2, 0°; 108: 1, 14°; 109: 5, 0°; 110: 3, 34° |
+| 350 | 7 of 55 | 101: 5, 0°; 102: 4, 0°; 103: 3, 10°; 104: 3, 15°; 105: 3, 12°; 106: 2, 14°; 107: 1, 0°; 108: 2, 0°; 109: 4, 0°; 110: 4, 2° |
+
+The battle ends at tick 734 with 6 immortals. On this seed few zerglings stand; the loss is attrition with the far
+column's rings partly free, not R10.
+
+**Failing checks:** B1 (D-R10 `free` still 77,863 unit-ticks in battle 28, 1,323 in 26; blocked falls), B3 (largest
+enemy overlap 20.6 % in 26, 15.6 % in 28, 14.2 % in 27), B4 (unexplained returns above the base in 28, 33, 36a,
+36b, 38a, 38b), B7 (lower firing rates in 27, 28, 29, 33, 38a). Class D battles: none flips or leaves its range
+(9a, 10, 23a/b, 24a/b, 27, 29, 32, 36a/b change rows only). Class R battles 26, 33, 38a and 38b leave their
+ranges; with checks failing, none is restated.
+
+## 5. Throughput (`perf/b0.txt`, `b1.txt`, `b2.txt`; instructions retired, `perf stat -e instructions:u`)
+
+Three runs each; instruction counts agree to 0.001 %. Ticks per second are noisy on the shared machine (load
+average up to 139 during the runs) and are reported as the range of the three.
+
+THROUGHPUT_TABLE
+
+## 6. Stop
+
+The package stops at WP2 under §7 (battle 28 does not hold on every seed of record; §6.1 checks fail) and under the
+coordinator's rule (failed checks, Class R battles moving). Nothing is restated, battle 28's marker stays, the goldens
+are not re-recorded, and the harness families were not run on the merged base (the queued runs were cancelled once
+the stop was certain). WP2's code is on `solver-followup-wp2-wip`; `solver-followup` ends at WP1 plus documents.

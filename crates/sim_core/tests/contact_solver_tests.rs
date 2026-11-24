@@ -631,7 +631,7 @@ fn battle_digest(rules: MovementRules) -> Result<u64, Box<dyn std::error::Error>
 }
 
 /// E-T4: with `contact.enemies_push_each_other` on, the simulation is the base's (main at
-/// `e5f5c565` with WP0's diagnostics, before E-1), bit for bit, on the E-T1 scene and on battle
+/// `708576ac` with WP0's diagnostics, before E-1), bit for bit, on the E-T1 scene and on battle
 /// 28's first seed of record: their per-tick checksum digests equal the base's, pinned below at
 /// schema 46. E-1 adds no state, so the schema is the base's.
 #[test]
@@ -649,4 +649,4 @@ fn the_enemy_push_switch_on_is_bit_identical() -> TestResult {
 /// The base's digest of the E-T1 scene (schema 46).
 const PRESS_DIGEST_EVEN_SPLIT: u64 = 0xa381_a7c5_b898_2232;
 /// The base's digest of battle 28's first seed of record (schema 46).
-const BATTLE_DIGEST_EVEN_SPLIT: u64 = 0x5b3a_d09e_1abd_3da2;
+const BATTLE_DIGEST_EVEN_SPLIT: u64 = 0x6b07_4574_a51e_ff4b;
