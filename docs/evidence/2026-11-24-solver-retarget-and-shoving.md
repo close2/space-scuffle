@@ -318,7 +318,7 @@ average up to 139 during the runs) and are reported as the range of the three.
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | 64 × 64 | 10.205 G | 16.681 G (+63.5 %) | 16.909 G (+1.4 %) | 10.559 G | 17.343 G | **+4.0 %** | **+3.5 %** | +69.9 % / +64.2 % | 69 to 99 |
 | 128 × 128 | 10.531 G | 11.304 G (+7.3 %) | 11.311 G (+0.1 %) | 10.709 G | 11.485 G | +1.6 % | **+1.7 %** | +9.1 % / +7.2 % | 85 to 132 |
-| canyon | 17.831 G | 27.675 G (+55.2 %) | 27.992 G (+1.1 %) | 18.076 G | 28.220 G (one run) | +2.0 % | **+1.4 %** | +58.3 % / +56.1 % | 65 |
+| canyon | 17.831 G | 27.675 G (+55.2 %) | 27.992 G (+1.1 %) | 18.076 G | 28.220 G | +2.0 % | **+1.4 %** | +58.3 % / +56.1 % | 65 |
 
 - **C-0:** every WP2 run is at or above 50 ticks per second. The base's own 64 × 64 Solver runs gave 41 to 49
   under a load average above 100, so the ticks/s column is not a reliable reading on this machine today.

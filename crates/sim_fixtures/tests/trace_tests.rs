@@ -604,6 +604,7 @@ fn the_matrix_mode_writes_every_battle_and_seed_and_compares_runs() -> TestResul
         let cells: Vec<u32> = line
             .split(',')
             .skip(9)
+            .take(5)
             .map(str::parse)
             .collect::<Result<_, _>>()?;
         assert_eq!(cells[1], cells[3] + cells[4], "{line}");
