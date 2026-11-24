@@ -101,3 +101,66 @@ scenarios are byte-identical. Winner changes: 26 (seeds 33, 4, 10, 12), 31 (seed
 3203386110), 35 (seed 4); expectation changes: 26 seed 13 and 36a seed 2 now miss. Its probe counts no stale hold of
 a gone or dead target; the standing count falls (matrix 9,045, battle 31 4, battle 33 0). It is the hold half of
 WP1, used below to class each moved world's first difference.
+
+## WP1: a swing ends when its target is lost (B-207), stopped for review
+
+WP1 is `3d68031e`. Its worlds (`~/scratch/wind-up-hold/world-wp1`, binaries built from the commit, assets from its
+`git archive`) against WP0's: 20 matrix battles move (10, 21, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36a, 36b, 37a,
+38a, 38b, 39a, 39b, 40), battles 31 and 33 move, the showcase on the default seed and seeds 1 to 8 and the showcase
+effects on the default seed and seeds 2, 3, 4, 5, 7 and 8. The matrix plays 2 misses of record (unchanged) and 27
+over all seeds.
+
+**Outcome moves** (winner changes include a win becoming a draw):
+
+| Battle | Close (§6.4) | Seeds whose winner changes | Expectation changes |
+|---|---|---|---|
+| 21_lurker_vs_6_marines | no | 8, 13 | none |
+| 26_100_lings_vs_6_colossi | yes | 4, 6, 8 | 13 now misses |
+| 28_100_lings_vs_10_immortals | `known_bug` B-192 | 5, 9, 10, 17 | 5 now misses; 9 and 17 now hold |
+| 31_15_marauders_vs_15_stalkers | yes | 4 | none |
+| 32_30_marines_vs_15_banelings | no | 3203386110 (of record), 8 | none |
+| 33_24_marines_vs_12_zealots | yes | none | 10 now misses |
+| 35_12_vikings_vs_6_colossi | yes | 4 | none |
+| 38a_fungal_turns_zerglings | yes | none | 4 now misses |
+
+Stop rule 4 fires for battles 21 and 32 (not close, outcome moved) and stop rule 5 for battle 28 (its claim now holds
+on seeds 9 and 17 and fails on seed 5). The package stops for review; no close battle is restated, WP3 (goldens,
+held-out run, records) is not started.
+
+**First differences** (`firstdiff.py` on per-unit traces of WP0 and WP1, matrix seeds):
+
+| Battle, seed | First differing tick | Units and fields | Class |
+|---|---:|---|---|
+| 21, 8 and 13 | 34 | the six marines' positions | V: the marines' wind-ups on the Lurker analogue end when it burrows (cloaked, undetected) and they walk on; the attribution build (gone or dead targets only) leaves battle 21 byte-identical |
+| 32, 3203386110 | 6 | blue 1 position, phase and target; blue 2 position | H: a marine whose target baneling died is no longer held |
+| 32, 8 | 3 | blue 11 and 21 phase and target | N: the next swing starts a tick earlier |
+| 28, 5 / 9 / 17 | 82 / 64 / 93 | red immortals' phase and target | N |
+| 26, 4 / 6 / 8 / 13 | 16 / 43 / 124 / 87 | a colossus' position (4), else its phase and target | H (4), N |
+| 33, 10 | 93 | blue 10 phase and target | N |
+| 38a, 4 | 122 | red 19 and 24 phase and target | N |
+
+Every first difference is a swing ended by D-1 (classes H, N, V); no second cause was found (stop rule 2 holds).
+
+**Behaviour checks.** W-1: the probe on WP1's tree counts no stale hold in any world (WP0: 2,446), and standing while
+able falls in every family (matrix 9,837 to 8,643, battle 31 38 to 4, battle 33 415 to 0, showcase 14 to 0,
+showcase effects 119 to 103, goldens 5 to 0). W-2: matrix stall give-ups 11 to 12, the one more on battle 31 seed 4,
+the close seed whose winner flipped (divergence after tick 4's first difference); no battle's
+`blocked_attacker_ticks` rises by 5 %. W-3: shots released per 1,000 alive unit-ticks, battle 31 19.12 to 19.10,
+battle 33 40.13 to 40.14; on the traced battles 21 (−0.35 %), 26 (−1.12 %), 28 (+2.02 %), 32 (+0.68 %), 33
+(−0.10 %), 38a (+0.56 %), aggregate 23.81 to 23.93. W-4: mean end tick falls (matrix sum 321,822 to 320,906;
+battle 31 650.3 to 649.3; battle 33 370.0 to 369.1). Battle 26's drop of 1.12 % is above the 1 % trace threshold and
+is not yet traced.
+
+## WP2: a holding hull faces its target between shots (B-199), measured while WP1 is under review
+
+WP2 is `3e333d6c`, measured against WP1's worlds. Only matrix battles 38a and 38b move (both close, every seed
+differs); battles 31 and 33, both showcase scenarios on every seed and the remaining matrix battles are
+byte-identical, as are the held Brood Lord, Roach, Zergling and Void Ray analogue battles (13, 19, 20, 41: their
+holders' targets do not change bearing between shots). No winner changes; battle 38a's seed 4, which WP1 made a
+miss, holds its claim again. W-2: stall give-ups 12 to 12, `blocked_attacker_ticks` 1,403,193 to 1,402,826. W-3 and
+W-4: battles 31 and 33 unchanged; matrix end-tick sum 320,906 to 320,813. W-5 (probe (b), matrix): ticks from the
+end of a cooldown to the next swing 381 to 29 over 3,561 cooldowns, bearing error at the end of a cooldown 1,960,582
+to 226,533 binary units in sum (mean 3.0° to 0.36°); W-1 standing while able 8,643 to 8,642. **W-5 fails in one
+part:** hull turns of a holder on ticks with no available target at either end rise from 24 to 58 (battles 11b,
+37a, 37b, 38a, 38b; the first in 11b seed 22 at tick 9, a Marauder analogue). Not yet traced; the probe reads the
+target at the ends of ticks, so a target acquired and killed within one tick counts.
