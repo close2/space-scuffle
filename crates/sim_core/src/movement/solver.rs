@@ -243,9 +243,11 @@ struct Pair {
     radius_sum: SimScalar,
     /// The overlap at or below which the pair is left alone (C-4), world units.
     dead_band: SimScalar,
-    /// The pair's correction at its bodies' current positions, once computed: reused while
-    /// neither body moves, since it is a function of the two positions alone.
+    /// The pair's correction at its bodies' positions when it was computed: reused while neither
+    /// body has moved since, since it is a function of the two positions alone.
     cached: Option<Correction>,
+    /// The two bodies' [`BodyStep::moves`] when `cached` was computed (K-1).
+    cached_at: (u32, u32),
 }
 
 /// Which pairs a summing pass reads (C-1, C-1b).
@@ -308,12 +310,15 @@ const PAIR_SLACK: SimScalar = SimScalar::from_raw(1 << 30);
 // Why: In a battle most pairs and most bodies do not change between iterations: a settled
 // pair stays in its dead band, and a body pressed into a wall or an anchored line is refused
 // the same correction again (evidence §5.3: 70 % to 92 % of battle ticks run all K iterations).
-// What: The active set (plan Amendment 3, item 1). A pair keeps its last correction and reuses
-// it while neither body moved; a body whose last terrain step left it in place is not stepped
-// again toward the same target. Both are functions of positions alone, so every result is
-// bit-identical to recomputing.
-// Trade-off: One cached correction per pair and a flag and a target per body, kept in the
-// retained buffers.
+// What: The active set (plan Amendment 3, item 1). A pair keeps its last correction with the
+// two bodies' move counts when it was computed, and reuses it while neither count has changed,
+// that is while neither body has moved since (plan `2026-11-25-enemy-contact-and-ring-retarget`
+// K-1: a flag of the latest application alone let the enemy pass reuse a correction from before
+// the last averaged iteration, B-208); a body whose last terrain step left it in place is not
+// stepped again toward the same target. Both are functions of positions alone, so every result
+// is bit-identical to recomputing.
+// Trade-off: One cached correction and two counts per pair, and a count and a target per body,
+// kept in the retained buffers.
 #[derive(Debug, Default)]
 pub(crate) struct ContactSolver {
     /// This tick's bodies, in the caller's order.
@@ -333,8 +338,9 @@ pub(crate) struct ContactSolver {
 /// One body's last terrain step within a solve (the active set of [`ContactSolver`]).
 #[derive(Debug, Clone, Copy, Default)]
 struct BodyStep {
-    /// The body moved in the latest application.
-    moved: bool,
+    /// Applications that moved the body in this solve (K-1): a pair's cached correction is valid
+    /// while both its bodies' counts are those it was computed at.
+    moves: u32,
     /// The target of the body's latest terrain step when that step left it where it was
     /// without a fault, world units; `None` after a step that moved it or faulted.
     held: Option<SimVec2>,
@@ -458,6 +464,7 @@ impl ContactSolver {
             radius_sum,
             dead_band,
             cached: None,
+            cached_at: (0, 0),
         });
     }
 
@@ -518,7 +525,8 @@ impl ContactSolver {
     }
 
     /// Sums the corrections of `pass`'s pairs from the current positions; a pair neither of whose
-    /// bodies moved since its correction was computed reuses it.
+    /// bodies moved since its correction was computed reuses it (K-1: by the bodies' move counts,
+    /// so a summed pass never reads a correction from positions before an earlier application).
     fn accumulate(&mut self, pass: Pass, report: &mut impl FnMut(MovementInvariant)) {
         self.sums.clear();
         self.sums.resize(self.bodies.len(), Accumulator::default());
@@ -533,11 +541,13 @@ impl ContactSolver {
             }
             let (ia, ib) = (pair.a as usize, pair.b as usize);
             let (a, b) = (&self.bodies[ia], &self.bodies[ib]);
+            let counts = (self.steps[ia].moves, self.steps[ib].moves);
             let correction = match pair.cached {
-                Some(cached) if !self.steps[ia].moved && !self.steps[ib].moved => cached,
+                Some(cached) if pair.cached_at == counts => cached,
                 _ => pair_correction(pair, a, b),
             };
             pair.cached = Some(correction);
+            pair.cached_at = counts;
             match correction {
                 Ok(None) => {}
                 Ok(Some((delta_a, delta_b))) => {
@@ -623,7 +633,6 @@ impl ContactSolver {
     ) -> bool {
         let mut moved = false;
         for ((body, acc), last) in self.bodies.iter_mut().zip(&self.sums).zip(&mut self.steps) {
-            last.moved = false;
             if acc.count == 0 || body.party.fixed {
                 continue;
             }
@@ -644,7 +653,7 @@ impl ContactSolver {
             match target.and_then(|target| terrain(body, target)) {
                 Ok(Some(next)) if next != body.position => {
                     body.position = next;
-                    last.moved = true;
+                    last.moves = last.moves.wrapping_add(1);
                     moved = true;
                 }
                 Ok(_) => last.held = attempted,
@@ -1593,6 +1602,83 @@ mod tests {
         for (before, after) in bodies.iter().zip(&solved.bodies) {
             assert_eq!(before.position, after.position);
         }
+        Ok(())
+    }
+
+    /// K1-T1 (plan `2026-11-25-enemy-contact-and-ring-retarget` §4.1, B-208): the enemy pass
+    /// reads its corrections at the positions it starts from. An enemy pair whose first body is
+    /// also pressed by a friend (a soft pair, ½ ½): in the one averaged iteration both bodies of
+    /// the enemy pair move; the hard friends' pass has no pair and moves nobody; the enemy pass
+    /// must then correct the pair as it stands after the averaged iteration, not reuse the
+    /// correction computed before it (which over-separates the pair by the overlap the averaged
+    /// iteration already removed). Every correction stays below half [`PAIR_SLACK`], so the pair
+    /// list is not rebuilt between the passes (a rebuild empties the cache and would hide the
+    /// defect).
+    #[test]
+    fn the_enemy_pass_reads_corrections_at_its_own_positions(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut world = flat_world(None)?;
+        let settings = SolverSettings {
+            iterations: 1,
+            ..SETTINGS
+        };
+        let bodies = [
+            solver_body(1, party(0), 0.5, at(20.0, 20.0), at(20.0, 20.0)),
+            solver_body(2, party(1), 0.5, at(20.8, 20.0), at(20.8, 20.0)),
+            solver_body(3, party(0), 0.5, at(19.15, 20.0), at(19.15, 20.0)),
+        ];
+        let mut solver = ContactSolver::default();
+        solver.bodies.extend_from_slice(&bodies);
+        let mut errors = Vec::new();
+        let mut report = |e| errors.push(e);
+        // Every terrain call: the body as it stood and the target it was given.
+        let mut calls: Vec<(SolverBody, SimVec2)> = Vec::new();
+        let map = &world.map;
+        let size = (map.width(), map.height());
+        let pathfinder = &mut world.pathfinder;
+        solver.solve(
+            (settings, size),
+            |a, b| bodies_touch(map, a, b),
+            |body, target| {
+                calls.push((*body, target));
+                terrain_step(
+                    map,
+                    pathfinder,
+                    body.policy,
+                    (body.start, body.position),
+                    target,
+                )
+            },
+            &mut report,
+        );
+        assert_eq!(errors, []);
+        assert_eq!(solver.pair_count(), 2);
+        // The enemy pass is each enemy body's last terrain call; the averaged one came before.
+        let last = |id: u32| calls.iter().rev().find(|(b, _)| b.id == EntityId(id));
+        let averaged = |id: u32| {
+            calls
+                .iter()
+                .find(|(b, _)| b.id == EntityId(id))
+                .map(|(b, _)| *b)
+        };
+        let (Some((a, target_a)), Some((b, target_b))) = (last(1), last(2)) else {
+            return Err("both enemy bodies take an enemy correction".into());
+        };
+        assert_ne!(
+            averaged(2).map(|first| first.position),
+            Some(b.position),
+            "the enemy body moved in the averaged iteration"
+        );
+        let pair = solver
+            .pairs
+            .iter()
+            .find(|p| p.last)
+            .ok_or("the enemy pair")?;
+        let Some((delta_a, delta_b)) = pair_correction(pair, a, b)? else {
+            return Err("the enemy pair still overlaps after the averaged iteration".into());
+        };
+        assert_eq!(*target_a - a.position, delta_a, "first body's correction");
+        assert_eq!(*target_b - b.position, delta_b, "second body's correction");
         Ok(())
     }
 
