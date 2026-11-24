@@ -845,7 +845,7 @@
     ),
     (
         name: "26_100_lings_vs_6_colossi",
-        claim: "Six colossi vaporize a hundred zerglings",
+        claim: "A hundred zerglings that pack round each colossus mostly overwhelm six colossi; when the colossi win, they win narrowly",
         map_cells: 96,
         ticks: 700,
         blue: (
@@ -877,7 +877,16 @@
         // with 2 left at tick 566. So the claim "six colossi vaporize a hundred zerglings" is
         // within noise on seed 33: a miss on it is a stop only if no placebo of the same base shows
         // the same miss, and any re-examination of the claim starts from this finding.
-        expect: (blue: (0, 0), red: (2, 999)),
+        // Restated for plan 2026-11-20-contact-solver WP6 (Amendment 19, the owner's answer to
+        // Q0103, option (a)); the claim was "Six colossi vaporize a hundred zerglings". Under the
+        // contact solver the D-delta nudge the owner chose in Q0095 (Q0052 addendum) lets an
+        // engaged zergling slide along its attack ring when friends need room, so ten zerglings
+        // fit round the first colossus against three before, and the colossi die before their
+        // sweeps kill enough zerglings. On the seeds of record and seeds 1 to 20 the zerglings win
+        // 20 of 24 with 10 to 31 left, and the colossi 4 with 1 to 3 left (seed 33 of record:
+        // colossi, 2 left); with the nudge off the colossi win all 24. Colossus fire rate, damage
+        // per sweep and enemy overlap are unchanged (evidence 2026-11-20-contact-solver §13.12).
+        expect: (blue: (0, 31), red: (0, 3)),
     ),
     (
         name: "27_100_lings_vs_8_ultralisks",
@@ -901,6 +910,13 @@
     (
         name: "28_100_lings_vs_10_immortals",
         claim: "Without splash, immortals are overrun",
+        // Known bug B-192 (plan 2026-11-20-contact-solver Amendment 19, the owner's answer to
+        // Q0103, option (b)): under the contact solver a zergling whose automatically acquired
+        // immortal is surrounded stands behind it (G-6) while the rear column has room, so the
+        // immortals win 19 of 24 runs (the legacy pipeline: the zerglings all 24). The claim is
+        // StarCraft II's and stays; the matrix reports this battle as an expected failure and fails
+        // once it holds again, when B-192 (and with it the enemy shoving of B-193) is fixed.
+        known_bug: Some("B-192"),
         map_cells: 96,
         ticks: 1000,
         blue: (

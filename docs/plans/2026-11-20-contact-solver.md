@@ -2178,3 +2178,42 @@ numbers changed; every claim still holds.
 
 **Bug rows** (`DESIGN.md` §4; B-182 to B-187 are taken on `main` at `cff46b37` and by the attack-orders plan): B-188 to B-191 as §17.2 lists them, B-192 (R10), B-193 (enemy
 contact). B-157 is marked fixed: T9 holds on both ranges. B-158 is narrowed to B-189.
+
+## Amendment 19 (implementer, 2026-11-24, at the orchestrator's direction): the owner's answers to Q0102 and Q0103; known-bug battles in the matchup matrix
+
+**Answers.**
+- **Q0102: (a).** The 64 × 64 cost is accepted. It measured +66.8 % instructions on this tree (§13.13, `DESIGN.md`
+  §5), and every scenario runs at 80 ticks per second or more.
+- **Q0103, battle 26: (a).** The claim is restated to what is measured, citing the D-δ nudge (Q0095).
+  - New claim: "A hundred zerglings that pack round each colossus mostly overwhelm six colossi; when the colossi
+    win, they win narrowly".
+  - New expectation: blue 0..31, red 0..3 (was blue 0..0, red 2..999). It covers the seeds of record and seeds 1 to
+    20 under the solver pipeline: the zerglings win 20 of 24 with 10 to 31 left, the colossi 4 with 1 to 3 left.
+  - The fixture comment cites D-δ, Q0095 and Q0103.
+- **Q0103, battle 28: (b).** The StarCraft II claim stays, and the solver merges with battle 28 marked as an expected
+  failure for B-192. B-192 (retargeting round a surrounded front row) and B-193 (enemy shoving) stay open for a
+  dedicated follow-up. Its starting point is the stopped G-6′ on `contact-solver-g6p-wip` (Amendment 18).
+
+**The expected-failure mechanism (data, not code per battle).**
+- **The marker.** A battle of `matchup_matrix.ron` may carry `known_bug: Some("B-…")`, an open row of `DESIGN.md`'s
+  bug register. Absent, it means `None`.
+- **The verdict.** `Battle::verdict` (`sim_fixtures::matchup`) judges a battle's seeds of record:
+
+  | Verdict | When | The matrix test |
+  |---|---|---|
+  | `Holds` | no marker, every seed holds the claim | passes |
+  | `Broken` | no marker, some seed breaks the claim | fails |
+  | `ExpectedFailure` | marked, some seed breaks the claim | passes, and lists the battle apart, tagged with its bug |
+  | `StaleKnownBug` | marked, every seed holds the claim | fails: the bug is to be closed and the marker removed |
+
+  So a marker cannot outlive its bug.
+- **The register check.** `every_known_bug_marker_names_an_open_bug_of_the_register` checks that each marker names
+  a row of `DESIGN.md`'s register that is not marked fixed.
+- **The trace tool.** Its whole-matrix mode tags the failures of a marked battle with its bug.
+- **Tests first.** `matchup::tests::a_known_bug_turns_a_broken_claim_into_an_expected_failure_and_goes_stale_when_it_holds`
+  and `the_fixture_reads_a_known_bug_marker` were red (they did not compile, then the fixture had no marker) before
+  the mechanism and the marker.
+- **Battle 28** carries `known_bug: Some("B-192")`.
+
+**The merge** of `main` and the one golden re-record wait for the orchestrator's word: main is about to take schemas
+44 and 45.
