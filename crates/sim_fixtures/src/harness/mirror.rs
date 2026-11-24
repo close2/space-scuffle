@@ -6,7 +6,9 @@
 //! the same army at the point reflection of every position (plan `2026-11-20-contact-solver`
 //! §6.2). Blue, spawned first, has the lower entity ids. [`run`] plays the battle: both sides
 //! attack-move to the other's centroid, again every 100 ticks, for at most 3,000 ticks, with the
-//! random weapon delays removed, and reports who won and the visible reversals (M1).
+//! random weapon delays removed, and reports who won, the visible reversals (M1) and D-R10, the
+//! unit-ticks spent standing on an automatic chase while another enemy had room (plan Amendment
+//! 17).
 //!
 //! # How it fits
 //! Archetypes are chosen by their properties from the shipped catalog, never by name (charter
@@ -23,8 +25,8 @@ use super::{Family, HarnessError, RunOptions};
 use sim_core::{SimWorld, UnitCatalog};
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
-    EntityId, MoverType, PlayerCommand, PlayerId, ShapeKind, SimScalar, SimVec2, Tick, TickBundle,
-    UnitOrder, UnitTypeId,
+    AttackOrigin, EntityId, MoverType, PlayerCommand, PlayerId, ShapeKind, SimScalar, SimVec2,
+    Tick, TickBundle, UnitOrder, UnitTypeId,
 };
 
 /// The map's side, cells.
@@ -63,25 +65,30 @@ pub struct MirrorRow {
     pub rev_amp: u32,
     /// Simulation diagnostics raised.
     pub diagnostics: u32,
+    /// D-R10 (plan `2026-11-20-contact-solver` Amendment 17): unit-ticks a unit stood on an
+    /// automatic chase out of reach of its target while another enemy in its scan range had room
+    /// on its ring ([`stands_with_room`]). Reported, not a threshold.
+    pub dr10: u32,
 }
 
 impl MirrorRow {
     /// The CSV header, in [`Self::to_csv`] order.
     pub const HEADER: &'static str =
-        "family,seed,winner,ticks,blue_left,red_left,rev_amp,diagnostics";
+        "family,seed,winner,ticks,blue_left,red_left,rev_amp,diagnostics,dr10";
 
     /// The row as one CSV line.
     #[must_use]
     pub fn to_csv(&self) -> String {
         format!(
-            "mirror,{},{},{},{},{},{},{}",
+            "mirror,{},{},{},{},{},{},{},{}",
             self.seed,
             self.winner,
             self.ticks,
             self.blue_left,
             self.red_left,
             self.rev_amp,
-            self.diagnostics
+            self.diagnostics,
+            self.dr10
         )
     }
 }
@@ -250,6 +257,7 @@ fn play(world: &mut SimWorld, sides: &[Vec<EntityId>; 2], seed: u64) -> MirrorRo
         row.diagnostics = row
             .diagnostics
             .saturating_add(u32::try_from(world.drain_diagnostics().count()).unwrap_or(u32::MAX));
+        row.dr10 = row.dr10.saturating_add(standing_with_room(world, &last));
         for (id, position, step, speed) in &mut last {
             let Some(entity) = world.entities.get(id).filter(|e| e.is_alive()) else {
                 continue;
@@ -284,6 +292,105 @@ fn play(world: &mut SimWorld, sides: &[Vec<EntityId>; 2], seed: u64) -> MirrorRo
         _ => 2,
     };
     row
+}
+
+/// One living unit at the start of the tick just played: id, owner, centre (world units) and
+/// collision radius.
+type Body = (EntityId, PlayerId, Point, f64);
+
+/// D-R10 for the tick just played: how many units stood on an automatic chase with room
+/// elsewhere ([`stands_with_room`]). `last` holds every unit's centre at the tick's start.
+fn standing_with_room(world: &SimWorld, last: &[(EntityId, Point, Option<Point>, f64)]) -> u32 {
+    let bodies: Vec<Body> = last
+        .iter()
+        .filter_map(|&(id, before, _, _)| {
+            let entity = world.entities.get(&id).filter(|e| e.is_alive())?;
+            let radius = world
+                .catalog
+                .get(entity.unit_type_id)
+                .ok()?
+                .collision_radius;
+            Some((id, entity.owner, before, to_f64(radius)))
+        })
+        .collect();
+    let standing = bodies
+        .iter()
+        .filter(|&&body| stands_with_room(world, &bodies, body))
+        .count();
+    u32::try_from(standing).unwrap_or(u32::MAX)
+}
+
+/// The band's outer edge (centre to centre, world units) at which `entity` reaches `enemy`, or
+/// `None` when it has no weapon against it.
+fn band_against(
+    world: &SimWorld,
+    entity: &sim_core::Entity,
+    enemy: &sim_core::Entity,
+) -> Option<f64> {
+    let arch = world.catalog.get(entity.unit_type_id).ok()?;
+    let enemy_arch = world.catalog.get(enemy.unit_type_id).ok()?;
+    let weapon = arch.weapon_against(enemy_arch.mover_type, entity.active_siege_weapon())?;
+    Some(to_f64(
+        weapon.max_range + arch.collision_radius + enemy_arch.collision_radius,
+    ))
+}
+
+/// Whether `body` stood this tick (it did not move and has no velocity) on an automatic chase
+/// (`AttackTarget` with `AttackOrigin::Acquired`) whose target lies beyond its band, while some
+/// other enemy within its scan range (edge to edge, at least its weapon's range) had room on the
+/// ring the ring rule reads round it (radius band − r / 2), all at the tick's start positions.
+fn stands_with_room(world: &SimWorld, bodies: &[Body], body: Body) -> bool {
+    let (id, owner, before, r) = body;
+    let Some(entity) = world.entities.get(&id) else {
+        return false;
+    };
+    let Some(&UnitOrder::AttackTarget {
+        target,
+        origin: AttackOrigin::Acquired,
+    }) = entity.order_queue.front()
+    else {
+        return false;
+    };
+    if point(entity.position) != before || entity.velocity != SimVec2::ZERO {
+        return false;
+    }
+    let distance = |a: Point, b: Point| (a.0 - b.0).hypot(a.1 - b.1);
+    let start = |wanted: EntityId| bodies.iter().find(|b| b.0 == wanted).copied();
+    let (Some(target_body), Some(target_entity)) = (start(target), world.entities.get(&target))
+    else {
+        return false;
+    };
+    if band_against(world, entity, target_entity)
+        .is_none_or(|band| distance(before, target_body.2) <= band)
+    {
+        return false;
+    }
+    let Ok(arch) = world.catalog.get(entity.unit_type_id) else {
+        return false;
+    };
+    bodies
+        .iter()
+        .filter(|other| other.1 != owner && other.0 != target)
+        .any(|&(enemy, _, at, radius)| {
+            let Some(band) = world
+                .entities
+                .get(&enemy)
+                .and_then(|e| band_against(world, entity, e))
+            else {
+                return false;
+            };
+            let reach = band - r - radius;
+            let scan = to_f64(arch.scan_range).max(reach);
+            if distance(before, at) - r - radius > scan {
+                return false;
+            }
+            let others: Vec<(Point, f64)> = bodies
+                .iter()
+                .filter(|b| b.0 != enemy && b.0 != id)
+                .map(|b| (b.2, b.3))
+                .collect();
+            super::room::ring_has_room(at, band - r / 2.0, r, &others)
+        })
 }
 
 /// The centroid of `units`' positions, exact in Q32.32 up to the division's rounding.

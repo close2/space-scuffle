@@ -10,6 +10,10 @@
 //!   such angle, ties clockwise (G-3), keeping last tick's gap while that stays free;
 //! - no angle is free: it stands, keeps its order and accrues no stall (G-6, Q0089).
 //!
+//! [`SimWorld::ring_retarget`] is G-6′ (Amendment 17, R10, deviation D-ε): before an automatic
+//! chase stands, it walks the unit's acquisition candidates in acquisition order and returns the
+//! first whose ring the rule does not stand on.
+//!
 //! # How it fits
 //! The pursuit (`locomotion::prepare_pursuit`) asks it once per chase and tick, before the chase
 //! steps. Occupancy is **geometry, not class**: a body blocks the ring when its disc reaches it,
@@ -39,8 +43,13 @@ use sim_types::{EntityId, SimAngle, SimScalar, SimVec2};
 /// What the ring rule decides for one chase this tick.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RingAim {
-    /// The unit's bearing point is free, or the rule does not apply: chase straight in.
+    /// The unit's bearing point is free and admissible, or the unit is already in its band:
+    /// chase straight in.
     Straight,
+    /// The rule does not apply: the unit's own bearing point lies beyond the leash or where its
+    /// terrain disc cannot stand. The pursuit chases straight in, exactly as for
+    /// [`Self::Straight`]; G-6′ (plan Amendment 17) does not count it as a slot.
+    Unruled,
     /// The bearing point is blocked; the nearest free angle and its point on the ring.
     Gap(SimAngle, SimVec2),
     /// No free angle on the ring: stand, keep the order, accrue no stall.
@@ -233,7 +242,7 @@ impl SimWorld {
         if !leashed(own) || !disc_sweeps(map, pathfinder, policy, own, own) {
             // The unit does not come at the ring along its bearing (terrain or the leash is in
             // the way): the chase runs as it always has.
-            return Ok(RingAim::Straight);
+            return Ok(RingAim::Unruled);
         }
         if is_free(bearing, intervals) {
             return Ok(RingAim::Straight);
@@ -369,6 +378,73 @@ impl SimWorld {
         });
     }
 
+    /// G-6′ (plan `2026-11-20-contact-solver` Amendment 17, R10): for a pursuer at `position`
+    /// whose automatic chase of `current` the ring rule stands, the first other enemy, in the
+    /// order acquisition ranks them from the tick-start positions, whose ring the rule does not
+    /// stand on: a free bearing point, a gap within the chase's `leash`, or the unit already in
+    /// its band. Returns that enemy, the rule's aim at it and its band's outer edge (raw units),
+    /// or `None` when every candidate's ring is full, out of reach or unruled.
+    ///
+    /// The candidates and their order are acquisition's own ([`SimWorld::ranked_candidates`]);
+    /// every input is a tick-start position, the phase-4 spatial hash or static, so the answer
+    /// does not depend on the order pursuers are processed in.
+    ///
+    /// # Errors
+    /// An unrepresentable distance or point of a candidate's ring.
+    pub(crate) fn ring_retarget(
+        &mut self,
+        entry: MotionEntry,
+        position: SimVec2,
+        current: EntityId,
+        leash: Option<(SimVec2, SimScalar)>,
+    ) -> Result<Option<(EntityId, RingAim, i128)>, MovementInvariant> {
+        // PERFORMANCE RATIONALE:
+        // Why: G-6′ runs for every standing automatic chaser every tick; fresh candidate lists
+        // would allocate in the movement phase's hot loop.
+        // What: The neighbour ids and the ranked list are retained buffers of the movement
+        // workspace, taken for the call and put back.
+        // Trade-off: Memory stays at the most crowded scan's high-water mark.
+        let mut neighbours = std::mem::take(&mut self.movement.retarget_neighbours);
+        let mut ranked = std::mem::take(&mut self.movement.retarget_ranked);
+        let found = match self.entities.get(&entry.id) {
+            Some(actor) => {
+                self.ranked_candidates(actor, position, current, &mut neighbours, &mut ranked);
+                self.first_open_ring(entry, position, leash, &ranked)
+            }
+            None => Ok(None),
+        };
+        self.movement.retarget_neighbours = neighbours;
+        self.movement.retarget_ranked = ranked;
+        found
+    }
+
+    /// The first of `ranked` whose ring the rule does not stand on (see [`Self::ring_retarget`]).
+    fn first_open_ring(
+        &mut self,
+        entry: MotionEntry,
+        position: SimVec2,
+        leash: Option<(SimVec2, SimScalar)>,
+        ranked: &[(crate::combat::TargetPriorityKey, EntityId)],
+    ) -> Result<Option<(EntityId, RingAim, i128)>, MovementInvariant> {
+        for &(_, candidate) in ranked {
+            let Some(band_max) = self.chase_band(entry, candidate)? else {
+                continue;
+            };
+            let aim = self.ring_aim(RingChase {
+                entry,
+                position,
+                target: candidate,
+                band_max,
+                leash,
+                kept: None,
+            })?;
+            if matches!(aim, RingAim::Straight | RingAim::Gap(..)) {
+                return Ok(Some((candidate, aim, band_max)));
+            }
+        }
+        Ok(None)
+    }
+
     /// The position `id` had when this tick's movement phase began, world units: from the
     /// phase's record, or the entity's position when it takes no part in movement.
     pub(crate) fn tick_start_position(&self, id: EntityId) -> SimVec2 {
@@ -398,6 +474,53 @@ mod tests {
 
     fn at(x: f64, y: f64) -> SimVec2 {
         SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(y))
+    }
+
+    /// Test 6 of plan Amendment 17: a chase whose own bearing point lies beyond its leash is
+    /// `Unruled`, not `Straight`, so G-6′ never takes it for a slot; the same chase without the
+    /// leash, its bearing point free, is `Straight`.
+    #[test]
+    fn a_bearing_point_beyond_the_leash_is_unruled() -> Result<(), Box<dyn std::error::Error>> {
+        let map = sim_map::GameMap::new(
+            32,
+            32,
+            sim_map::MapCell::default_ground(sim_map::CliffLevel(0)),
+        )?;
+        let mut world = crate::test_support::world(map, 0x0A17_0006);
+        let kind = world
+            .catalog
+            .archetypes()
+            .find(|a| {
+                a.mover_type == sim_types::MoverType::Ground
+                    && a.max_speed > SimScalar::ZERO
+                    && a.weapon.is_some()
+            })
+            .map(|a| a.unit_type_id)
+            .ok_or("an armed ground unit")?;
+        let unit = world.spawn_unit(kind, sim_types::PlayerId(0), at(8.0, 16.0))?;
+        let target = world.spawn_unit(kind, sim_types::PlayerId(1), at(16.0, 16.0))?;
+        // One tick builds the movement phase's snapshot and body grids the rule reads.
+        world.step(&sim_types::TickBundle {
+            tick: sim_types::Tick(world.current_tick),
+            commands: Vec::new(),
+            state_checksum: None,
+        });
+        let entry = world.motion_entry(unit)?;
+        let chase = RingChase {
+            entry,
+            position: at(8.0, 16.0),
+            target,
+            band_max: i128::from(SimScalar::from_num(2).raw()),
+            leash: None,
+            kept: None,
+        };
+        assert_eq!(world.ring_aim(chase)?, RingAim::Straight);
+        let leashed = RingChase {
+            leash: Some((at(8.0, 16.0), SimScalar::from_num(3))),
+            ..chase
+        };
+        assert_eq!(world.ring_aim(leashed)?, RingAim::Unruled);
+        Ok(())
     }
 
     /// A free bearing is chased straight; a blocked one aims at the nearest free angle; a full

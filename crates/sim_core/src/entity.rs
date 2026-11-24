@@ -303,6 +303,11 @@ pub struct MovementMemory {
     /// nobody else reads it. Written only by the solver pipeline; `None` under the legacy
     /// pipeline and while the unit's own bearing point is free.
     pub slot: Option<SlotClaim>,
+    /// The target G-6′ handed this unit to when its own target's ring was full (plan
+    /// `2026-11-20-contact-solver` Amendment 17, R10): acquisition keeps it unless a candidate
+    /// outranks it, so the nearer, full target is not taken back the next tick. Written only by
+    /// the solver pipeline; cleared by a restart, and so by any change of target or order.
+    pub ring_retarget: Option<EntityId>,
 }
 
 /// The gap an attacker walks to on the ring round its target (plan `2026-11-20-contact-solver`

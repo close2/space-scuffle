@@ -5,9 +5,9 @@
 //! `2026-11-18-contour-footprints` Amendment 4, B-142) and the contact rules of plan
 //! `2026-11-20-contact-solver` (§3.6): which movement pipeline runs, the contact solver's
 //! iteration count, its dead band and moving-overlap bound (sanctioned deviation D-α), the side
-//! rule's horizon factor and the D-β switch. It is parsed into [`MovementRules`], validated, and
-//! carried by the [`UnitCatalog`](super::UnitCatalog) the world is built with. Like every catalog
-//! it is not hashed; lockstep peers must load equal files.
+//! rule's horizon factor and the D-β, D-δ and D-ε switches. It is parsed into
+//! [`MovementRules`], validated, and carried by the [`UnitCatalog`](super::UnitCatalog) the world
+//! is built with. Like every catalog it is not hashed; lockstep peers must load equal files.
 //!
 //! Invariants: a [`MovementRules`] value always has a tolerance in `0..=1000` permille, a leash
 //! radius of at least one world unit, and [`ContactRules`] with at least one iteration,
@@ -63,10 +63,20 @@ pub struct ContactRules {
     /// attack ring, never out of range, never by enemies, never on Hold Position. On when absent.
     #[serde(default = "nudge_default")]
     pub nudge_engaged_along_ring: bool,
+    /// Deviation D-ε, G-6′ (plan Amendment 17, R10): an automatic chase whose target's ring has
+    /// no free angle takes, in the normal acquisition order, the next enemy in range whose ring
+    /// has room, before it stands. On when absent.
+    #[serde(default = "retarget_default")]
+    pub retarget_from_full_ring: bool,
 }
 
 /// D-δ is on unless the file switches it off (Q0095).
 const fn nudge_default() -> bool {
+    true
+}
+
+/// D-ε is on unless the file switches it off (plan Amendment 17).
+const fn retarget_default() -> bool {
     true
 }
 
@@ -81,6 +91,7 @@ impl ContactRules {
         side_horizon_factor: 2,
         moving_friends_push: true,
         nudge_engaged_along_ring: true,
+        retarget_from_full_ring: true,
     };
 
     /// These rules if they are valid (§3.6).
@@ -374,6 +385,18 @@ mod tests {
         let off = CONTACT.replace("true)", "true, nudge_engaged_along_ring: false)");
         let rules = MovementRules::from_ron_str(&text(21, &off))?;
         assert!(!rules.contact().nudge_engaged_along_ring);
+        Ok(())
+    }
+
+    /// Deviation D-ε (plan Amendment 17): the full-ring switch is on when the file omits it, and
+    /// the file can switch it off.
+    #[test]
+    fn the_full_ring_switch_defaults_on_and_can_be_switched_off() -> SimResult<()> {
+        let absent = MovementRules::from_ron_str(&text(21, CONTACT))?;
+        assert!(absent.contact().retarget_from_full_ring);
+        let off = CONTACT.replace("true)", "true, retarget_from_full_ring: false)");
+        let rules = MovementRules::from_ron_str(&text(21, &off))?;
+        assert!(!rules.contact().retarget_from_full_ring);
         Ok(())
     }
 }

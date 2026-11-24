@@ -95,7 +95,11 @@ use std::collections::BTreeMap;
 /// outside an attack order (a `bool`), `WeaponSpec::allowed_movement` and
 /// `WeaponSpec::fires_outside_attack_order`, after `turret_idle` (plan `2026-11-23-turret-wind-up`
 /// D-9).
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 40;
+/// Schema 42 adds each unit's full-ring retarget, `MovementMemory::ring_retarget` (an `Option` of
+/// an entity id), after its remembered gap (plan `2026-11-20-contact-solver` Amendment 17, G-6′).
+/// Only the solver pipeline writes it. The number is the next free one at the merge (41 is
+/// reserved for the vision branch), and is renumbered then if needed.
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 42;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.
