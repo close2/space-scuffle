@@ -679,7 +679,7 @@ tree), each named in the commit. Guards that pass unchanged: `target_selection_t
 
 ---
 
-## 15. Draft owner question (for the orchestrator to file as Q0109; not filed by this plan)
+## 15. Draft owner question (filed as [Q0109](../questions/open/0109-turret-and-off-order-fire.md))
 
 ```markdown
 # Q0109: Turrets while firing and between shots, and weapons that fire off their attack order
