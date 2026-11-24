@@ -639,3 +639,59 @@ Every option changes presentation only: no battle outcome, replay or checksum mo
   to CurseForge, and Liquipedia answered HTTP 429). The Hive Workshop's damage-effect page answered HTTP 502.
 - No prototype: WP1's record and drop rules are small and fully covered by constructed tests, and no world is
   expected to move.
+
+---
+
+## As built
+
+Built on branch `attacker-snapshot-plan` from `b010d0a6` (main `8a15bff9`, schema 45), 2026-11-24, with Q0112's
+defaults 1(a), 2(a), 3(a). Evidence: [`docs/evidence/2026-11-24-attacker-snapshot.md`](../evidence/2026-11-24-attacker-snapshot.md).
+
+| WP | Commit | What |
+|---|---|---|
+| WP0 | `7ba9581d` | B-183 restated; B-204 to B-206 registered (provisional numbers); baseline on four builds |
+| WP1 | `f547d7e2` | D-1 to D-4 in `sim_types` and `sim_core`; P-1 to P-12 |
+| WP2 | `032cf676` | D-5 in the client; P-13 to P-16 |
+| WP3 | `3e8b5295` | P-17, P-18 on radv and lavapipe; capture for review |
+| WP4 | this commit | Records |
+
+No checksum, golden, schema or measured world moved: both goldens and `DEFAULT_SANDBOX_CHECKSUM` pass unchanged on
+native debug and release and `wasm32-wasip1` release and debug, on the WP1 commit and on the final tree.
+
+Deviations from the plan:
+
+1. **The view leaves out a shown attacker's snapshot (R-7).** P-7 found that an attacker walking into the viewer's
+   sight during a tick's movement phase, after that tick's vision phase pruned, was listed both as a unit in sight and
+   as a snapshot for one tick. `write_player_view` now skips a record whose attacker it shows now
+   (`SimWorld::snapshot_attacker_shown`, the second half of D-2's drop rule, shared with the prune). The record itself
+   is still dropped by the vision phase on the next tick. Presentation only.
+2. **The pose carries no weapon visual.** `snapshot_bubble` derives the visual from the pose's settled mode
+   (`ground_weapon_override` of `arch.modes[mode]`), as `bubble_instance` derives it from the entity's active
+   siege weapon. They agree for every `SwitchMode` mode; they would differ only for a `SiegeModeToggle` stance whose
+   mode the archetype does not declare, which no shipped unit has.
+3. **Shared parts of the two render records** are a private `Placed` (world position, ground height, drawn radius,
+   weapon visual) and `published_share`/`fraction`; C7's allowance of `world/snapshot.rs` rose from 3 to 7, with
+   this plan's reference.
+4. **`PlayerView::attack_snapshots` is filled by `clear` then `push`**, not element-wise `clone_from`:
+   `AttackSnapshotView` holds no heap storage, so the refill allocates nothing once warm (P-2's test). The client's
+   copy uses `Vec::clone_from`, which reuses each element.
+5. **A shared test support file**, `crates/client/tests/support/attack_snapshot_stage.rs` (not in §10), stages the
+   fight for `battle_fog_tests`, `sync_steady_state_tests`, `sync_allocation_count_tests` and the GPU test: it reads
+   the shipped skirmish map's cliff levels for the edge farthest from the local units, with two cells of open ground
+   round each soldier (a soldier at a cliff's foot stands outside its terrain-radius movement domain).
+6. **Also touched:** `crates/client/tests/system_ownership_tests.rs` (the pool is a declared writer of bubble
+   materials), `crates/client/tests/support/battle_harness.rs` (`unit_on_screen` finds a unit's own bubble, never its
+   image), `effects/catalog/error.rs` (`SnapshotLookNotHeldShell`). `EffectCatalog::snapshot_look` reads the look.
+   A missing `defaults.snapshot` draws the image without a look, as every other optional default; the shipped file
+   names one and a test requires it.
+7. **P-16's allocation count** stages the snapshot before the session begins and makes the struck unit
+   invulnerable, so the running children hold one unchanged image through the window; the view writer and the fog
+   refill run in the running live child beside the pool.
+8. **P-17's dimming bound** is that the image keeps at most half the live unit's mean chroma: "lower" alone also
+   passed without the look (the still frame is a little duller, 0.80), so the bound tests the look.
+9. **P-18's "frames byte-identical"** is shown structurally (no pool, no system, no entity under the sandbox),
+   not by a pixel comparison across trees.
+10. **The showcase** (§7) runs under the player's fog. Its `battle` take shows one snapshot on ticks 313 to 328 and
+    345 to 348 (the opening of the lane fight); the `effects` take none. CI renders the video, so nothing was
+    re-recorded. Measured after WP2, since no earlier tree records snapshots.
+11. **Not run here:** `cargo gate package` and the throughput bench (the verifier's package gate, Q0061).
