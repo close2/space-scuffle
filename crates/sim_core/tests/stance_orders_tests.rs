@@ -466,12 +466,11 @@ fn the_default_stance_takes_stop_when_mobile_or_armed_and_hold_when_mobile() {
     for arch in catalogs.units.archetypes() {
         let mobile = !arch.is_immobile_by_default();
         let armed = arch.stance_armed(None);
+        // The A command has its own derivation and table (plan `2026-11-24-attack-orders` P-1).
+        let orders = arch.stance_orders(None);
         assert_eq!(
-            arch.stance_orders(None),
-            StanceOrders {
-                stop: mobile || armed,
-                hold_position: mobile,
-            },
+            (orders.stop, orders.hold_position),
+            (mobile || armed, mobile),
             "{}",
             arch.slug
         );

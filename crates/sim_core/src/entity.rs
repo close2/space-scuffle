@@ -12,9 +12,9 @@ use crate::catalog::{UnitArchetype, WeaponSpec};
 use crate::movement::MovementMathError;
 use crate::weapon_timing::{combined_attack_rate, AttackRate, InvalidBuffAttackRate};
 use sim_types::{
-    AbilityEffectSpec, AnimState, AttackDashSpec, AttackOrigin, BarrierSpec, EffectSource,
-    EntityId, MoverType, OverclockSpec, PlayerId, ResourceKind, ResourceNodeId, ShapeKind,
-    SimAngle, SimScalar, SimVec2, StanceOrders, UnitModeSpec, UnitOrder, UnitTypeId,
+    AbilityEffectSpec, AnimState, AttackCommand, AttackDashSpec, AttackOrigin, BarrierSpec,
+    EffectSource, EntityId, MoverType, OverclockSpec, PlayerId, ResourceKind, ResourceNodeId,
+    ShapeKind, SimAngle, SimScalar, SimVec2, StanceOrders, UnitModeSpec, UnitOrder, UnitTypeId,
 };
 use std::collections::VecDeque;
 
@@ -1297,6 +1297,41 @@ impl Entity {
         archetype.stance_orders(self.settled_mode(archetype))
     }
 
+    /// The A command of the stance this unit is in or is switching to ([`Self::settled_mode`]),
+    /// by [`UnitArchetype::stance_orders`]: Attack, Scan Move or none (plan
+    /// `2026-11-24-attack-orders` D-2). `archetype` must be this unit's. Read-only and
+    /// allocation-free, so the client's card and its admission share the simulation's rule.
+    #[must_use]
+    pub fn settled_attack_command(&self, archetype: &UnitArchetype) -> AttackCommand {
+        self.settled_stance_orders(archetype).attack
+    }
+
+    /// Whether an attack order on `target` reaches this unit (`StarCraft` II's `ToSelection`,
+    /// `core` AbilData:127-129; plan `2026-11-24-attack-orders` D-2): the stance it is in or is
+    /// switching to has [`AttackCommand::Attack`], `target` is another unit, and that stance's
+    /// weapon against `target`'s plane ([`UnitArchetype::stance_weapon_against`]) exists and its
+    /// `target_flags` meet `target`'s attributes, as automatic acquisition requires.
+    ///
+    /// The target's owner is not read: 5.0.14's attack ability leaves out own and allied units
+    /// only for acquisition and the smart click (`core` AbilData:117-119, B-175), so an A-click on
+    /// one's own unit attacks it. `archetype` must be this unit's and `target_archetype`
+    /// `target`'s. Read-only and allocation-free; the simulation's admission
+    /// (`SimWorld::issue_plain_order`) and the client's share it.
+    #[must_use]
+    pub fn can_attack(
+        &self,
+        archetype: &UnitArchetype,
+        target: &Self,
+        target_archetype: &UnitArchetype,
+    ) -> bool {
+        let stance = self.settled_mode(archetype);
+        target.id != self.id
+            && archetype.stance_orders(stance).attack == AttackCommand::Attack
+            && archetype
+                .stance_weapon_against(stance, target_archetype.mover_type)
+                .is_some_and(|weapon| weapon.target_flags.intersects(target_archetype.attributes))
+    }
+
     /// Whether this unit is armed in the stance it is in or is switching to
     /// ([`Self::settled_mode`]), by [`UnitArchetype::stance_armed`]. `archetype` must be this
     /// unit's. Read-only and allocation-free, so the client's Attack entry and its admission
@@ -1572,6 +1607,167 @@ mod order_walks_tests {
         }
         entity.order_queue.clear();
         assert!(!entity.order_walks(), "no order does not walk");
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod can_attack_tests {
+    //! Plan `2026-11-24-attack-orders` D-2: `Entity::can_attack`, the one rule for "can this
+    //! unit attack that unit" the simulation's admission and the client's share.
+    use crate::catalog::UnitArchetype;
+    use crate::test_support::world;
+    use crate::SimWorld;
+    use sim_map::{CliffLevel, GameMap, MapCell};
+    use sim_types::{
+        AbilityEffectSpec, AttackCommand, AttributeFlags, EntityId, MoverType, PlayerId, SimVec2,
+        StanceOrders,
+    };
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    fn bare() -> Result<SimWorld, Box<dyn std::error::Error>> {
+        Ok(world(
+            GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?,
+            5,
+        ))
+    }
+
+    /// The first shipped archetype `pick` accepts.
+    fn find(world: &SimWorld, pick: impl Fn(&UnitArchetype) -> bool) -> Option<UnitArchetype> {
+        world.catalog.archetypes().find(|arch| pick(arch)).cloned()
+    }
+
+    /// Whether `unit` can attack `target`, by their own archetypes.
+    fn attacks(world: &SimWorld, unit: EntityId, target: EntityId) -> bool {
+        let unit = &world.entities[&unit];
+        let target = &world.entities[&target];
+        let (Ok(arch), Ok(target_arch)) = (
+            world.catalog.get(unit.unit_type_id),
+            world.catalog.get(target.unit_type_id),
+        ) else {
+            return false;
+        };
+        unit.can_attack(arch, target, target_arch)
+    }
+
+    /// Self is refused, the owner is not read, and the plane and attribute flags of the target
+    /// are: a ground-only armed walker attacks an enemy and an own ground unit, never itself or
+    /// an air unit, and nothing its weapon's `target_flags` leave out.
+    #[test]
+    fn self_is_refused_owner_ignored_plane_and_flags_read() -> TestResult {
+        let mut world = bare()?;
+        let gunner = find(&world, |arch| {
+            !arch.is_immobile_by_default()
+                && arch.mover_type == MoverType::Ground
+                && arch.air_weapon.is_none()
+                && arch.weapon_against(MoverType::Ground, None).is_some()
+                && arch.modes.is_empty()
+        })
+        .ok_or("a ground-only armed walker")?;
+        let flyer = find(&world, |arch| arch.mover_type == MoverType::Air).ok_or("an air unit")?;
+        let at = |x: i32| SimVec2::from_i32(x, 10);
+        let unit = world.spawn_unit(gunner.unit_type_id, PlayerId(0), at(8))?;
+        let own = world.spawn_unit(gunner.unit_type_id, PlayerId(0), at(10))?;
+        let enemy = world.spawn_unit(gunner.unit_type_id, PlayerId(1), at(12))?;
+        let enemy_air = world.spawn_unit(flyer.unit_type_id, PlayerId(1), at(14))?;
+        assert!(attacks(&world, unit, enemy), "an enemy ground unit");
+        assert!(
+            attacks(&world, unit, own),
+            "an own ground unit: the owner is not read"
+        );
+        assert!(!attacks(&world, unit, unit), "never itself");
+        assert!(!attacks(&world, unit, enemy_air), "no weapon against air");
+
+        let mut blind = gunner.clone();
+        for weapon in [&mut blind.weapon, &mut blind.ground_weapon]
+            .into_iter()
+            .flatten()
+        {
+            weapon.target_flags = AttributeFlags::empty();
+        }
+        let shooter = &world.entities[&unit];
+        let target = &world.entities[&enemy];
+        assert!(
+            !shooter.can_attack(&blind, target, &gunner),
+            "target_flags that meet none of the target's attributes"
+        );
+
+        let mut scan_mover = gunner.clone();
+        scan_mover.default_stance_orders = Some(StanceOrders {
+            attack: AttackCommand::ScanMove,
+            ..StanceOrders::ALL
+        });
+        assert!(
+            !shooter.can_attack(&scan_mover, target, &gunner),
+            "an armed stance whose A command is not Attack"
+        );
+        assert_eq!(
+            shooter.settled_attack_command(&scan_mover),
+            AttackCommand::ScanMove
+        );
+        assert_eq!(
+            shooter.settled_attack_command(&gunner),
+            AttackCommand::Attack
+        );
+        Ok(())
+    }
+
+    /// A unit armed only in its mode, with Attack in its default stance (the Lurker analogue,
+    /// plan S7): it attacks nothing until it is burrowing, and from the start of the switch it
+    /// attacks with the mode's replacement weapon, as the settled stance gives it.
+    #[test]
+    fn the_settled_replacement_weapon_is_used_while_switching() -> TestResult {
+        let mut world = bare()?;
+        let burrower = find(&world, |arch| {
+            !arch.stance_armed(None)
+                && !arch.is_immobile_by_default()
+                && arch.modes.iter().any(|mode| arch.stance_armed(Some(mode)))
+        })
+        .ok_or("a unit armed only in its mode")?;
+        let ground = find(&world, |arch| {
+            !arch.is_immobile_by_default() && arch.mover_type == MoverType::Ground
+        })
+        .ok_or("a ground walker")?;
+        let switch = burrower
+            .abilities
+            .iter()
+            .position(|ability| matches!(ability.effect, AbilityEffectSpec::SwitchMode { .. }))
+            .ok_or("its switch")?;
+        let unit = world.spawn_unit(burrower.unit_type_id, PlayerId(0), SimVec2::from_i32(8, 8))?;
+        let enemy = world.spawn_unit(ground.unit_type_id, PlayerId(1), SimVec2::from_i32(10, 8))?;
+        assert_eq!(
+            world.entities[&unit].settled_attack_command(&burrower),
+            burrower.stance_orders(None).attack
+        );
+        assert!(
+            !attacks(&world, unit, enemy),
+            "no weapon in the default stance"
+        );
+        let mode = burrower
+            .modes
+            .iter()
+            .find(|mode| burrower.stance_armed(Some(mode)))
+            .ok_or("the arming mode")?;
+        assert!(
+            burrower
+                .stance_weapon_against(Some(mode), MoverType::Ground)
+                .is_some(),
+            "the mode's replacement weapon"
+        );
+        assert!(burrower
+            .stance_weapon_against(None, MoverType::Ground)
+            .is_none());
+        assert!(world.execute_ability(unit, u8::try_from(switch)?, None, None));
+        assert!(
+            world.entities[&unit].channeling_remaining_ticks > 0,
+            "switching"
+        );
+        assert!(attacks(&world, unit, enemy), "the settled stance's weapon");
+        assert_eq!(
+            world.entities[&unit].settled_attack_command(&burrower),
+            mode.orders.attack
+        );
         Ok(())
     }
 }

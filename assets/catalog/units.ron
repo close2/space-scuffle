@@ -477,8 +477,9 @@
                     leave_random_delay_max_ticks: 8.9286,
                     // SiegeTankSieged carries stop, attack and Unsiege and no move, so Stop and no
                     // Hold Position (liberty UnitData:5172-5174; no later layer sets its AbilArray;
-                    // plan 2026-11-23-anchored-commands D-1, B-98).
-                    orders: (stop: true, hold_position: false),
+                    // plan 2026-11-23-anchored-commands D-1, B-98), and Attack for its A command
+                    // (attack, liberty UnitData:5173; plan 2026-11-24-attack-orders D-1).
+                    orders: (stop: true, hold_position: false, attack: Attack),
                     is_immobile: true,
                     unpushable: true,
                     is_cloaked: false,
@@ -3143,6 +3144,11 @@
             build_time_ticks: 446,
             armor_class: Some("swarm_ground_carapace"),
             weapon: None,
+            // LurkerMP carries stop and move (liberty UnitData:727-728), and 5.0.14 adds attack
+            // although it has no weapon (voidmulti UnitData:974, balancemulti UnitData:909), so
+            // its A command is Attack, not the Scan Move the derived rule gives an unarmed mobile
+            // unit (plan 2026-11-24-attack-orders D-1, B-174).
+            default_stance_orders: Some((stop: true, hold_position: true, attack: Attack)),
             modes: [
                 (
                     mode_name: "burrowed",
@@ -3152,8 +3158,9 @@
                     leave_random_delay_max_ticks: 4.4643,
                     // LurkerMPBurrowed carries move and stop, so Stop and Hold Position (liberty
                     // UnitData:793-796, void UnitData:767-769; plan 2026-11-23-anchored-commands
-                    // D-1, B-98).
-                    orders: (stop: true, hold_position: true),
+                    // D-1, B-98), and Attack for its A command (attack, liberty UnitData:793;
+                    // plan 2026-11-24-attack-orders D-1).
+                    orders: (stop: true, hold_position: true, attack: Attack),
                     is_immobile: true,
                     unpushable: true,
                     is_cloaked: true,

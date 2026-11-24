@@ -294,13 +294,36 @@ pub enum AbilityEffectSpec {
     Effect(String),
 }
 
+/// What the A key does for a unit in one stance: `StarCraft` II's Attack slot, row 0 column 4
+/// of the command card (plan `2026-11-24-attack-orders` D-1).
+///
+/// In 5.0.14 every unit with a weapon carries an attack ability, every unarmed mobile unit puts
+/// the `move` ability's `AcquireMove` (Scan Move) in that slot (`liberty` UnitData:5485-5486
+/// for the Medivac), and the unburrowed Lurker carries `attack` without a weapon (`voidmulti`
+/// UnitData:974). Catalog data, not hashed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AttackCommand {
+    /// No A command: an unarmed structure, or an anchored stance with neither `attack` nor
+    /// `move`.
+    #[default]
+    None,
+    /// The `move` ability's `AcquireMove` (Scan Move, `core` AbilData:555-557): an attack-move on
+    /// a point, never an attack on a unit.
+    ScanMove,
+    /// The `attack` ability: an attack-move on a point, or an attack on a unit the stance's
+    /// weapons can target.
+    Attack,
+}
+
 /// The plain orders a unit accepts in one stance (`StarCraft` II: whether the stance's unit type
 /// carries the `stop` ability, and the `move` ability whose `HoldPos` command is Hold Position;
-/// `core` AbilData:552-554, :1362, :1371). Plan `2026-11-23-anchored-commands` D-1.
+/// `core` AbilData:552-554, :1362, :1371), and its A command. Plans
+/// `2026-11-23-anchored-commands` D-1 and `2026-11-24-attack-orders` D-1.
 ///
-/// The two facts are independent of each other and of mobility: 5.0.14's burrowed Lurker has
-/// both (`liberty` UnitData:793-796), the sieged Siege Tank Stop only (`liberty`
-/// UnitData:5172-5174), and the burrowed Widow Mine neither (`swarm` UnitData:3312-3313).
+/// The facts are independent of each other and of mobility: 5.0.14's burrowed Lurker has
+/// Stop and Hold Position (`liberty` UnitData:793-796), the sieged Siege Tank Stop only
+/// (`liberty` UnitData:5172-5174), and the burrowed Widow Mine neither (`swarm`
+/// UnitData:3312-3313). All three fields are required in RON.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StanceOrders {
@@ -308,18 +331,22 @@ pub struct StanceOrders {
     pub stop: bool,
     /// Whether a `HoldPosition` order reaches the unit.
     pub hold_position: bool,
+    /// The stance's A command (plan `2026-11-24-attack-orders` D-1).
+    pub attack: AttackCommand,
 }
 
 impl StanceOrders {
-    /// Both plain orders: the default stance of every mobile archetype.
+    /// Both plain orders and Attack: the default stance of every mobile armed archetype.
     pub const ALL: Self = Self {
         stop: true,
         hold_position: true,
+        attack: AttackCommand::Attack,
     };
-    /// Neither plain order: the default stance of an immobile archetype.
+    /// No plain order and no A command: the default stance of an unarmed immobile archetype.
     pub const NONE: Self = Self {
         stop: false,
         hold_position: false,
+        attack: AttackCommand::None,
     };
 }
 
@@ -496,12 +523,14 @@ mod tests {
             StanceOrders::ALL,
             StanceOrders {
                 stop: true,
-                hold_position: true
+                hold_position: true,
+                attack: AttackCommand::Attack,
             }
         );
         let stop_only = StanceOrders {
             stop: true,
             hold_position: false,
+            attack: AttackCommand::Attack,
         };
         let text = ron::to_string(&stop_only).expect("invariant: plain data serializes");
         assert_eq!(
@@ -509,6 +538,26 @@ mod tests {
             stop_only
         );
         assert!(ron::from_str::<StanceOrders>("(stop: true, hold: true)").is_err());
+        // The A command is required, as the plain orders are (plan `2026-11-24-attack-orders`
+        // D-1), and each of its three values reads back.
+        assert!(ron::from_str::<StanceOrders>("(stop: true, hold_position: true)").is_err());
+        for attack in [
+            AttackCommand::None,
+            AttackCommand::ScanMove,
+            AttackCommand::Attack,
+        ] {
+            let orders = StanceOrders {
+                stop: true,
+                hold_position: true,
+                attack,
+            };
+            let text = ron::to_string(&orders).expect("invariant: plain data serializes");
+            assert_eq!(
+                ron::from_str::<StanceOrders>(&text).expect("invariant: its own output parses"),
+                orders
+            );
+        }
+        assert_eq!(AttackCommand::default(), AttackCommand::None);
     }
 
     #[test]

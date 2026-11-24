@@ -90,3 +90,39 @@ The tree of the plan and its questions (`c72c6a4f`, exported with `git archive` 
 record, 4 over all seeds". `base.sh` now takes the commit to measure as its second argument for that reason: a first
 WP0 run measured the worktree while WP1's `units.ron` edit landed in it, and its showcase-effects runs read the new
 field (`route_trace: invalid catalog …`); that run was discarded.
+
+## WP1: the A command as data
+
+### Red run (the field and the enum in place, the derivation still `attack: None` everywhere, no validation)
+
+Logs `~/scratch/attack-orders/red/wp1-red-a.log` and `wp1-red-b.log`:
+
+| Test | Failure |
+|---|---|
+| `catalog::tests::the_default_a_command_follows_weapons_and_mobility_unless_authored` | "mobile true, weapon slot 0": `None`, expected `Attack` |
+| `catalog::tests::the_default_stance_takes_stop_when_mobile_or_armed` (rewritten, below) | "armed false": `attack: None`, expected `ScanMove` |
+| `catalog::tests::stance_orders_follow_mobility_for_the_default_stance_and_data_for_a_mode` (rewritten, below) | the mobile armed walker: `attack: None`, expected `Attack` |
+| `catalog_reference_values_tests::b186_stances_have_the_a_command_of_their_starcraft_unit_type` (P-1) | "Medivac None: the A command, StarCraft II liberty UnitData:5475-5478, :5485-5486": `None`, expected `ScanMove` |
+| `catalog_reference_values_tests::the_a_command_is_derived_for_every_archetype_but_the_lurker_analogue` (P-1) | `welder_drone`: `None`, expected `Attack` |
+| `runtime_catalog_tests::removing_an_authored_default_stance_derives_scan_move` (P-8) | `burrow_scorpion`: shipped `None`, expected `Attack` |
+| `runtime_catalog_tests::an_unarmed_walker_authored_without_an_a_command_loses_scan_move` (P-8) | `repair_shuttle`: `None`, expected `ScanMove` |
+| `runtime_catalog_tests::a_stance_with_scan_move_and_no_hold_position_is_refused` (P-8, validation) | the edited catalog loaded (`Ok(UnitCatalog { … })`) |
+| `entity::can_attack_tests` (both) | do not compile: no `Entity::can_attack`, `Entity::settled_attack_command` or `UnitArchetype::stance_weapon_against` (E0599) |
+
+### Tests rewritten by §8 rule 4
+
+- `catalog::tests::the_default_stance_takes_stop_when_mobile_or_armed`: an unarmed walker's default set is now
+  `ALL` with `attack: ScanMove`, not `ALL`.
+- `catalog::tests::stance_orders_follow_mobility_for_the_default_stance_and_data_for_a_mode`: the speed-0 walker's
+  set gains `attack` (Attack when armed, none otherwise), and the mode loop covers the three A commands.
+- `stance_orders_tests::the_default_stance_takes_stop_when_mobile_or_armed_and_hold_when_mobile` compares Stop and
+  Hold Position only; the A command has its own derivation and P-1 table.
+- `runtime_catalog_tests::edited_stance_orders_change_the_loaded_rule` and
+  `an_anchoring_mode_given_hold_position_in_its_file_holds` write the new required field in their RON edits.
+- `damage_and_shields_tests` and `attack_move_simulation_tests` build a `UnitArchetype` literal, which gains
+  `default_stance_orders: None`; the client's `card.rs` test that rewrites a mode's orders keeps its `attack`.
+
+### Green
+
+`sim_types`, `sim_fixtures` and `sim_core` (every target, the matrix included): 109 test binaries, none failed
+(`~/scratch/attack-orders/wp1-sim-tests.log`). Clippy on the three crates with `-D warnings` is clean.

@@ -1941,6 +1941,7 @@ mod tests {
             spec.orders = sim_types::StanceOrders {
                 stop,
                 hold_position,
+                ..spec.orders
             };
             Ok(())
         };

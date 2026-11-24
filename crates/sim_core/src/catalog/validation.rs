@@ -10,6 +10,7 @@
 use super::placement_rules::{
     PlacementRulesFile, ResourceFootprintDef, MAX_REACH_SIDE, MAX_RESOURCE_SIDE,
 };
+use super::CatalogError;
 use super::{
     PrimaryWeapon, SplashShapeDef, SplashSpecDef, StructureArchetypeDef, TurretIdleDef,
     UnitArchetypeDef, UnitModeSpecDef, WeaponSpecDef,
@@ -19,9 +20,9 @@ use crate::movement::tuning::STALL_REPATH_TICKS;
 use crate::weapon_timing::AttackRate;
 use sim_map::MAX_SIGHT_RADIUS_CELLS;
 use sim_types::{
-    AbilityEffectSpec, AbilitySpec, AbilityTargetKind, Attribute, AttributeFlags, MoverType,
-    PlacementFlag, ProjectileTargetLossBehavior, ResourceKind, ShapeKind, SimAngle, SimScalar,
-    SplashCliff, SplashImpact, WeaponVisualKind,
+    AbilityEffectSpec, AbilitySpec, AbilityTargetKind, AttackCommand, Attribute, AttributeFlags,
+    MoverType, PlacementFlag, ProjectileTargetLossBehavior, ResourceKind, ShapeKind, SimAngle,
+    SimScalar, SplashCliff, SplashImpact, WeaponVisualKind,
 };
 
 fn invalid(definition: &str, field: &str, reason: &'static str) -> SimCoreError {
@@ -659,7 +660,33 @@ impl UnitArchetypeDef {
         for mode in self.modes.iter().chain(&self.capabilities.modes) {
             mode.validate(&self.slug)?;
         }
+        self.validate_stance_orders()?;
         self.validate_mode_abilities()
+    }
+
+    /// Every authored stance with Scan Move has Hold Position: both are commands of `StarCraft`
+    /// II's `move` ability (`core` AbilData:555-557), so no unit type has one without the other
+    /// (plan `2026-11-24-attack-orders` D-1). Checks the authored default stance and every mode.
+    fn validate_stance_orders(&self) -> SimResult<()> {
+        let modes = self.modes.iter().chain(&self.capabilities.modes);
+        let stances = self
+            .default_stance_orders
+            .map(|orders| (None, orders))
+            .into_iter()
+            .chain(modes.map(|mode| (Some(mode.mode_name.as_str()), mode.orders)));
+        for (mode, orders) in stances {
+            if orders.attack == AttackCommand::ScanMove && !orders.hold_position {
+                return Err(CatalogError::ScanMoveWithoutHoldPosition {
+                    definition: self.slug.clone(),
+                    stance: mode.map_or_else(
+                        || "default_stance_orders".to_owned(),
+                        |name| format!("modes.{name}.orders"),
+                    ),
+                }
+                .into());
+            }
+        }
+        Ok(())
     }
 
     /// A mode toggle switches one of the archetype's own modes and names the command that
