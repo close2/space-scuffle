@@ -19,6 +19,11 @@
 //! turns the hull: the hull belongs to the unit's order, so the weapon fires only at a target
 //! already in its arc.
 //!
+//! Between shots the weapon turns the hull of a unit that holds position or is immobile towards
+//! its target, at what is left of the tick's budget, when it works for an attack order; it never
+//! turns a hull that pursuit aims, and nothing turns with no target (plan
+//! `2026-11-25-wind-up-and-hold-facing` D-4, B-199).
+//!
 //! # How it fits
 //! The tests drive the public world API (`SimWorld::step`) on a flat map and read headings,
 //! turret angles and weapon phases between ticks, as a battle sees them.
@@ -31,7 +36,7 @@
 //! authored in degrees per tick and read back from the catalog in binary units per tick.
 
 use sim_core::catalog::UnitCatalog;
-use sim_core::{SimWorld, WeaponPhase};
+use sim_core::{step_entity_weapon, Mandate, SimWorld, WeaponPhase, WeaponTarget};
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
     EntityId, PlayerCommand, PlayerId, SimAngle, SimScalar, SimVec2, Tick, TickBundle, UnitOrder,
@@ -1012,5 +1017,258 @@ fn a_hull_weapon_outside_an_attack_order_never_turns_the_hull() -> TestResult {
             "target at ({x}, {y}): damage"
         );
     }
+    Ok(())
+}
+
+/// How the shooter of [`hull_between_shots`] stands, and why its weapon works.
+// Each flag is one independent condition of the case table, so a test reads as its table row.
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Clone, Copy)]
+struct BetweenShots {
+    /// The phase between shots: `Backswing` (with the cooldown running) or `Cooldown`.
+    backswing: bool,
+    /// The unit is on Hold Position.
+    hold: bool,
+    /// The unit is immobile.
+    immobile: bool,
+    /// Why the weapon works against its target.
+    mandate: Mandate,
+    /// What is left of this tick's hull budget, binary units.
+    budget: u16,
+    /// The weapon locks its turret while firing (a hull weapon has none to lock).
+    locks: bool,
+    /// The weapon has a target this tick, due south of the shooter.
+    target: bool,
+}
+
+/// One direct weapon step of the scratch shooter (hull weapon, facing +x, 7 units north of its
+/// target) between shots, as `case` says; returns its heading after the step.
+fn hull_between_shots(case: BetweenShots) -> Result<SimAngle, Box<dyn std::error::Error>> {
+    let shooter = Shooter {
+        turn_rate: 20.16,
+        max_speed: 0.15,
+        arc: 15.0,
+        turret: None,
+        turn_before_move: false,
+        stationary: Some(STATIONARY),
+    };
+    let bench = Bench::new(shooter, 10, 23)?;
+    let shooter_type = bench.world.catalog.id_by_slug(SHOOTER).ok_or("shooter")?;
+    let mut weapon = bench
+        .world
+        .catalog
+        .get(shooter_type)?
+        .weapon
+        .clone()
+        .ok_or("the shooter's weapon")?;
+    weapon.locks_turret_while_firing = case.locks;
+    let mut entity = bench
+        .world
+        .entities
+        .get(&bench.shooter)
+        .ok_or("shooter")?
+        .clone();
+    entity.heading = SimAngle::ZERO;
+    entity.weapon_cooldown_remaining = 5;
+    entity.weapon_phase = if case.backswing {
+        WeaponPhase::Backswing {
+            target_id: bench.target,
+            remaining_ticks: 3,
+        }
+    } else {
+        WeaponPhase::Cooldown
+    };
+    entity.order_queue.clear();
+    if case.hold {
+        entity.issue_order(UnitOrder::HoldPosition, false)?;
+    }
+    entity.is_immobile = case.immobile;
+    entity.hull_turn_budget = case.budget;
+    let target = case.target.then(|| WeaponTarget {
+        id: bench.target,
+        position: point(10, 23),
+        combined_radius: SimScalar::ONE,
+    });
+    assert!(
+        !step_entity_weapon(&mut entity, &weapon, target, case.mandate),
+        "nothing is released between shots"
+    );
+    Ok(entity.heading)
+}
+
+/// The facing due south of the shooter of [`hull_between_shots`].
+fn south() -> SimAngle {
+    facing(point(10, 16), point(10, 23))
+}
+
+/// The holding case of [`hull_between_shots`]: a full stationary budget, a target, an attack
+/// order's mandate, no lock, in a cooldown.
+const HOLDING: BetweenShots = BetweenShots {
+    backswing: false,
+    hold: true,
+    immobile: false,
+    mandate: Mandate::AttackOrder,
+    budget: STATIONARY_UNITS,
+    locks: false,
+    target: true,
+};
+
+/// B-1 (direct) of plan `2026-11-25-wind-up-and-hold-facing` (D-4): in its backswing and in its
+/// cooldown, a holding unit's hull weapon turns the hull towards its target by the tick's
+/// budget, the stationary rate.
+#[test]
+fn a_holding_hull_turns_towards_its_target_between_shots() -> TestResult {
+    for backswing in [false, true] {
+        let after = hull_between_shots(BetweenShots {
+            backswing,
+            ..HOLDING
+        })?;
+        assert_eq!(
+            after,
+            SimAngle::ZERO.rotate_towards(south(), STATIONARY_UNITS),
+            "backswing {backswing}"
+        );
+    }
+    Ok(())
+}
+
+/// B-2 of plan `2026-11-25-wind-up-and-hold-facing` (D-4): a mobile unit that does not hold,
+/// whose hull pursuit aims under its attack order, is not turned by its weapon between shots.
+#[test]
+fn the_weapon_does_not_turn_a_hull_pursuit_aims() -> TestResult {
+    for backswing in [false, true] {
+        let after = hull_between_shots(BetweenShots {
+            backswing,
+            hold: false,
+            ..HOLDING
+        })?;
+        assert_eq!(after, SimAngle::ZERO, "backswing {backswing}");
+    }
+    Ok(())
+}
+
+/// B-3 of plan `2026-11-25-wind-up-and-hold-facing` (D-4; turret wind-up D-5): a hull weapon
+/// working on its own initiative never turns the hull, holding or not.
+#[test]
+fn a_weapon_on_its_own_initiative_never_turns_the_hull_between_shots() -> TestResult {
+    for hold in [false, true] {
+        let after = hull_between_shots(BetweenShots {
+            hold,
+            mandate: Mandate::OwnInitiative,
+            ..HOLDING
+        })?;
+        assert_eq!(after, SimAngle::ZERO, "hold {hold}");
+    }
+    Ok(())
+}
+
+/// B-4 of plan `2026-11-25-wind-up-and-hold-facing` (D-4): an immobile unit's hull weapon turns
+/// the hull by what the tick leaves it; with no budget (a structure's stationary rate of 0) the
+/// hull never turns.
+#[test]
+fn an_immobile_hull_turns_by_its_budget_and_not_at_all_without_one() -> TestResult {
+    let immobile = BetweenShots {
+        hold: false,
+        immobile: true,
+        ..HOLDING
+    };
+    assert_eq!(
+        hull_between_shots(BetweenShots {
+            budget: 0,
+            ..immobile
+        })?,
+        SimAngle::ZERO
+    );
+    assert_eq!(
+        hull_between_shots(immobile)?,
+        SimAngle::ZERO.rotate_towards(south(), STATIONARY_UNITS)
+    );
+    Ok(())
+}
+
+/// B-5 of plan `2026-11-25-wind-up-and-hold-facing` (D-4; fire-rules D-2): a turret lock never
+/// holds a hull: a hull weapon flagged to lock its turret still turns the hull in its backswing.
+/// Catalog validation is not asked; the flag is written on the step's weapon.
+#[test]
+fn a_turret_lock_never_holds_a_hull() -> TestResult {
+    let after = hull_between_shots(BetweenShots {
+        backswing: true,
+        locks: true,
+        ..HOLDING
+    })?;
+    assert_eq!(
+        after,
+        SimAngle::ZERO.rotate_towards(south(), STATIONARY_UNITS)
+    );
+    Ok(())
+}
+
+/// B-6 of plan `2026-11-25-wind-up-and-hold-facing` (D-4): with no target this tick a holding
+/// unit keeps its heading between shots.
+#[test]
+fn with_no_target_a_holding_hull_keeps_its_heading() -> TestResult {
+    for backswing in [false, true] {
+        let after = hull_between_shots(BetweenShots {
+            backswing,
+            target: false,
+            ..HOLDING
+        })?;
+        assert_eq!(after, SimAngle::ZERO, "backswing {backswing}");
+    }
+    Ok(())
+}
+
+/// B-1 of plan `2026-11-25-wind-up-and-hold-facing` (D-4, B-199): a holding unit whose hull
+/// turns slowly (3° a tick standing, a 5° arc) fires at a target that walks across its front
+/// without ever turning to it after its first swing: its hull follows the target through every
+/// cooldown, so each next swing starts on the tick the cooldown allows. A hull left where it
+/// fired would rotate to the target after each cooldown first.
+#[test]
+fn a_slow_holding_hull_never_waits_to_turn_after_its_first_swing() -> TestResult {
+    let shooter = Shooter {
+        turn_rate: 3.0,
+        max_speed: 0.15,
+        arc: 5.0,
+        turret: None,
+        turn_before_move: false,
+        stationary: Some(3.0),
+    };
+    let mut bench = Bench::new(shooter, 10, 20)?;
+    let target = bench.target;
+    bench
+        .world
+        .entities
+        .get_mut(&bench.shooter)
+        .ok_or("shooter")?
+        .heading = south();
+    bench.step(Some((bench.shooter, UnitOrder::HoldPosition)));
+    bench.step(Some((
+        target,
+        UnitOrder::Move {
+            target: point(40, 20),
+        },
+    )));
+    let mut swings = 0;
+    let mut previous = bench.phase()?;
+    for tick in 3..=60_u32 {
+        bench.step(None);
+        let phase = bench.phase()?;
+        if matches!(phase, WeaponPhase::Windup { .. })
+            && !matches!(previous, WeaponPhase::Windup { .. })
+        {
+            swings += 1;
+        }
+        if swings > 0 {
+            assert!(
+                !matches!(phase, WeaponPhase::RotatingToTarget { .. }),
+                "tick {tick}: the hull already faces its target"
+            );
+        }
+        previous = phase;
+    }
+    assert!(
+        swings >= 2,
+        "premise: the unit fired more than once, {swings}"
+    );
     Ok(())
 }
