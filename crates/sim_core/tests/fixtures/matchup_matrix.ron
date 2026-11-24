@@ -668,7 +668,11 @@
             squads: [
                 (unit: "burrow_scorpion", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
             ],
-            order: AttackMove(16, 32),
+            // No order: the burrowing Lurker is anchored in the stance it settles in, so an
+            // attack-move does not reach it (plan 2026-11-24-attack-orders D-9, Q0098) and it
+            // acquires on its own. The attack-move this side gave before D-9 changed no outcome
+            // and no unit trace on any seed (evidence 2026-11-24-attack-orders, WP5).
+            order: None,
             mode: Some("burrowed"),
         ),
         red: (
