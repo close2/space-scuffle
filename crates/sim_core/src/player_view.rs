@@ -80,6 +80,18 @@ impl SimWorld {
                 })
                 .map(|entity| entity.id),
         );
+        // Entity-ID order, so the list is sorted (plan `2026-11-23-vision-and-detection` D-6).
+        out.attack_revealed.extend(
+            self.entities
+                .values()
+                .filter(|entity| {
+                    entity.owner != viewer
+                        && entity.is_alive()
+                        && !entity.is_loaded_in_transport()
+                        && entity.is_attack_revealed_to(viewer)
+                })
+                .map(|entity| entity.id),
+        );
         for (node, index) in self.map.resources().iter().zip(0_u32..) {
             if vision.visibility_at(node.cell.0, node.cell.1) == VisibilityState::Visible {
                 out.visible_nodes.push(VisibleNodeView {

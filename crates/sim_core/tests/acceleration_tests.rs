@@ -91,7 +91,6 @@ fn catalog_ron(motion: Motion) -> String {
             supply_provided: 0,
             build_time_ticks: 100,
             weapon: None,
-            is_detector: false,
         )])"#,
         mover = motion.mover,
         max_speed = motion.max_speed,

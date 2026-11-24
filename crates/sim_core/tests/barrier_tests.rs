@@ -69,6 +69,7 @@ fn weapon(damage: i32, period: u16) -> WeaponSpec {
         suicide_on_attack: false,
         structure_strike: None,
         melee: false,
+        attack_visibility: sim_types::AttackVisibility::Snapshot,
     }
 }
 

@@ -24,12 +24,12 @@ use sim_map::{
 };
 use sim_types::{AbilitySource, EffectContext, EffectId, EffectTarget, StatusId};
 use sim_types::{
-    AllowedMovement, AnimState, ArmorClassId, AttackOrigin, AttributeBonuses, AttributeFlags,
-    EntityId, FootprintShape, MatchResult, MoverType, PlayerId, PlayerUpgradeState,
-    ProjectileTargetLossBehavior, RallyTarget, ResourceNodeId, SimAngle, SimScalar, SimVec2,
-    SplashCliff, SplashImpact, SplashLine, SplashLineAxis, SplashLineOrigin, SplashShape,
-    SplashSpec, SplashZone, StructureStrike, Tick, TurretIdle, UnitOrder, UnitStatDeltas,
-    UnitTypeId, VisibilityState, WeaponClassId, WeaponSpec, WeaponVisualKind,
+    AllowedMovement, AnimState, ArmorClassId, AttackOrigin, AttackVisibility, AttributeBonuses,
+    AttributeFlags, EntityId, FootprintShape, MatchResult, MoverType, PerPlayer, PlayerId,
+    PlayerUpgradeState, ProjectileTargetLossBehavior, RallyTarget, ResourceNodeId, SimAngle,
+    SimScalar, SimVec2, SplashCliff, SplashImpact, SplashLine, SplashLineAxis, SplashLineOrigin,
+    SplashShape, SplashSpec, SplashZone, StructureStrike, Tick, TurretIdle, UnitOrder,
+    UnitStatDeltas, UnitTypeId, VisibilityState, WeaponClassId, WeaponSpec, WeaponVisualKind,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use xxhash_rust::xxh64::Xxh64;
@@ -370,6 +370,7 @@ fields!(Entity {
     route_orders_issued,
     cast_lock_ticks,
     displacement,
+    attack_reveal_ticks,
 } unhashed {
     hull_turn_budget,
     status_modifiers,
@@ -540,6 +541,7 @@ fields!(WeaponSpec {
     suicide_on_attack,
     structure_strike,
     melee,
+    attack_visibility,
 });
 // `view` is presentation only (the line's renderer events): it decides nothing.
 fields!(PendingLine {
@@ -863,6 +865,29 @@ impl Canonical for TurretIdle {
     }
 }
 
+// Plan `2026-11-23-vision-and-detection` D-7: the case's tag, then the reveal ticks of `Visible`.
+impl Canonical for AttackVisibility {
+    fn encode(&self, encoder: &mut Encoder) {
+        match self {
+            Self::Snapshot => 0_u8.encode(encoder),
+            Self::Visible { reveal_ticks } => {
+                1_u8.encode(encoder);
+                reveal_ticks.encode(encoder);
+            }
+            Self::Hidden => 2_u8.encode(encoder),
+        }
+    }
+}
+
+// Every player slot's value, in slot order.
+impl<T: Canonical> Canonical for PerPlayer<T> {
+    fn encode(&self, encoder: &mut Encoder) {
+        for value in self {
+            value.encode(encoder);
+        }
+    }
+}
+
 impl Canonical for ProjectileTargetLossBehavior {
     fn encode(&self, encoder: &mut Encoder) {
         match self {
@@ -987,7 +1012,7 @@ mod tests {
         // Domain length, UTF-8 domain, schema u32, u16, i32, option tags/payload,
         // then UTF-8 string byte length and its two encoded bytes.
         let bytes = [
-            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 40, 0, 0, 0, 0x34, 0x12, 0xfe, 0xff,
+            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 41, 0, 0, 0, 0x34, 0x12, 0xfe, 0xff,
             0xff, 0xff, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0xc3, 0xa9,
         ];
         assert_eq!(encoder.finish(), xxh64(&bytes, 0));
@@ -1063,7 +1088,7 @@ mod tests {
             let mut encoder = Encoder::new("test");
             7_u32.encode(&mut encoder);
             text.as_str().encode(&mut encoder);
-            let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 40, 0, 0, 0];
+            let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 41, 0, 0, 0];
             bytes.extend([7, 0, 0, 0]);
             bytes.extend((length as u64).to_le_bytes());
             bytes.extend(text.as_bytes());
@@ -1088,7 +1113,7 @@ mod tests {
         // then the full remaining duration u32 (0x0001_0001), total, supply, the started flag
         // and payments.
         let bytes = [
-            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 40, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 41, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
             0x34, 0x12, 1, 0, 1, 0, 2, 0, 0, 0, 0x78, 0x56, 0x34, 0x12, 1, 3, 0, 0, 0, 4, 0, 0, 0,
         ];
         assert_eq!(digest(&queue), xxh64(&bytes, 0));
@@ -1099,7 +1124,7 @@ mod tests {
     #[test]
     fn rally_targets_encode_their_tag_and_payload() {
         use sim_types::{EntityId, RallyTarget, ResourceNodeId, SimScalar, SimVec2};
-        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 40, 0, 0, 0];
+        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 41, 0, 0, 0];
         let point = SimVec2::new(SimScalar::from_raw(0x0102), SimScalar::from_raw(-1));
         let mut bytes = header.to_vec();
         bytes.push(0);
@@ -1122,7 +1147,7 @@ mod tests {
 
     #[test]
     fn carrier_identity_has_explicit_option_tag_and_all_id_bytes() {
-        let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 40, 0, 0, 0];
+        let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 41, 0, 0, 0];
         bytes.push(0);
         assert_eq!(digest(&None::<sim_types::EntityId>), xxh64(&bytes, 0));
         bytes.pop();

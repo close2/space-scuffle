@@ -2059,7 +2059,7 @@ fn detect_in_tableau(world: &mut World) {
         .catalog
         .archetypes()
         .find(|arch| {
-            arch.is_detector
+            arch.is_detector()
                 && arch.max_speed > SimScalar::ZERO
                 && presentable(&assets(), &arch.slug)
         })

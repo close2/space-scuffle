@@ -81,10 +81,10 @@ pub use upgrades::{
     PlayerUpgradeState, UnitStatDeltas, UpgradeApplicationError, UpgradeEffect, UpgradeStat,
 };
 pub use weapon::{
-    default_projectile_lifetime_ticks, AllowedMovement, Attribute, AttributeBonuses,
-    ProjectileTargetLossBehavior, SplashCliff, SplashImpact, SplashLine, SplashLineAxis,
-    SplashLineOrigin, SplashShape, SplashSpec, SplashZone, StructureStrike, TurretIdle, WeaponSpec,
-    DEFAULT_PROJECTILE_LIFETIME_TICKS,
+    default_projectile_lifetime_ticks, AllowedMovement, AttackVisibility, Attribute,
+    AttributeBonuses, ProjectileTargetLossBehavior, SplashCliff, SplashImpact, SplashLine,
+    SplashLineAxis, SplashLineOrigin, SplashShape, SplashSpec, SplashZone, StructureStrike,
+    TurretIdle, WeaponSpec, DEFAULT_PROJECTILE_LIFETIME_TICKS,
 };
 
 /// Simulation ticks per second of game time: the one fixed tick rate of every match (25 Hz,

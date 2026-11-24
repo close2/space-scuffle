@@ -13,8 +13,8 @@ use crate::movement::MovementMathError;
 use crate::weapon_timing::{combined_attack_rate, AttackRate, InvalidBuffAttackRate};
 use sim_types::{
     AbilityEffectSpec, AnimState, AttackDashSpec, AttackOrigin, BarrierSpec, EffectSource,
-    EntityId, MoverType, OverclockSpec, PlayerId, ResourceKind, ResourceNodeId, ShapeKind,
-    SimAngle, SimScalar, SimVec2, StanceOrders, UnitModeSpec, UnitOrder, UnitTypeId,
+    EntityId, MoverType, OverclockSpec, PerPlayer, PlayerId, ResourceKind, ResourceNodeId,
+    ShapeKind, SimAngle, SimScalar, SimVec2, StanceOrders, UnitModeSpec, UnitOrder, UnitTypeId,
 };
 use std::collections::VecDeque;
 
@@ -578,6 +578,11 @@ pub struct Entity {
     pub cast_lock_ticks: u16,
     /// The flight a `Displace` effect node gives the unit (D-8); `None` when not displaced.
     pub displacement: Option<crate::effects::Displacement>,
+    /// For each player, the ticks left during which this unit is revealed to that player by its
+    /// own attacks: a strike of a weapon whose attack visibility is `Visible` on a unit of player
+    /// p raises the count for p to the weapon's reveal ticks, and the vision phase counts it down
+    /// (plan `2026-11-23-vision-and-detection` D-5). All zero at spawn.
+    pub attack_reveal_ticks: PerPlayer<u16>,
     /// The combined modifiers of the statuses this unit carries: a cache of the fold of
     /// `SimWorld::effects` for this entity, refreshed by the effect engine whenever one of its
     /// statuses is inserted or removed, and so derived state, left out of the checksum.
@@ -700,6 +705,7 @@ impl Entity {
             route_orders_issued: 0,
             cast_lock_ticks: 0,
             displacement: None,
+            attack_reveal_ticks: PerPlayer::default(),
             status_modifiers: crate::effects::StatusModifiers::NEUTRAL,
             hull_turn_budget: archetype.turn_rate.raw(),
         }
@@ -725,6 +731,16 @@ impl Entity {
     #[must_use]
     pub const fn is_action_locked(&self) -> bool {
         self.status_modifiers.stun || self.cast_lock_ticks > 0 || self.displacement.is_some()
+    }
+
+    /// Whether this unit's attacks reveal it to `player` now: a counter of
+    /// [`Self::attack_reveal_ticks`] above zero (plan `2026-11-23-vision-and-detection` D-5).
+    /// False for a player outside the slots.
+    #[must_use]
+    pub fn is_attack_revealed_to(&self, player: PlayerId) -> bool {
+        self.attack_reveal_ticks
+            .get(player)
+            .is_some_and(|&ticks| ticks > 0)
     }
 
     /// Whether the unit is hidden by cloak or burrow now: cloaked and not revealed by a status

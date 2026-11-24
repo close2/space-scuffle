@@ -76,7 +76,6 @@
                 // Options Melee: SCV FusionCutter, liberty WeaponData:195-201 (Melee :201).
                 melee: true,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 // Harvest time, amount and return delay are the resource's (placement_rules.ron;
@@ -191,7 +190,6 @@
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 0.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: Some((
                     hp_cost: 10.0,
@@ -282,7 +280,6 @@
                 upgrade_bonus_per_level: 2.0,
                 bonus_upgrade_per_level: 0.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -371,7 +368,6 @@
                 // Options Melee: Zealot PsiBlades, liberty WeaponData:150-158 (Melee :158).
                 melee: true,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -538,7 +534,6 @@
                     leave_name: Some("Tank Mode"),
                 ),
             ],
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -608,6 +603,10 @@
             weapon: None,
             air_weapon: Some((
                 name: "Disruptor Beam",
+                // 5.0.14 IonCannonsU (liberty EffectData:1984): Visibility Visible; AttackReveal lasts 3 Normal s (core
+                // BehaviorData:237-240), 3 x 25 / 1.4 = 53.6 ticks, rounded half up to 54 (Q0052 S-5);
+                // plan 2026-11-23-vision-and-detection D-4, D-5.
+                attack_visibility: Visible(reveal_ticks: 54),
                 visual_kind: LaserBeam,
                 target_flags: (bits: 255),
                 min_range: 0.0,
@@ -635,7 +634,6 @@
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 0.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -719,7 +717,6 @@
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 1.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: Some((
                     hp_cost: 20.0,
@@ -813,7 +810,6 @@
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 0.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -897,7 +893,6 @@
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 1.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -992,7 +987,6 @@
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 1.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -1133,7 +1127,6 @@
                 upgrade_bonus_per_level: 3.0,
                 bonus_upgrade_per_level: 0.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -1196,6 +1189,10 @@
             armor_class: Some("directorate_vehicle_plating"),
             air_weapon: Some((
                 name: "Sky Torpedo Volley",
+                // 5.0.14 LanzerTorpedoesDamage (liberty EffectData:1715): Visibility Visible; AttackReveal lasts 3 Normal s (core
+                // BehaviorData:237-240), 3 x 25 / 1.4 = 53.6 ticks, rounded half up to 54 (Q0052 S-5);
+                // plan 2026-11-23-vision-and-detection D-4, D-5.
+                attack_visibility: Visible(reveal_ticks: 54),
                 visual_kind: Projectile,
                 target_flags: (bits: 255),
                 min_range: 0.0,
@@ -1224,7 +1221,6 @@
                 bonus_upgrade_per_level: 0.0,
             )),
             weapon: None,
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -1282,7 +1278,6 @@
             build_time_ticks: 750,
             armor_class: Some("directorate_vehicle_plating"),
             weapon: None,
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -1338,6 +1333,10 @@
             armor_class: Some("directorate_vehicle_plating"),
             air_weapon: Some((
                 name: "Lexington Rockets",
+                // 5.0.14 LiberatorMissileDamage (void EffectData:2935): Visibility Visible; AttackReveal lasts 3 Normal s (core
+                // BehaviorData:237-240), 3 x 25 / 1.4 = 53.6 ticks, rounded half up to 54 (Q0052 S-5);
+                // plan 2026-11-23-vision-and-detection D-4, D-5.
+                attack_visibility: Visible(reveal_ticks: 54),
                 visual_kind: Projectile,
                 target_flags: (bits: 255),
                 min_range: 0.0,
@@ -1376,7 +1375,6 @@
                 bonus_upgrade_per_level: 0.0,
             )),
             weapon: None,
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -1435,6 +1433,10 @@
             armor_class: Some("directorate_vehicle_plating"),
             weapon: Some((
                 name: "Backlash Thermite Rockets",
+                // 5.0.14 BacklashRocketsU (liberty EffectData:2566): Visibility Visible; AttackReveal lasts 3 Normal s (core
+                // BehaviorData:237-240), 3 x 25 / 1.4 = 53.6 ticks, rounded half up to 54 (Q0052 S-5);
+                // plan 2026-11-23-vision-and-detection D-4, D-5.
+                attack_visibility: Visible(reveal_ticks: 54),
                 visual_kind: Projectile,
                 target_flags: (bits: 255),
                 min_range: 0.0,
@@ -1462,7 +1464,6 @@
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 0.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -1521,7 +1522,8 @@
             build_time_ticks: 857,
             armor_class: Some("directorate_vehicle_plating"),
             weapon: None,
-            is_detector: true,
+            // 5.0.14 Raven: Detector11 (liberty BehaviorData:1175-1178), linked at liberty UnitData:5613; Sight 11 (:5607): detection equals sight (plan 2026-11-23-vision-and-detection D-2).
+            detection_radius: Some(11.0),
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -1608,7 +1610,6 @@
                 // Options Melee: Probe ParticleBeam, liberty WeaponData:142-148 (Melee :148).
                 melee: true,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 // Harvest time, amount and return delay are the resource's (placement_rules.ron;
@@ -1724,7 +1725,6 @@
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 1.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -1812,7 +1812,6 @@
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 0.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -1897,7 +1896,6 @@
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 1.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -1996,7 +1994,6 @@
                     effect: Effect("psionic_storm"),    // Effect PsiStormPersistent, liberty :2063
                 ),
             ],
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -2084,7 +2081,6 @@
                 // Options Melee: Dark Templar WarpBlades, liberty WeaponData:161-169 (Melee :169).
                 melee: true,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -2176,7 +2172,6 @@
                 upgrade_bonus_per_level: 2.0,
                 bonus_upgrade_per_level: 3.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -2244,6 +2239,10 @@
             armor_class: Some("enclave_ground_armor"),
             weapon: Some((
                 name: "Thermal Lance Sweep",
+                // 5.0.14 ThermalLancesMU (liberty EffectData:2421): Visibility Visible; AttackReveal lasts 3 Normal s (core
+                // BehaviorData:237-240), 3 x 25 / 1.4 = 53.6 ticks, rounded half up to 54 (Q0052 S-5);
+                // plan 2026-11-23-vision-and-detection D-4, D-5.
+                attack_visibility: Visible(reveal_ticks: 54),
                 visual_kind: LaserBeam,
                 target_flags: (bits: 255),
                 min_range: 0.0,
@@ -2282,7 +2281,6 @@
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 1.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -2341,7 +2339,8 @@
             build_time_ticks: 446,
             armor_class: Some("enclave_air_armor"),
             weapon: None,
-            is_detector: true,
+            // 5.0.14 Observer: Detector11 (liberty BehaviorData:1175-1178), linked at liberty UnitData:3446; Sight 11 (:3442): detection equals sight (plan 2026-11-23-vision-and-detection D-2).
+            detection_radius: Some(11.0),
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -2396,7 +2395,6 @@
             build_time_ticks: 893,
             armor_class: Some("enclave_air_armor"),
             weapon: None,
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -2453,6 +2451,10 @@
             armor_class: Some("enclave_air_armor"),
             weapon: Some((
                 name: "Prismatic Beam",
+                // 5.0.14 PrismaticBeamMUBase (liberty EffectData:125) and VoidRaySwarmDamage (void EffectData:1807): Visibility Visible; AttackReveal lasts 3 Normal s (core
+                // BehaviorData:237-240), 3 x 25 / 1.4 = 53.6 ticks, rounded half up to 54 (Q0052 S-5);
+                // plan 2026-11-23-vision-and-detection D-4, D-5.
+                attack_visibility: Visible(reveal_ticks: 54),
                 visual_kind: LaserBeam,
                 target_flags: (bits: 255),
                 min_range: 0.0,
@@ -2482,6 +2484,10 @@
             )),
             air_weapon: Some((
                 name: "Prismatic Beam",
+                // 5.0.14 PrismaticBeamMUBase (liberty EffectData:125) and VoidRaySwarmDamage (void EffectData:1807): Visibility Visible; AttackReveal lasts 3 Normal s (core
+                // BehaviorData:237-240), 3 x 25 / 1.4 = 53.6 ticks, rounded half up to 54 (Q0052 S-5);
+                // plan 2026-11-23-vision-and-detection D-4, D-5.
+                attack_visibility: Visible(reveal_ticks: 54),
                 visual_kind: LaserBeam,
                 target_flags: (bits: 255),
                 min_range: 0.0,
@@ -2509,7 +2515,6 @@
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 0.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -2572,6 +2577,10 @@
             armor_class: Some("enclave_air_armor"),
             weapon: Some((
                 name: "Interceptor Fleet Salvo",
+                // 5.0.14 InterceptorBeamAADamage and InterceptorBeamAGDamage (voidmulti EffectData:2264, :2280): Visibility Visible; AttackReveal lasts 3 Normal s (core
+                // BehaviorData:237-240), 3 x 25 / 1.4 = 53.6 ticks, rounded half up to 54 (Q0052 S-5);
+                // plan 2026-11-23-vision-and-detection D-4, D-5.
+                attack_visibility: Visible(reveal_ticks: 54),
                 visual_kind: Projectile,
                 target_flags: (bits: 255),
                 min_range: 0.0,
@@ -2595,7 +2604,6 @@
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 0.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -2685,7 +2693,6 @@
                 // Options Melee: Drone Spines, liberty WeaponData:349-355 (Melee :355).
                 melee: true,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 // Harvest time, amount and return delay are the resource's (placement_rules.ron;
@@ -2776,7 +2783,6 @@
                 // Options Melee: Zergling Claws, liberty WeaponData:357-363 (Melee :363).
                 melee: true,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -2885,7 +2891,6 @@
                 // Options Melee: Baneling VolatileBurst, liberty WeaponData:463-472 (Melee :472); its structure strike is VolatileBurstBuilding, swarm WeaponData:200-203 (Melee :203).
                 melee: true,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -2970,7 +2975,6 @@
                 upgrade_bonus_per_level: 2.0,
                 bonus_upgrade_per_level: 0.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -3079,7 +3083,6 @@
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 0.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -3212,7 +3215,6 @@
                     leave_name: Some("Unburrow"),
                 ),
             ],
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -3273,6 +3275,10 @@
             armor_class: Some("swarm_flyer_carapace"),
             weapon: Some((
                 name: "Glaive Stinger",
+                // 5.0.14 GlaiveWurmU1 to U3 (liberty EffectData:2229, :2234, :2239): Visibility Visible; AttackReveal lasts 3 Normal s (core
+                // BehaviorData:237-240), 3 x 25 / 1.4 = 53.6 ticks, rounded half up to 54 (Q0052 S-5);
+                // plan 2026-11-23-vision-and-detection D-4, D-5.
+                attack_visibility: Visible(reveal_ticks: 54),
                 visual_kind: Projectile,
                 target_flags: (bits: 255),
                 min_range: 0.0,
@@ -3301,6 +3307,10 @@
             )),
             air_weapon: Some((
                 name: "Glaive Stinger",
+                // 5.0.14 GlaiveWurmU1 to U3 (liberty EffectData:2229, :2234, :2239): Visibility Visible; AttackReveal lasts 3 Normal s (core
+                // BehaviorData:237-240), 3 x 25 / 1.4 = 53.6 ticks, rounded half up to 54 (Q0052 S-5);
+                // plan 2026-11-23-vision-and-detection D-4, D-5.
+                attack_visibility: Visible(reveal_ticks: 54),
                 visual_kind: Projectile,
                 target_flags: (bits: 255),
                 min_range: 0.0,
@@ -3327,7 +3337,6 @@
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 0.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -3389,6 +3398,10 @@
             armor_class: Some("swarm_flyer_carapace"),
             air_weapon: Some((
                 name: "Parasitic Spores",
+                // 5.0.14 ParasiteSporeDamage (liberty EffectData:2589): Visibility Visible; AttackReveal lasts 3 Normal s (core
+                // BehaviorData:237-240), 3 x 25 / 1.4 = 53.6 ticks, rounded half up to 54 (Q0052 S-5);
+                // plan 2026-11-23-vision-and-detection D-4, D-5.
+                attack_visibility: Visible(reveal_ticks: 54),
                 visual_kind: Projectile,
                 target_flags: (bits: 255),
                 min_range: 0.0,
@@ -3416,7 +3429,6 @@
                 bonus_upgrade_per_level: 1.0,
             )),
             weapon: None,
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -3475,6 +3487,10 @@
             armor_class: Some("swarm_flyer_carapace"),
             ground_weapon: Some((
                 name: "Broodling Swarm",
+                // 5.0.14 BroodlingEscortDamage (liberty EffectData:2788): Visibility Visible; AttackReveal lasts 3 Normal s (core
+                // BehaviorData:237-240), 3 x 25 / 1.4 = 53.6 ticks, rounded half up to 54 (Q0052 S-5);
+                // plan 2026-11-23-vision-and-detection D-4, D-5.
+                attack_visibility: Visible(reveal_ticks: 54),
                 visual_kind: Projectile,
                 target_flags: (bits: 255),
                 min_range: 0.0,
@@ -3503,6 +3519,10 @@
             )),
             weapon: Some((
                 name: "Broodling Swarm",
+                // 5.0.14 BroodlingEscortDamage (liberty EffectData:2788): Visibility Visible; AttackReveal lasts 3 Normal s (core
+                // BehaviorData:237-240), 3 x 25 / 1.4 = 53.6 ticks, rounded half up to 54 (Q0052 S-5);
+                // plan 2026-11-23-vision-and-detection D-4, D-5.
+                attack_visibility: Visible(reveal_ticks: 54),
                 visual_kind: Projectile,
                 target_flags: (bits: 255),
                 min_range: 0.0,
@@ -3529,7 +3549,6 @@
                 upgrade_bonus_per_level: 2.0,
                 bonus_upgrade_per_level: 0.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -3628,7 +3647,6 @@
                 // Options Melee: Ultralisk KaiserBlades, liberty WeaponData:430-439 (Melee :439).
                 melee: true,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -3766,7 +3784,6 @@
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 0.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -3844,7 +3861,6 @@
                     effect: Effect("fungal_growth"),    // Effect FungalGrowthLaunchMissile, void :673
                 ),
             ],
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -3946,7 +3962,6 @@
                     effect: Effect("blinding_cloud"),   // Effect BlindingCloudCP, swarm :1207
                 ),
             ],
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -4005,7 +4020,6 @@
             build_time_ticks: 446,
             armor_class: Some("swarm_flyer_carapace"),
             weapon: None,
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,

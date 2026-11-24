@@ -1309,14 +1309,14 @@ fn concealment_world() -> Result<(SimWorld, EntityId, UnitTypeId, UnitTypeId), B
         .catalog
         .archetypes()
         .filter(unarmed)
-        .find(|arch| !arch.is_detector)
+        .find(|arch| !arch.is_detector())
         .ok_or("a shipped unarmed unit")?
         .unit_type_id;
     let detector = world
         .catalog
         .archetypes()
         .filter(unarmed)
-        .find(|arch| arch.is_detector)
+        .find(|arch| arch.is_detector())
         .ok_or("a shipped unarmed mobile detector")?
         .unit_type_id;
     let hidden = world.spawn_unit(plain, AWAY, point(30, 24))?;

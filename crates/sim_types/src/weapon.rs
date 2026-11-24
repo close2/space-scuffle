@@ -338,13 +338,17 @@ impl SplashSpec {
 /// (e.g. loaded into a transport, cloaked without detection, expired hallucination, or destroyed).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProjectileTargetLossBehavior {
-    /// Default SC2 homing projectile behavior: if the target becomes unavailable
-    /// in flight (loaded into transport, cloaked/burrowed without detection,
-    /// expired hallucination, stasis, or died), the projectile harmlessly fizzles/disjoints.
-    #[default]
+    /// `PointFallback 0` (e.g. `StarCraft` II's `NeuralParasiteLaunchMissile`, `liberty`
+    /// EffectData:1013): once the target fails the weapon's filters, the missile is removed
+    /// without landing, so neither its strike nor its area lands anywhere.
     Fizzle,
-    /// Ballistic/artillery behavior: continues to the last known `target_pos`
-    /// and detonates splash damage on the ground coordinate even if the original unit vanished.
+    /// 5.0.14's `PointFallback` (`core` EffectData:97), the default of every attack missile:
+    /// once the target fails the weapon's filters (it dies, is loaded, turns invulnerable, or
+    /// cloaks or burrows undetected), the missile flies on to the last point it tracked, in
+    /// world units, and lands there; its strike reaches no unit, its area strikes around the
+    /// point. Permanent: a target that becomes available again is not re-acquired (plan
+    /// `2026-11-23-vision-and-detection` D-1).
+    #[default]
     ImpactLastKnownPosition,
     /// Seeking missile behavior (SC1 Valkyrie / SC2 Mirage / Glaive-style retargeting):
     /// when the current target becomes unavailable in flight, scans spatial neighborhood within
@@ -523,6 +527,28 @@ pub struct WeaponSpec {
     /// D-14) read it.
     #[serde(default)]
     pub melee: bool,
+    /// What the weapon's damage shows of its attacker to the player it strikes (plan
+    /// `2026-11-23-vision-and-detection` D-4). Omitted, the engine default: a snapshot.
+    #[serde(default)]
+    pub attack_visibility: AttackVisibility,
+}
+
+/// What a weapon's damage shows of its attacker to the player it strikes: `StarCraft` II's
+/// `CEffectDamage` `Visibility` (`core` EffectData:62).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AttackVisibility {
+    /// A snapshot in fog and on the minimap, never a target (the engine default). The
+    /// simulation records nothing; the presentation is bug B-183.
+    #[default]
+    Snapshot,
+    /// The attacker becomes visible, and so targetable, to each struck unit's owner for
+    /// `reveal_ticks` (`AttackReveal`, `core` BehaviorData:237–240, 3 Normal s).
+    Visible {
+        /// How long one hit reveals the attacker, in whole ticks.
+        reveal_ticks: u16,
+    },
+    /// Nothing is shown.
+    Hidden,
 }
 
 /// Whether a weapon's unit may move while it attacks: `StarCraft` II's `CWeapon`
@@ -714,6 +740,20 @@ mod tests {
             ron::from_str("(zones: [], cliff: Any, strike_target_on_other_level: true)")?;
         assert_eq!(splash.cliff, SplashCliff::Any);
         assert!(splash.strike_target_on_other_level);
+        Ok(())
+    }
+
+    /// Plan `2026-11-23-vision-and-detection` D-4: an omitted attack visibility reads as the
+    /// engine default, a snapshot; the visible case carries its reveal in whole ticks.
+    #[test]
+    fn attack_visibility_defaults_to_a_snapshot_and_reads_its_cases(
+    ) -> Result<(), ron::error::SpannedError> {
+        use super::AttackVisibility;
+        assert_eq!(AttackVisibility::default(), AttackVisibility::Snapshot);
+        let visible: AttackVisibility = ron::from_str("Visible(reveal_ticks: 54)")?;
+        assert_eq!(visible, AttackVisibility::Visible { reveal_ticks: 54 });
+        let hidden: AttackVisibility = ron::from_str("Hidden")?;
+        assert_eq!(hidden, AttackVisibility::Hidden);
         Ok(())
     }
 }

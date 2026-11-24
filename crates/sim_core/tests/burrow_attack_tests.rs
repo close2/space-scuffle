@@ -74,6 +74,7 @@ fn spines() -> WeaponSpec {
         suicide_on_attack: false,
         structure_strike: None,
         melee: false,
+        attack_visibility: sim_types::AttackVisibility::Snapshot,
     }
 }
 

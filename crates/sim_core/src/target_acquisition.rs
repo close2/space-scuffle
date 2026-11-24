@@ -125,6 +125,26 @@ impl SimWorld {
         target.is_alive() && !target.is_loaded_in_transport() && !target.is_invulnerable
     }
 
+    /// Whether `viewer` sees the enemy `target`: a viewer without a vision map sees everything;
+    /// otherwise the target's cell is `Visible` to the viewer, or the target's own attacks reveal
+    /// it to the viewer (plan `2026-11-23-vision-and-detection` D-5). Concealment is not judged
+    /// here: a concealed target still needs [`Self::is_cloak_revealed`].
+    #[must_use]
+    pub(crate) fn sees_enemy(
+        map: &SimMap,
+        vision_maps: &PerPlayer<PlayerVisionMap>,
+        viewer: PlayerId,
+        target: &Entity,
+    ) -> bool {
+        let Some(vision) = vision_maps.get(viewer) else {
+            return true;
+        };
+        target.is_attack_revealed_to(viewer)
+            || map
+                .world_to_cell(target.position)
+                .is_ok_and(|(cx, cy)| vision.visibility_at(cx, cy) == VisibilityState::Visible)
+    }
+
     /// The attack gate for an already resolved entity; see
     /// [`Self::is_entity_available_for_combat`] for its meaning.
     #[must_use]
@@ -311,15 +331,12 @@ impl SimWorld {
         if attacker.is_loaded_in_transport() {
             return false;
         }
-        let Some(vision) = self.vision_maps.get(viewer) else {
+        if self.vision_maps.get(viewer).is_none() {
             return true;
-        };
-        self.map
-            .world_to_cell(attacker.position)
-            .is_ok_and(|(cx, cy)| {
-                vision.visibility_at(cx, cy) == VisibilityState::Visible
-                    && (!attacker.is_concealed() || vision.is_detected(cx, cy))
-            })
+        }
+        Self::sees_enemy(&self.map, &self.vision_maps, viewer, attacker)
+            && (!attacker.is_concealed()
+                || Self::is_cloak_revealed(&self.map, &self.vision_maps, viewer, attacker.position))
     }
 
     /// Sends a helpless victim directly away from its attacker.
@@ -720,7 +737,6 @@ impl SimWorld {
         );
         candidates.clear();
         let mut result = ScanResult::default();
-        let vision = self.vision_maps.get(entity.owner);
 
         for &neighbor_id in neighbors.iter() {
             let Some(neighbor) = self.entities.get(&neighbor_id) else {
@@ -733,10 +749,9 @@ impl SimWorld {
                 continue;
             }
             let dist = entity.position.distance(neighbor.position);
-            let Ok((cx, cy)) = self.map.world_to_cell(neighbor.position) else {
-                continue;
-            };
-            if vision.is_some_and(|v| v.visibility_at(cx, cy) != VisibilityState::Visible) {
+            if self.map.world_to_cell(neighbor.position).is_err()
+                || !Self::sees_enemy(&self.map, &self.vision_maps, entity.owner, neighbor)
+            {
                 continue;
             }
             let Ok(target_arch) = self.catalog.get(neighbor.unit_type_id) else {
