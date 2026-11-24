@@ -109,8 +109,10 @@ const FLOAT_ALLOWLIST: &[FloatAllowance] = &[
     },
     FloatAllowance {
         path: "crates/sim_core/src/world/snapshot.rs",
-        count: 3,
-        reason: "presentation: progress and hit-flash ratios written into `RenderSnapshot`",
+        count: 7,
+        reason: "presentation: progress and hit-flash ratios written into `RenderSnapshot`, and \
+                 the placement and share conversions a live record and an attack snapshot share \
+                 (plan 2026-11-24-attacker-snapshot D-4)",
     },
 ];
 

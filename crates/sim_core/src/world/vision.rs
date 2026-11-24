@@ -14,6 +14,11 @@
 //! in phase 7 of tick t is seen by that tick's retaliation and by acquisition on the following
 //! `reveal_ticks - 1` ticks, so it is in force for exactly `reveal_ticks` ticks.
 //!
+//! Once this tick's vision maps are final, the phase drops each player's attack snapshots that
+//! player now sees again: its spot is `Visible`, or the attacker itself is shown (plan
+//! `2026-11-24-attacker-snapshot` D-2). A strike of phase 7 records a snapshot on the same
+//! vision, so no snapshot is ever recorded for an attacker this phase showed.
+//!
 //! # Invariants
 //! - Incremental recasting leaves every counter and state exactly as a full recount would.
 //! - Sight lists are sorted by ID, with watchtowers at the top of the ID range.
@@ -215,6 +220,43 @@ impl SimWorld {
         self.vision.sights = sights;
 
         self.update_known_structures();
+        self.prune_attack_snapshots();
+    }
+
+    /// Drops every attack snapshot its viewer sees again: the cell of its spot is `Visible` to
+    /// the viewer, or the attacker lives, is not hidden and is shown to the viewer
+    /// ([`Self::shown_to`]). The attacker's death alone drops nothing; its image stays until
+    /// its spot is seen (plan `2026-11-24-attacker-snapshot` D-2, rule 6).
+    fn prune_attack_snapshots(&mut self) {
+        if !self.presentation.has_attack_snapshots() {
+            return;
+        }
+        let (map, vision_maps, entities) = (&self.map, &self.vision_maps, &self.entities);
+        self.presentation.prune_attack_snapshots(|record| {
+            let Some(vision) = vision_maps.get(record.viewer) else {
+                return false;
+            };
+            let spot_seen = map
+                .world_to_cell(record.pose.position)
+                .is_ok_and(|(cx, cy)| vision.visibility_at(cx, cy) == VisibilityState::Visible);
+            !spot_seen && !Self::snapshot_attacker_shown(map, vision_maps, entities, record)
+        });
+    }
+
+    /// Whether the attacker of `record` lives, is not hidden and is shown to the record's
+    /// viewer ([`Self::shown_to`]): the viewer then sees the unit itself, and its snapshot is
+    /// dropped here and left out of the viewer's view (plan `2026-11-24-attacker-snapshot` D-2).
+    pub(crate) fn snapshot_attacker_shown(
+        map: &sim_map::SimMap,
+        vision_maps: &PerPlayer<sim_map::PlayerVisionMap>,
+        entities: &std::collections::BTreeMap<EntityId, crate::Entity>,
+        record: &crate::world::presentation::AttackSnapshotRecord,
+    ) -> bool {
+        entities.get(&record.attacker).is_some_and(|attacker| {
+            attacker.is_alive()
+                && !attacker.is_hidden()
+                && Self::shown_to(map, vision_maps, record.viewer, attacker)
+        })
     }
 
     /// Walks the old and new ID-sorted source lists together, recasting only the differences.
@@ -302,5 +344,104 @@ impl SimWorld {
             });
             self.vision.known_blocked_lists[p] = list;
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use super::*;
+    use crate::world::presentation::{AttackSnapshotRecord, SnapshotPose};
+    use sim_map::{CliffLevel, GameMap, MapCell};
+    use sim_types::{MoverType, ShapeKind, SimAngle, Tick, UnitTypeId};
+
+    fn at(x: f64, y: f64) -> SimVec2 {
+        SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(y))
+    }
+
+    /// A flat 64x64 world, a mobile ground unit type of the shipped catalog, and its attacker
+    /// of player 0 at `attacker_at`, whose snapshot player 1 keeps at `spot`.
+    fn snapshot_world(attacker_at: SimVec2, spot: SimVec2) -> (SimWorld, EntityId, UnitTypeId) {
+        let map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0)))
+            .expect("invariant: a flat map");
+        let mut world = crate::test_support::world(map, 0x183);
+        let kind = world
+            .catalog
+            .archetypes()
+            .find(|arch| {
+                matches!(arch.shape, ShapeKind::UnitSphere)
+                    && arch.mover_type == MoverType::Ground
+                    && !arch.is_detector()
+                    && arch.max_speed > SimScalar::ZERO
+            })
+            .map(|arch| arch.unit_type_id)
+            .expect("the shipped catalog has a mobile ground unit");
+        let attacker = world
+            .spawn_unit(kind, PlayerId(0), attacker_at)
+            .expect("invariant: a free spot");
+        world
+            .presentation
+            .record_attack_snapshot(AttackSnapshotRecord {
+                viewer: PlayerId(1),
+                attacker,
+                struck: Tick(1),
+                pose: SnapshotPose {
+                    unit_type: kind,
+                    owner: PlayerId(0),
+                    position: spot,
+                    heading: SimAngle::ZERO,
+                    turret: SimAngle::ZERO,
+                    mode: None,
+                    hp_fraction: SimScalar::ONE,
+                    shield_fraction: SimScalar::ZERO,
+                },
+            });
+        (world, attacker, kind)
+    }
+
+    fn kept(world: &SimWorld) -> usize {
+        world.presentation.attack_snapshots_of(PlayerId(1)).count()
+    }
+
+    /// Plan `2026-11-24-attacker-snapshot` D-2, drop: an unseen snapshot is kept; it is dropped
+    /// once its viewer sees its spot, though the attacker stands far from it.
+    #[test]
+    fn a_snapshot_is_dropped_when_its_spot_is_seen() {
+        let spot = at(12.5, 12.5);
+        let (mut world, _, kind) = snapshot_world(at(52.5, 52.5), spot);
+        world.update_vision();
+        assert_eq!(kept(&world), 1, "unseen: kept");
+        world
+            .spawn_unit(kind, PlayerId(1), at(14.5, 12.5))
+            .expect("invariant: a free spot");
+        world.update_vision();
+        assert_eq!(kept(&world), 0, "the spot is seen");
+    }
+
+    /// D-2, drop: a snapshot is dropped once its viewer sees the attacker, wherever it stands.
+    #[test]
+    fn a_snapshot_is_dropped_when_its_attacker_is_seen() {
+        let (mut world, _, kind) = snapshot_world(at(52.5, 52.5), at(12.5, 12.5));
+        world
+            .spawn_unit(kind, PlayerId(1), at(52.5, 50.5))
+            .expect("invariant: a free spot");
+        world.update_vision();
+        assert_eq!(kept(&world), 0, "the attacker is seen");
+    }
+
+    /// D-2, rule 6: the attacker's death drops nothing, even where its viewer sees its body; only
+    /// the spot's sight drops the image.
+    #[test]
+    fn a_snapshot_outlives_its_attacker() {
+        let (mut world, attacker, kind) = snapshot_world(at(52.5, 52.5), at(12.5, 12.5));
+        world.entities.get_mut(&attacker).expect("spawned").hp = SimScalar::ZERO;
+        world
+            .spawn_unit(kind, PlayerId(1), at(52.5, 50.5))
+            .expect("invariant: a free spot");
+        world.update_vision();
+        assert_eq!(kept(&world), 1, "a dead attacker is not shown");
+        world.entities.remove(&attacker);
+        world.update_vision();
+        assert_eq!(kept(&world), 1, "nor a reaped one");
     }
 }
