@@ -6,7 +6,7 @@
 //! shipped skirmish, on the shipped floor, at the battle camera's default zoom, fired by real
 //! units at real bubbles. Each child stages one wave of shooters, each across open ground from
 //! an unarmed enemy target, and pictures every subject every 40 ms frame for
-//! [`WAVE_SECONDS`]:
+//! [`WAVE_FRAMES`] frames:
 //! - **The first waves** stage one presentable unit per *family*: a distinct pair of `travel`
 //!   and `impact` looks named by a presentable unit's block for its ground weapon, as many a
 //!   wave as the child finds spots for. Each fires its own weapon with its own looks.
@@ -27,7 +27,7 @@
 //!   flight must start within [`LAUNCH_TOLERANCE_PX`] of the shooter's drawn bubble outline
 //!   (Amendment 7, B-133: not below a flyer's bubble, where the simulation publishes it).
 //!
-//! The units first stand unarmed for [`SETTLE_SECONDS`] and are pictured: the baseline. Then
+//! The units first stand unarmed for [`SETTLE_FRAMES`] frames and are pictured: the baseline. Then
 //! they open fire. The parent checks that each staged family's looks were spawned while its
 //! wave ran; that, against the baseline and outside every bubble's interior, they changed at
 //! least [`SEEN_PIXELS`] round the path and the target; and that its impact, from its birth,
@@ -66,6 +66,10 @@
 //! - The waves are planned from the catalog and the spots alone, so parent and child agree on
 //!   them; the parent checks that every child planned as many waves as the first.
 //! - Every unit staged stands at full health throughout, so nothing dies in the pictures.
+//! - A wave's run and its blank show the same battle frame for frame: the warm-up before the
+//!   staging waits on pipeline compilation, which is wall time, so the battle stands still at
+//!   [`STAGE_TICK`] through it, and the settling and the wave last fixed counts of frames
+//!   ([`SETTLE_FRAMES`], [`WAVE_FRAMES`]). A child staging at another tick fails.
 
 #![allow(
     clippy::expect_used,
@@ -152,8 +156,15 @@ const FRAMING_FRAMES: u32 = 12;
 const IDLE_FRAMES: u32 = 8;
 /// Presentation time each frame of a child advances: one simulation tick.
 const FRAME_STEP: Duration = Duration::from_millis(40);
-/// Seconds each wave is pictured for.
-const WAVE_SECONDS: f64 = 2.0;
+/// Simulation tick at which a child pauses the battle until it stages its wave. The camera's
+/// settling, the pan and the renderer's warm-up take as many frames as the pipelines take to
+/// compile, which is wall time; with the battle paused through them, every child of a wave (its
+/// run and its blank) stages on the same world at the same tick, and so fires at the same tick.
+/// 42 ticks (1.68 s) is the battle time at which the children used to stage when nothing
+/// delayed the warm-up, so the spots and the subjects' ground are those of the earlier runs.
+const STAGE_TICK: u32 = 42;
+/// Frames, of [`FRAME_STEP`] each, each wave is pictured for: 2 seconds.
+const WAVE_FRAMES: u32 = 50;
 /// Most shooters a wave stages.
 const MAX_SUBJECTS: usize = 9;
 /// Fewest spots a wave child may stage on (plan `2026-11-20-gpu-lane` D-3): a child that finds
@@ -194,9 +205,9 @@ const SEEN_PIXELS: usize = 30;
 /// E4-1: the units' animations, the attacker's rim turning as it strikes among them, change
 /// those pixels on both runs; a blank melee impact left up to 33 there, on the blow from below).
 const IMPACT_MARGIN: usize = 20;
-/// Seconds the staged units stand, unarmed, before the baseline picture: they appear and
-/// settle (review 2, E2-3).
-const SETTLE_SECONDS: f64 = 0.4;
+/// Frames, of [`FRAME_STEP`] each, the staged units stand, unarmed, before the baseline
+/// picture: they appear and settle (review 2, E2-3). 0.4 seconds.
+const SETTLE_FRAMES: u32 = 10;
 /// World units beyond the struck bubble's radius in which its impact is looked for.
 const IMPACT_ZONE: f32 = 0.7;
 /// World units either side of a shot's line left out of its impact's count: the shot's own
@@ -538,9 +549,9 @@ enum Phase {
     Framing {
         frames: u32,
     },
-    /// The units are staged, unarmed, since `at`.
+    /// The units are staged, unarmed, and have stood for `frames` frames.
     Settling {
-        at: f64,
+        frames: u32,
     },
     Running {
         at: f64,
@@ -1430,11 +1441,16 @@ fn stage_wave_child(
     let now = time.elapsed_secs_f64();
     let idle_long = idle.0.load(Ordering::Acquire) >= IDLE_FRAMES;
     staging.phase = match staging.phase {
-        Phase::Boot if tick < 2 => Phase::Boot,
-        Phase::Boot => Phase::Booting {
-            still: 0,
-            height: rts.look_at_y,
-        },
+        Phase::Boot if tick < STAGE_TICK => Phase::Boot,
+        Phase::Boot => {
+            // The battle stands still at STAGE_TICK until the wave is staged, however many
+            // frames the camera and the renderer take to settle.
+            lab.battle_paused = true;
+            Phase::Booting {
+                still: 0,
+                height: rts.look_at_y,
+            }
+        }
         Phase::Booting { still, height } if still < STILL_CAMERA_FRAMES || !idle_long => {
             let still = if (rts.look_at_y - height).abs() < 1e-4 {
                 still + 1
@@ -1473,6 +1489,11 @@ fn stage_wave_child(
             else {
                 panic!("the effect system is loaded before the staging");
             };
+            assert_eq!(
+                tick, STAGE_TICK,
+                "wave {}: the battle stands still at the staging tick through the warm-up",
+                staging.wave
+            );
             let world = session.world().expect("a ready session has a world");
             let search = search_spots(
                 world,
@@ -1502,11 +1523,11 @@ fn stage_wave_child(
             stage(&mut staging, &mut session, catalog, runtime, &spots, up);
             commands.queue(rebuild_tables);
             lab.battle_paused = false;
-            Phase::Settling { at: now }
+            Phase::Settling { frames: 0 }
         }
-        Phase::Settling { at } if now - at < SETTLE_SECONDS => {
+        Phase::Settling { frames } if frames < SETTLE_FRAMES => {
             heal(&staging, &mut session);
-            Phase::Settling { at }
+            Phase::Settling { frames: frames + 1 }
         }
         Phase::Settling { .. } => {
             assert_staged_units_seen(&staging, &session, &fog);
@@ -1541,7 +1562,7 @@ fn stage_wave_child(
             }
             Phase::Running { at: now, frame: 0 }
         }
-        Phase::Running { at, frame } if now - at <= WAVE_SECONDS => {
+        Phase::Running { at, frame } if frame < WAVE_FRAMES => {
             heal(&staging, &mut session);
             picture(
                 &mut commands,
@@ -1654,7 +1675,19 @@ fn weapon_wave_child() {
             wave,
             ..Staging::default()
         })
-        .add_systems(Update, stage_wave_child.in_set(BattleSet::Present));
+        // The pictures and the spawn counts of a frame describe the same pool: the child reads
+        // it after this frame's effects are spawned and its held beams kept. Unordered, the
+        // systems are ambiguous and the multi-threaded executor runs them either way round,
+        // by thread timing: a child that read the pool first marked each impact's birth a frame
+        // late and measured four other frames (a blank melee impact then counted 21 and 49 px
+        // beside the struck bubble instead of 9 and 36, and its wave failed).
+        .add_systems(
+            Update,
+            stage_wave_child
+                .in_set(BattleSet::Present)
+                .after(client::effects::systems::spawn_effects_from_events)
+                .after(client::effects::beams::keep_beams),
+        );
     assert!(client::render_compatibility::run_render_app(&mut app).is_success());
 }
 

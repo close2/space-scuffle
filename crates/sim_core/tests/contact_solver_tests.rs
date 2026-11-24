@@ -59,14 +59,19 @@ fn the_shipped_iteration_count_meets_the_catalogs_bound() {
     );
 }
 
+/// WP6: the shipped rules run the solver pipeline, with D-β (Q0092) and D-δ (Q0095) on.
 #[test]
-fn the_shipped_rules_run_the_legacy_pipeline_until_the_switch_over() {
+fn the_shipped_rules_run_the_solver_pipeline_since_the_switch_over() {
     let rules = sim_fixtures::shipped_catalogs()
         .units
         .movement_rules()
         .contact();
-    assert_eq!(rules.pipeline, MovementPipeline::Legacy);
+    assert_eq!(rules.pipeline, MovementPipeline::Solver);
     assert!(rules.moving_friends_push, "D-β is on by default (Q0092)");
+    assert!(
+        rules.nudge_engaged_along_ring,
+        "D-δ is on by default (Q0095)"
+    );
 }
 
 #[test]
@@ -79,6 +84,7 @@ fn contact_shares_answer_the_push_table() {
         engaged: false,
         idle: false,
         moving: true,
+        nudge: None,
     };
     let (zero, half, one) = (SimScalar::ZERO, SimScalar::HALF, SimScalar::ONE);
     let enemy = ContactParty {

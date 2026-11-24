@@ -173,6 +173,17 @@ fn test_idle_friendly_displaced_laterally() {
     let default_cell = MapCell::default_ground(CliffLevel(0));
     let map = GameMap::new(64, 64, default_cell).expect("valid map");
     let mut world = sim_fixtures::world(map, 0x1111_2222);
+    // The legacy form of this test (plan `2026-11-20-contact-solver` §8.1: restated for the solver
+    // in `solver_pipeline_tests.rs`); it runs the legacy pipeline until WP7 deletes it.
+    let rules = world.catalog.movement_rules();
+    world.catalog.set_movement_rules(
+        rules
+            .with_contact(sim_core::catalog::ContactRules {
+                pipeline: sim_core::catalog::MovementPipeline::Legacy,
+                ..rules.contact()
+            })
+            .expect("invariant: the shipped contact rules are valid"),
+    );
 
     let player = PlayerId(0);
     let pulse_bot_id = world

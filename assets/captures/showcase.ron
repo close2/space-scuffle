@@ -79,6 +79,13 @@
 // (revision 1f129416): `clash` runs from tick 305 to 680, `march` ends on combat at the viewer's base
 // at tick 973, and `assault` (to about tick 1,373) covers both worker deaths; no scene length
 // changed. Scene ticks are in docs/evidence/2026-11-19-parked-body-aim.md (WP3).
+// Re-checked for plan 2026-11-20-contact-solver WP6 (the contact solver is the default pipeline).
+// The lane fight still goes to player 1 but lasts longer: the viewer's last unit dies at tick 691,
+// the enemy's surviving pulse bots kill its workers (ticks 1,091 and 1,128) and fire on its hall
+// until it falls at tick 2,505. `clash` is 400 frames (375 before) so that it covers the fight's
+// last death. Render-checked on radv: `clash` runs from tick 297 to 697, `march` ends on combat at
+// the viewer's base at tick 1,010, and `assault` (to about tick 1,410) covers both worker deaths;
+// scene ticks are in docs/evidence/2026-11-20-contact-solver.md §13.11.
 // Effects take added by plan 2026-11-09-effect-visualization WP14 (Amendment 31): a second battle
 // (scenarios/showcase_effects.ron), so the `battle` take's scenario and outcome are its own.
 // Player 0's siege line anchors and burrows where it spawns, in a row on the near side of its hall
@@ -158,7 +165,7 @@
                 (
                     name: "clash",
                     speed: Speed(1),
-                    length: Frames(375),
+                    length: Frames(400),
                     camera: FollowCombat(distance: 16.0, pitch_deg: 52.0),
                     overlay: Caption(
                         title: "Combat",

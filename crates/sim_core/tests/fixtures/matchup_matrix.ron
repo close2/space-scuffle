@@ -845,7 +845,7 @@
     ),
     (
         name: "26_100_lings_vs_6_colossi",
-        claim: "Six colossi vaporize a hundred zerglings",
+        claim: "A hundred zerglings that pack round each colossus mostly overwhelm six colossi; when the colossi win, they win narrowly",
         map_cells: 96,
         ticks: 700,
         blue: (
@@ -877,7 +877,16 @@
         // with 2 left at tick 566. So the claim "six colossi vaporize a hundred zerglings" is
         // within noise on seed 33: a miss on it is a stop only if no placebo of the same base shows
         // the same miss, and any re-examination of the claim starts from this finding.
-        expect: (blue: (0, 0), red: (2, 999)),
+        // Restated for plan 2026-11-20-contact-solver WP6 (Amendment 19, the owner's answer to
+        // Q0103, option (a)); the claim was "Six colossi vaporize a hundred zerglings". Under the
+        // contact solver the D-delta nudge the owner chose in Q0095 (Q0052 addendum) lets an
+        // engaged zergling slide along its attack ring when friends need room, so ten zerglings
+        // fit round the first colossus against three before, and the colossi die before their
+        // sweeps kill enough zerglings. On the seeds of record and seeds 1 to 20 the zerglings win
+        // 20 of 24 with 10 to 31 left, and the colossi 4 with 1 to 3 left (seed 33 of record:
+        // colossi, 2 left); with the nudge off the colossi win all 24. Colossus fire rate, damage
+        // per sweep and enemy overlap are unchanged (evidence 2026-11-20-contact-solver §13.12).
+        expect: (blue: (0, 31), red: (0, 3)),
     ),
     (
         name: "27_100_lings_vs_8_ultralisks",
@@ -901,6 +910,13 @@
     (
         name: "28_100_lings_vs_10_immortals",
         claim: "Without splash, immortals are overrun",
+        // Known bug B-192 (plan 2026-11-20-contact-solver Amendment 19, the owner's answer to
+        // Q0103, option (b)): under the contact solver a zergling whose automatically acquired
+        // immortal is surrounded stands behind it (G-6) while the rear column has room, so the
+        // immortals win 19 of 24 runs (the legacy pipeline: the zerglings all 24). The claim is
+        // StarCraft II's and stays; the matrix reports this battle as an expected failure and fails
+        // once it holds again, when B-192 (and with it the enemy shoving of B-193) is fixed.
+        known_bug: Some("B-192"),
         map_cells: 96,
         ticks: 1000,
         blue: (
@@ -1027,6 +1043,10 @@
     // figures, from docs/evidence/2026-11-03-battle-33-investigation.md §4.2), and
     // docs/evidence/2026-11-05-sc2-deviation-fixes.md §12 (B-3), §11 (B-29), §5.3 (B-2), §4.6 (B-9) and §1
     // (WP1).
+    // Restated for plan 2026-11-20-contact-solver WP6 (the solver pipeline becomes the default):
+    // on the 20 matrix seeds the marines now win every one with 8 to 16 left (seed 11 of record:
+    // 14). Blue's upper bound 13 -> 16; reported as a finding, since the claim's "narrowly" no
+    // longer describes the fight (evidence §14).
     (
         name: "33_24_marines_vs_12_zealots",
         claim: "A close fight: unkited zealots and marines trade evenly, either side may win narrowly",
@@ -1044,7 +1064,7 @@
             ],
             order: AttackMove(20, 48),
         ),
-        expect: (blue: (0, 13), red: (0, 3)),
+        expect: (blue: (0, 16), red: (0, 3)),
     ),
     (
         name: "34_20_hydras_vs_12_mutas",
@@ -1077,7 +1097,7 @@
     // different answer to Q0106 part 2 or part 4 re-opens this expectation.
     (
         name: "35_12_vikings_vs_6_colossi",
-        claim: "Vikings lose nothing; colossi that flee out of their sight survive (5.0.14 TargetFilters Visible)",
+        claim: "Vikings lose nothing; colossi that flee out of the vikings' sight usually survive, though on a close run all six fall (5.0.14 TargetFilters Visible)",
         map_cells: 96,
         ticks: 900,
         blue: (
@@ -1092,7 +1112,16 @@
             ],
             order: AttackMove(28, 48),
         ),
-        expect: (blue: (12, 12), red: (1, 3)),
+        // Restated for plan 2026-11-20-contact-solver on its merge with main 8a15bff9 (Amendment
+        // 20, a minor deviation under AGENTS.md §8: close-battle variation, not broken behaviour);
+        // the range was red 1..3. Under the solver default, on the first seed of record the vikings
+        // kill all six colossi by tick 267: one colossus that has not been hit itself stands idle
+        // inside the vikings' sight while they kill the others, and flees only once struck (a
+        // unit flees only from an attacker it cannot hit back, as in StarCraft II). The legacy
+        // pipeline misses the same way on seed 19. Every other run of the seeds of record and
+        // seeds 1 to 20 leaves 1 to 3 colossi. Evidence: docs/evidence/2026-11-20-contact-solver.md
+        // §13.14.
+        expect: (blue: (12, 12), red: (0, 3)),
     ),
     // Plan 2026-11-10-spellcaster-mechanics §10.2, WP2b. The High Templar analogue stands behind six
     // zealots; sixteen marines attack-move into them and are in contact from tick 109. On tick 150 the
@@ -1129,6 +1158,8 @@
     // record) marine entity 8 keeps walking at tick 118 where it used to step forward, and the
     // marines win with 12 left (11 before); the range was the control's measured spread, not a
     // StarCraft II figure.
+    // Restated for plan 2026-11-20-contact-solver WP6: under the solver pipeline the marines win
+    // all 20 matrix seeds with 9 to 13 left (seed 3203386110 of record: 13); red 9..12 -> 9..13.
     (
         name: "36b_marines_beat_zealots_without_storm",
         claim: "Control of 36a: without the storm the same marines beat the zealots and the High Templar analogue",
@@ -1148,7 +1179,7 @@
             ],
             order: AttackMove(46, 45),
         ),
-        expect: (blue: (0, 0), red: (9, 12)),
+        expect: (blue: (0, 0), red: (9, 13)),
     ),
     // Battles 37a/37b (plan 2026-11-10-spellcaster-mechanics §10.2, Amendment 6): Abduct's own
     // effect. Two sieged tanks 6 apart hold behind four marines; the Viper analogue waits on the
@@ -1237,6 +1268,9 @@
     ),
     // Control of 38a: no cast. The marines win all 20 seeds with 6 to 8 left (5 once in 52
     // seeds); every zergling dies and the idle caster outlives the 400-tick limit.
+    // Restated for plan 2026-11-20-contact-solver WP6: under the solver pipeline the marines win
+    // all 20 matrix seeds with 4 to 8 left, and on 7 the idle caster dies too (seed 3203386110 of
+    // record: blue 0, red 6); blue 1..1 -> 0..1, red 5..8 -> 4..8.
     (
         name: "38b_marines_beat_zerglings_without_fungal",
         claim: "Control of 38a: without Fungal Growth the same marines beat the zerglings",
@@ -1255,7 +1289,7 @@
             ],
             order: HoldPosition,
         ),
-        expect: (blue: (1, 1), red: (5, 8)),
+        expect: (blue: (0, 1), red: (4, 8)),
     ),
     // Battles 39a/39b (plan 2026-11-10-spellcaster-mechanics §10.2): Blinding Cloud flips a fight.
     // Three sieged tanks hold in a column 1.8 apart, every one within 2 of their centroid; eight

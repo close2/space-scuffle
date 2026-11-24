@@ -60,6 +60,11 @@ pub struct ContactParty {
     pub idle: bool,
     /// Its committed step this tick is longer than `STANDING_DRIFT` (1/64 world units).
     pub moving: bool,
+    /// Deviation D-δ (Q0095, plan Amendment 15, N): for an engaged melee unit that allies may nudge
+    /// along its attack ring, the unit vector from its target to it; `None` otherwise. In a
+    /// friend pair such a unit is shared as if not engaged, but only the part of its correction
+    /// along the ring's tangent is taken, so it never leaves its range.
+    pub nudge: Option<SimVec2>,
 }
 
 impl ContactParty {
@@ -130,7 +135,12 @@ pub fn contact_shares(a: &ContactParty, b: &ContactParty, moving_friends_push: b
         (false, true) => return weights(one, zero),
         (false, false) => {}
     }
-    match (a.engaged, b.engaged) {
+    // D-δ: an engaged unit allies may nudge is shared with them as if not engaged; the radial
+    // part of its correction is removed when the pair is built.
+    match (
+        a.engaged && a.nudge.is_none(),
+        b.engaged && b.nudge.is_none(),
+    ) {
         (true, true) => return weights(half, half),
         (true, false) => return weights(zero, one),
         (false, true) => return weights(one, zero),
@@ -226,6 +236,10 @@ struct Pair {
     hard: bool,
     /// Enemies, or a fixed body: the hard constraints applied last (plan Amendment 7, item 4).
     last: bool,
+    /// D-δ: in a friend pair, the radial direction of a body that may only be nudged along its
+    /// ring; its correction keeps only the part perpendicular to it.
+    nudge_a: Option<SimVec2>,
+    nudge_b: Option<SimVec2>,
     radius_sum: SimScalar,
     /// The overlap at or below which the pair is left alone (C-4), world units.
     dead_band: SimScalar,
@@ -308,6 +322,8 @@ pub(crate) struct ContactSolver {
     /// Each body's position when the pair list was last built.
     anchors: Vec<SimVec2>,
     sums: Vec<Accumulator>,
+    /// Per body: the scale of its summed step in a hard pass ([`Self::bound_summed_steps`]).
+    scales: Vec<SimScalar>,
     /// Per body: the state of its last terrain step, for the active set.
     steps: Vec<BodyStep>,
     grid: BodyGrid,
@@ -400,6 +416,7 @@ impl ContactSolver {
             operation: "contact solver pair",
             source,
         };
+        let friends = a.party.owner == b.party.owner;
         let (share_a, share_b) =
             match contact_shares(&a.party, &b.party, settings.moving_friends_push) {
                 PairShares::None => return,
@@ -418,7 +435,14 @@ impl ContactSolver {
         let Some(radius_sum) = a.policy.radius.checked_add(b.policy.radius) else {
             return report(fault(MovementMathError::Unrepresentable));
         };
-        let band = i128::from(radius_sum.raw()) * i128::from(settings.dead_band_permille) / 1000;
+        // D-α: the dead band applies to friends only; an enemy overlap is always corrected (plan
+        // Amendment 11, P7: T7 allows enemies 0.5 %, below the 1 % band).
+        let permille = if a.party.owner == b.party.owner {
+            i128::from(settings.dead_band_permille)
+        } else {
+            0
+        };
+        let band = i128::from(radius_sum.raw()) * permille / 1000;
         let dead_band = SimScalar::from_raw(i64::try_from(band).unwrap_or(i64::MAX));
         self.pairs.push(Pair {
             a: u32::try_from(low).unwrap_or(u32::MAX),
@@ -429,6 +453,8 @@ impl ContactSolver {
                 || share_a == SimScalar::ZERO
                 || share_b == SimScalar::ZERO,
             last: a.party.owner != b.party.owner || a.party.fixed || b.party.fixed,
+            nudge_a: a.party.nudge.filter(|_| friends),
+            nudge_b: b.party.nudge.filter(|_| friends),
             radius_sum,
             dead_band,
             cached: None,
@@ -472,7 +498,10 @@ impl ContactSolver {
         // enemy and fixed constraints, so that no friend's correction is the last word against
         // an enemy or a fixed body.
         self.accumulate(Pass::HardFriends, report);
+        self.bound_summed_steps(report);
         self.apply(false, &mut terrain, report);
+        // The enemy and fixed constraints keep the last word unbounded: D-α never relaxes them,
+        // and a body may close on a friend to clear an enemy.
         self.accumulate(Pass::EnemyAndFixed, report);
         self.apply(false, &mut terrain, report);
         done.pairs = self.pairs.len();
@@ -527,6 +556,59 @@ impl ContactSolver {
                     operation: "contact solver pair",
                     source,
                 }),
+            }
+        }
+    }
+
+    /// Keeps the hard friend pass monotone (plan Amendment 15, O1): a body whose summed step has a
+    /// component toward a body it already overlaps does not take that step in this pass. No
+    /// overlapping pair then closes in a summed pass, so no overlap grows and no pair's order along
+    /// its line of centres reverses. Without it, a walker's whole overlap with an idle body carried
+    /// the idle body across its idle partner, and the two swapped places every tick (A0's traces).
+    /// The averaged iterations of the next tick resolve what the pass left. The decision is a
+    /// minimum over pairs, so it does not depend on their order.
+    // PERFORMANCE RATIONALE:
+    // Why: The bound needs each overlapping pair's distance, a root per pair.
+    // What: It runs only in the two summed passes, only for pairs with a body that has a summed
+    // step, and keeps one scale per body in a retained buffer.
+    // Trade-off: One more scan of the pair list per summed pass.
+    fn bound_summed_steps(&mut self, report: &mut impl FnMut(MovementInvariant)) {
+        self.scales.clear();
+        self.scales.resize(self.bodies.len(), SimScalar::ONE);
+        for pair in &self.pairs {
+            let (ia, ib) = (pair.a as usize, pair.b as usize);
+            if self.sums[ia].count == 0 && self.sums[ib].count == 0 {
+                continue;
+            }
+            let (a, b) = (&self.bodies[ia], &self.bodies[ib]);
+            let bound = pair_bound(a, b, pair.radius_sum).and_then(|bound| {
+                let Some((toward_b, half)) = bound else {
+                    return Ok((SimScalar::ONE, SimScalar::ONE));
+                };
+                let toward_a = super::math::checked_vec_neg(toward_b)?;
+                Ok((
+                    step_scale(self.sums[ia].sum, toward_b, half)?,
+                    step_scale(self.sums[ib].sum, toward_a, half)?,
+                ))
+            });
+            match bound {
+                Ok((scale_a, scale_b)) => {
+                    self.scales[ia] = self.scales[ia].min(scale_a);
+                    self.scales[ib] = self.scales[ib].min(scale_b);
+                }
+                Err(source) => report(MovementInvariant::Arithmetic {
+                    entity: a.id,
+                    operation: "contact solver step bound",
+                    source,
+                }),
+            }
+        }
+        for (acc, &scale) in self.sums.iter_mut().zip(&self.scales) {
+            if scale < SimScalar::ONE {
+                acc.sum = SimVec2::new(
+                    acc.sum.x.saturating_mul(scale),
+                    acc.sum.y.saturating_mul(scale),
+                );
             }
         }
     }
@@ -637,6 +719,48 @@ fn settled_step(
     settle_on_terrain(map, pathfinder, policy, start, current, accepted)
 }
 
+/// For an overlapping pair, the unit vector from `a` toward `b` and the step either may take
+/// toward the other in a summed pass (none); `None` when the pair does not overlap. Coincident centres take the direction the pair's
+/// correction uses ([`pair_normal`], reversed: from `a` toward `b`).
+fn pair_bound(
+    a: &SolverBody,
+    b: &SolverBody,
+    radius_sum: SimScalar,
+) -> Result<Option<(SimVec2, SimScalar)>, MovementMathError> {
+    let distance = super::checked_distance(a.position, b.position)
+        .ok_or(MovementMathError::Unrepresentable)?;
+    if distance >= radius_sum {
+        return Ok(None);
+    }
+    let toward_b = super::math::checked_vec_neg(pair_normal(a, b)?)?;
+    Ok(Some((toward_b, SimScalar::ZERO)))
+}
+
+/// The largest factor in [0, 1] by which `step` may be taken so that its component along `toward`
+/// (a unit vector) is at most `half` (zero for a step that closes on `toward`).
+fn step_scale(
+    step: SimVec2,
+    toward: SimVec2,
+    half: SimScalar,
+) -> Result<SimScalar, MovementMathError> {
+    let along = super::math::checked_dot(step, toward)?;
+    if along <= half {
+        return Ok(SimScalar::ONE);
+    }
+    half.checked_div(along)
+        .ok_or(MovementMathError::Unrepresentable)
+        .map(|scale| scale.clamp(SimScalar::ZERO, SimScalar::ONE))
+}
+
+/// `delta` without its component along `radial` (D-δ), or `delta` itself when there is none.
+fn along_ring(delta: SimVec2, radial: Option<SimVec2>) -> Result<SimVec2, MovementMathError> {
+    let Some(radial) = radial else {
+        return Ok(delta);
+    };
+    let out = super::math::checked_dot(delta, radial)?;
+    checked_vec_sub(delta, checked_vec_scale(radial, out)?)
+}
+
 /// Adds `share` of `delta` to slot `index`'s sum, counting it, when the share is positive.
 fn add_to(
     sums: &mut [Accumulator],
@@ -708,8 +832,11 @@ fn pair_correction(pair: &Pair, a: &SolverBody, b: &SolverBody) -> Correction {
             .ok_or(MovementMathError::Unrepresentable)
             .and_then(|amount| checked_vec_scale(normal, amount))
     };
-    let delta_a = push(pair.share_a)?;
-    let delta_b = super::math::checked_vec_neg(push(pair.share_b)?)?;
+    let delta_a = along_ring(push(pair.share_a)?, pair.nudge_a)?;
+    let delta_b = along_ring(
+        super::math::checked_vec_neg(push(pair.share_b)?)?,
+        pair.nudge_b,
+    )?;
     Ok(Some((delta_a, delta_b)))
 }
 
@@ -726,6 +853,7 @@ mod tests {
             engaged: false,
             idle: false,
             moving: false,
+            nudge: None,
         }
     }
 
@@ -937,6 +1065,7 @@ mod tests {
                     engaged: rng.below(8) == 0,
                     idle: rng.below(3) == 0,
                     moving: rng.below(2) == 0,
+                    nudge: None,
                 };
                 let party = ContactParty {
                     holding: party.holding || party.fixed,
@@ -1076,6 +1205,191 @@ mod tests {
         Ok(())
     }
 
+    /// Plan Amendment 11, P7: an enemy overlap inside the friends' dead band (here 0.8 % of the
+    /// radius sum, under the 1 % band) is still corrected; a friendly one is left alone (C-4).
+    #[test]
+    fn enemy_pairs_take_no_dead_band() -> Result<(), Box<dyn std::error::Error>> {
+        let mut world = flat_world(None)?;
+        let pillar = ContactParty {
+            fixed: true,
+            holding: true,
+            ..party(1)
+        };
+        let touch = 1.0 - 0.008;
+        for (other, corrected) in [(pillar, true), (party(0), false)] {
+            let bodies = [
+                solver_body(1, party(0), 0.5, at(20.0, 20.0), at(20.0, 20.0)),
+                solver_body(
+                    2,
+                    other,
+                    0.5,
+                    at(20.0 + touch, 20.0),
+                    at(20.0 + touch, 20.0),
+                ),
+            ];
+            let (solved, errors) = solve_on(&mut world, &bodies, SETTINGS);
+            assert_eq!(errors, []);
+            let share = overlap_share(&solved.bodies[0], &solved.bodies[1]);
+            if corrected {
+                assert!(share <= 0.0001, "enemy overlap {share}");
+            } else {
+                assert!((share - 0.008).abs() < 1e-6, "friend overlap {share}");
+            }
+        }
+        Ok(())
+    }
+
+    /// A column of walker, idle, idle, walker of radius 0.875, its centres 0.584 apart (a third
+    /// of the radius sum; acceptance seed 100804's and development seed 967's knot), the walkers
+    /// stepping 0.071 inward every tick; each tick's solve starts where the last ended. Returns the
+    /// two idle bodies' x after every tick.
+    fn column_ticks(world: &mut crate::SimWorld, ticks: usize) -> Vec<(f64, f64)> {
+        let spacing = 0.584;
+        let press = 0.071;
+        let walker = ContactParty {
+            moving: true,
+            idle: false,
+            ..party(0)
+        };
+        let idle = ContactParty {
+            idle: true,
+            moving: false,
+            ..party(0)
+        };
+        let mut xs = [
+            20.0,
+            20.0 + spacing,
+            20.0 + 2.0 * spacing,
+            20.0 + 3.0 * spacing,
+        ];
+        let mut out = Vec::new();
+        for _ in 0..ticks {
+            let bodies = [
+                solver_body(20, walker, 0.875, at(xs[0] - press, 20.0), at(xs[0], 20.0)),
+                solver_body(24, idle, 0.875, at(xs[1], 20.0), at(xs[1], 20.0)),
+                solver_body(9, idle, 0.875, at(xs[2], 20.0), at(xs[2], 20.0)),
+                solver_body(5, walker, 0.875, at(xs[3] + press, 20.0), at(xs[3], 20.0)),
+            ];
+            let (solved, _) = solve_on(world, &bodies, SETTINGS);
+            for (k, body) in solved.bodies.iter().enumerate() {
+                xs[k] = f64::from(body.position.x.to_f32());
+            }
+            out.push((xs[1], xs[2]));
+        }
+        out
+    }
+
+    /// Plan Amendment 15, O1: the hard pass never carries a body across a partner it overlaps.
+    /// Before, the summed hard correction of each walker–idle pair (the whole overlap, 1.17)
+    /// carried each idle body past its idle partner (0.584 away), and the two swapped places
+    /// every tick. Now they keep their order and stand still from tick to tick.
+    #[test]
+    fn a_pressed_column_keeps_its_order_and_settles() -> Result<(), Box<dyn std::error::Error>> {
+        let mut world = flat_world(None)?;
+        let ticks = column_ticks(&mut world, 8);
+        for (tick, &(left, right)) in ticks.iter().enumerate() {
+            assert!(
+                left < right,
+                "tick {tick}: the idle pair swapped ({left}, {right})"
+            );
+        }
+        assert_eq!(ticks[6], ticks[7], "the column still moves: {ticks:?}");
+        Ok(())
+    }
+
+    /// Plan Amendment 15, O1: two idle units placed overlapping by 0.8 separate monotonically:
+    /// along their line of centres each moves one way only, and their overlap never grows.
+    #[test]
+    fn an_overlapped_idle_pair_separates_monotonically() -> Result<(), Box<dyn std::error::Error>> {
+        let mut world = flat_world(None)?;
+        let idle = ContactParty {
+            idle: true,
+            moving: false,
+            ..party(0)
+        };
+        let mut xs = [20.0, 20.0 + 1.75 - 0.8];
+        let mut gaps = Vec::new();
+        for _ in 0..4 {
+            let bodies = [
+                solver_body(1, idle, 0.875, at(xs[0], 20.0), at(xs[0], 20.0)),
+                solver_body(2, idle, 0.875, at(xs[1], 20.0), at(xs[1], 20.0)),
+            ];
+            let (solved, errors) = solve_on(&mut world, &bodies, SETTINGS);
+            assert_eq!(errors, []);
+            let next = [
+                f64::from(solved.bodies[0].position.x.to_f32()),
+                f64::from(solved.bodies[1].position.x.to_f32()),
+            ];
+            assert!(next[0] <= xs[0] && next[1] >= xs[1], "{xs:?} -> {next:?}");
+            xs = next;
+            gaps.push(xs[1] - xs[0]);
+        }
+        assert!(gaps.windows(2).all(|w| w[1] >= w[0]), "{gaps:?}");
+        Ok(())
+    }
+
+    /// Deviation D-δ (Q0095, plan Amendment 15, N): an engaged melee unit that allies may nudge
+    /// is moved by a pressing friend only along its ring's tangent, never radially, so it stays
+    /// in range; without the nudge (on Hold Position, ranged, or the switch off) it does not move
+    /// at all; an enemy never nudges it.
+    #[test]
+    fn a_nudged_attacker_slides_along_its_ring_only() -> Result<(), Box<dyn std::error::Error>> {
+        let mut world = flat_world(None)?;
+        // The target lies due west: the ring's radial direction at the attacker is +x.
+        let radial = SimVec2::new(SimScalar::ONE, SimScalar::ZERO);
+        let engaged = ContactParty {
+            engaged: true,
+            ..party(0)
+        };
+        let walker = ContactParty {
+            moving: true,
+            ..party(0)
+        };
+        // The friend presses from the south-east, so the overlap has both a radial and a
+        // tangential part.
+        let solve = |world: &mut crate::SimWorld, attacker: ContactParty, presser: ContactParty| {
+            let bodies = [
+                solver_body(1, attacker, 0.5, at(20.0, 20.0), at(20.0, 20.0)),
+                solver_body(2, presser, 0.5, at(20.6, 19.4), at(20.55, 19.45)),
+            ];
+            let (solved, errors) = solve_on(world, &bodies, SETTINGS);
+            assert_eq!(errors, []);
+            solved.bodies[0].position
+        };
+        let nudged = solve(
+            &mut world,
+            ContactParty {
+                nudge: Some(radial),
+                ..engaged
+            },
+            walker,
+        );
+        assert_eq!(nudged.x, at(20.0, 0.0).x, "moved radially: {nudged:?}");
+        assert!(
+            nudged.y > at(0.0, 20.0).y,
+            "not nudged along the ring: {nudged:?}"
+        );
+        assert_eq!(solve(&mut world, engaged, walker), at(20.0, 20.0));
+        let enemy = ContactParty {
+            moving: true,
+            ..party(1)
+        };
+        let by_enemy = solve(
+            &mut world,
+            ContactParty {
+                nudge: Some(radial),
+                ..engaged
+            },
+            enemy,
+        );
+        let without = solve(&mut world, engaged, enemy);
+        assert_eq!(
+            by_enemy, without,
+            "an enemy's push must not depend on the nudge"
+        );
+        Ok(())
+    }
+
     /// Amendment 7, item 4: a correction that terrain refuses whole slides along the wall. A body
     /// touching a wall is pressed by a fixed enemy from below and outward: before, its correction
     /// (half of it into the wall) was refused and the overlap stayed; now it slides along the wall
@@ -1094,7 +1408,13 @@ mod tests {
         ];
         let (solved, errors) = solve_on(&mut world, &bodies, SETTINGS);
         assert_eq!(errors, []);
-        assert!(solved.bodies[0].position.x <= at(20.5, 0.0).x);
+        // Never deeper into the wall than the wall rule's rounding allowance.
+        let limit = at(20.5, 0.0).x + super::super::tuning::WALL_CONTACT_TOLERANCE;
+        assert!(
+            solved.bodies[0].position.x <= limit,
+            "{:?}",
+            solved.bodies[0].position
+        );
         assert!(solved.bodies[0].position.y > at(0.0, 20.0).y);
         assert!(overlap_share(&solved.bodies[0], &solved.bodies[1]) <= 0.005);
         Ok(())

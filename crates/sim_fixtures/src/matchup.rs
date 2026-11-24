@@ -170,6 +170,62 @@ pub struct Battle {
     pub red: Side,
     /// The recorded result.
     pub expect: Expected,
+    /// The bug of `DESIGN.md`'s register (e.g. `"B-192"`) known to break this battle's claim: the
+    /// matrix then reports the battle as an expected failure while the claim breaks, and fails
+    /// once it holds on every seed of record, so the marker is removed with the bug (plan
+    /// `2026-11-20-contact-solver` Amendment 19, Q0103). `None` for every battle that must hold.
+    #[serde(default)]
+    pub known_bug: Option<String>,
+}
+
+/// How the matrix judges one battle over its seeds of record ([`Battle::verdict`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Verdict {
+    /// The claim holds on every seed, and no bug is known to break it.
+    Holds,
+    /// The claim breaks on these seeds and no bug is known to break it: a failure.
+    Broken(Vec<u64>),
+    /// The claim breaks on these seeds, as the battle's known bug says it does: reported, not a
+    /// failure.
+    ExpectedFailure {
+        /// The known bug.
+        bug: String,
+        /// The seeds that break the claim.
+        seeds: Vec<u64>,
+    },
+    /// The battle is marked with this known bug, yet its claim holds on every seed: the marker
+    /// is stale, a failure until the bug is closed and the marker removed.
+    StaleKnownBug(String),
+}
+
+impl Verdict {
+    /// Whether the matrix passes this battle.
+    #[must_use]
+    pub const fn passes(&self) -> bool {
+        matches!(self, Self::Holds | Self::ExpectedFailure { .. })
+    }
+}
+
+impl Battle {
+    /// The verdict on this battle from `results`, each seed with whether its outcome held the
+    /// claim ([`Expected::holds`]): the one rule the matrix test applies, known bugs included.
+    #[must_use]
+    pub fn verdict(&self, results: &[(u64, bool)]) -> Verdict {
+        let broken: Vec<u64> = results
+            .iter()
+            .filter(|(_, held)| !held)
+            .map(|&(seed, _)| seed)
+            .collect();
+        match (&self.known_bug, broken.is_empty()) {
+            (None, true) => Verdict::Holds,
+            (None, false) => Verdict::Broken(broken),
+            (Some(bug), false) => Verdict::ExpectedFailure {
+                bug: bug.clone(),
+                seeds: broken,
+            },
+            (Some(bug), true) => Verdict::StaleKnownBug(bug.clone()),
+        }
+    }
 }
 
 /// One rectangle of an arena's terrain: every cell in it, corners included, is set to plain
@@ -892,6 +948,56 @@ mod tests {
         Ok(())
     }
 
+    /// A battle without a known bug holds when every seed of record holds its claim and breaks
+    /// otherwise; one marked with a known bug is an expected failure while some seed breaks the
+    /// claim, and a stale marker once every seed holds it (plan `2026-11-20-contact-solver`
+    /// Amendment 19, Q0103).
+    #[test]
+    fn a_known_bug_turns_a_broken_claim_into_an_expected_failure_and_goes_stale_when_it_holds() {
+        let plain = bare_battle(Vec::new());
+        assert_eq!(plain.verdict(&[(1, true), (2, true)]), Verdict::Holds);
+        assert_eq!(
+            plain.verdict(&[(1, true), (2, false)]),
+            Verdict::Broken(vec![2])
+        );
+        let marked = Battle {
+            known_bug: Some("B-192".to_owned()),
+            ..bare_battle(Vec::new())
+        };
+        assert_eq!(
+            marked.verdict(&[(1, false), (2, true), (3, false)]),
+            Verdict::ExpectedFailure {
+                bug: "B-192".to_owned(),
+                seeds: vec![1, 3],
+            }
+        );
+        assert_eq!(
+            marked.verdict(&[(1, true), (2, true)]),
+            Verdict::StaleKnownBug("B-192".to_owned())
+        );
+        assert!(Verdict::Holds.passes());
+        assert!(!Verdict::Broken(vec![2]).passes());
+        assert!(Verdict::ExpectedFailure {
+            bug: "B-192".to_owned(),
+            seeds: vec![1],
+        }
+        .passes());
+        assert!(!Verdict::StaleKnownBug("B-192".to_owned()).passes());
+    }
+
+    /// The fixture may mark a battle with a known bug and leaves the rest unmarked.
+    #[test]
+    fn the_fixture_reads_a_known_bug_marker() -> Result<(), MatchupError> {
+        let matrix = Matrix::from_ron_str(MATRIX_RON)?;
+        let marked: Vec<_> = matrix
+            .battles
+            .iter()
+            .filter_map(|b| b.known_bug.as_deref().map(|bug| (b.name.as_str(), bug)))
+            .collect();
+        assert_eq!(marked, [("28_100_lings_vs_10_immortals", "B-192")]);
+        Ok(())
+    }
+
     /// A battle on a 32-cell arena with `terrain`, no units, for the arena tests.
     fn bare_battle(terrain: Vec<ArenaRegion>) -> Battle {
         Battle {
@@ -924,6 +1030,7 @@ mod tests {
                 blue_lead_alive: None,
                 red_lead_alive: None,
             },
+            known_bug: None,
         }
     }
 
