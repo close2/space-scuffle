@@ -416,12 +416,30 @@ fn a_snapshot_or_hidden_weapon_reveals_nothing() -> TestResult {
 }
 
 /// P-10: an attacker that died before its strike landed reveals nothing: a missile of a
-/// `Visible` weapon whose attacker died in flight strikes, and no unit is revealed.
+/// `Visible` weapon whose attacker died in flight strikes, and no unit is revealed. An unarmed,
+/// invulnerable spotter of the attacker's player stands beside the victim, so that the missile,
+/// which strikes only a target its player sees (plan `2026-11-24-weapon-validation` D-3), still
+/// sees it once the attacker, its player's only other eye, is dead.
 #[test]
 fn a_dead_attacker_reveals_nothing() -> TestResult {
     let mut bench = bench(visible_air_attacker, |weapon| {
         weapon.projectile_speed = Some(SimScalar::from_num(0.25));
     })?;
+    let victim = &bench.world.entities[&bench.victim];
+    let (kind, at) = (victim.unit_type_id, victim.position);
+    let arch = bench.world.catalog.get(kind)?.clone();
+    let kind = register(&mut bench.world, &arch, None);
+    let spotter = bench.world.spawn_unit(
+        kind,
+        PlayerId(0),
+        SimVec2::new(at.x - SimScalar::from_num(1.5), at.y),
+    )?;
+    bench
+        .world
+        .entities
+        .get_mut(&spotter)
+        .ok_or("spawned")?
+        .is_invulnerable = true;
     let full = bench.vitals(bench.victim);
     let mut tick = 0;
     while bench.world.projectiles.is_empty() {

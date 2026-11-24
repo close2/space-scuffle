@@ -480,6 +480,22 @@ fn test_missile_lifetime_timeout_expiration() {
         )
         .expect("spawn target");
 
+    // A spotter of the shooter's player sees the target, beyond its own weapon's reach, holding
+    // and invulnerable: a weapon strikes only what its player sees (plan
+    // `2026-11-24-weapon-validation` D-3), and the target lies beyond the shooter's sight.
+    let spotter = world
+        .spawn_unit(
+            pulse_id,
+            PlayerId(0),
+            SimVec2::new(SimScalar::from_num(25), SimScalar::from_num(23)),
+        )
+        .expect("spawn spotter");
+    let spotter_entity = world.entities.get_mut(&spotter).expect("spotter");
+    spotter_entity.is_invulnerable = true;
+    spotter_entity
+        .issue_order(UnitOrder::HoldPosition, false)
+        .expect("hold admitted");
+
     // Speed 0.50 units/tick -> distance 15.0 requires ~30 ticks.
     // Set max lifetime to only 5 ticks!
     let weapon = custom_projectile_weapon(

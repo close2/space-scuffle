@@ -72,6 +72,9 @@ struct TargetSnapshot {
     damageable: bool,
     /// Requires detection before anyone may aim at it.
     cloaked: bool,
+    /// For each player, whether the entity's own attacks reveal it to that player (B-55), as
+    /// [`Entity::is_attack_revealed_to`] at the start of the weapon phase.
+    attack_revealed: PerPlayer<bool>,
 }
 
 /// One discharged weapon waiting for dispatch.
@@ -216,10 +219,22 @@ struct StrikeContext<'a> {
 }
 
 impl StrikeContext<'_> {
-    /// Whether `viewer`'s weapons may strike the entity `snapshot` describes: it passes the
-    /// damage gate and, if cloaked, is revealed to `viewer`.
+    /// Whether `viewer`'s weapons may strike the entity `snapshot` describes: the weapon filter
+    /// of [`SimWorld::passes_weapon_filters`] on the snapshot. It passes the damage gate, is
+    /// seen by `viewer` (its cell `Visible`, or attack-revealed) and, if cloaked, is revealed
+    /// to `viewer` (plan `2026-11-24-weapon-validation` D-3).
     fn is_available(&self, viewer: PlayerId, snapshot: TargetSnapshot) -> bool {
+        let revealed = viewer
+            .slot()
+            .is_some_and(|slot| snapshot.attack_revealed[slot]);
         snapshot.damageable
+            && SimWorld::sees_point(
+                self.map,
+                self.vision_maps,
+                viewer,
+                snapshot.position,
+                revealed,
+            )
             && (!snapshot.cloaked
                 || SimWorld::is_cloak_revealed(
                     self.map,
@@ -452,6 +467,9 @@ impl SimWorld {
                     mover,
                     damageable: Self::is_damageable(entity),
                     cloaked: entity.is_concealed(),
+                    attack_revealed: PerPlayer::from_fn(|slot| {
+                        entity.is_attack_revealed_to(slot.id())
+                    }),
                 },
             ));
         }
@@ -980,14 +998,16 @@ impl SimWorld {
     /// Applies the strikes `source` carries to `target_id`, then the target's retaliation.
     ///
     /// Returns where the shot landed, or `None` when the target no longer exists. A target
-    /// that became unavailable after the shot was prepared, typically killed earlier this
-    /// phase, takes no strikes, but the landed hit still carries any area damage.
+    /// that fails the weapon filter when the hit lands ([`Self::is_weapon_target_available`]:
+    /// typically killed earlier this phase, or, for a missile that does not validate the
+    /// weapon in flight, cloaked undetected or unseen at the landing) takes no strikes, but the
+    /// landed hit still carries any area damage.
     fn apply_weapon_hit(
         &mut self,
         source: HitSource<'_>,
         target_id: EntityId,
     ) -> Option<ResolvedHit> {
-        let available = self.is_entity_available_for_combat(source.owner, target_id);
+        let available = self.is_weapon_target_available(source.owner, target_id);
         let target = self.entities.get_mut(&target_id)?;
         let target_arch = self.catalog.get(target.unit_type_id).ok()?;
         let hit = ResolvedHit {
@@ -1526,9 +1546,10 @@ impl SimWorld {
 
     /// Refreshes a projectile's aim point and returns the surface radius to stop at.
     ///
-    /// The target is followed while it passes the weapon's filters (5.0.14's `ValidateWeapon`)
+    /// The target is followed while it passes the weapon's filters (5.0.14's `ValidateWeapon`;
+    /// [`Self::passes_weapon_filters`], vision included, so a target that walks into fog is lost)
     /// or, for a weapon that clears `missile_validation.weapon` (the Brood Lord's missiles),
-    /// while it is alive and not loaded: such a missile follows it through cloak and
+    /// while it is alive and not loaded: such a missile follows it through fog, cloak and
     /// invulnerability and leaves the filters to the impact ([`Self::apply_weapon_hit`]). It is
     /// lost otherwise and, if the weapon validates teleports (`missile_validation.teleport`,
     /// `ValidateTeleport`), when its teleport count moved on since the launch. The teleport is
@@ -1547,7 +1568,7 @@ impl SimWorld {
                 .get(&target_id)
                 .is_some_and(|target| target.teleport_count != proj.target_teleport_count);
         let followed = if validation.weapon {
-            self.is_entity_available_for_combat(proj.owner, target_id)
+            self.is_weapon_target_available(proj.owner, target_id)
         } else {
             // [INF] A loaded target is not followed: its position is its transport's (plan
             // `2026-11-24-weapon-validation` D-4, R-6).
@@ -1613,13 +1634,7 @@ impl SimWorld {
                 continue;
             };
             if candidate.owner == proj.owner
-                || !Self::is_target_available_for_combat(
-                    &self.entities,
-                    &self.map,
-                    &self.vision_maps,
-                    proj.owner,
-                    candidate_id,
-                )
+                || !Self::passes_weapon_filters(candidate, &self.map, &self.vision_maps, proj.owner)
             {
                 continue;
             }
@@ -1778,6 +1793,9 @@ mod tests {
         let (mut projectile_step, mut missile_step) = (None, None);
         for step in 1..=40_u32 {
             world.entities.get_mut(&target).expect("alive").position.x += receding;
+            // The projectile follows only a target its owner sees (plan
+            // `2026-11-24-weapon-validation` D-3): the target's own sight shows its cell.
+            world.update_vision();
             if projectile_step.is_none() {
                 world.advance_projectiles();
                 if world.projectiles.is_empty() {

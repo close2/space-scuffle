@@ -163,6 +163,9 @@ fn battle(
         remaining_ticks: 1,
     };
     entity.active_buffs.push(buff(rate));
+    // Vision before combat, as `step` orders the phases: a weapon strikes only what its player
+    // sees (plan `2026-11-24-weapon-validation` D-3).
+    world.update_vision();
     Ok((world, attacker, target, damage_point))
 }
 

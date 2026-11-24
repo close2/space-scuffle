@@ -119,3 +119,57 @@ the tank takes the fourth, which flees too, and shells it beyond its sight until
 **Worlds.** Every output of §7.1 is byte-identical to WP0 except the matrix's summary files, which gain battle 42's
 rows (`matrix.csv` equal to WP0's with battle 42's rows removed; 1,220 runs, 0 expectation failures on the seeds of
 record, 4 over all seeds, as on WP0).
+
+## WP5: weapons strike only what their player sees (B-185 weapon half)
+
+**Red run** (on WP4's tree, the final test file): 12 of the 23 `weapon_validation_tests` failed, each WP5 test but
+the two guards that hold before and after (`an_acquired_target_lost_to_fog_gives_way_to_a_seen_one`, since the old
+rule already traded an unseen current target for a seen candidate, and `a_seen_target_out_of_reach_is_still_chased`):
+`no_swing_starts_on_an_unseen_target`, `a_spotter_lets_the_strike_land`, `an_attack_revealed_target_is_struck` ("tick 1:
+the shooter swings"), `a_pending_strike_holds_on_an_unseen_target` (the second strike landed),
+`a_missile_whose_target_walks_into_fog_lands_on_the_point` (the missile kept its target),
+`a_missile_that_skips_the_weapon_check_follows_a_target_into_fog`, `…_with_none_the_attack_move_resumes`,
+`a_hold_target_lost_to_fog_is_released`, `an_immobile_units_order_on_a_lost_target_ends`,
+`a_players_order_is_kept_but_holds_fire`, `the_reveals_end_ends_the_answer` (the Hydra analogue kept firing after the
+reveal), `a_sieged_tank_needs_a_spotter_beyond_its_sight` (the tank shelled the unseen target).
+
+**Deviation (P-6's last clause).** "A player without a vision map fires as today" cannot be reached through the
+public API: every player slot has a vision map and a unit of an owner outside the slots cannot be spawned
+(`InvalidPlayer`). It is pinned by the unit test
+`target_acquisition::weapon_filter_tests::a_player_without_a_vision_map_sees_every_enemy` instead.
+
+**Re-derived tests** (they struck targets their player did not see): the `combat_resolution` unit test
+`a_projectile_and_an_effect_missile_impact_on_the_same_step`, `target_selection_tests::swings_under` (both b90
+tests), `transport_ownership_tests` (`prepared_mutual_lethal_shots_…`, and `loaded_ground_and_air_targets_…`, whose
+target now stands at 2 inside the fixture's sight of 3) and `weapon_period_tests::battle` drive the combat phase
+directly and now run the vision phase first, as `step` does; `attack_reveal_tests::a_dead_attacker_reveals_nothing`
+and `combat_retaliation_and_projectile_tests::test_missile_lifetime_timeout_expiration` gain an unarmed or holding,
+invulnerable spotter of the shooter's player beside the target.
+
+**Worlds** (`compare-wp5.txt` against WP0; WP4's tree for the first differences):
+
+| World | Moved | Counted by WP0's probe | First difference |
+|---|---|---|---|
+| Matrix battle 35 | every seed (20) | every seed | at or after the seed's first counted event (a strike or missile on an unseen Colossus analogue: the Colossus's life differs that tick; or a Viking analogue's acquired target dropped one tick after it is lost to fog) |
+| Matrix battle 42 | every seed | (new) | the tank's acquired attack dropped, ticks 150 to 214 |
+| Matrix, every other battle (37a and 31 included) | no outcome moved | 37a seeds 7, 11, 14; 31 seeds 1, 7, 14, 17 | the matrix records outcomes only |
+| Battle 31, 100 seeds | exactly the 14 counted seeds; no outcome changed | 14 seeds | 0 to 4 ticks after each seed's first counted missile event |
+| Showcase effects | default and seeds 1, 2, 3, 4, 5, 7 (positions only; 4 and 5 also the reversal summary) | all 9 | ticks 711 to 756, after each first counted event (703 to 711); seeds 6 and 8 counted but did not move |
+| Showcase, battle 33 | none | none | — |
+| Goldens, sandbox | none (native debug) | none | — |
+
+Every moved world was counted and every first difference is at or after a counted event (P-11).
+
+**P-12 (battle 42).** As predicted: the tank fires at no worker beyond its sight and all 4 workers survive on all 20
+seeds (3 before). The expectation is re-recorded `(blue: (4, 4), red: (1, 1))`.
+
+**Broken matrix claim (stop rule 3, reported, not rewritten): battle 35.** "Vikings lose nothing; a helpless colossus
+may flee out of their scan range", `expect: (blue: (12, 12), red: (0, 1))`. Vikings still lose nothing, but on 9 of
+20 seeds (22 and 33 of record; 3, 6, 7, 8, 9, 10, 14) 2 or 3 Colossus analogues are left at tick 900 (WP4: 0 or 1,
+battles ending on ticks 320 to 530 unless one fled). Cause, traced: a Colossus analogue that flees out of the Viking
+analogues' sight (10; the Vikings hit at full reach on centres beyond it, 19,658 of WP0's steps) is lost to fog; the
+Vikings' acquired attacks are dropped (D-5, Q0106 part 2's default) and they resume their attack-move, so a fleeing
+Colossus is no longer chased by its true position. The expectation is left as recorded; the matrix test
+`every_battle_keeps_its_recorded_outcome_on_every_seed` fails on battle 35 seeds 22 and 33 until the orchestrator
+decides (re-record with the trace, or revisit Q0106 part 2 or part 4: a Colossus's body inside sight while its centre
+is not).
