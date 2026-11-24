@@ -70,7 +70,7 @@ impl SimWorld {
                     entity.owner != viewer
                         && entity.is_concealed()
                         && entity.is_alive()
-                        && !entity.is_loaded_in_transport()
+                        && !entity.is_hidden()
                         && Self::is_cloak_revealed(
                             &self.map,
                             &self.vision_maps,
@@ -88,7 +88,7 @@ impl SimWorld {
                 .filter(|entity| {
                     entity.owner != viewer
                         && entity.is_alive()
-                        && !entity.is_loaded_in_transport()
+                        && !entity.is_hidden()
                         && entity.is_attack_revealed_to(viewer)
                 })
                 .map(|entity| entity.id),

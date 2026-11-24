@@ -105,7 +105,10 @@ use std::collections::BTreeMap;
 /// validation (weapon, teleport; a `bool` each), `WeaponSpec::missile_validation`, after
 /// `attack_visibility` (plan `2026-11-24-weapon-validation` D-7). Number 42 is reserved for the
 /// contact solver's branch; whichever merges second takes the next free number.
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 43;
+/// Schema 44 adds each unit task's housing structure, `UnitTask::housed_in`, after `last_node`
+/// (plan `2026-11-24-hidden-harvesters` D-3). Number 42 is reserved for the contact solver's
+/// branch.
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 44;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.

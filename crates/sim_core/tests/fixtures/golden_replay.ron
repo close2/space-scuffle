@@ -424,8 +424,15 @@
 // reproduce the lists recorded for plan 2026-11-23-vision-and-detection (schema 41), on native
 // debug and release and wasm32-wasip1 release and debug. Native debug and release and
 // wasm32-wasip1 release and debug agree on the list below.
+// Re-recorded for plan 2026-11-24-hidden-harvesters WP2, on its merge with main 7dc356fc (checksum
+// schema 43 -> 44): each unit task also encodes its housing structure, `UnitTask::housed_in`, so
+// every checkpoint changed. No behaviour did: with the field left out of the encoding at schema
+// 43, both fixtures reproduce the lists recorded for plan 2026-11-24-weapon-validation WP1
+// (schema 41 -> 43), on native debug and release and wasm32-wasip1 release and debug. Nothing in
+// this replay harvests, so the field is `None` on every unit at every checkpoint. Native debug and
+// release and wasm32-wasip1 release and debug agree on the list below.
 (
-    checksum_schema: 43,
+    checksum_schema: 44,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -451,25 +458,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x905f659572318b1d,
-        0x78417c07281b6698,
-        0x25383de5d7581651,
-        0x044e583fc75e685e,
-        0x1301b62948738547,
-        0xadf7c95284deec48,
-        0x4d3f2dac3839aff3,
-        0x0a66847b64c32362,
-        0x0a731488afeca738,
-        0x9ccdc225140f5ff5,
-        0xee6bb8849076e4a0,
-        0x326d2032dea962ec,
-        0x700c5a855420d521,
-        0x040f293f900dfb04,
-        0x6fd769d3fa728fc4,
-        0x4936a7f2c75e1d51,
-        0x91f0aad78d2ca9fe,
-        0x33981a09284c0486,
-        0x7922c3e6ed70c486,
-        0x8bfd498e25082bce,
+        0x2146016e5cb9828d,
+        0x489f21ed594af233,
+        0x1eaef3da607ec7ad,
+        0xbced10ca048f721e,
+        0x734d3dca0289e17e,
+        0xe7b3ec99606ebfed,
+        0xbe82f6d70f913afe,
+        0x2cd318cc627c327b,
+        0x8971b7c4bbe553fe,
+        0xb5a5bdfe61f5a5c4,
+        0xad93705a4c983bcd,
+        0x1123bb5e918924a6,
+        0xc625a16ad65c7478,
+        0x2441624ed67094d8,
+        0x4563eb48270a2fd5,
+        0x09fa309f61774d95,
+        0x4487559268edf447,
+        0x89f879bf15a9aec9,
+        0x2ceab976c29c0d13,
+        0x7ac88f0d8fe12f0f,
     ],
 )

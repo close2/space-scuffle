@@ -35,7 +35,7 @@ use sim_types::{
 impl SimWorld {
     /// Whether `entity_id` could take an order to cast the ability at `ability_index` of its
     /// archetype at `target_pos` (world units) or on `target_entity`: alive, completed and not
-    /// carried, the ability unlocked and off cooldown, the energy at hand, and the target
+    /// hidden (5.0.14 `CasterIsNotHidden`), the ability unlocked and off cooldown, the energy at hand, and the target
     /// valid, visible to the caster's owner and admitted by the ability's target filter (plan
     /// D-7.2).
     ///
@@ -59,7 +59,7 @@ impl SimWorld {
         };
         entity.is_alive()
             && entity.is_completed
-            && !entity.is_loaded_in_transport()
+            && !entity.is_hidden()
             && self.is_ability_unlocked(arch, entity.owner, &ability.name)
             && entity
                 .ability_cooldowns

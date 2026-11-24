@@ -1,8 +1,10 @@
 //! Unit predicates of the effect engine: which unit a unit-targeted node may act on, and the
 //! resolved [`ResolvedFilter`] of searches and validators (plan D-1, D-15).
 //!
-//! A unit is a valid target while it exists, lives (`hp > 0`) and is not hidden in a
-//! transport, the editor's default `Dead` and `Hidden` exclusions. Filters additionally
+//! A unit is a valid target while it exists, lives (`hp > 0`) and is not hidden, the editor's
+//! default `Dead` and `Hidden` exclusions. Two kinds of unit are hidden: cargo in a transport,
+//! and a gatherer inside a structure that hides its harvesters (plan
+//! `2026-11-24-hidden-harvesters` D-4; `Entity::is_hidden`). Filters additionally
 //! exclude invulnerable units and narrow by owner, plane, structure, attribute and status.
 
 use super::state::EffectWorld;
@@ -15,7 +17,7 @@ use std::collections::BTreeMap;
 pub(crate) fn unit_target(entities: &BTreeMap<EntityId, Entity>, id: EntityId) -> Option<&Entity> {
     entities
         .get(&id)
-        .filter(|entity| entity.is_alive() && !entity.is_loaded_in_transport())
+        .filter(|entity| entity.is_alive() && !entity.is_hidden())
 }
 
 /// Whether `entity` is in the air plane now (its mode's override, else its archetype's).
@@ -47,7 +49,7 @@ pub(crate) fn passes_filter(
     catalog: &UnitCatalog,
     effects: &EffectWorld,
 ) -> bool {
-    if !entity.is_alive() || entity.is_loaded_in_transport() || entity.is_invulnerable {
+    if !entity.is_alive() || entity.is_hidden() || entity.is_invulnerable {
         return false;
     }
     let alliance = match filter.alliance {

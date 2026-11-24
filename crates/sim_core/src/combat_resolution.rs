@@ -448,10 +448,7 @@ impl SimWorld {
     /// [`Self::advance_pending_lines`]).
     fn pending_line_weapon(&self, id: EntityId, plane: MoverType) -> Option<(WeaponSpec, String)> {
         let entity = self.entities.get(&id)?;
-        if !entity.is_alive()
-            || entity.is_loaded_in_transport()
-            || entity.channeling_remaining_ticks > 0
-        {
+        if !entity.is_alive() || entity.is_hidden() || entity.channeling_remaining_ticks > 0 {
             return None;
         }
         let rate = entity.attack_rate_multiplier().ok()?;
@@ -519,7 +516,7 @@ impl SimWorld {
             if !entity.is_alive()
                 || entity.channeling_remaining_ticks > 0
                 || entity.is_action_locked()
-                || entity.is_loaded_in_transport()
+                || entity.is_hidden()
                 || !entity.is_completed
             {
                 continue;
@@ -680,7 +677,7 @@ impl SimWorld {
         let Some(pending) = entity.pending_strikes.take() else {
             return;
         };
-        if !entity.is_alive() || entity.is_loaded_in_transport() {
+        if !entity.is_alive() || entity.is_hidden() {
             return;
         }
         if pending.ticks_until_next > 1 {
@@ -1618,8 +1615,8 @@ impl SimWorld {
             }
             return Some(radius);
         }
-        // Target became unavailable (cargo loaded, cloaked without detector, invulnerable,
-        // died, or expired) or teleported.
+        // Target became unavailable (hidden in cargo or a structure, cloaked without detector,
+        // invulnerable, died, or expired) or teleported.
         match proj.weapon_spec.target_loss_behavior {
             ProjectileTargetLossBehavior::Fizzle => None,
             ProjectileTargetLossBehavior::ImpactLastKnownPosition => {

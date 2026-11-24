@@ -928,6 +928,122 @@ fn selected_structure_keeps_card_queue_and_feed_buffers_on_every_tick() {
     assert_eq!(shown, 2, "the base's rally reticle and line");
 }
 
+/// Places a completed extractor that hides its harvesters, of the local player, over the gas
+/// node nearest the first worker, and orders that worker to gather from it through the battle's
+/// command queue; returns the worker.
+fn send_worker_to_gas(harness: &mut Harness) -> EntityId {
+    let worker = local_workers(harness)[0];
+    let at = sim_types::SimVec2::new(
+        sim_types::SimScalar::from_num(harness.simulated_position(worker).x),
+        sim_types::SimScalar::from_num(harness.simulated_position(worker).y),
+    );
+    let world = harness.world();
+    let extractor = world
+        .catalog
+        .archetypes()
+        .find(|a| a.capabilities.is_gas_extractor && a.capabilities.hides_harvesters)
+        .expect("the catalog ships an extractor that hides its harvesters")
+        .unit_type_id;
+    let mut nodes: Vec<(sim_types::SimScalar, usize, (u32, u32))> = world
+        .map
+        .resources()
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| node.kind == sim_map::ResourceKind::Gas)
+        .map(|(index, node)| (node.pos.distance_sq(at), index, node.cell))
+        .collect();
+    nodes.sort_unstable();
+    let index = nodes
+        .into_iter()
+        .find(|(_, _, cell)| {
+            harness
+                .world_mut()
+                .spawn_structure(extractor, LOCAL_PLAYER, cell.0 - 1, cell.1 - 1)
+                .is_ok()
+        })
+        .map(|(_, index, _)| index)
+        .expect("a gas node near home takes an extractor");
+    let target = sim_types::ResourceNodeId(u32::try_from(index).expect("few nodes"));
+    let mut session = harness.app.world_mut().resource_mut::<BattleSession>();
+    let (world, queue) = session.world_and_commands();
+    queue
+        .submit_selection(
+            world.expect("committed battle"),
+            LOCAL_PLAYER,
+            &[worker],
+            sim_types::UnitOrder::Harvest { target },
+            false,
+        )
+        .expect("the client admits a harvest order");
+    worker
+}
+
+/// Steps, counting motion, until `worker` has gone inside its extractor and come out again.
+/// Returns how often its presence changed (twice): on each such frame the stance look writes the
+/// bubble's shell once (`effects::stance`), as it does for a unit that cloaks.
+fn through_a_gas_trip(harness: &mut Harness, worker: EntityId, motion: &mut Motion) -> u64 {
+    let housed = |harness: &Harness| harness.world().entities[&worker].is_housed();
+    let mut frames = 0;
+    let mut changes = 0;
+    for inside in [true, false] {
+        while housed(harness) != inside {
+            step_counting(harness, motion);
+            frames += 1;
+            assert!(
+                frames < READY_FRAMES * 4,
+                "the worker never went in and out"
+            );
+        }
+        changes += 1;
+    }
+    changes
+}
+
+/// Plan `2026-11-24-hidden-harvesters` P-10: a gas worker that goes inside its extractor and
+/// comes out spawns and despawns nothing, its bubble keeps its render entity, no asset other
+/// than the materials of redrawn bubbles is touched, and no retained buffer moves or grows. The
+/// window starts after one whole trip, so the first use of any buffer is outside it.
+#[test]
+fn a_gas_trip_in_and_out_of_the_extractor_spawns_nothing() {
+    let mut harness = skirmish();
+    settle(&mut harness, true);
+    let worker = send_worker_to_gas(&mut harness);
+    harness.resume();
+    let mut warm = Motion::default();
+    through_a_gas_trip(&mut harness, worker, &mut warm);
+    run_ticks(&mut harness, WARM_TICKS);
+    let render = harness.app.world().resource::<client::RenderEntityMap>().0[&worker];
+    let entities = census(&harness);
+    let buffers = retained_buffers(harness.app.world());
+    reset(&mut harness);
+    let mut motion = Motion::default();
+    let presence_changes = through_a_gas_trip(&mut harness, worker, &mut motion);
+    assert_eq!(
+        harness.app.world().resource::<client::RenderEntityMap>().0[&worker],
+        render,
+        "one render entity through the trip"
+    );
+    let tally = tallies(&harness);
+    let bubbles = type_name::<Assets<BubbleDomeMaterial>>();
+    assert_eq!(
+        tally.others(&[(bubbles, EventKind::Modified)]),
+        Vec::new(),
+        "asset events other than bubble materials of redrawn units"
+    );
+    let modified = tally.count(bubbles, EventKind::Modified);
+    assert!(
+        modified <= motion.redrawn + presence_changes,
+        "{modified} bubble materials modified; (unit, frame) pairs: {motion:?}, and \
+         {presence_changes} presence changes"
+    );
+    assert_eq!(census(&harness), entities, "entities spawned or despawned");
+    assert_eq!(
+        moved(&buffers, &retained_buffers(harness.app.world())),
+        Vec::new(),
+        "retained buffers that moved or grew"
+    );
+}
+
 #[test]
 fn marching_frames_touch_only_turning_units() {
     let mut harness = Harness::battle();

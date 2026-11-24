@@ -120,14 +120,15 @@ struct ScanResult {
 }
 
 impl SimWorld {
-    /// Whether an entity can take damage at all: alive, in the world and not invulnerable.
+    /// Whether an entity can take damage at all: alive, not hidden (carried, or inside a
+    /// structure while it gathers; plan `2026-11-24-hidden-harvesters` D-4) and not invulnerable.
     ///
     /// Area damage uses this gate alone, because a blast needs no aim: it reaches cloaked
     /// units whether or not anyone detects them.
     #[must_use]
     #[inline]
     pub(crate) fn is_damageable(target: &Entity) -> bool {
-        target.is_alive() && !target.is_loaded_in_transport() && !target.is_invulnerable
+        target.is_alive() && !target.is_hidden() && !target.is_invulnerable
     }
 
     /// Whether `viewer` sees the enemy `target`: a viewer without a vision map sees everything;
@@ -275,7 +276,7 @@ impl SimWorld {
     ///
     /// An entity is available if and only if:
     /// - It exists and is alive (`hp > 0`),
-    /// - It is not loaded in a transport craft,
+    /// - It is not hidden: loaded in a transport craft, or inside a structure while it gathers,
     /// - It is not invulnerable (e.g. stasis, phase shift),
     /// - If cloaked, the attacker's player possesses active detector vision at the entity's map cell.
     #[must_use]
@@ -313,11 +314,7 @@ impl SimWorld {
         victim_id: EntityId,
         attacker_id: EntityId,
     ) {
-        let Some(victim) = self
-            .entities
-            .get(&victim_id)
-            .filter(|v| !v.is_loaded_in_transport())
-        else {
+        let Some(victim) = self.entities.get(&victim_id).filter(|v| !v.is_hidden()) else {
             return;
         };
         let Some(attacker) = self.entities.get(&attacker_id).filter(|a| a.is_alive()) else {
@@ -370,7 +367,7 @@ impl SimWorld {
         let Some(victim) = self
             .entities
             .get(&victim_id)
-            .filter(|v| v.is_alive() && !v.is_loaded_in_transport())
+            .filter(|v| v.is_alive() && !v.is_hidden())
         else {
             return;
         };
@@ -406,7 +403,7 @@ impl SimWorld {
 
     /// Whether `viewer` sees `attacker` well enough to shoot back at it.
     fn is_attacker_visible_to(&self, viewer: PlayerId, attacker: &Entity) -> bool {
-        if attacker.is_loaded_in_transport() {
+        if attacker.is_hidden() {
             return false;
         }
         if self.vision_maps.get(viewer).is_none() {
@@ -474,7 +471,7 @@ impl SimWorld {
                 || !entity.is_alive()
                 || entity.is_holding_position
                 || entity.is_immobile
-                || entity.is_loaded_in_transport()
+                || entity.is_hidden()
                 || !matches!(entity.order_queue.front(), None | Some(UnitOrder::Idle))
                 || (id != victim_id && entity.position.distance_sq(victim_pos) > call_radius_sq)
             {
@@ -511,7 +508,7 @@ impl SimWorld {
         // Populate spatial hash grid with current entity positions
         self.spatial_hash.clear();
         for (id, entity) in &self.entities {
-            if !entity.is_loaded_in_transport() {
+            if !entity.is_hidden() {
                 self.spatial_hash.insert(*id, entity.position);
             }
         }
@@ -533,7 +530,7 @@ impl SimWorld {
         for (&id, entity) in &self.entities {
             if entity.channeling_remaining_ticks > 0
                 || entity.is_action_locked()
-                || entity.is_loaded_in_transport()
+                || entity.is_hidden()
                 || !entity.is_completed
             {
                 continue;

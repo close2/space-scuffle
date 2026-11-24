@@ -773,7 +773,8 @@ package, on 2026-11-24. [Evidence](../evidence/2026-11-24-owner-answers-cliff-an
 | WP5 | `a3e97544` | `collect_sights` gives a foundation no detection (Q0101 3(b), B-184) |
 | WP6 | this commit | D-6's docs, the register, the pointers, the evidence, Q0099 and Q0101 resolved and closed |
 
-**No schema change** (43 stays), no catalog or fixture change, nothing under `crates/sim_core/src/movement/`. No
+**No schema change of its own** (43 when built; 44 after merging `main` with plan `2026-11-24-hidden-harvesters`, which
+raised it), no catalog or fixture change, nothing under `crates/sim_core/src/movement/`. No
 measured world moved in any package (every comparison byte-identical to WP0), as the probes predicted.
 
 **Differences from the plan, recorded here (Q0002):**

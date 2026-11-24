@@ -53,7 +53,8 @@ pub(crate) struct VisionWorkspace {
 impl SimWorld {
     /// Assigns each watchtower from the ground units standing on the map this tick.
     ///
-    /// Air units overfly towers, and structures and transported cargo do not occupy them.
+    /// Air units overfly towers, and structures and hidden units (transported cargo, gatherers
+    /// inside a structure) do not occupy them.
     // PERFORMANCE RATIONALE:
     // Why: This runs every tick, and most maps have few towers while battles have many units.
     // What: Skip entirely on towerless maps; otherwise reuse one scratch buffer of positions.
@@ -64,7 +65,7 @@ impl SimWorld {
         }
         self.vision.watchtower_units.clear();
         for entity in self.entities.values() {
-            if entity.is_loaded_in_transport() || !entity.is_completed {
+            if entity.is_hidden() || !entity.is_completed {
                 continue;
             }
             let occupies = self.catalog.get(entity.unit_type_id).is_ok_and(|arch| {
@@ -93,11 +94,13 @@ impl SimWorld {
         }
     }
 
-    /// Lists every sight source for this tick in ID order, watchtowers after all entities.
+    /// Lists every sight source for this tick in ID order, watchtowers after all entities. A
+    /// hidden unit sees nothing: cargo, and a gatherer inside a structure (plan
+    /// `2026-11-24-hidden-harvesters` D-6, Q0107's default (2a)).
     fn collect_sights(&self, sights: &mut Vec<AppliedSight>) {
         sights.clear();
         for entity in self.entities.values() {
-            if entity.is_loaded_in_transport() {
+            if entity.is_hidden() {
                 continue;
             }
             let Some(owner) = entity.owner.slot() else {
