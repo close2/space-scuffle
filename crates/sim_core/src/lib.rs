@@ -49,8 +49,8 @@ pub use combat::{
     WeaponTarget, MIN_DAMAGE_CLAMP, RELEASE_RANGE_SLOP,
 };
 pub use entity::{
-    ActiveBuff, ActiveProjectile, BarrierState, Cargo, Entity, MovementMemory, PendingLine,
-    PendingLineView, PendingStrikes, SlotClaim, UnitTask, WeaponPhase,
+    ActiveBuff, ActiveProjectile, BarrierState, Cargo, Entity, LastSeen, MovementMemory,
+    PendingLine, PendingLineView, PendingStrikes, SlotClaim, UnitTask, WeaponPhase,
 };
 pub use error::{SimCoreError, SimResult};
 pub use published_actions::ActionSet;

@@ -463,8 +463,16 @@
 // order ends on tick 255 instead of 254, as a hull-weapon unit's already did (registered as B-207).
 // Checkpoints 1 to 5 are unchanged; every checkpoint from 6 on changed. golden_replay_orders did not
 // move. Native debug and release and wasm32-wasip1 release and debug agree on the list below.
+// Re-recorded for plan 2026-11-24-weapon-validation WP7 (Amendment 2, B-195) on its merge with main
+// a59368a3 (checksum schema 46 -> 47, provisional: the next free number at merge): each unit also
+// encodes its last seen point of its attack order's target (MovementMemory::last_seen), so every
+// checkpoint changed. No behaviour did: with last_seen left out of the encoding at schema 46, a
+// git-archive copy of the merged tree, built in a fresh target directory, reproduces main's lists
+// of both fixtures and DEFAULT_SANDBOX_CHECKSUM on native debug and release and wasm32-wasip1
+// release and debug (neither fixture gives a player's attack order). Native debug and release and
+// wasm32-wasip1 release and debug agree on the list below.
 (
-    checksum_schema: 46,
+    checksum_schema: 47,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -490,25 +498,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x920010601dbaae7f,
-        0x803cbe6daa5c8511,
-        0xbeff44a6fa0b63ff,
-        0x4153942439264b03,
-        0xd2f4fdbc70fc17e1,
-        0x5672dcff3cc9d4b7,
-        0x910683565be8a38b,
-        0x26cf7fbb5d732e76,
-        0x66d53c6d838f60c1,
-        0x5a3416ec646ad59f,
-        0x1e01552b6a8028d6,
-        0x53c068a52343856e,
-        0x7cddbc5ee3f824c7,
-        0xe66931fa3e3badc0,
-        0x62084ccdba361c6c,
-        0xe310f93093559a77,
-        0xe7167f46bc8e8139,
-        0x2deafd383c6d00b5,
-        0x38bf18afc2ab7a97,
-        0x890755e89d14bba0,
+        0xc969bf8c8e8adf01,
+        0xce8fa92e6a76673c,
+        0x56871350d70c960d,
+        0x053bdd9af615e1e7,
+        0xc13cf15a856440e6,
+        0xec87579c871c5086,
+        0x19cee690218ff537,
+        0x643731caa4ec0ac4,
+        0xc3eefe7088f2b0ee,
+        0x2de1eca90932f113,
+        0xa2e228d31de95126,
+        0x57192e2177593ab9,
+        0x69b49b89d84c2044,
+        0x29a9306ad7bf1da7,
+        0x4413ca837b0e3ba9,
+        0x2e0769db17a48ce5,
+        0xa92cdb17b33e5ab4,
+        0x6ec8ce97fa1b2019,
+        0xd5774277208018bf,
+        0x64fd0fc4868c52f8,
     ],
 )

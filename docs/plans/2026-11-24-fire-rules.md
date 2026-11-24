@@ -777,3 +777,13 @@ built (parts 1 to 4, answer (a) each), and the owner answered (a) on every part;
 - **R-7 found:** a hull unit on Hold Position does not face its target between shots; registered as **B-199**
   (provisional), the hull half of B-197, deferred (a movement-side rule).
 - **Numbers.** Schema 45, B-197, B-198 and B-199 are provisional: next free at merge.
+
+## Amendment 1 (2026-11-25, orchestrator): WP6 after the contact solver merge
+
+The contact solver is the default pipeline since `e5f5c565`. Its merge pinned the gate-mismatch test
+(`a_target_that_crosses_the_band_edge_first_splits_the_readings`) to the Legacy pipeline and added the solver twin
+`target_acquisition::under_the_solver_a_crossing_target_does_not_split_the_readings`: under the solver, pursuit reads
+its target's tick-start position, so reach and pursuit agree for a target that crosses the band edge. The disagreement
+that made WP6 "needed" therefore exists only under the Legacy pipeline, which the contact-solver plan's WP7 deletes.
+WP6 is **dropped** under its own rule (§11: "if nothing disagrees, WP6 is dropped"); the Legacy-only split is accepted
+until Legacy is deleted. If the solver twin ever fails, WP6 is reopened.
