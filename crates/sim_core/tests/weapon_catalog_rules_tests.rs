@@ -340,6 +340,53 @@ fn an_instant_weapon_authoring_missile_validation_is_refused() {
     }
 }
 
+/// P-5 (plan `2026-11-24-weapon-validation` §2.3, D-6): every shipped missile validates both
+/// the weapon and teleports in flight (5.0.14's `CEffectLaunchMissile` defaults, `core`
+/// EffectData:100–101), except the Brood Lord's, whose three missiles clear `ValidateWeapon`
+/// (`liberty` EffectData:2668, :2749, :2780) and validate at impact instead; no instant weapon
+/// authors the field. Mode weapons (a siege mode's override) are included.
+#[test]
+fn missile_validation_follows_starcraft() -> TestResult {
+    let world = flat_world(16)?;
+    let mut brood_missiles = 0;
+    for archetype in world.catalog.archetypes() {
+        let brood = archetype
+            .sc2_analogue()
+            .is_some_and(|analogue| analogue.starts_with("Brood Lord"));
+        let modes = archetype.modes.iter().flat_map(|mode| {
+            [
+                mode.ground_weapon_override.as_ref(),
+                mode.air_weapon_override.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
+            .flatten()
+        });
+        for weapon in own_weapons(archetype).chain(modes) {
+            let slug = &archetype.slug;
+            let expected = if brood && weapon.projectile_speed.is_some() {
+                brood_missiles += 1;
+                sim_types::MissileValidation {
+                    weapon: false,
+                    teleport: true,
+                }
+            } else {
+                sim_types::MissileValidation::default()
+            };
+            assert_eq!(
+                weapon.missile_validation, expected,
+                "{slug}'s {} validates as 5.0.14's missiles do",
+                weapon.name
+            );
+        }
+    }
+    assert!(
+        brood_missiles > 0,
+        "the Brood Lord analogue's missiles are shipped"
+    );
+    Ok(())
+}
+
 #[test]
 fn s16_weapon_ranges_and_cadence_must_be_usable() -> Result<(), Box<dyn std::error::Error>> {
     // The first firing arc a shipped structure states, whatever its value.

@@ -31,7 +31,10 @@
 //!    weapon's `reveal_ticks`, recorded before the strike's retaliation runs, so the response
 //!    of the same tick sees it (plan `2026-11-23-vision-and-detection` D-5).
 //! 9. A missile loses its target when the target teleports after the launch, unless its weapon
-//!    clears `missile_validation.teleport` (plan `2026-11-24-weapon-validation` D-4).
+//!    clears `missile_validation.teleport`, and when the target fails the weapon's filters,
+//!    unless its weapon clears `missile_validation.weapon`; a missile that does not validate the
+//!    weapon strikes only a target that passes it at impact (plan `2026-11-24-weapon-validation`
+//!    D-4).
 
 use crate::catalog::UnitCatalog;
 use crate::catalog::{SplashSpec, UnitArchetype, WeaponSpec};
@@ -1523,23 +1526,36 @@ impl SimWorld {
 
     /// Refreshes a projectile's aim point and returns the surface radius to stop at.
     ///
-    /// The target is lost when it fails the availability gate or, if the weapon validates
-    /// teleports (`missile_validation.teleport`, 5.0.14's `ValidateTeleport`), when its
-    /// teleport count moved on since the launch. The teleport is checked before the aim point
-    /// is refreshed, so a lost missile keeps the point where the target stood before it (plan
-    /// `2026-11-24-weapon-validation` D-4).
+    /// The target is followed while it passes the weapon's filters (5.0.14's `ValidateWeapon`)
+    /// or, for a weapon that clears `missile_validation.weapon` (the Brood Lord's missiles),
+    /// while it is alive and not loaded: such a missile follows it through cloak and
+    /// invulnerability and leaves the filters to the impact ([`Self::apply_weapon_hit`]). It is
+    /// lost otherwise and, if the weapon validates teleports (`missile_validation.teleport`,
+    /// `ValidateTeleport`), when its teleport count moved on since the launch. The teleport is
+    /// checked before the aim point is refreshed, so a lost missile keeps the point where the
+    /// target stood before it (plan `2026-11-24-weapon-validation` D-4).
     ///
     /// Returns `None` when the projectile disjoints because its target was lost.
     fn track_projectile_target(&mut self, proj: &mut ActiveProjectile) -> Option<SimScalar> {
         let Some(target_id) = proj.target_id else {
             return Some(SimScalar::ZERO);
         };
-        let teleported = proj.weapon_spec.missile_validation.teleport
+        let validation = proj.weapon_spec.missile_validation;
+        let teleported = validation.teleport
             && self
                 .entities
                 .get(&target_id)
                 .is_some_and(|target| target.teleport_count != proj.target_teleport_count);
-        if !teleported && self.is_entity_available_for_combat(proj.owner, target_id) {
+        let followed = if validation.weapon {
+            self.is_entity_available_for_combat(proj.owner, target_id)
+        } else {
+            // [INF] A loaded target is not followed: its position is its transport's (plan
+            // `2026-11-24-weapon-validation` D-4, R-6).
+            self.entities
+                .get(&target_id)
+                .is_some_and(|target| target.is_alive() && !target.is_loaded_in_transport())
+        };
+        if followed && !teleported {
             let mut radius = SimScalar::HALF;
             if let Some(target) = self.entities.get(&target_id) {
                 proj.target_pos = target.position;

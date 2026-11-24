@@ -8,6 +8,11 @@
 //!   by `PointFallback`, flies on at its speed to the last point it tracked, where the target
 //!   stood before the teleport; a single-target missile strikes nobody, an area strikes around
 //!   the point. A missile launched after the teleport tracks the target normally.
+//! - D-4, B-194 (P-4): a missile whose weapon clears `missile_validation.weapon` (5.0.14's
+//!   Brood Lord missiles, `ValidateWeapon 0`, `liberty` EffectData:2668, :2749, :2780) follows
+//!   its target while it lives and is not loaded, wherever it goes, and strikes it only if the
+//!   target passes the weapon's filters on the landing tick (`BroodlingEscortFilters`, :2679,
+//!   :2785).
 //!
 //! # How it fits
 //! The teleport count (`Entity::teleport_count`) is written by `Entity::teleport_to`, which every
@@ -484,3 +489,105 @@ fn a_missile_launched_after_the_blink_strikes() -> TestResult {
     Ok(())
 }
 
+/// Sets `missile_validation.weapon` to `false`: the missile validates the target at impact.
+fn validates_at_impact(weapon: &mut WeaponSpec) {
+    weapon.missile_validation.weapon = false;
+}
+
+/// A shipped mobile archetype that detects.
+fn mobile_detector(world: &SimWorld) -> Option<UnitTypeId> {
+    world
+        .catalog
+        .archetypes()
+        .find(|arch| arch.detection_radius.is_some() && arch.max_speed > SimScalar::ZERO)
+        .map(|arch| arch.unit_type_id)
+}
+
+/// Cloaks the target right after the launch and gives it a move order up the map, then steps
+/// until the missile is spent, checking on every tick it is in flight that it still homes on the
+/// target's current position. With `detector`, a mobile detector of the shooter's player is
+/// placed beside the target's path after one tick of flight, before the landing. Returns whether
+/// the target was struck.
+fn cloaked_flight(seed: u64, detector: bool) -> Result<bool, Box<dyn std::error::Error>> {
+    let mut bench = bench(seed, validates_at_impact)?;
+    let full = bench.hp(bench.target).ok_or("the target exists")?;
+    let launched = bench.launch()?;
+    let target = bench
+        .world
+        .entities
+        .get_mut(&bench.target)
+        .ok_or("the target exists")?;
+    target.is_cloaked = true;
+    target
+        .issue_order(
+            UnitOrder::Move {
+                target: point(TARGET.0, TARGET.1 + 8.0),
+            },
+            false,
+        )
+        .map_err(|error| format!("{error:?}"))?;
+    for tick in launched + 1..launched + 200 {
+        if detector && tick == launched + 2 {
+            // After one tick of undetected flight, which a missile validating the weapon would
+            // not survive.
+            let kind = mobile_detector(&bench.world).ok_or("a mobile detector is shipped")?;
+            bench
+                .world
+                .spawn_unit(kind, PlayerId(0), point(TARGET.0 - 2.0, TARGET.1 + 1.0))?;
+        }
+        bench.world.step(&bundle(tick));
+        let Some(missile) = bench.world.projectiles.first() else {
+            return Ok(bench.hp(bench.target) != Some(full));
+        };
+        assert_eq!(
+            missile.target_id,
+            Some(bench.target),
+            "tick {tick}: the missile keeps its cloaked target"
+        );
+        assert_eq!(
+            missile.target_pos, bench.world.entities[&bench.target].position,
+            "tick {tick}: the missile homes on the target's current position"
+        );
+    }
+    Err("the missile was spent within 200 ticks".into())
+}
+
+/// P-4: a missile that skips the weapon check follows a target that cloaks undetected and
+/// lands on it; undetected at the landing, the target is not struck.
+#[test]
+fn a_missile_that_skips_the_weapon_check_follows_a_cloaking_target() -> TestResult {
+    assert!(
+        !cloaked_flight(0xB30, false)?,
+        "an undetected target fails the filter at impact"
+    );
+    Ok(())
+}
+
+/// P-4: the same missile strikes its cloaked target when a detector of the shooter's player
+/// reveals it before the landing: the filter is checked at impact, not in flight.
+#[test]
+fn a_missile_that_skips_the_weapon_check_strikes_only_if_the_target_passes_at_impact() -> TestResult
+{
+    assert!(
+        cloaked_flight(0xB31, true)?,
+        "a target detected at the landing is struck"
+    );
+    Ok(())
+}
+
+/// P-4: a missile that skips the weapon check still follows only a living target: one that
+/// dies in flight leaves it to land on its last point, striking nobody.
+#[test]
+fn a_missile_that_skips_the_weapon_check_lands_on_the_point_of_a_target_that_died() -> TestResult {
+    let mut bench = bench(0xB32, validates_at_impact)?;
+    let launched = bench.launch()?;
+    let last = bench.world.entities[&bench.target].position;
+    bench
+        .world
+        .entities
+        .get_mut(&bench.target)
+        .ok_or("the target exists")?
+        .hp = SimScalar::ZERO;
+    bench.fly_to_point(launched, last)?;
+    Ok(())
+}

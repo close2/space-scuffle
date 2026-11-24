@@ -87,3 +87,15 @@ blinker) failed; `a_missile_launched_after_the_blink_strikes` passed, as it shou
 
 **Worlds.** Every output of §7.1 is byte-identical to WP0 (`compare-wp2.txt`: 483 files, 0 differing), as probe (d)
 predicted (no shipped Blink); both goldens and the sandbox pass unchanged on native debug.
+
+## WP3: the Brood Lord's missiles validate at impact (B-194)
+
+**Red run** (on WP2's tree, with WP3's tests and data): `a_missile_that_skips_the_weapon_check_follows_a_cloaking_target`
+and `…_strikes_only_if_the_target_passes_at_impact` failed ("tick 5: the missile keeps its cloaked target": the missile
+dropped it); `weapon_catalog_rules_tests::missile_validation_follows_starcraft` failed before the data rows (the
+`spore_matriarch` weapons validated the weapon); `runtime_catalog_tests::an_authored_weapon_validation_off_follows_a_cloaking_target`
+failed ("the authored flag keeps homing on it"). `…_lands_on_the_point_of_a_target_that_died` passed before and after,
+as it should (a dead target is not followed either way).
+
+**Worlds.** Every output of §7.1 is byte-identical to WP0 (`compare-wp3.txt`: 483 files, 0 differing), as probe (e)
+predicted (no cloak against the Brood Lord analogue); the goldens and the sandbox pass unchanged on native debug.
