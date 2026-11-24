@@ -809,6 +809,89 @@ the column at x = 41.85 (cell 41 under the jitter), rows 30.25 to 34.75: every w
 its 8, inside the tank's 11). On all 20 seeds no worker swings and every struck worker flees to 13.55 to 14.09 from
 the tank, outside its sight and inside its reach (14.25).
 
+## Amendment 2 (implementer, 2026-11-24): WP7 fixed against the merged contact solver (D-6a)
+
+WP7 starts on `main` `ffc6f298`, where the contact solver is the default pipeline (schema 46) and the legacy pipeline
+stays selectable, and with the owner's answer to Q0106 part 1, (a): a player's attack order on a unit that leaves
+vision walks to where the unit was last seen and stops there, and resumes the attack if the unit is seen again. This
+amendment replaces D-6a's three open points with what is built.
+
+**Where `last_seen` lives: the unit's `MovementMemory`.** `MovementMemory` gains `last_seen: Option<LastSeen>`, with
+`LastSeen { target: EntityId, point: SimVec2, lost: bool }` (world units). Not on `UnitOrder::AttackTarget`: that type
+is `sim_types`' command vocabulary, shared with `PlayerCommand`, the client and every fixture, and a field there would
+make the player's command carry simulation memory. The memory is the solver's layout for per-chase state (`slot`,
+`leash_origin`), it is per unit and only the front order is chased, and every new order already clears it
+(`commit_order`'s `MovementMemory::restart`), as do the ends of an attack in movement (`end_attack`, `finish`).
+`target` keys the record to the order's target, so an order that ends without a restart (acquisition's
+`AbandonAttack`) leaves nothing another attack could read.
+
+**The writer: acquisition (phase 4).** For each unit acquisition visits (not channelling, not action-locked, not
+hidden, completed; the same units whose pursuit runs in phase 5) whose front order is an `Explicit` attack:
+- target exists and its player sees it (`sees_enemy`: the cell at its centre `Visible`, or attack-revealed; Q0106
+  part 4 (a)): `last_seen := { target, point: target.position, lost: false }`;
+- target exists, passes `is_entity_targetable`, is unseen, and `last_seen` names it: `lost := true`, the point kept;
+- otherwise nothing changes. In particular a target never seen under the order has no record (below).
+A change of `lost` restarts the walk's progress measure (`progress_best`, `stalled_ticks`) and drops the solver's
+ring gap (`slot`), because the goal changes from the target to the point or back (as `end_attack` does for B-112).
+One method, `MovementMemory::sight`, holds the rule, so the memory's invariants stay in its own type. Acquisition
+reads phase 3's vision and the positions movement has not yet changed, so the record does not depend on the order
+actors move in (locomotion's invariant 2).
+
+**The reader: pursuit (phase 5), both pipelines.** Both pipelines reach pursuit through one function,
+`walking_goal`, before the solver's ring rule (`prepare_pursuit`) or the legacy chase. There, an `Explicit` attack
+whose `last_seen` names its target with `lost` set, on a target `is_entity_available_for_combat` still admits, is
+walked like a move order to the point (clamped into the map as a cast's approach is) instead of pursued. The walk is
+the move order's machinery unchanged: route, arrival witnesses, braking, the stall rule, an unreachable point
+replaced by the nearest reachable one (the replacement written back into `last_seen.point`). Arrival, or a stall,
+ends the walk as a move ends (`finish`), which pops the attack order: the unit stops, and the order below it, if any,
+starts. "Resumes if it enters vision again" is read as the plan's default worded it: before the unit
+arrives; once it has stopped, the order is over, and a target that comes back into its scan range is acquired
+automatically as by any idle unit. When acquisition sees the target again, `lost` clears and the next phase 5 pursues as before; the route to
+the point is dropped by the chase's drift rule. Nothing else of pursuit changes: a target that dies or becomes
+unavailable ends the order as today, the ring rule and the leash are untouched, an `Acquired` attack lost to fog is
+still dropped by acquisition (D-5), and an immobile unit's order still ends (D-5).
+
+A unit walking to the point is not engaged with its target: the anchoring tests of both pipelines
+(`is_anchored_in_combat`, `in_range_of_live_target`) skip a target the unit walks away from, so friendly contact
+treats it as the walker it is. Its weapon already holds fire at the unseen target (D-3).
+
+**A target never seen under the order.** The client offers only seen units (§2.5), so such an order comes only from a
+script, a fixture or a test, and its target never *left* vision, which is what Q0106 part 1 is about. It has no last
+seen point, and it keeps today's behaviour: pursuit follows it and the weapon holds fire until the player sees it,
+from when the rule above applies. Recorded as a scoping decision (Q0002); admission stays unchanged (§2.5).
+
+**Schema.** `last_seen` is hashed: `fields!(MovementMemory { …, slot, last_seen })` and
+`fields!(LastSeen { target, point, lost })`. Schema **next free at merge: 47, provisional**; the `solver-followup`
+branch may take 47 first, in which case the merge renumbers this to the next free number and re-records with the same
+proof. The doc of `CHECKSUM_SCHEMA_VERSION`: "Schema N adds each unit's last seen point of its attack order's target,
+`MovementMemory::last_seen` (target, point and whether it is lost), after `slot` (plan
+`2026-11-24-weapon-validation` Amendment 2, B-195)." The proof is §5's: with `last_seen` left out of the encoding at
+schema 46, both goldens and the sandbox reproduce `main`'s values on native debug and release and `wasm32-wasip1`
+release and debug, unless the probe counts an event in them (then the first changed checkpoint and entity are traced);
+then the field goes in and the fixtures are re-recorded once, on the final merged tree.
+
+**Probe (WP7's own, probe (c)'s `Explicit` events on `main`).** A scratch patch on `ffc6f298` counts, per world and
+seed, every acquisition visit of a unit under an `Explicit` attack whose target is targetable and unseen (mobile or
+immobile), with whether the unit's player saw that target earlier under the order, and every first sighting. The
+worlds that count a mobile event after a sighting are the only ones WP7 may move (stop rule 3, read for WP7).
+
+**Tests first** (`weapon_validation_tests.rs`, red on `ffc6f298`), on the vision arena of WP5, units found by
+property, run under the default (solver) pipeline and again under the legacy pipeline:
+- `a_players_order_on_a_lost_target_walks_to_where_it_was_last_seen_and_ends`: the target is struck while seen,
+  blinks beyond sight; the shooter walks to the target's last seen position, stops there, and its order ends, with no
+  strike on the way.
+- `a_lost_target_seen_again_resumes_the_attack`: before the shooter arrives, a spotter of its player sees the
+  target; the order is kept and the target is struck.
+- `seen_means_the_cell_at_the_centre`: a large target whose body reaches into the shooter's sight while the cell at
+  its centre does not is lost (the walk starts); moved so that its centre cell is seen, it is not.
+- WP5's `a_players_order_is_kept_but_holds_fire` is re-derived as the first test above (its claim was B-195's interim
+  behaviour); the P-6 tests whose target is never seen keep their claims (the decision above).
+- `checksum_state_tests`: `last_seen` changes the checksum.
+
+**Stop rule 3 for WP7.** WP7 moves only the worlds its probe counted, from a counted event; a close battle that flips
+by this rule is restated with its trace (charter §8: natural movement outweighs keeping a close winner); a stall, or a
+unit standing while able to fight, stops the package.
+
 ## As built
 
 WP0 to WP6 on branch `weapon-validation-plan`, one commit each, with `main` at `e313268f` (the attack orders, no
