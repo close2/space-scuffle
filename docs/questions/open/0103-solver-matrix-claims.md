@@ -1,7 +1,7 @@
 # Q0103: With the new movement solver, two battle claims break. Change the claims, call them bugs, or switch the nudge off?
 
 - **Asked:** 2026-11-24
-- **Blocking:** the merge of the new movement solver, together with [Q0102](0102-solver-cost-gap.md). Other work
+- **Blocking:** the merge of the new movement solver, together with [Q0102](../closed/0102-solver-cost-gap.md). Other work
   continues meanwhile.
 - **Default until answered:** (a) for battle 26 and (b) for battle 28. These are applied when you answer, or at the
   merge if that comes first. Until then the solver branch keeps the old expectations, and its battle test fails on
