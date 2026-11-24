@@ -959,3 +959,12 @@ the baseline re-derived (`b0`); the close-battle list did not change. **The pack
   cost-neutral), and Solver 4.0 % over the WP0 base (C-2's 3 % fails). The code is on `solver-followup-wp2-wip`
   (`dc3b62ab`); battle 28 keeps its marker, the goldens and the checksum encoding unit tests are not re-pinned, and
   the harness families were not run on the merged base.
+
+### Draft questions: figures (the package stopped; nothing is filed)
+
+- **Q0110** (only if G-6′ resumes): battle 28 goes back to zergling wins on **22** of 24 runs under WP2 (base 5,
+  Legacy 24), but fails seed of record 33 and holds on 21 of 24 held-out seeds. Restated battles: **none** (checks
+  failed). Cost: **+69.9 %** instructions over the base's Legacy on 64 × 64 (accepted level +66.8 %, Q0102), at 69 to
+  99 ticks per second on a loaded machine.
+- **Q0111**: not triggered (64 × 64 +69.9 %, below +70 %; canyon +58.3 %, below +60 %). The split by phase was not
+  measured.

@@ -314,7 +314,20 @@ ranges; with checks failing, none is restated.
 Three runs each; instruction counts agree to 0.001 %. Ticks per second are noisy on the shared machine (load
 average up to 139 during the runs) and are reported as the range of the three.
 
-THROUGHPUT_TABLE
+| Scenario | Legacy b0 | Solver b0 | Solver b1 (E-1) | Legacy b2 | Solver b2 | b2 Solver vs b0 Solver (C-2, ≤ 3 %) | b2 Legacy vs b1 Legacy (C-1) | b2 Solver vs b0 Legacy / own Legacy | Ticks/s b2 Solver |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 64 × 64 | 10.205 G | 16.681 G (+63.5 %) | 16.909 G (+1.4 %) | 10.559 G | 17.343 G | **+4.0 %** | **+3.5 %** | +69.9 % / +64.2 % | 69 to 99 |
+| 128 × 128 | 10.531 G | 11.304 G (+7.3 %) | 11.311 G (+0.1 %) | 10.709 G | 11.485 G | +1.6 % | **+1.7 %** | +9.1 % / +7.2 % | 85 to 132 |
+| canyon | 17.831 G | 27.675 G (+55.2 %) | 27.992 G (+1.1 %) | 18.076 G | 28.220 G (one run) | +2.0 % | **+1.4 %** | +58.3 % / +56.1 % | 65 |
+
+- **C-0:** every WP2 run is at or above 50 ticks per second. The base's own 64 × 64 Solver runs gave 41 to 49
+  under a load average above 100, so the ticks/s column is not a reliable reading on this machine today.
+- **C-1 fails:** the Legacy pipeline, which never calls G-6′, costs 1.4 % to 3.5 % more on the WP2 tree. The shared
+  admission test is behaviour-identical (G-T9, the switch-off byte identity) but not cost-neutral; the one cost
+  step of §7 (the covered-ring early answer) addresses G-6′'s own cost, not this.
+- **C-2 fails on 64 × 64** (+4.0 %); 128 × 128 and canyon are within 3 %.
+- **Reporting:** 64 × 64 rises to +69.9 % over the WP0 base's Legacy, above Q0102's accepted +66.8 % but below
+  §9's +70 % trigger; canyon is +58.3 %, below +60 %. Q0111 is not triggered; Q0110's background would say so.
 
 ## 6. Stop
 
