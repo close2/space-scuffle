@@ -28,3 +28,8 @@ whether the fog stays lifted beyond the Refinery's own sight while the SCV is in
 
 ## Answer
 
+- **1(a):** If the extractor is destroyed while a worker is inside, the worker **survives** and appears where it entered.
+- **2(a):** The worker **sees nothing** while inside (the extractor's own sight of 9 covers the area).
+- **3(a):** The worker comes out **where it went in**.
+
+**Reasoning:** Matches StarCraft II (workers inside a Refinery, Assimilator, or Extractor survive its destruction and pop out next to the wreckage).

@@ -25,3 +25,6 @@ control group and press the key while it is inside.
 
 ## Answer
 
+- **Option (a): Not selectable while inside, leaves active selection, kept in control groups, cannot be ordered while inside.**
+
+**Reasoning:** Matches StarCraft II verbatim — a worker hidden inside a gas extractor cannot be clicked or box-selected and leaves the current active selection, while remaining registered in its control groups so pressing the group key selects it again once it exits.
