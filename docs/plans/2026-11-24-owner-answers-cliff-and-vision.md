@@ -350,16 +350,17 @@ partial abstraction. When teams are planned, the reveal's audience is one of the
 
 | Document | Change | WP |
 |---|---|---|
-| `DESIGN.md` §4 | Register **B-199**: "A `SameCliff` area counts a ramp as its lower landing and an air blast or air unit as the level of the ground below; the owner's answer to Q0099 is that a ramp counts as both levels (1(c)) and air blasts ignore levels (2(b))", open, plan `2026-11-24-owner-answers-cliff-and-vision`. Register **B-200**: "Detection follows the detector's line of sight (cliffs and blockers stop it); the owner's answer to Q0101 2(b) is a plain circle, with vision from any friendly unit", open, same plan. **B-184** restated: "Detectors under construction detect; the owner's answer to Q0101 3(b) is that they detect only once complete", open, same plan. Evidence file created | WP0 |
-| `DESIGN.md` §4 | B-199, B-200 and B-184 fixed with commits and evidence. B-170's row gains "ramp and air readings per Q0099 (B-199)". B-55's row and the "Combat" row: the reveal's audience (D-6). The "Simulation vision and watchtowers" row: detection is a circle; foundations do not detect | WP6 |
+| `DESIGN.md` §4 | Register **B-200**: "A `SameCliff` area counts a ramp as its lower landing and an air blast or air unit as the level of the ground below; the owner's answer to Q0099 is that a ramp counts as both levels (1(c)) and air blasts ignore levels (2(b))", open, plan `2026-11-24-owner-answers-cliff-and-vision`. Register **B-201**: "Detection follows the detector's line of sight (cliffs and blockers stop it); the owner's answer to Q0101 2(b) is a plain circle, with vision from any friendly unit", open, same plan. **B-184** restated: "Detectors under construction detect; the owner's answer to Q0101 3(b) is that they detect only once complete", open, same plan. Evidence file created | WP0 |
+| `DESIGN.md` §4 | B-200, B-201 and B-184 fixed with commits and evidence. B-170's row gains "ramp and air readings per Q0099 (B-200)". B-55's row and the "Combat" row: the reveal's audience (D-6). The "Simulation vision and watchtowers" row: detection is a circle; foundations do not detect | WP6 |
 | `docs/plans/2026-11-23-splash-cliff-levels.md` §14 F-2 | "Taken up by plan `2026-11-24-owner-answers-cliff-and-vision` (Q0099 1(c), 2(b))" | WP6 |
 | `docs/plans/2026-11-23-vision-and-detection.md` §14 (B-184 line) and the As built "Open" paragraph | "Q0101 answered; taken up by plan `2026-11-24-owner-answers-cliff-and-vision`" | WP6 |
 | New `docs/evidence/2026-11-24-owner-answers-cliff-and-vision.md` | §7's comparisons per package, the probes' counts, any traced first difference | WP0 creates; WP1 to WP6 append |
 | `docs/questions/open/0099-…`, `0101-…` | `## Resolution` (what changed, which commits), then `git mv` to `closed/` | WP6 |
 | `docs/plans/README.md` | Row `Proposed` (with the plan), `Active` (WP1), `Done` (WP6) | plan, WP1, WP6 |
 
-B-numbers B-199 and B-200 are the next free at this plan's writing (numbers below B-199 are held by other branches); if
-`main` has taken them at WP0, WP0 takes the next free and says so in an amendment.
+B-200 and B-201 are each the next free at merge: numbers below B-200 are held by other branches (B-199 by the
+fire-rules branch). If `main` has taken them when this branch merges, the merge takes the next free and says so in an
+amendment.
 
 ---
 
@@ -524,7 +525,7 @@ else; a change is traced (§8 rule 3).
 1. **Every package moves only the worlds its probe counted** (P-14). A difference elsewhere, or on a seed with a zero
    count, is a defect of the package, not a re-record.
 2. **A move whose first differing tick is not a counted event**, or that breaks P-6's superset property, stops the
-   package until traced. If the trace shows a second cause, it is registered as a bug (from B-201) and the package
+   package until traced. If the trace shows a second cause, it is registered as a bug (from B-202) and the package
    lands only if its rule's change can be separated from it.
 3. **A change of which side remains** is traced to its first counted event and reported. It is not by itself a stop,
    as each rule is the owner's answer. A matrix claim that breaks is reported to the orchestrator with its trace and
@@ -599,13 +600,13 @@ WP0 to WP6 may run as one branch and one session, one commit each, with one `pac
 
 ### WP0: records, baseline and probes (XS, docs only)
 
-- `DESIGN.md` §4: B-199 and B-200 registered, B-184 restated (D-8). Evidence file created, stating §3 items 3 and 4
+- `DESIGN.md` §4: B-200 and B-201 registered, B-184 restated (D-8). Evidence file created, stating §3 items 3 and 4
   (Q0099 3(a) and Q0101 1(a) already hold, with the code and tests that show it).
 - Measure WP0's tree (§7.1) for the baseline. Run §7.2's probes and record their counts and first events. State in
   the evidence which worlds each package may move.
 - **Gate:** docs-only.
 
-### WP1: a ramp spans both landings (S, `sim_map`, `sim_core`, Q0099 1(c), B-199)
+### WP1: a ramp spans both landings (S, `sim_map`, `sim_core`, Q0099 1(c), B-200)
 
 Failing tests first (red on WP0's tree: they do not compile, or fail on the old reading):
 - `grid.rs` unit tests for `CliffSpan::overlaps` and `cliff_span_at` (P-1); `ramp_profile_tests.rs`
@@ -620,9 +621,9 @@ Failing tests first (red on WP0's tree: they do not compile, or fail on the old 
 Then D-1 and D-2's span part (`level_span` with the ground span only; the `Air` case is WP2), the buffer type, the
 fallback, invariant 6 (ramp half), the `weapon.rs` docs (ramp half). **Acceptance:** §8 rules 1, 2; P-6 on any moved
 world. Plan row `Active`. Commit `fix(sim_core): a ramp counts as both cliff levels for area damage, owner answer
-Q0099 1(c) (owner-answers-cliff-and-vision WP1, B-199)`.
+Q0099 1(c) (owner-answers-cliff-and-vision WP1, B-200)`.
 
-### WP2: air blasts ignore cliff levels (XS, `sim_core`, Q0099 2(b), B-199)
+### WP2: air blasts ignore cliff levels (XS, `sim_core`, Q0099 2(b), B-200)
 
 Failing tests first (red on WP1's tree), in `splash_cliff_tests.rs`:
 - `an_air_area_ignores_levels` (re-derived from `an_air_area_keeps_to_the_level_below`: both air bystanders struck
@@ -632,9 +633,9 @@ Failing tests first (red on WP1's tree), in `splash_cliff_tests.rs`:
   level).
 
 Then D-2's `Air` case and the remaining docs. **Acceptance:** §8 rules 1, 2. Commit `fix(sim_core): air blasts and
-air units ignore cliff levels, owner answer Q0099 2(b) (owner-answers-cliff-and-vision WP2, B-199)`.
+air units ignore cliff levels, owner answer Q0099 2(b) (owner-answers-cliff-and-vision WP2, B-200)`.
 
-### WP3: detection is a circle (S, `sim_map`, Q0101 2(b), B-200)
+### WP3: detection is a circle (S, `sim_map`, Q0101 2(b), B-201)
 
 Failing tests first (red on WP2's tree):
 - `vision_tests.rs`: `detection_is_a_plain_circle` (P-7, replacing `detection_follows_line_of_sight`: the plateau
@@ -651,9 +652,9 @@ Failing tests first (red on WP2's tree):
 
 Then D-3, the docs, and the 1(a) comment and test doc ("Q0101 part 1, answered (a)"). **Acceptance:** §8 rules 1, 2,
 8. Commit `fix(sim_map): detection is a plain circle that no terrain stops, owner answer Q0101 2(b)
-(owner-answers-cliff-and-vision WP3, B-200)`.
+(owner-answers-cliff-and-vision WP3, B-201)`.
 
-### WP4: a revealed, detected cloaked attacker is a target (S, `sim_core`, D-4, B-200)
+### WP4: a revealed, detected cloaked attacker is a target (S, `sim_core`, D-4, B-201)
 
 Failing tests first (red on WP3's tree):
 - `attack_reveal_tests.rs` `a_detected_cloaked_attacker_is_answered_during_its_reveal` (P-11: detector structure
@@ -663,7 +664,7 @@ Failing tests first (red on WP3's tree):
 - `a_cloaked_attacker_stays_hidden_without_detection` passes unchanged (the control).
 
 Then D-4. **Acceptance:** §8 rules 1, 2. Commit `fix(sim_core): an attack reveal counts as sight of a detected
-cloaked attacker (owner-answers-cliff-and-vision WP4, B-200)`.
+cloaked attacker (owner-answers-cliff-and-vision WP4, B-201)`.
 
 ### WP5: detectors under construction do not detect (S, `sim_core`, Q0101 3(b), B-184)
 
