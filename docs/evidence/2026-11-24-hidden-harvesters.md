@@ -219,3 +219,29 @@ built from `tree-wp0`); only the order of three lines printed by concurrent test
   differing; the matrix 1,220 runs, 0 expectation failures on the seeds of record, 4 over all seeds, on both.
 - **Income** (`income/main-*`, `income/merge-*`): the same 5,661 takes on the same ticks; the housed probe gives 35
   tick ends inside for each of 917 gas trips and 0 for each of 4,623 mineral trips.
+
+## 6. WP5: the movement phase reads `is_hidden` (Amendment 1)
+
+Branch `hidden-harvesters-wp5` from `main` `708576ac` (the contact solver shipped, `Legacy` selectable). Scratch
+outputs under `~/scratch/harvesters-wp5/`; the scripts are this evidence's §7 scripts with the worktree, target and
+output paths changed (`scripts/`).
+
+- **Red first** (`red/red-tests.log`, `red/red-legacy-first.log`, on the tree with the tests and no fix): the three
+  new tests fail. `a_housed_worker_is_no_body_in_either_pipeline` fails under `Solver` (and, run with `Legacy`
+  first, under `Legacy`): with `is_mineral_walking` cleared by hand, the housed worker pushes the idle friend standing
+  in it and is pushed by the walker. `a_housed_worker_is_no_displacement_obstacle` returns `Occupied(housed)`.
+  `a_housed_worker_is_no_push_partner` moves both units.
+- **Green:** `hidden_harvester_tests`, 17 of 17.
+- **Worlds** (`world-main/` of `708576ac` against `world-wp5/` of `78d68c64`, both exports touched, release): 483
+  files, 0 differing. The matrix's 1,220 runs keep 2 expectation failures on the seeds of record and 25 over all
+  seeds on both trees.
+- **Income (P-11)** (`income/main-*`, `income/wp5-*`): 26 files byte-identical: the same 5,661 takes on the same
+  ticks. The housed probe gives 35 tick ends inside for each of 917 gas trips and 0 for each of 4,623 mineral trips.
+- **Goldens** (`golden-wp5/summary.txt`, on the exported WP5 tree, no re-recording): `golden_replay_tests` on native
+  release and debug and `wasm32-wasip1` release and debug, and `sim_fixtures`' `fixture_tests` (the sandbox
+  checksum) on native release and debug, all pass. No fixture file changed.
+- **After merging `main` `ffc6f298`** (attack-orders WP5, merge `8701972f`), measured again against that `main`
+  (`world-main2/` against `world-merged/`, `income/main2-*` against `income/merged-*`, `golden-merged/`): 483 world
+  files, 0 differing; the matrix keeps 2 and 25 expectation failures; 26 income files byte-identical (5,661 takes;
+  35 tick ends inside for each of 917 gas trips, 0 for each of 4,623 mineral trips); the goldens and the sandbox pass
+  unchanged on native release and debug and `wasm32-wasip1` release and debug.

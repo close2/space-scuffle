@@ -831,6 +831,16 @@ impl Entity {
         self.is_loaded_in_transport() || self.is_housed()
     }
 
+    /// Whether other units pass through this one in the movement phase: it is no collision pair
+    /// and no obstacle anyone steers or is pushed around, in either contact pipeline. True for a
+    /// [hidden](Self::is_hidden) unit (plan `2026-11-24-hidden-harvesters` D-11, Amendment 1), a
+    /// harvester on its mining walk (`is_mineral_walking`) and a unit whose statuses suppress
+    /// collision. The unit itself still moves.
+    #[must_use]
+    pub const fn passes_through_units(&self) -> bool {
+        self.is_hidden() || self.is_mineral_walking || self.status_modifiers.suppress_collision
+    }
+
     /// Whether the front order is a task, which [`crate::economy`] drives instead of movement.
     #[must_use]
     pub fn has_task_order(&self) -> bool {
