@@ -115,13 +115,20 @@ impl SimWorld {
                             arch,
                             entity.owner,
                         ),
-                        // A status may suppress detection (plan
-                        // `2026-11-10-spellcaster-mechanics` §6.4). Sight upgrades leave the
-                        // detection radius as authored (plan
+                        // A detector detects only once its construction completes (owner
+                        // answer Q0101 3(b); 5.0.14 hides the `Detector` button until then,
+                        // `Requirements="NotUnderConstruction"`; plan
+                        // `2026-11-24-owner-answers-cliff-and-vision` D-5, B-184); its sight is
+                        // unchanged meanwhile. The radius changes at completion, so
+                        // `sees_the_same` recasts the source on that tick. A status may
+                        // suppress detection (plan `2026-11-10-spellcaster-mechanics` §6.4).
+                        // Sight upgrades leave the detection radius as authored (plan
                         // `2026-11-23-vision-and-detection` D-2).
                         detection_radius: arch
                             .detection_radius
-                            .filter(|_| !entity.status_modifiers().suppress_detection)
+                            .filter(|_| {
+                                entity.is_completed && !entity.status_modifiers().suppress_detection
+                            })
                             .unwrap_or(SimScalar::ZERO),
                     },
                 });

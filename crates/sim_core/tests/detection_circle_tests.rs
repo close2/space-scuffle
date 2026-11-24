@@ -1,11 +1,14 @@
-//! Detection is a plain circle (owner answer Q0101 2(b), bug B-201).
+//! Detection is a plain circle (owner answer Q0101 2(b), bug B-201), and a detector detects only
+//! once its construction completes (owner answer Q0101 3(b), bug B-184).
 //!
 //! # Responsibility
-//! Pins plan `2026-11-24-owner-answers-cliff-and-vision` P-10 end to end, through
+//! Pins plan `2026-11-24-owner-answers-cliff-and-vision` P-10 and P-12 end to end, through
 //! `SimWorld::step`: a detector detects every cell within its detection radius, up a cliff and
 //! into a sight blocker, and its side may strike a concealed unit there wherever another
 //! friendly unit gives vision; a detected cell that nobody sees gives nothing (detection is not
-//! sight), and without a detection radius nothing is detected.
+//! sight), and without a detection radius nothing is detected. A detector foundation built
+//! through a `Build` command detects nothing until the tick its construction completes, and the
+//! incremental vision maps then equal a full recount.
 //!
 //! # How it fits
 //! `sim_map::PlayerVisionMap::cast` marks detection on the disc of the detection radius and
@@ -21,8 +24,8 @@
 use sim_core::{SimWorld, UnitArchetype};
 use sim_map::{CellFlags, CliffLevel, GameMap, MapCell};
 use sim_types::{
-    EntityId, MoverType, PlayerId, PlayerSlot, PlayerView, ShapeKind, SimScalar, SimVec2, Tick,
-    TickBundle, UnitOrder, UnitTypeId,
+    EntityId, MoverType, PlayerCommand, PlayerId, PlayerSlot, PlayerView, ShapeKind, SimScalar,
+    SimVec2, Tick, TickBundle, UnitOrder, UnitTypeId, VisibilityState,
 };
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -252,7 +255,7 @@ impl Bench {
         let vision = &self.world.vision_maps[PlayerSlot::ALL[0]];
         Ok((
             vision.is_detected(x, y),
-            vision.visibility_at(x, y) == sim_types::VisibilityState::Visible,
+            vision.visibility_at(x, y) == VisibilityState::Visible,
         ))
     }
 
@@ -323,5 +326,247 @@ fn a_detector_outside_a_blocker_detects_inside_it() -> TestResult {
         (true, false),
         "detected, unseen"
     );
+    Ok(())
+}
+
+/// Plays one tick with `commands`.
+fn tick(world: &mut SimWorld, commands: Vec<PlayerCommand>) {
+    let tick = world.current_tick;
+    world.step(&TickBundle {
+        tick: Tick(tick),
+        commands,
+        state_checksum: None,
+    });
+}
+
+/// The construction bench: a blue detector foundation laid by a `Build` command on a flat map,
+/// a red cloaked air unit three cells east of the site inside its detection radius, and an
+/// unarmed blue air spotter over the cloaked unit.
+struct Construction {
+    world: SimWorld,
+    foundation: EntityId,
+    cloaked: EntityId,
+    /// The cloaked unit's cell.
+    cell: (u32, u32),
+}
+
+/// The first shipped detector structure for which the first builder of its faction is admitted
+/// to build it on open ground, once the structures its own data requires stand: blue gets that
+/// builder, those structures and the money, and the builder is ordered to build at `site`.
+/// Returns the world after the foundation is laid, with the foundation's id.
+fn lay_detector(
+    site: (u32, u32),
+) -> Result<(SimWorld, EntityId, UnitArchetype), Box<dyn std::error::Error>> {
+    let candidates: Vec<UnitArchetype> = {
+        let world = sim_fixtures::world(map_flat()?, 0xB18);
+        world
+            .catalog
+            .archetypes()
+            .filter(|arch| {
+                arch.is_detector() && matches!(arch.shape, ShapeKind::BuildingDome { .. })
+            })
+            .cloned()
+            .collect()
+    };
+    for detector in candidates {
+        let mut world = sim_fixtures::world(map_flat()?, 0xB18);
+        let Some(builder) = world
+            .catalog
+            .archetypes()
+            .find(|arch| arch.capabilities.can_construct && arch.faction == detector.faction)
+            .map(|arch| arch.unit_type_id)
+        else {
+            continue;
+        };
+        let mut corner = 1;
+        for slug in &detector.requires_structures {
+            let Some(required) = world.catalog.id_by_slug(slug) else {
+                continue;
+            };
+            world.spawn_structure(required, BLUE, corner, 1)?;
+            corner += 6;
+        }
+        let worker = world.spawn_unit(
+            builder,
+            BLUE,
+            SimVec2::new(
+                SimScalar::from_num(f64::from(site.0) - 2.5),
+                SimScalar::from_num(f64::from(site.1) + 0.5),
+            ),
+        )?;
+        world.player_resources[PlayerSlot::ALL[0]].minerals = 5000;
+        world.player_resources[PlayerSlot::ALL[0]].gas = 5000;
+        tick(
+            &mut world,
+            vec![PlayerCommand {
+                player_id: BLUE,
+                entities: vec![worker],
+                order: UnitOrder::Build {
+                    structure_type: detector.unit_type_id,
+                    cell_x: site.0,
+                    cell_y: site.1,
+                },
+                queue: false,
+            }],
+        );
+        for _ in 0..600 {
+            if let Some(foundation) = world
+                .entities
+                .values()
+                .find(|e| e.unit_type_id == detector.unit_type_id)
+                .map(|e| e.id)
+            {
+                return Ok((world, foundation, detector));
+            }
+            tick(&mut world, Vec::new());
+        }
+    }
+    Err("no shipped detector structure could be built".into())
+}
+
+/// A flat [`SIDE`] × [`SIDE`] map.
+fn map_flat() -> Result<GameMap, sim_map::MapError> {
+    GameMap::new(SIDE, SIDE, MapCell::default_ground(CliffLevel(0)))
+}
+
+/// Builds the construction bench.
+fn construction() -> Result<Construction, Box<dyn std::error::Error>> {
+    let (mut world, foundation, detector) = lay_detector((14, 14))?;
+    assert!(!world.entities[&foundation].is_completed, "a foundation");
+    let centre = world.entities[&foundation].position;
+    let at = SimVec2::new(centre.x + SimScalar::from_i32(3), centre.y);
+    let radius = detector.detection_radius.ok_or("a detector")?;
+    assert!(
+        centre.distance(at) < radius - SimScalar::ONE,
+        "within the radius"
+    );
+    let flyer = air_unit(&world).ok_or("a shipped air unit")?;
+    let cloaked_type = register(&mut world, &flyer, "scratch_cloaked", disarm);
+    let cloaked = world.spawn_unit(cloaked_type, RED, at)?;
+    world
+        .entities
+        .get_mut(&cloaked)
+        .ok_or("spawned")?
+        .is_cloaked = true;
+    hold(&mut world, cloaked)?;
+    let spotter_type = register(&mut world, &flyer, "scratch_spotter", disarm);
+    let spotter = world.spawn_unit(spotter_type, BLUE, at)?;
+    hold(&mut world, spotter)?;
+    let cell = world.map.world_to_cell(at)?;
+    Ok(Construction {
+        world,
+        foundation,
+        cloaked,
+        cell,
+    })
+}
+
+impl Construction {
+    /// Whether blue detects the cloaked unit's cell, and whether it sees it.
+    fn detected_and_seen(&self) -> (bool, bool) {
+        let vision = &self.world.vision_maps[PlayerSlot::ALL[0]];
+        (
+            vision.is_detected(self.cell.0, self.cell.1),
+            vision.visibility_at(self.cell.0, self.cell.1) == VisibilityState::Visible,
+        )
+    }
+
+    /// Whether blue's view lists the cloaked unit as revealed.
+    fn listed(&self) -> bool {
+        let mut view = PlayerView::default();
+        self.world.write_player_view(BLUE, &mut view);
+        view.revealed.contains(&self.cloaked)
+    }
+
+    /// Plays until the foundation completes, checking every tick before that the cloaked unit
+    /// is seen and not detected, not listed, and that the foundation sees its own cell.
+    /// Returns the tick on which it completed.
+    fn build_out(&mut self) -> Result<u32, Box<dyn std::error::Error>> {
+        let full = self.world.entities[&self.cloaked].hp;
+        let site = self
+            .world
+            .map
+            .world_to_cell(self.world.entities[&self.foundation].position)?;
+        for _ in 0..5000 {
+            tick(&mut self.world, Vec::new());
+            if self.world.entities[&self.foundation].is_completed {
+                return Ok(self.world.current_tick);
+            }
+            assert_eq!(
+                self.detected_and_seen(),
+                (false, true),
+                "a foundation detects nothing"
+            );
+            assert!(!self.listed(), "not revealed while it builds");
+            assert_eq!(self.world.entities[&self.cloaked].hp, full, "not struck");
+            assert_eq!(
+                self.world.vision_maps[PlayerSlot::ALL[0]].visibility_at(site.0, site.1),
+                VisibilityState::Visible,
+                "the foundation sees as before"
+            );
+        }
+        Err("the foundation never completed".into())
+    }
+}
+
+/// P-12 (Q0101 3(b)): a detector foundation next to a cloaked enemy that a spotter of its
+/// player sees detects nothing, reveals nothing and strikes nothing while it builds.
+#[test]
+fn a_detector_foundation_detects_nothing() -> TestResult {
+    let mut bench = construction()?;
+    assert_eq!(
+        bench.detected_and_seen(),
+        (false, true),
+        "laid, not detecting"
+    );
+    bench.build_out()?;
+    Ok(())
+}
+
+/// P-12: the detector detects from the tick its construction completes. Construction advances
+/// in the production phase, before the vision phase of the same tick, so the vision update of
+/// the completing tick already detects, and the view lists the cloaked unit.
+#[test]
+fn a_detector_detects_from_its_completion() -> TestResult {
+    let mut bench = construction()?;
+    bench.build_out()?;
+    assert_eq!(
+        bench.detected_and_seen(),
+        (true, true),
+        "detected on the completing tick"
+    );
+    assert!(bench.listed(), "revealed once complete");
+    Ok(())
+}
+
+/// P-12: after completion the incrementally recast vision maps equal a full recount: a touched
+/// map cell bumps the map's cell revision, which makes the next vision phase recount every
+/// source, and with every unit holding still every counter and state is unchanged by it.
+#[test]
+fn a_completed_detector_recasts_to_a_full_recount() -> TestResult {
+    let mut bench = construction()?;
+    bench.build_out()?;
+    tick(&mut bench.world, Vec::new());
+    let incremental: Vec<_> = PlayerSlot::ALL
+        .iter()
+        .map(|&slot| bench.world.vision_maps[slot].clone())
+        .collect();
+    bench.world.map.cell_mut(0, 0)?;
+    tick(&mut bench.world, Vec::new());
+    for (slot, before) in PlayerSlot::ALL.iter().zip(&incremental) {
+        let after = &bench.world.vision_maps[*slot];
+        assert_eq!(
+            after.detector_counter(),
+            before.detector_counter(),
+            "{slot:?}"
+        );
+        assert_eq!(
+            after.visible_counter(),
+            before.visible_counter(),
+            "{slot:?}"
+        );
+        assert_eq!(after.states(), before.states(), "{slot:?}");
+    }
+    assert_eq!(bench.detected_and_seen(), (true, true));
     Ok(())
 }
