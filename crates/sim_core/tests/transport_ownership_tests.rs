@@ -549,7 +549,9 @@ fn loaded_ground_and_air_targets_preserve_shooter_windup_without_aim_or_damage()
             source.ground_weapon = Some(weapon);
         }
         let shooter = f.spawn(0, 4, 4)?;
-        let target = f.world.spawn_unit(target_kind, PlayerId(1), point(8, 4))?;
+        // Inside the shooter's sight of 3: a weapon strikes only what its player sees (plan
+        // `2026-11-24-weapon-validation` D-3).
+        let target = f.world.spawn_unit(target_kind, PlayerId(1), point(6, 4))?;
         let carrier = f.spawn(1, 24, 24)?;
         let actor = f.world.entities.get_mut(&shooter).ok_or("shooter")?;
         actor.issue_order(UnitOrder::attack(target), false)?;
@@ -577,7 +579,7 @@ fn loaded_ground_and_air_targets_preserve_shooter_windup_without_aim_or_damage()
         );
         assert!(f.world.projectiles.is_empty() && f.world.pending_events.is_empty());
         f.world
-            .try_unload_unit_from_transport(target, point(8, 4))?;
+            .try_unload_unit_from_transport(target, point(6, 4))?;
         f.world
             .entities
             .get_mut(&shooter)
@@ -586,6 +588,9 @@ fn loaded_ground_and_air_targets_preserve_shooter_windup_without_aim_or_damage()
             target_id: target,
             remaining_ticks: 1,
         };
+        // Vision before combat, as `step` orders the phases: a weapon strikes only what its player
+        // sees (plan `2026-11-24-weapon-validation` D-3).
+        f.world.update_vision();
         f.world.step_weapons_and_projectiles();
         assert!(
             f.world.entities[&target].hp < before.0 || f.world.entities[&target].shields < before.1
@@ -744,6 +749,7 @@ fn all_three_splash_routes_ignore_cargo_at_dormant_pickup_coordinates() -> TestR
                 source_slug: Some(f.world.catalog.get(f.kind)?.slug.clone()),
                 remaining_lifetime_ticks: 10,
                 strikes: 1,
+                target_teleport_count: 0,
             });
         }
         f.world.try_load_unit_into_transport(passenger, carrier)?;
@@ -782,6 +788,7 @@ fn committed_projectile_from_loaded_attacker_still_damages_without_cargo_retalia
         source_slug: Some(f.world.catalog.get(f.kind)?.slug.clone()),
         remaining_lifetime_ticks: 10,
         strikes: 1,
+        target_teleport_count: 0,
     });
     f.world.try_load_unit_into_transport(attacker, carrier)?;
     let before = f.world.entities[&attacker].clone();
@@ -821,6 +828,9 @@ fn prepared_mutual_lethal_shots_retain_actual_sparse_owners_and_origins() -> Tes
             remaining_ticks: 1,
         };
     }
+    // Vision before combat, as `step` orders the phases: a weapon strikes only what its player
+    // sees (plan `2026-11-24-weapon-validation` D-3).
+    f.world.update_vision();
     f.world.step_weapons_and_projectiles();
     assert!(!f.world.entities[&a].is_alive());
     assert!(!f.world.entities[&b].is_alive());

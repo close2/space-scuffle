@@ -26,6 +26,11 @@
 //! 5. Scan range, like weapon reach, is measured between the two units' edges: the centre
 //!    distance minus both collision radii (`StarCraft` II `MinScanRange`, Q0057). A weapon
 //!    scans at least to its own effective range.
+//! 6. Weapons strike only what their player sees ([`SimWorld::passes_weapon_filters`], 5.0.14
+//!    `TargetFilters Visible`); pursuit's gate, [`SimWorld::is_entity_available_for_combat`], does
+//!    not ask for vision (plan `2026-11-24-weapon-validation` D-3, B-195). An automatic attack
+//!    whose target is lost to fog gives way to the best seen candidate or, with none, is dropped
+//!    so that the order below it resumes (D-5, Q0106 part 2's default).
 
 use crate::catalog::{AcquireLevel, AcquireTieBreak, UnitArchetype, WeaponSpec};
 use crate::combat::{fires_without_attack_order, is_threat_to, weapon_aim, TargetPriorityKey};
@@ -137,13 +142,73 @@ impl SimWorld {
         viewer: PlayerId,
         target: &Entity,
     ) -> bool {
+        Self::sees_point(
+            map,
+            vision_maps,
+            viewer,
+            target.position,
+            target.is_attack_revealed_to(viewer),
+        )
+    }
+
+    /// The rule of [`Self::sees_enemy`] for an enemy at `position` (world units) that is
+    /// `attack_revealed` to `viewer` or not, for callers holding a snapshot rather than the
+    /// entity.
+    #[must_use]
+    pub(crate) fn sees_point(
+        map: &SimMap,
+        vision_maps: &PerPlayer<PlayerVisionMap>,
+        viewer: PlayerId,
+        position: SimVec2,
+        attack_revealed: bool,
+    ) -> bool {
         let Some(vision) = vision_maps.get(viewer) else {
             return true;
         };
-        target.is_attack_revealed_to(viewer)
+        attack_revealed
             || map
-                .world_to_cell(target.position)
+                .world_to_cell(position)
                 .is_ok_and(|(cx, cy)| vision.visibility_at(cx, cy) == VisibilityState::Visible)
+    }
+
+    /// The weapon filter: whether a weapon of `attacker_owner` may start, land or keep a strike
+    /// on `target`. It passes [`Self::is_entity_targetable`] (alive, unloaded, vulnerable and, if
+    /// concealed, detected) and `attacker_owner` sees it ([`Self::sees_enemy`]: its cell
+    /// `Visible`, or attack-revealed). 5.0.14's `CWeapon` default `TargetFilters Visible;-`
+    /// (`core` WeaponData:29), which every one of the 146 `TargetFilters` rows keeps (plan
+    /// `2026-11-24-weapon-validation` D-3, S4).
+    #[must_use]
+    pub(crate) fn passes_weapon_filters(
+        target: &Entity,
+        map: &SimMap,
+        vision_maps: &PerPlayer<PlayerVisionMap>,
+        attacker_owner: PlayerId,
+    ) -> bool {
+        Self::is_entity_targetable(target, map, vision_maps, attacker_owner)
+            && Self::sees_enemy(map, vision_maps, attacker_owner, target)
+    }
+
+    /// [`Self::passes_weapon_filters`] for the entity `target_id`; `false` when it does not
+    /// exist.
+    #[must_use]
+    pub(crate) fn is_weapon_target_available(
+        &self,
+        attacker_owner: PlayerId,
+        target_id: EntityId,
+    ) -> bool {
+        self.entities.get(&target_id).is_some_and(|target| {
+            Self::passes_weapon_filters(target, &self.map, &self.vision_maps, attacker_owner)
+        })
+    }
+
+    /// Whether `target_id` is lost to `viewer`'s fog: it exists and passes
+    /// [`Self::is_entity_targetable`] but `viewer` does not see it (plan
+    /// `2026-11-24-weapon-validation` D-5).
+    fn is_lost_to_fog(&self, viewer: PlayerId, target_id: EntityId) -> bool {
+        self.entities.get(&target_id).is_some_and(|target| {
+            Self::is_entity_targetable(target, &self.map, &self.vision_maps, viewer)
+                && !Self::sees_enemy(&self.map, &self.vision_maps, viewer, target)
+        })
     }
 
     /// The attack gate for an already resolved entity; see
@@ -627,7 +692,7 @@ impl SimWorld {
         let reachable_current = current
             .and_then(|id| self.entities.get(&id))
             .filter(|target| {
-                Self::is_entity_targetable(target, &self.map, &self.vision_maps, entity.owner)
+                Self::passes_weapon_filters(target, &self.map, &self.vision_maps, entity.owner)
                     && self.reaches_from_here(entity, arch, target)
                     && self.licensed(engagement, entity, arch, target)
             });
@@ -668,17 +733,7 @@ impl SimWorld {
             candidates,
         );
         let Some(best) = scan.best else {
-            return match engagement {
-                Engagement::Hold | Engagement::Track { .. }
-                    if current.is_some() && reachable_current.is_none() =>
-                {
-                    Some(Acquisition::ReleaseHoldTarget)
-                }
-                Engagement::Acquired(_) if entity.is_immobile && reachable_current.is_none() => {
-                    Some(Acquisition::AbandonAttack)
-                }
-                _ => None,
-            };
+            return self.without_candidate(engagement, entity, reachable_current.is_some());
         };
         if current == Some(best.entity_id) {
             return None;
@@ -689,6 +744,34 @@ impl SimWorld {
             return None;
         }
         Some(Acquisition::Engage(best.entity_id))
+    }
+
+    /// What changes for `entity` under `engagement` when its scan found no candidate, given
+    /// whether its current target is still `reachable` (passes the weapon filter and is in
+    /// reach): a holding or tracking unit releases a target it cannot reach; an automatic attack
+    /// ends when its unit is immobile and cannot reach the target, or when the target is lost
+    /// to fog (plan `2026-11-24-weapon-validation` D-5): the order below it resumes, and an idle
+    /// unit stays idle. A target merely out of reach and seen is still chased.
+    fn without_candidate(
+        &self,
+        engagement: Engagement,
+        entity: &Entity,
+        reachable: bool,
+    ) -> Option<Acquisition> {
+        match engagement {
+            Engagement::Hold | Engagement::Track { .. }
+                if entity.current_target.is_some() && !reachable =>
+            {
+                Some(Acquisition::ReleaseHoldTarget)
+            }
+            Engagement::Acquired(_) if entity.is_immobile && !reachable => {
+                Some(Acquisition::AbandonAttack)
+            }
+            Engagement::Acquired(target) if self.is_lost_to_fog(entity.owner, target) => {
+                Some(Acquisition::AbandonAttack)
+            }
+            _ => None,
+        }
     }
 
     /// The farthest `entity` scans beyond both edges against any candidate, in world units: its
@@ -818,5 +901,46 @@ impl SimWorld {
         }
         unit.current_funnel_waypoints.clear();
         unit.movement.restart();
+    }
+}
+
+#[cfg(test)]
+mod weapon_filter_tests {
+    //! Plan `2026-11-24-weapon-validation` D-3 (P-6): the weapon filter asks for vision only of
+    //! a player that has a vision map; every player slot has one, so this is the only place the
+    //! other case can be reached.
+    use crate::test_support::world;
+    use crate::world::SimWorld;
+    use sim_map::{CliffLevel, GameMap, MapCell};
+    use sim_types::{MoverType, PlayerId, SimScalar, SimVec2, Tick, TickBundle};
+
+    #[test]
+    fn a_player_without_a_vision_map_sees_every_enemy() -> Result<(), Box<dyn std::error::Error>> {
+        let map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?;
+        let mut world = world(map, 9);
+        let kind = world
+            .catalog
+            .archetypes()
+            .find(|arch| arch.mover_type == MoverType::Ground && arch.max_speed > SimScalar::ZERO)
+            .map(|arch| arch.unit_type_id)
+            .ok_or("the shipped catalog has a mobile ground archetype")?;
+        let target = world.spawn_unit(kind, PlayerId(1), SimVec2::from_i32(28, 28))?;
+        world.step(&TickBundle {
+            tick: Tick(1),
+            commands: Vec::new(),
+            state_checksum: None,
+        });
+        let entity = world.entities.get(&target).ok_or("spawned")?;
+        assert!(
+            !SimWorld::passes_weapon_filters(entity, &world.map, &world.vision_maps, PlayerId(0)),
+            "player 0, with no unit, does not see the target"
+        );
+        assert!(
+            SimWorld::passes_weapon_filters(entity, &world.map, &world.vision_maps, PlayerId(8)),
+            "an owner outside the slots has no vision map and sees everything"
+        );
+        assert!(world.is_weapon_target_available(PlayerId(8), target));
+        assert!(!world.is_weapon_target_available(PlayerId(0), target));
+        Ok(())
     }
 }

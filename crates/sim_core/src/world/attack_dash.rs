@@ -175,7 +175,6 @@ impl SimWorld {
         let Some(target_entity) = self.entities.get(&target) else {
             return false;
         };
-        Self::is_entity_targetable(target_entity, &self.map, &self.vision_maps, entity.owner)
-            && Self::sees_enemy(&self.map, &self.vision_maps, entity.owner, target_entity)
+        Self::passes_weapon_filters(target_entity, &self.map, &self.vision_maps, entity.owner)
     }
 }

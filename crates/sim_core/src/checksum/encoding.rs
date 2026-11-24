@@ -25,11 +25,12 @@ use sim_map::{
 use sim_types::{AbilitySource, EffectContext, EffectId, EffectTarget, StatusId};
 use sim_types::{
     AllowedMovement, AnimState, ArmorClassId, AttackOrigin, AttackVisibility, AttributeBonuses,
-    AttributeFlags, EntityId, FootprintShape, MatchResult, MoverType, PerPlayer, PlayerId,
-    PlayerUpgradeState, ProjectileTargetLossBehavior, RallyTarget, ResourceNodeId, SimAngle,
-    SimScalar, SimVec2, SplashCliff, SplashImpact, SplashLine, SplashLineAxis, SplashLineOrigin,
-    SplashShape, SplashSpec, SplashZone, StructureStrike, Tick, TurretIdle, UnitOrder,
-    UnitStatDeltas, UnitTypeId, VisibilityState, WeaponClassId, WeaponSpec, WeaponVisualKind,
+    AttributeFlags, EntityId, FootprintShape, MatchResult, MissileValidation, MoverType, PerPlayer,
+    PlayerId, PlayerUpgradeState, ProjectileTargetLossBehavior, RallyTarget, ResourceNodeId,
+    SimAngle, SimScalar, SimVec2, SplashCliff, SplashImpact, SplashLine, SplashLineAxis,
+    SplashLineOrigin, SplashShape, SplashSpec, SplashZone, StructureStrike, Tick, TurretIdle,
+    UnitOrder, UnitStatDeltas, UnitTypeId, VisibilityState, WeaponClassId, WeaponSpec,
+    WeaponVisualKind,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use xxhash_rust::xxh64::Xxh64;
@@ -371,6 +372,7 @@ fields!(Entity {
     cast_lock_ticks,
     displacement,
     attack_reveal_ticks,
+    teleport_count,
 } unhashed {
     hull_turn_budget,
     status_modifiers,
@@ -505,6 +507,7 @@ fields!(ActiveProjectile {
     source_slug,
     remaining_lifetime_ticks,
     strikes,
+    target_teleport_count,
 });
 fields!(WeaponSpec {
     name,
@@ -542,7 +545,10 @@ fields!(WeaponSpec {
     structure_strike,
     melee,
     attack_visibility,
+    missile_validation,
 });
+// Plan `2026-11-24-weapon-validation` D-7: the two flags in order, one byte each.
+fields!(MissileValidation { weapon, teleport });
 // `view` is presentation only (the line's renderer events): it decides nothing.
 fields!(PendingLine {
     points,

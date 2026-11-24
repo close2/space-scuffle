@@ -538,6 +538,7 @@ fn a_missile_at_a_worker_that_goes_inside_lands_on_the_point() -> TestResult {
         source_slug: Some(slug),
         remaining_lifetime_ticks: 20,
         strikes: 1,
+        target_teleport_count: scene.world.entities[&housed].teleport_count,
     });
     let worker_vitals = vitals(&scene.world, housed);
     for _ in 0..5 {

@@ -3498,6 +3498,11 @@
                 // BehaviorData:237-240), 3 x 25 / 1.4 = 53.6 ticks, rounded half up to 54 (Q0052 S-5);
                 // plan 2026-11-23-vision-and-detection D-4, D-5.
                 attack_visibility: Visible(reveal_ticks: 54),
+                // 5.0.14 BroodlingEscortLaunchA, BroodlingEscortMissile and BroodlingEscortFallbackMissile
+                // clear ValidateWeapon (liberty EffectData:2668, :2749, :2780); the damage validates
+                // BroodlingEscortFilters at impact (:2679, :2785; ValidatorData:1723-1726); plan
+                // 2026-11-24-weapon-validation D-4, B-194.
+                missile_validation: (weapon: false, teleport: true),
                 visual_kind: Projectile,
                 target_flags: (bits: 255),
                 min_range: 0.0,
@@ -3530,6 +3535,11 @@
                 // BehaviorData:237-240), 3 x 25 / 1.4 = 53.6 ticks, rounded half up to 54 (Q0052 S-5);
                 // plan 2026-11-23-vision-and-detection D-4, D-5.
                 attack_visibility: Visible(reveal_ticks: 54),
+                // 5.0.14 BroodlingEscortLaunchA, BroodlingEscortMissile and BroodlingEscortFallbackMissile
+                // clear ValidateWeapon (liberty EffectData:2668, :2749, :2780); the damage validates
+                // BroodlingEscortFilters at impact (:2679, :2785; ValidatorData:1723-1726); plan
+                // 2026-11-24-weapon-validation D-4, B-194.
+                missile_validation: (weapon: false, teleport: true),
                 visual_kind: Projectile,
                 target_flags: (bits: 255),
                 min_range: 0.0,

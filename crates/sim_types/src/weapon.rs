@@ -531,6 +531,35 @@ pub struct WeaponSpec {
     /// `2026-11-23-vision-and-detection` D-4). Omitted, the engine default: a snapshot.
     #[serde(default)]
     pub attack_visibility: AttackVisibility,
+    /// What the weapon's missile re-checks about its target in flight (plan
+    /// `2026-11-24-weapon-validation` D-1). Omitted, the engine default: both checks. Read only
+    /// for a weapon with a `projectile_speed`; catalog validation refuses a non-default value on
+    /// an instant weapon.
+    #[serde(default)]
+    pub missile_validation: MissileValidation,
+}
+
+/// What a weapon's missile re-checks about its target in flight: `StarCraft` II's
+/// `CEffectLaunchMissile` flags (`core` EffectData:95–109). A check that fails makes the
+/// missile lose its target, and `target_loss_behavior` decides what it does then.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MissileValidation {
+    /// `ValidateWeapon` (:101): the target must keep passing the weapon's filters (alive,
+    /// unloaded, vulnerable, seen and, if concealed, detected). `false`: only its existence
+    /// is followed, and the filters are checked at impact instead.
+    pub weapon: bool,
+    /// `ValidateTeleport` (:100): a target that teleports after the launch is lost.
+    pub teleport: bool,
+}
+
+impl Default for MissileValidation {
+    /// The engine default of every `CEffectLaunchMissile`: both checks on.
+    fn default() -> Self {
+        Self {
+            weapon: true,
+            teleport: true,
+        }
+    }
 }
 
 /// What a weapon's damage shows of its attacker to the player it strikes: `StarCraft` II's
@@ -754,6 +783,37 @@ mod tests {
         assert_eq!(visible, AttackVisibility::Visible { reveal_ticks: 54 });
         let hidden: AttackVisibility = ron::from_str("Hidden")?;
         assert_eq!(hidden, AttackVisibility::Hidden);
+        Ok(())
+    }
+    /// Plan `2026-11-24-weapon-validation` D-1: an omitted missile validation reads as the engine
+    /// default, both checks on (`CEffectLaunchMissile`, `core` EffectData:100–101); an authored
+    /// row reads each flag as written.
+    #[test]
+    fn missile_validation_defaults_to_both_checks_and_reads_both_cases(
+    ) -> Result<(), ron::error::SpannedError> {
+        use super::MissileValidation;
+        let both = MissileValidation {
+            weapon: true,
+            teleport: true,
+        };
+        assert_eq!(MissileValidation::default(), both);
+        let at_impact: MissileValidation = ron::from_str("(weapon: false, teleport: true)")?;
+        assert_eq!(
+            at_impact,
+            MissileValidation {
+                weapon: false,
+                teleport: true,
+            }
+        );
+        let follows_teleports: MissileValidation =
+            ron::from_str("(weapon: true, teleport: false)")?;
+        assert_eq!(
+            follows_teleports,
+            MissileValidation {
+                weapon: true,
+                teleport: false,
+            }
+        );
         Ok(())
     }
 }
