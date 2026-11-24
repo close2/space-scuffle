@@ -189,9 +189,11 @@ pub enum SplashImpact {
 
 /// Which cliff levels a weapon's area reaches: `StarCraft` II's `SearchFlags` `SameCliff`.
 ///
-/// A level is read from the map under a position (`sim_map::GameMap::cliff_level_at`): a ramp
-/// counts as its lower landing and an air unit has the level of the ground below it (plan
-/// `2026-11-23-splash-cliff-levels` D-2, owner question Q0099's defaults).
+/// A position's levels are read from the map under it (`sim_map::GameMap::cliff_span_at`): a
+/// ramp counts as both of its landings (owner answer Q0099 1(c), plan
+/// `2026-11-24-owner-answers-cliff-and-vision` D-1), and an air unit has the level of the
+/// ground below it (plan `2026-11-23-splash-cliff-levels` D-2, Q0099's default). The level is
+/// read at the search point (Q0099 3(a)).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SplashCliff {
     /// Only units on the cliff level of the search point that reaches them (`SameCliff 1`, the

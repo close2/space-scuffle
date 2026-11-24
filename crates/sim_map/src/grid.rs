@@ -41,6 +41,43 @@ impl CliffLevel {
     }
 }
 
+/// The cliff levels a ground position belongs to for `StarCraft` II's `SameCliff`: an inclusive
+/// range. A flat cell spans its one level; a ramp cell spans its lower landing and the level
+/// above it, so a ramp shares a level with both of its landings (owner answer Q0099 1(c), plan
+/// `2026-11-24-owner-answers-cliff-and-vision` D-1). Two positions share a level when their
+/// spans overlap; overlap is not transitive, so a ramp's two landings stay apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CliffSpan {
+    /// The lowest level the position belongs to.
+    pub low: CliffLevel,
+    /// The highest level the position belongs to; equal to `low` off a ramp.
+    pub high: CliffLevel,
+}
+
+impl CliffSpan {
+    /// Every level from [`CliffLevel::MIN`] to [`CliffLevel::MAX`]: the span of a position in
+    /// the air, which no cliff separates from anything (owner answer Q0099 2(b)).
+    pub const ALL: Self = Self {
+        low: CliffLevel::MIN,
+        high: CliffLevel::MAX,
+    };
+
+    /// The span of a position on the one level `level`.
+    #[must_use]
+    pub const fn single(level: CliffLevel) -> Self {
+        Self {
+            low: level,
+            high: level,
+        }
+    }
+
+    /// Whether the two spans share at least one level.
+    #[must_use]
+    pub const fn overlaps(self, other: Self) -> bool {
+        self.low.0 <= other.high.0 && other.low.0 <= self.high.0
+    }
+}
+
 /// World-unit height of one cliff level step.
 pub const CLIFF_LEVEL_HEIGHT: i32 = 3;
 
@@ -465,18 +502,22 @@ impl GameMap {
         Ok((cx, cy))
     }
 
-    /// The cliff level a position stands on: the level stored in the cell under `pos`, a ramp
-    /// cell counting as its lower landing (as the map stores it). A position off the map takes
-    /// the level of the nearest cell on the map, so every position has a level. The level
-    /// depends on the position alone, not on what stands there: an air unit has the level of
-    /// the ground below it.
+    /// The cliff levels the ground at `pos` belongs to: the level stored in the cell under
+    /// `pos` for a flat cell, and that level and the one above it for a ramp cell (owner answer
+    /// Q0099 1(c)). A ramp cell stores its lower landing, and map validation requires the upper
+    /// landing to be one level higher (`RampUpperLandingMismatch`), so the span is exactly the
+    /// two landings; on an unvalidated map a ramp stored at [`CliffLevel::MAX`] spans that level
+    /// only. Diagonal legacy ramps span the same way. A position off the map takes the span of
+    /// the nearest cell on the map, so every position has one. The span reads the terrain
+    /// alone, not what stands there: combat decides how an air unit or an air blast reads it
+    /// (plan `2026-11-24-owner-answers-cliff-and-vision` D-2).
     ///
     /// `pos` is in world units; a coordinate is floored to its cell after a clamp to
     /// `[0, width)` × `[0, height)`, so a whole-number coordinate lies in the cell that starts
     /// there. Area damage reads it to keep a search to its centre's level (plan
     /// `2026-11-23-splash-cliff-levels` D-2, `StarCraft` II's `SameCliff`).
     #[must_use]
-    pub fn cliff_level_at(&self, pos: SimVec2) -> CliffLevel {
+    pub fn cliff_span_at(&self, pos: SimVec2) -> CliffSpan {
         // `saturating_to_u32` floors and turns a negative coordinate into 0; `min` keeps a
         // coordinate at or past the far edge on the last cell. `new` and `from_cells` refuse a
         // zero size, so the subtraction cannot wrap. Both constructors also make `cells` cover
@@ -487,7 +528,17 @@ impl GameMap {
         let index = (y as usize) * (self.width as usize) + (x as usize);
         self.cells
             .get(index)
-            .map_or(CliffLevel::MIN, |cell| cell.cliff_level)
+            .map_or(CliffSpan::single(CliffLevel::MIN), |cell| {
+                let low = cell.cliff_level;
+                if cell.ramp.is_some() {
+                    CliffSpan {
+                        low,
+                        high: CliffLevel(low.0.saturating_add(1).min(CliffLevel::MAX.0)),
+                    }
+                } else {
+                    CliffSpan::single(low)
+                }
+            })
     }
 
     /// Converts discrete grid cell coordinates into the continuous world center position `(x + 0.5, y + 0.5)`.
@@ -1070,7 +1121,7 @@ impl GameMap {
     reason = "a map that cannot be built or a cell outside it is a broken test, stopped loudly"
 )]
 mod tests {
-    use super::{CliffLevel, GameMap, MapCell};
+    use super::{CliffLevel, CliffSpan, GameMap, MapCell, RampDir};
     use sim_types::{SimScalar, SimVec2};
 
     const WIDTH: u32 = 6;
@@ -1080,6 +1131,11 @@ mod tests {
     /// side or diagonal, differ, so a position read in the wrong cell fails.
     fn level_of(x: u32, y: u32) -> CliffLevel {
         CliffLevel(u8::try_from((x + 2 * y) % 4).unwrap_or(0))
+    }
+
+    /// The span of a flat cell `(x, y)` of [`checkerboard`]: its one level.
+    fn span_of(x: u32, y: u32) -> CliffSpan {
+        CliffSpan::single(level_of(x, y))
     }
 
     /// A `WIDTH` × `HEIGHT` map whose cell `(x, y)` stores [`level_of`]`(x, y)`.
@@ -1100,8 +1156,9 @@ mod tests {
         SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(y))
     }
 
-    /// Plan `2026-11-23-splash-cliff-levels` P-4: a position on the map has the level of the
-    /// cell it lies in, at the cell's centre and anywhere inside it.
+    /// Plan `2026-11-23-splash-cliff-levels` P-4, as a span (plan
+    /// `2026-11-24-owner-answers-cliff-and-vision` P-1): a position on a flat cell spans the one
+    /// level of the cell it lies in, at the cell's centre and anywhere inside it.
     #[test]
     fn a_position_has_the_level_of_its_cell() {
         let map = checkerboard();
@@ -1109,8 +1166,8 @@ mod tests {
             for x in 0..WIDTH {
                 for (fx, fy) in [(0.5, 0.5), (0.0, 0.0), (0.999, 0.001), (0.25, 0.75)] {
                     assert_eq!(
-                        map.cliff_level_at(at(f64::from(x) + fx, f64::from(y) + fy)),
-                        level_of(x, y),
+                        map.cliff_span_at(at(f64::from(x) + fx, f64::from(y) + fy)),
+                        span_of(x, y),
                         "cell ({x}, {y}) at ({fx}, {fy})"
                     );
                 }
@@ -1126,15 +1183,15 @@ mod tests {
         let below = SimScalar::EPSILON;
         for x in 1..WIDTH {
             let edge = SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(2.5));
-            assert_eq!(map.cliff_level_at(edge), level_of(x, 2), "x = {x}");
+            assert_eq!(map.cliff_span_at(edge), span_of(x, 2), "x = {x}");
             let before = SimVec2::new(edge.x - below, edge.y);
-            assert_eq!(map.cliff_level_at(before), level_of(x - 1, 2), "x = {x}⁻");
+            assert_eq!(map.cliff_span_at(before), span_of(x - 1, 2), "x = {x}⁻");
         }
         for y in 1..HEIGHT {
             let edge = SimVec2::new(SimScalar::from_num(3.5), SimScalar::from_num(y));
-            assert_eq!(map.cliff_level_at(edge), level_of(3, y), "y = {y}");
+            assert_eq!(map.cliff_span_at(edge), span_of(3, y), "y = {y}");
             let before = SimVec2::new(edge.x, edge.y - below);
-            assert_eq!(map.cliff_level_at(before), level_of(3, y - 1), "y = {y}⁻");
+            assert_eq!(map.cliff_span_at(before), span_of(3, y - 1), "y = {y}⁻");
         }
     }
 
@@ -1148,82 +1205,183 @@ mod tests {
         for far in [1e-9, 0.5, 3.0, 1.0e6] {
             // The four sides, beside cell column 2 or row 1.
             assert_eq!(
-                map.cliff_level_at(at(-far, 1.5)),
-                level_of(0, 1),
+                map.cliff_span_at(at(-far, 1.5)),
+                span_of(0, 1),
                 "west {far}"
             );
             assert_eq!(
-                map.cliff_level_at(at(w + far, 1.5)),
-                level_of(last_x, 1),
+                map.cliff_span_at(at(w + far, 1.5)),
+                span_of(last_x, 1),
                 "east {far}"
             );
             assert_eq!(
-                map.cliff_level_at(at(2.5, -far)),
-                level_of(2, 0),
+                map.cliff_span_at(at(2.5, -far)),
+                span_of(2, 0),
                 "south {far}"
             );
             assert_eq!(
-                map.cliff_level_at(at(2.5, h + far)),
-                level_of(2, last_y),
+                map.cliff_span_at(at(2.5, h + far)),
+                span_of(2, last_y),
                 "north {far}"
             );
             // The four corners.
             assert_eq!(
-                map.cliff_level_at(at(-far, -far)),
-                level_of(0, 0),
+                map.cliff_span_at(at(-far, -far)),
+                span_of(0, 0),
                 "south-west {far}"
             );
             assert_eq!(
-                map.cliff_level_at(at(w + far, -far)),
-                level_of(last_x, 0),
+                map.cliff_span_at(at(w + far, -far)),
+                span_of(last_x, 0),
                 "south-east {far}"
             );
             assert_eq!(
-                map.cliff_level_at(at(-far, h + far)),
-                level_of(0, last_y),
+                map.cliff_span_at(at(-far, h + far)),
+                span_of(0, last_y),
                 "north-west {far}"
             );
             assert_eq!(
-                map.cliff_level_at(at(w + far, h + far)),
-                level_of(last_x, last_y),
+                map.cliff_span_at(at(w + far, h + far)),
+                span_of(last_x, last_y),
                 "north-east {far}"
             );
         }
         // Exactly on the far edges: the coordinate equal to the width or height lies past the
         // last cell, which it takes.
         assert_eq!(
-            map.cliff_level_at(at(w, 1.5)),
-            level_of(last_x, 1),
+            map.cliff_span_at(at(w, 1.5)),
+            span_of(last_x, 1),
             "x = width"
         );
         assert_eq!(
-            map.cliff_level_at(at(2.5, h)),
-            level_of(2, last_y),
+            map.cliff_span_at(at(2.5, h)),
+            span_of(2, last_y),
             "y = height"
         );
         let extreme = SimVec2::new(SimScalar::MIN, SimScalar::MAX);
         assert_eq!(
-            map.cliff_level_at(extreme),
-            level_of(0, last_y),
+            map.cliff_span_at(extreme),
+            span_of(0, last_y),
             "the scalar bounds"
         );
     }
 
-    /// P-4: the level depends on the position alone; a structure placed over cells, as any
-    /// unit standing there, leaves it unchanged (an air unit has the level of the ground below).
+    /// P-4: the span depends on the terrain alone; a structure placed over cells, as any unit
+    /// standing there, leaves it unchanged. (What stands there, an air unit for one, is
+    /// combat's reading: plan `2026-11-24-owner-answers-cliff-and-vision` D-2.)
     #[test]
-    fn the_level_reads_the_terrain_only() {
+    fn the_span_reads_the_terrain_only() {
         let mut map = GameMap::new(8, 8, MapCell::default_ground(CliffLevel(2)))
             .expect("invariant: a nonzero size");
-        let before = map.cliff_level_at(at(3.5, 3.5));
+        let before = map.cliff_span_at(at(3.5, 3.5));
         map.place_structure(
             sim_types::EntityId(7),
             (3, 3),
             crate::footprint::StructureFootprint::square(2, 2),
         )
         .expect("invariant: open buildable ground");
-        assert_eq!(map.cliff_level_at(at(3.5, 3.5)), before);
-        assert_eq!(map.cliff_level_at(at(4.5, 4.5)), before);
-        assert_eq!(before, CliffLevel(2));
+        assert_eq!(map.cliff_span_at(at(3.5, 3.5)), before);
+        assert_eq!(map.cliff_span_at(at(4.5, 4.5)), before);
+        assert_eq!(before, CliffSpan::single(CliffLevel(2)));
+    }
+
+    /// Plan `2026-11-24-owner-answers-cliff-and-vision` P-1: a ramp cell spans its stored
+    /// (lower) level and the level above it, anywhere in the cell, for every ramp direction,
+    /// diagonal legacy ramps included; a ramp stored at the top level spans that level only.
+    #[test]
+    fn a_ramp_cell_spans_its_landing_and_the_level_above() {
+        let dirs = [
+            RampDir::North,
+            RampDir::South,
+            RampDir::East,
+            RampDir::West,
+            RampDir::NorthEast,
+            RampDir::NorthWest,
+            RampDir::SouthEast,
+            RampDir::SouthWest,
+        ];
+        for low in 0..=CliffLevel::MAX.0 {
+            for dir in dirs {
+                let mut map = GameMap::new(WIDTH, HEIGHT, MapCell::default_ground(CliffLevel(low)))
+                    .expect("invariant: a nonzero size");
+                map.cell_mut(2, 2).expect("invariant: inside the map").ramp = Some(dir);
+                let expected = CliffSpan {
+                    low: CliffLevel(low),
+                    high: CliffLevel((low + 1).min(CliffLevel::MAX.0)),
+                };
+                for (fx, fy) in [(0.5, 0.5), (0.0, 0.0), (0.999, 0.001)] {
+                    assert_eq!(
+                        map.cliff_span_at(at(2.0 + fx, 2.0 + fy)),
+                        expected,
+                        "{dir:?} at level {low}, ({fx}, {fy})"
+                    );
+                }
+                assert_eq!(
+                    map.cliff_span_at(at(3.5, 2.5)),
+                    CliffSpan::single(CliffLevel(low)),
+                    "the flat cell beside it"
+                );
+            }
+        }
+    }
+
+    /// Every span with `low <= high` between [`CliffLevel::MIN`] and [`CliffLevel::MAX`].
+    fn every_span() -> Vec<CliffSpan> {
+        let mut spans = Vec::new();
+        for low in CliffLevel::MIN.0..=CliffLevel::MAX.0 {
+            for high in low..=CliffLevel::MAX.0 {
+                spans.push(CliffSpan {
+                    low: CliffLevel(low),
+                    high: CliffLevel(high),
+                });
+            }
+        }
+        spans
+    }
+
+    /// P-1: overlap is reflexive and symmetric; two single levels overlap exactly when they are
+    /// equal; [`CliffSpan::ALL`] overlaps every span.
+    #[test]
+    fn overlap_is_reflexive_symmetric_and_all_overlaps_everything() {
+        let spans = every_span();
+        for &a in &spans {
+            assert!(a.overlaps(a), "{a:?} reflexive");
+            assert!(CliffSpan::ALL.overlaps(a), "ALL and {a:?}");
+            assert!(a.overlaps(CliffSpan::ALL), "{a:?} and ALL");
+            for &b in &spans {
+                assert_eq!(a.overlaps(b), b.overlaps(a), "{a:?}, {b:?} symmetric");
+                let shared =
+                    (a.low.0..=a.high.0).any(|level| (b.low.0..=b.high.0).contains(&level));
+                assert_eq!(a.overlaps(b), shared, "{a:?}, {b:?}: a level in common");
+            }
+        }
+        for a in CliffLevel::MIN.0..=CliffLevel::MAX.0 {
+            for b in CliffLevel::MIN.0..=CliffLevel::MAX.0 {
+                assert_eq!(
+                    CliffSpan::single(CliffLevel(a)).overlaps(CliffSpan::single(CliffLevel(b))),
+                    a == b,
+                    "single {a} and {b}"
+                );
+            }
+        }
+        assert_eq!(CliffSpan::ALL.low, CliffLevel::MIN);
+        assert_eq!(CliffSpan::ALL.high, CliffLevel::MAX);
+    }
+
+    /// P-1: a ramp's span overlaps both its landings and neither the level below its lower
+    /// landing nor the level above its upper one; overlap is not transitive, so the two
+    /// landings stay apart.
+    #[test]
+    fn a_ramp_span_overlaps_both_landings_and_no_third_level() {
+        let ramp = CliffSpan {
+            low: CliffLevel(1),
+            high: CliffLevel(2),
+        };
+        let level = |l| CliffSpan::single(CliffLevel(l));
+        assert!(ramp.overlaps(level(1)), "the lower landing");
+        assert!(ramp.overlaps(level(2)), "the upper landing");
+        assert!(!ramp.overlaps(level(0)), "below the lower landing");
+        assert!(!ramp.overlaps(level(3)), "above the upper landing");
+        assert!(!level(1).overlaps(level(2)), "the landings stay apart");
     }
 }

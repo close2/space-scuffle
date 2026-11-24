@@ -18,13 +18,15 @@
 //! 3. No shot changes another entity's position, owner or lifecycle link during this phase.
 //! 4. An attacker-centred area ([`SplashImpact::Attacker`]) is the only damage of its shot: no
 //!    direct strike, so no weapon hit effect; its target is struck by the area like any other
-//!    unit in it (plan `2026-11-23-splash-centres` D-1), or, when it stands on another cliff
-//!    level and the area says so, by the area's other-level strike, which is part of the area
+//!    unit in it (plan `2026-11-23-splash-centres` D-1), or, when it shares no cliff level with
+//!    the release position and the area says so, by the area's other-level strike, which is part of the area
 //!    and passes the area's own filters (plan `2026-11-23-splash-cliff-levels` D-3).
 //! 5. An area with a target radius condition opens only around a target whose collision radius
 //!    is below it; otherwise it searches nothing and publishes nothing (D-3).
-//! 6. An area whose `cliff` is `Same` strikes only units on the cliff level of a search point
-//!    that reaches them (plan `2026-11-23-splash-cliff-levels` D-1).
+//! 6. An area whose `cliff` is `Same` strikes only units whose cliff span overlaps the span of
+//!    a search point that reaches them: a ramp cell spans both its landings (owner answer Q0099
+//!    1(c); plan `2026-11-24-owner-answers-cliff-and-vision` D-2). The level is read at the
+//!    search point (Q0099 3(a)).
 //! 7. A projectile whose target is lost lands at the last tracked point unless its weapon says
 //!    `Fizzle` (plan `2026-11-23-vision-and-detection` D-1).
 //! 8. A strike by a `Visible` weapon reveals its attacker to the struck unit's owner for the
@@ -48,7 +50,7 @@ use crate::entity::{
 use crate::weapon_timing::{resolve_attack_period, AttackRate, SimulationDiagnostic};
 use crate::world::presentation::{weapon_source, PresentationWorkspace};
 use crate::world::SimWorld;
-use sim_map::{CliffLevel, PlayerVisionMap, SimMap};
+use sim_map::{CliffSpan, PlayerVisionMap, SimMap};
 use sim_types::{
     AbilitySource, AttackVisibility, CombatEventVisual, EffectContext, EffectSource, EffectTarget,
     EntityId, LineView, MoverType, PerPlayer, PlayerId, PlayerUpgradeState,
@@ -158,11 +160,11 @@ pub(crate) struct CombatWorkspace {
     // PERFORMANCE RATIONALE:
     // Why: An area kept to its level compares each unit in reach with the level of every search
     // point, and a strike must not allocate.
-    // What: The levels of the current strike's search points, read once per strike beside the
-    // points, in the same order.
+    // What: The cliff spans of the current strike's search points, read once per strike beside
+    // the points, in the same order.
     // Trade-off: One more buffer held at its high-water mark (a line's point count).
-    /// Cliff level of each of the current strike's search points, for an area kept to its level.
-    splash_levels: Vec<CliffLevel>,
+    /// Cliff span of each of the current strike's search points, for an area kept to its level.
+    splash_levels: Vec<CliffSpan>,
     /// Units with pending line searches this tick, in `EntityId` order.
     line_owners: Vec<EntityId>,
     finished_projectiles: Vec<(usize, ProjectileStep)>,
@@ -1208,8 +1210,9 @@ impl SimWorld {
     /// answer to Q0063). A unit inside several searches is struck once, at the fraction of its
     /// nearest search point, and a unit in `struck` not at all (the game's `noMarkers` validator
     /// on the damage effect); each unit struck is appended to `struck`. An area kept to its level
-    /// ([`SplashCliff::Same`]) counts only the search points on the unit's own cliff level (plan
-    /// `2026-11-23-splash-cliff-levels` D-1). Spares `area.primary`, already struck directly,
+    /// ([`SplashCliff::Same`]) counts only the search points whose cliff span overlaps the
+    /// unit's: a ramp cell spans both its landings (plan `2026-11-23-splash-cliff-levels` D-1;
+    /// owner answer Q0099 1(c), plan `2026-11-24-owner-answers-cliff-and-vision` D-2). Spares `area.primary`, already struck directly,
     /// and the attacker, which never damages itself. Each struck entity then runs its
     /// retaliation against the attacker.
     fn strike_area(
@@ -1226,7 +1229,7 @@ impl SimWorld {
         levels.clear();
         let same_level = splash.cliff == SplashCliff::Same;
         if same_level {
-            levels.extend(points.iter().map(|&point| self.map.cliff_level_at(point)));
+            levels.extend(points.iter().map(|&point| self.map.cliff_span_at(point)));
         }
         let reach = splash.reach();
         for (&other_id, other) in &self.entities {
@@ -1254,11 +1257,11 @@ impl SimWorld {
             if same_level {
                 // Only a unit already in reach reads its level, so the map is read once per
                 // unit the area could strike, not once per entity.
-                let own = self.map.cliff_level_at(other.position);
+                let own = self.map.cliff_span_at(other.position);
                 let Some(on_level) = points
                     .iter()
                     .zip(&levels)
-                    .filter(|&(_, &level)| level == own)
+                    .filter(|&(_, &level)| level.overlaps(own))
                     .map(|(point, _)| edge_distance(point))
                     .min()
                     .filter(|&distance| distance <= reach)
@@ -1278,8 +1281,10 @@ impl SimWorld {
 
     /// The other-level strike of an attacker-centred area (plan `2026-11-23-splash-cliff-levels`
     /// D-3, `StarCraft` II's `BanelingVolatileBurstDirectFallbackSet` on `CliffLevelNotEqual`):
-    /// when `target_id` stands on another cliff level than the attacker's release position
-    /// (`source.origin`), the target takes `splash`'s strike directly, at the fraction of the
+    /// when `target_id`'s cliff span does not overlap that of the attacker's release position
+    /// (`source.origin`), the exact complement of the area's level test (a ramp spans both its
+    /// landings, plan `2026-11-24-owner-answers-cliff-and-vision` D-2), the target takes
+    /// `splash`'s strike directly, at the fraction of the
     /// first zone (distance zero), once, and runs its retaliation. It passes the area's own
     /// filters, as `strike_area` applies them, without their distance and level tests. It runs
     /// whether or not the area opened, and does nothing when the target is gone or on the
@@ -1294,7 +1299,10 @@ impl SimWorld {
         let Some(target) = self.entities.get(&target_id) else {
             return;
         };
-        if self.map.cliff_level_at(target.position) == self.map.cliff_level_at(source.origin)
+        if self
+            .map
+            .cliff_span_at(target.position)
+            .overlaps(self.map.cliff_span_at(source.origin))
             || !Self::area_may_strike(source, splash, area, target_id, target)
         {
             return;
