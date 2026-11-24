@@ -356,6 +356,18 @@ pub enum EffectCatalogError {
         /// The status name.
         name: String,
     },
+    /// `defaults.snapshot` names an effect that is not exactly one held `Shell` layer: the
+    /// attack snapshot's look modulates a still image and spawns nothing (plan
+    /// `2026-11-24-attacker-snapshot` D-5).
+    #[error(
+        "'{path}': defaults snapshot names effect '{effect}', which must be exactly one held Shell layer"
+    )]
+    SnapshotLookNotHeldShell {
+        /// The vocabulary file.
+        path: PathBuf,
+        /// The effect name.
+        effect: String,
+    },
     /// A mode's `moving` slot names an effect that does not say how often it repeats.
     #[error("unit '{unit}' mode moving names effect '{name}', which has no `repeat` period")]
     TrailWithoutRepeat {

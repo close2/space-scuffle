@@ -174,8 +174,10 @@ SuiteCatalog(
         ]),
 
         // Valgrind: counts the live battle sync's steady-state allocations.
+        // Its running children also hold an attack snapshot through the snapshot pool (plan
+        // 2026-11-24-attacker-snapshot P-16).
         "client/sync_allocation_count_tests": (class: Valgrind, triggers: [
-            "crates/client/src/{battle_pipeline/**,presentation.rs,runtime_battle/**,player_presentation/**,effects/**}",
+            "crates/client/src/{battle_pipeline/**,presentation.rs,runtime_battle/**,player_presentation/**,effects/**,battle_hud/attack_snapshots.rs}",
         ]),
         // Valgrind: counts the effect engine's steady-state allocations (plan
         // 2026-11-10-spellcaster-mechanics D-18).

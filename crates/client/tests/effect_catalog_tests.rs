@@ -2701,3 +2701,53 @@ fn a_missile_holds_its_look_and_lays_an_area_impact() {
         "{error}"
     );
 }
+
+/// Plan `2026-11-24-attacker-snapshot` D-5: the shipped vocabulary names the attack snapshot's
+/// look, one held `Shell` layer that dims the image (a tint over the media, the glare matted,
+/// the shadow taken away), and `snapshot_look` returns it.
+#[test]
+fn the_shipped_snapshot_look_is_one_held_shell_that_dims() {
+    let root = ResolvedAssetsRoot::resolve().expect("the assets root resolves");
+    let catalog = EffectCatalog::load(&root.as_path().join(EFFECTS_CATALOG_PATH), root.as_path())
+        .expect("the shipped vocabulary loads");
+    let id = catalog
+        .defaults
+        .snapshot
+        .expect("the shipped vocabulary names a snapshot look");
+    let effect = catalog.effect(id).expect("a resolved id names an effect");
+    let [layer] = effect.layers.as_slice() else {
+        panic!("one layer: {}", effect.name);
+    };
+    assert!(layer.held, "held");
+    let Block::Shell(look) = &layer.block else {
+        panic!("a Shell layer: {:?}", layer.block);
+    };
+    assert_eq!(catalog.snapshot_look(), Some(*look));
+    assert!(look.tint.w > 0.0, "the image's media is tinted");
+    assert!(look.matte > 0.0, "its glare is matted");
+    assert!(look.shadow > 0.0, "its shadow is taken away");
+}
+
+/// D-5: a `snapshot` default that is not exactly one held `Shell` layer is refused, naming the
+/// file and the effect; a valid one resolves.
+#[test]
+fn a_snapshot_look_must_be_one_held_shell_layer() {
+    let (dir, manifest) = fixture();
+    let effect =
+        |layers: &str| format!(r#""dim": (class: Minor, event: Mode, layers: [ {layers} ])"#);
+    let shell = r#"(block: Shell(tint: (0.4, 0.4, 0.4, 0.6)), duration: 0.3, curve: "fade", held: true, priority: Critical)"#;
+    let valid = vocabulary(&manifest, "", &effect(shell), r#"snapshot: "dim""#);
+    let catalog = load(dir.path(), &valid).expect("one held Shell layer is a snapshot look");
+    assert!(catalog.snapshot_look().is_some());
+    let unheld = shell.replace("held: true, ", "");
+    let sprite = r#"(block: Sprite(texture: "soft_disc", ramp: "white"), size: (bind: UnitRadius, scale: 1.0), duration: 0.3, curve: "fade", held: true, priority: Critical)"#;
+    for layers in [unheld, format!("{shell}, {shell}"), sprite.to_owned()] {
+        let text = vocabulary(&manifest, "", &effect(&layers), r#"snapshot: "dim""#);
+        let error = load(dir.path(), &text).expect_err("not one held Shell layer");
+        assert!(
+            matches!(error, EffectCatalogError::SnapshotLookNotHeldShell { .. }),
+            "{error}"
+        );
+        assert_names(&error, &["vocabulary.ron", "'dim'"]);
+    }
+}

@@ -65,3 +65,45 @@ WP1 tests pass after it.
 `attack_snapshot_tests` is a `fast` target like the other vision tests, so `crates/gate/suites.ron` needs no entry.
 C7: the float allowance of `crates/sim_core/src/world/snapshot.rs` rises from 3 to 7 for the shared placement and share
 conversions (`Placed`, `published_share`), with this plan's reference.
+
+## 3. WP2: the client draws it, never picks it
+
+### 3.1 Red run (`red/wp2-red.log`)
+
+On the WP2 tree with the client's behaviour cut (the pool system returning at once, the fog not copying the list,
+the catalog not checking `defaults.snapshot`, and `effects.ron` without the `snapshot` default):
+
+| Test | Red |
+|---|---|
+| `battle_pipeline::fog::tests::the_fog_copies_attack_snapshots_sorted_and_they_show_no_unit`, `…_are_refilled_in_place_and_closed_with_the_fog` | FAILED |
+| `effect_catalog_tests::the_shipped_snapshot_look_is_one_held_shell_that_dims`, `…a_snapshot_look_must_be_one_held_shell_layer` | FAILED |
+| `battle_fog_tests` P-13 (`an_unseen_attacker_is_drawn_as_one_snapshot_with_the_snapshot_look`), P-14 (`a_snapshot_is_never_picked_or_targeted`), P-15 (`a_snapshot_is_hidden_on_the_frame_the_view_drops_it`) | FAILED (no snapshot bubble; the view did list the snapshot, so the staging works) |
+| `sync_steady_state_tests` P-16 (`a_held_attack_snapshot_changes_nothing_on_running_frames`, `a_refreshed_attack_snapshot_spawns_nothing`) | FAILED (no pooled entity) |
+| `sync_allocation_count_tests::running_live_sync_frames` run as a child (`SPACE_SCUFFLE_STEADY_FRAMES=64`) | FAILED: "the window must hold one attack snapshot, drawn once: 0 listed, 0 shown" |
+
+### 3.2 Green (`red/wp2-green.log`, `wp2-valgrind.log`)
+
+All of the above pass. P-15 first failed for its own staging: a local soldier spawned beside the attacker stood
+outside its terrain-radius movement domain at the cliff's brink, which the simulation refuses; the staging now keeps
+two cells of open ground round each soldier (gap 5 cells), and P-15 shows the attacker with a local air unit with
+shipped media instead. `sync_allocation_count_tests` (valgrind, all 10 tests) passes: with the snapshot held, the
+running live child's difference equals the running baseline's.
+
+The staging is shared by four test files through a new support file, `crates/client/tests/support/attack_snapshot_stage.rs`
+(not in the plan's file list): it finds the cliff edge of the shipped skirmish map farthest from the local units by
+reading cliff levels, and places a `pulse_bot` of the enemy on the high side and a tough local one holding below.
+
+### 3.3 The showcase (plan §7)
+
+A scratch probe (`~/scratch/attacker-snapshot/probe/zz_snapshot_probe.rs`, not committed) played both showcase scenarios
+for 3,000 ticks through `client::runtime_battle::BattleDefinition`, writing player 0's view each tick:
+
+| Scenario | Ticks at which the viewer keeps a snapshot | Most at once |
+|---|---|---|
+| `scenarios/showcase.ron` (take `battle`) | 313 to 328, 345 to 348 | 1 |
+| `scenarios/showcase_effects.ron` (take `effects`) | none | 0 |
+
+So the `battle` take's `clash` scene (from the first shot, about tick 305) shows one attack snapshot for about 20 of
+its frames, at the opening of the lane fight; nothing else in the video changes. The video is rendered by CI from the
+storyboard, so no file is re-recorded; the storyboard needs no change. The high-water mark of the records in the longest
+shipped scenario is 1 (plan R-2).
