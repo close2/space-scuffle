@@ -5,7 +5,8 @@
 //! `2026-11-18-contour-footprints` Amendment 4, B-142) and the contact rules of plan
 //! `2026-11-20-contact-solver` (§3.6): which movement pipeline runs, the contact solver's
 //! iteration count, its dead band and moving-overlap bound (sanctioned deviation D-α), the side
-//! rule's horizon factor and the D-β switch. It is parsed into [`MovementRules`], validated, and
+//! rule's horizon factor, the D-β and D-δ switches and E-2's switch (plan
+//! `2026-11-25-enemy-contact-and-ring-retarget`). It is parsed into [`MovementRules`], validated, and
 //! carried by the [`UnitCatalog`](super::UnitCatalog) the world is built with. Like every catalog
 //! it is not hashed; lockstep peers must load equal files.
 //!
@@ -63,10 +64,21 @@ pub struct ContactRules {
     /// attack ring, never out of range, never by enemies, never on Hold Position. On when absent.
     #[serde(default = "nudge_default")]
     pub nudge_engaged_along_ring: bool,
+    /// E-2 (plan `2026-11-25-enemy-contact-and-ring-retarget` §4.2, B-193): in the solver
+    /// pipeline enemies block and never push: no step a body takes closes on an enemy by more than
+    /// its share of the gap between them. `false` splits new enemy contact evenly as well (C-8),
+    /// kept for the bit-identity proof and for review. On when absent.
+    #[serde(default = "enemies_block_default")]
+    pub enemies_block: bool,
 }
 
 /// D-δ is on unless the file switches it off (Q0095).
 const fn nudge_default() -> bool {
+    true
+}
+
+/// E-2 is on unless the file switches it off.
+const fn enemies_block_default() -> bool {
     true
 }
 
@@ -81,6 +93,7 @@ impl ContactRules {
         side_horizon_factor: 2,
         moving_friends_push: true,
         nudge_engaged_along_ring: true,
+        enemies_block: true,
     };
 
     /// These rules if they are valid (§3.6).
@@ -374,6 +387,19 @@ mod tests {
         let off = CONTACT.replace("true)", "true, nudge_engaged_along_ring: false)");
         let rules = MovementRules::from_ron_str(&text(21, &off))?;
         assert!(!rules.contact().nudge_engaged_along_ring);
+        Ok(())
+    }
+
+    /// E-2 (plan `2026-11-25-enemy-contact-and-ring-retarget` §4.2): enemies block when the file
+    /// omits the switch, and the file can switch it off.
+    #[test]
+    fn the_enemies_block_switch_defaults_on_and_can_be_switched_off() -> SimResult<()> {
+        let absent = MovementRules::from_ron_str(&text(21, CONTACT))?;
+        assert!(absent.contact().enemies_block);
+        let off = CONTACT.replace("true)", "true, enemies_block: false)");
+        let rules = MovementRules::from_ron_str(&text(21, &off))?;
+        assert!(!rules.contact().enemies_block);
+        assert!(rules.contact().nudge_engaged_along_ring);
         Ok(())
     }
 }

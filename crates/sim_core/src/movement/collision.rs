@@ -413,6 +413,7 @@ impl SimWorld {
             iterations: contact.iterations,
             dead_band_permille: contact.dead_band_permille,
             moving_friends_push: contact.moving_friends_push,
+            enemies_block: contact.enemies_block,
         };
         let (map, pathfinder) = (&self.map, &mut self.pathfinder);
         let diagnostics = &mut self.tick_diagnostics;
@@ -464,6 +465,14 @@ impl SimWorld {
             policy: entry.policy,
             start: actor.pos_at_tick_start,
             position: actor.position,
+            committed: actor.position,
+            // E-2 bounds a body's own committed walk only: the movement phase recorded one for
+            // it this tick. A body a cast placed (a teleport) enters at its committed position.
+            walk_from: if self.proposed_step(entry.id).is_some() {
+                actor.pos_at_tick_start
+            } else {
+                actor.position
+            },
             ghost: actor.passes_through_units(),
         }
     }
