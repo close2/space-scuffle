@@ -105,7 +105,6 @@ use std::collections::BTreeMap;
 /// validation (weapon, teleport; a `bool` each), `WeaponSpec::missile_validation`, after
 /// `attack_visibility` (plan `2026-11-24-weapon-validation` D-7). Number 42 is reserved for the
 /// contact solver's branch; whichever merges second takes the next free number.
-
 /// Schema 44 adds each unit task's housing structure, `UnitTask::housed_in`, after `last_node`
 /// (plan `2026-11-24-hidden-harvesters` D-3). Number 42 is reserved for the contact solver's
 /// branch.
