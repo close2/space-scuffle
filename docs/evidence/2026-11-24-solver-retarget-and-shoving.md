@@ -34,21 +34,28 @@ Raw outputs are under `~/scratch/solver-followup/` (`matrix/`, `runs/`, `perf/`,
   - Counters for B1 (`Activity::Blocked` unit-ticks), B3 (largest enemy overlap, fraction of the radius sum, at the
     end of any tick) and B7 (releases read from rising cooldowns, and living unit-ticks).
 
-## 2. WP0: baseline of record (no behaviour change; binaries `*-wp0` from `32491bac`)
+## 2. WP0: baseline of record
 
-### 2.1 Matrix, Solver pipeline, 24 seeds (`matrix/wp0-solver`)
+**Re-derived on the merged base.** The first baseline was measured on `e5f5c565` (binaries `*-wp0`). `main` then
+moved to `708576ac` (attacker snapshot; turret wind-up WP3, which changes behaviour in both pipelines), and the
+coordinator asked for the merge before the golden re-record. The branch merged `main` (`485b27e5`) and every
+arm was rebuilt on it: `b0` is `708576ac` plus WP0's diagnostics (no E-1), `b1` the merged branch head (E-1),
+`b2` the WP2 tree. Every figure below and after is from those builds; the `*-wp0` runs are kept in
+`matrix/wp0-*` and are not used. The close-battle list is the same on both bases.
+
+### 2.1 Matrix, Solver pipeline, 24 seeds (`matrix/b0-solver`)
 
 1,464 runs; expectation failures 2 on the seeds of record (battle 28, seeds 11 and 22, the B-192 expected
-failure) and 31 over all seeds. Held-out seeds (`matrix/wp0-solver-held`): 20 failures over 1,464 runs. Legacy
-pipeline, 24 seeds (`matrix/wp0-legacy`, the full matrix): 3 failures of record, 25 over all seeds.
+failure) and 31 over all seeds. Held-out seeds (`matrix/b0-solver-held`): 20 failures over 1,464 runs. Legacy
+pipeline, 24 seeds (`matrix/b0-legacy`, the full matrix): 3 failures of record, 26 over all seeds.
 
 Contact checks of the crowd battles (sums over the 24 seeds; shove is the per-seed mean, world units):
 
 | Battle | seeds | blue/red wins | blue shove | red shove | R10 leash/terrain/unruled/free | churn expl/unexpl | blocked | give-ups | max enemy overlap % |
 |---|---|---|---|---|---|---|---|---|---|
-| 26_100_lings_vs_6_colossi | 24 | 20/4 | 39.30 | 5.21 | 0/0/0/64051 | 326/65 | 94902 | 0 | 2.80 |
+| 26_100_lings_vs_6_colossi | 24 | 18/6 | 36.57 | 4.89 | 0/0/0/69561 | 290/59 | 98799 | 0 | 2.59 |
 | 27_100_lings_vs_8_ultralisks | 24 | 0/24 | 29.30 | 2.38 | 0/0/0/22579 | 937/242 | 27686 | 0 | 2.45 |
-| 28_100_lings_vs_10_immortals | 24 | 5/19 | 18.07 | 2.94 | 0/0/0/318761 | 161/112 | 391118 | 0 | 1.42 |
+| 28_100_lings_vs_10_immortals | 24 | 5/19 | 17.99 | 2.87 | 0/0/0/318843 | 143/100 | 389019 | 0 | 1.42 |
 | 29_100_lings_vs_12_stalkers | 24 | 24/0 | 20.11 | 3.84 | 0/0/0/292449 | 177/210 | 467317 | 0 | 2.77 |
 | 32_30_marines_vs_15_banelings | 24 | 19/3 | 0.00 | 0.00 | 0/0/0/48 | 1/0 | 56 | 0 | 0.00 |
 | 33_24_marines_vs_12_zealots | 24 | 24/0 | 0.01 | 0.14 | 0/0/0/11592 | 7/0 | 11141 | 0 | 0.00 |
@@ -61,9 +68,9 @@ Legacy on the same seeds:
 
 | Battle | seeds | blue/red wins | blue shove | red shove | R10 leash/terrain/unruled/free | churn expl/unexpl | blocked | give-ups | max enemy overlap % |
 |---|---|---|---|---|---|---|---|---|---|
-| 26_100_lings_vs_6_colossi | 24 | 1/23 | 0.40 | 0.13 | 0/0/0/8025 | 731/149 | 23783 | 0 | 2.14 |
+| 26_100_lings_vs_6_colossi | 24 | 1/23 | 0.39 | 0.13 | 0/0/0/8079 | 736/142 | 23936 | 0 | 1.93 |
 | 27_100_lings_vs_8_ultralisks | 24 | 0/24 | 0.66 | 0.18 | 0/0/0/13973 | 1513/203 | 28620 | 0 | 6.52 |
-| 28_100_lings_vs_10_immortals | 24 | 24/0 | 0.96 | 0.37 | 0/0/0/17665 | 1124/2131 | 64016 | 0 | 4.08 |
+| 28_100_lings_vs_10_immortals | 24 | 24/0 | 0.96 | 0.37 | 0/0/0/17608 | 1119/2098 | 64390 | 0 | 4.08 |
 | 29_100_lings_vs_12_stalkers | 24 | 24/0 | 1.68 | 0.63 | 0/0/0/19251 | 715/2977 | 97866 | 0 | 3.56 |
 | 32_30_marines_vs_15_banelings | 24 | 18/4 | 0.00 | 0.00 | 0/0/0/42 | 2/0 | 54 | 0 | 0.00 |
 | 33_24_marines_vs_12_zealots | 24 | 13/5 | 0.00 | 0.03 | 0/0/0/292 | 42/110 | 1050 | 0 | 0.92 |
@@ -72,9 +79,9 @@ Legacy on the same seeds:
 | 38a_fungal_turns_zerglings | 24 | 24/0 | 0.07 | 0.00 | 0/0/0/326 | 23/24 | 817 | 0 | 2.22 |
 | 38b_marines_beat_zerglings_without_fungal | 24 | 0/0 | 0.02 | 0.00 | 0/0/0/256 | 15/18 | 585 | 0 | 2.04 |
 
-The full per-battle tables are `matrix/wp0-*-summary.md`.
+The full per-battle tables are `matrix/b0-*-summary.md`.
 
-### 2.2 Close-battle list (pre-registered, §6.2), written before any WP1 run
+### 2.2 Close-battle list (pre-registered, §6.2), written before any WP1 or WP2 run on this base
 
 Class R is battles 26, 28, 33, 38a and 38b (named by the owner and Q0103) and every battle below: its claim says
 "close", "narrowly" or "evenly" (whole words), or at the base no side wins at least 22 of the 24 seeds. A run with
@@ -87,7 +94,7 @@ survivors on both sides is no win, so the battles whose claims are survivor rang
 | 14_thor_vs_ultralisk |  | 6 / 18 | no side wins 22 of 24 |
 | 21_lurker_vs_6_marines | Spines kill light infantry that cannot detect the lurker, and it survives | 12 / 0 | no side wins 22 of 24 |
 | 22a_reaper_vs_2_workers | Without a bonus vs light, the Reaper kills only one of two workers in 200 ticks | 0 / 0 | no side wins 22 of 24 |
-| 26_100_lings_vs_6_colossi | A hundred zerglings that pack round each colossus mostly overwhelm six colossi; when the colossi win, they win narrowly | 20 / 4 | claim: narrow; no side wins 22 of 24 |
+| 26_100_lings_vs_6_colossi | A hundred zerglings that pack round each colossus mostly overwhelm six colossi; when the colossi win, they win narrowly | 18 / 6 | claim: narrow; no side wins 22 of 24 |
 | 28_100_lings_vs_10_immortals | Without splash, immortals are overrun | 5 / 19 | no side wins 22 of 24 |
 | 31_15_marauders_vs_15_stalkers | Equal supply is close: a small change of formation can swing the winner | 19 / 5 | claim: close; no side wins 22 of 24 |
 | 32_30_marines_vs_15_banelings | Banelings trade far above their cost against clumped marines | 19 / 3 | no side wins 22 of 24 |
@@ -103,14 +110,12 @@ survivors on both sides is no win, so the battles whose claims are survivor rang
 
 - **D-SHOVE counts friendly nudges too.** It counts any contact-induced displacement of a unit that proposes no
   motion. On the melee side that is mostly D-δ, the sanctioned nudge along an engaged unit's ring (Legacy has
-  none): battle 28's zerglings 18.07 per seed against Legacy's 0.96. B-193's shove is the other side's: the
-  immortals 2.94 against 0.37. Check B2 is therefore read per side, and a melee side above Legacy by D-δ alone is
-  reported, not taken for B-193.
-- **D-CHURN "unexplained" is not zero at the base** (battle 28: 112; Legacy 2,131), because acquisition's
-  nearest-first key returns a unit to a target that became nearer again. B4 is judged against the base, beyond
-  noise, like B1, B3 and B5.
-- **D-R10** has no leash, terrain or unruled cases at the base: every count is `free` (battle 28: 318,761
-  unit-ticks over 24 seeds; Legacy 17,665).
-- **The reproduction of §13.13's 3.61** (battle 28 seed 1, immortals): D-SHOVE gives 1.13 on this base. The 3.61
-  was the trace's "distance moved while engaged" at the solver plan's head `96df6dda`, before main's merges; §3.1
-  below compares both measures on the same run.
+  none). B-193's shove is the other side's (immortals, colossi). Check B2 is therefore read per side, and a melee
+  side above Legacy by D-δ alone is reported, not taken for B-193.
+- **D-CHURN "unexplained" is not zero at the base**, because acquisition's nearest-first key returns a unit to a
+  target that became nearer again. B4 is judged against the base, beyond noise, like B1, B3 and B5.
+- **D-R10** has no leash, terrain or unruled cases at the base: every count is `free`.
+- **§13.13's 3.61** (battle 28 seed 1, immortals): the old measure, "distance moved while an enemy is in the
+  band" (`red_pushed_distance` of the battle trace, `matrix/b0-b28-s1`), gives 3.31 on this base; D-SHOVE gives
+  1.16. The difference is the definition: D-SHOVE counts only ticks with an enemy body touching and no proposed
+  motion, so an immortal's own steps and turns while a zergling is in its band are not counted.
