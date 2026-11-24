@@ -75,3 +75,6 @@ Battle 26 with the fix: the zerglings win 22 of 24.
   B-193).
 
 ## Answer
+
+- **Battle 26 — Option (a):** Restate the claim to what is measured (zerglings mostly win), citing the Q0095 melee ring-nudge (`D-δ`).
+- **Battle 28 — Option (b):** Keep the StarCraft II claim (zerglings overrun immortals) and merge the movement solver with Battle 28 marked as an expected failure for known bug `B-192`, so `B-192` (retargeting around a surrounded front row) and `B-193` (enemy shoving) remain tracked for a dedicated follow-up fix.

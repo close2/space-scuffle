@@ -25,3 +25,6 @@ Recommendation: (a). Right-clicking your own unit is unchanged in every case.
 
 ## Answer
 
+- **Option (a): Attack it.** Units that can hit the clicked friendly unit attack it, the others walk to it, and the clicked unit itself does nothing even if selected. Right-clicking your own unit remains unchanged.
+
+**Reasoning:** Matches StarCraft II's standard force-attack mechanic (used to kill stuck units, deny buildings, etc.).
