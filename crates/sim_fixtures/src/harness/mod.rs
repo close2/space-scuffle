@@ -24,6 +24,7 @@ pub mod corpus;
 pub mod metrics;
 pub mod mirror;
 pub mod report;
+pub mod room;
 
 use corpus::{Lattice, Role, Scenario};
 use metrics::{ScenarioMeter, ScenarioRow};
