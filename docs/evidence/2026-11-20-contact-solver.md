@@ -1922,6 +1922,6 @@ Battle 35 per seed (colossi left at the end; blue keeps all 12 on every seed und
 - Under Legacy on the same seed, the last colossus had walked east of the vikings by tick 150 and flees out of sight.
 
 The outcome depends on where each colossus stands when the vikings turn to it, and Legacy shows the same miss on
-seed 19. Whether that is close-battle variation or broken behaviour, such as a helpless colossus standing idle while
-its neighbours are shot, is not settled. **Not restated; reported for review** under the owner's §8 guidance
-(Q0103).
+seed 19. **Restated** at the orchestrator's decision under the owner's §8 guidance (Q0103) as close-battle variation:
+a colossus that has not been hit itself does not flee, as in StarCraft II. The expectation is red 0..3 (was 1..3);
+see Amendment 20.

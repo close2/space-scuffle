@@ -2235,7 +2235,13 @@ switching. The number 42, once reserved for this plan's G-6′, stays unused.
 - Battle 26 holds its restated range, and battle 28 is B-192's expected failure.
 - **Battle 35 (vikings against colossi) breaks on its first seed of record:** all six colossi die under the solver.
   Legacy on the merged tree breaks the same way on seed 19.
-- It is reported for review, not restated. The matrix test is red on battle 35 until the orchestrator decides.
+- **Restated** at the orchestrator's decision, as a minor deviation under the owner's AGENTS.md §8 guidance (Q0103),
+  not a bug. It is close-battle variation: a colossus that has not been hit itself does not flee, and a unit flees
+  only from an attacker it cannot hit back, as in StarCraft II. Legacy misses the same way on seed 19.
+  - Expectation red 1..3 → **red 0..3**, blue unchanged.
+  - Claim: "Vikings lose nothing; colossi that flee out of the vikings' sight usually survive, though on a close
+    run all six fall (5.0.14 TargetFilters Visible)".
+  - The fixture comment keeps the old range and cites §8, §13.14 and this amendment.
 
 **Follow-ups unblocked by the merge of this plan.** They waited for the solver to become the default:
 - turret-wind-up WP3, the wind-up hold under `movement/`;
