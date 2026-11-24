@@ -34,7 +34,11 @@
 //!    `TargetFilters Visible`); pursuit's gate, [`SimWorld::is_entity_available_for_combat`], does
 //!    not ask for vision (plan `2026-11-24-weapon-validation` D-3, B-195). An automatic attack
 //!    whose target is lost to fog gives way to the best seen candidate or, with none, is dropped
-//!    so that the order below it resumes (D-5, Q0106 part 2's default).
+//!    so that the order below it resumes (D-5, Q0106 part 2's answer (a)).
+//! 7. A player's attack order remembers where its player last saw the target
+//!    (`MovementMemory::last_seen`), written here from this tick's vision before movement reads
+//!    it: movement walks a unit whose target is lost to fog to that point, where the order ends
+//!    (plan `2026-11-24-weapon-validation` Amendment 2, B-195, Q0106 part 1 (a)).
 
 use crate::catalog::{AcquireLevel, AcquireTieBreak, UnitArchetype, WeaponSpec};
 use crate::combat::{fires_without_attack_order, is_threat_to, weapon_aim, TargetPriorityKey};
@@ -94,6 +98,10 @@ pub(crate) enum Acquisition {
     SetWeaponTarget(EntityId),
     /// Forget the unit's own weapon target.
     ReleaseWeaponTarget,
+    /// Record what the unit's player sees of the target of its player's attack order: where it
+    /// stands when seen, `None` when not ([`crate::entity::MovementMemory::sight`], plan
+    /// `2026-11-24-weapon-validation` Amendment 2, B-195).
+    Sight(EntityId, Option<SimVec2>),
 }
 
 /// Facts about the whole catalog that every unit's acquisition reads, gathered once per tick.
@@ -597,6 +605,9 @@ impl SimWorld {
             let Ok(arch) = self.catalog.get(entity.unit_type_id) else {
                 continue;
             };
+            if let Some(sighting) = self.sighting(entity, arch) {
+                acquisitions.push((id, sighting));
+            }
             let decision =
                 self.decide_acquisition(entity, arch, bounds, &mut neighbors, &mut candidates);
             let order_kept = decision.is_none();
@@ -633,10 +644,30 @@ impl SimWorld {
                     }
                     Acquisition::SetWeaponTarget(target) => unit.weapon_target = Some(target),
                     Acquisition::ReleaseWeaponTarget => unit.weapon_target = None,
+                    Acquisition::Sight(target, seen_at) => unit.movement.sight(target, seen_at),
                 }
             }
         }
         self.scratch_acquisitions = acquisitions;
+    }
+
+    /// What `entity`'s player sees this tick of the target of its player's attack order (plan
+    /// `2026-11-24-weapon-validation` Amendment 2, B-195; Q0106 part 1 (a)): its position when the
+    /// player sees it ([`Self::sees_enemy`]: the cell at its centre, Q0106 part 4 (a)), `None` when
+    /// it is targetable but unseen, lost to fog. A target that is gone or unavailable for another
+    /// reason (concealed, loaded) is pursuit's to end, so nothing is recorded for it.
+    fn sighting(&self, entity: &Entity, arch: &UnitArchetype) -> Option<Acquisition> {
+        let Engagement::Explicit(target_id) = Self::engagement_of(entity, arch) else {
+            return None;
+        };
+        let target = self.entities.get(&target_id)?;
+        if Self::sees_enemy(&self.map, &self.vision_maps, entity.owner, target) {
+            Some(Acquisition::Sight(target_id, Some(target.position)))
+        } else if Self::is_entity_targetable(target, &self.map, &self.vision_maps, entity.owner) {
+            Some(Acquisition::Sight(target_id, None))
+        } else {
+            None
+        }
     }
 
     /// Where `entity`'s current target stands, if its archetype breaks ties by the previous

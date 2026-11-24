@@ -293,6 +293,8 @@ fields!(MovementMemory {
     side_partner,
     side_left,
     slot
+} unhashed {
+    last_seen
 });
 fields!(SlotClaim { target, point });
 fields!(ActiveBuff {

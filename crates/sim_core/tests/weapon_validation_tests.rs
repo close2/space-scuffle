@@ -18,8 +18,11 @@
 //!   the attacker's player, or the target attack-revealed to that player (B-55). A missile whose
 //!   target walks into fog lands on the point (`ValidateWeapon`). Acquisition drops an automatic
 //!   target lost to fog for the best seen candidate, or resumes the order below it; it releases
-//!   a hold or tracking target, and ends an immobile unit's attack order; a mobile unit's attack
-//!   order is kept (B-195) and holds fire.
+//!   a hold or tracking target, and ends an immobile unit's attack order.
+//! - Amendment 2, B-195 (Q0106 part 1 (a)): a mobile unit's attack order on a target that leaves
+//!   its player's vision walks to where the target was last seen and ends there, and resumes if
+//!   the target is seen before; "seen" is the cell at the target's centre (Q0106 part 4 (a)). A
+//!   target never seen under the order is followed and held fire on, as before.
 //!
 //! # How it fits
 //! The teleport count (`Entity::teleport_count`) is written by `Entity::teleport_to`, which every
@@ -34,8 +37,8 @@
 //!   when its offset from the viewer's cell lies within the sight radius, so the vision tests
 //!   place units at cell centres and count offsets in cells.
 
-use sim_core::catalog::AcquireLevel;
-use sim_core::{SimWorld, SplashSpec, UnitArchetype, WeaponSpec};
+use sim_core::catalog::{AcquireLevel, ContactRules, MovementPipeline};
+use sim_core::{LastSeen, SimWorld, SplashSpec, UnitArchetype, WeaponSpec};
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
     AbilityEffectSpec, AbilitySpec, AbilityTargetKind, EntityId, MoverType, PlayerId, SimScalar,
@@ -864,8 +867,8 @@ fn missile_pick(world: &SimWorld) -> Result<(UnitArchetype, WeaponSpec), String>
 type FogFlight = (Arena, EntityId, u32, Option<(SimScalar, SimScalar)>);
 
 /// Launches a slow missile (0.1 world units a tick) at a target standing at the last seen
-/// column of the shooter's row, and sends the target walking two columns away, out of the
-/// shooter's sight, while the missile flies. Returns
+/// column of the shooter's row, puts the shooter on hold, and sends the target walking two
+/// columns away, out of the shooter's sight, while the missile flies. Returns
 /// the arena, the target, the launch tick and the target's life before the launch.
 fn missile_into_fog(
     seed: u64,
@@ -890,6 +893,10 @@ fn missile_into_fog(
         }
     }
     let launched = launched.ok_or("the missile launched within 60 ticks")?;
+    // The shooter holds its ground, so only the missile's rule is measured: under its attack
+    // order it would walk to where the target was last seen (Amendment 2), see it again and fire
+    // anew.
+    arena.order(arena.shooter, UnitOrder::HoldPosition)?;
     let beyond = ahead(arena.sight_cells + 2);
     arena.order(target, UnitOrder::Move { target: beyond })?;
     Ok((arena, target, launched, full))
@@ -1116,37 +1123,182 @@ fn an_immobile_units_order_on_a_lost_target_ends() -> TestResult {
     Ok(())
 }
 
-/// P-8: a mobile unit's attack order on a target lost to fog is kept (B-195, until the chase of
-/// plan WP7) and holds fire while the target is unseen.
-#[test]
-fn a_players_order_is_kept_but_holds_fire() -> TestResult {
-    let mut arena = arena(0xB5C, instant_archetype, |_| {})?;
+/// Plan Amendment 2 (B-195, Q0106 part 1 (a)): the arena of [`arena`] on `pipeline`, with a
+/// target of player 1 on hold (so a strike does not make it flee) at the seen cell [`Arena::seen`],
+/// attacked by the shooter on a player's order until struck, then blinked to `to`. Returns the
+/// arena, the target, the point the target was last seen at, and the tick after the strike.
+fn lose_after_strike(
+    seed: u64,
+    pipeline: MovementPipeline,
+    radius: Option<SimScalar>,
+    to: impl FnOnce(&Arena) -> SimVec2,
+) -> Result<(Arena, EntityId, SimVec2, u32), Box<dyn std::error::Error>> {
+    let mut arena = arena(seed, instant_archetype, |_| {})?;
+    on_pipeline(&mut arena.world, pipeline)?;
+    if let Some(radius) = radius {
+        let dummy = arena
+            .world
+            .catalog
+            .get_mut(arena.dummy)
+            .map_err(|e| format!("{e:?}"))?;
+        dummy.collision_radius = radius;
+    }
     let seen = arena.seen();
     let target = arena.dummy_at(1, seen)?;
+    arena.order(target, UnitOrder::HoldPosition)?;
     arena.order(arena.shooter, UnitOrder::attack(target))?;
     let struck = arena.until_struck(target, 1)?;
-    let far = ahead(arena.sight_cells + 4);
-    arena.blink(target, far)?;
-    let after = arena.hp(target);
-    for tick in struck + 1..=struck + 60 {
-        arena.world.step(&bundle(tick));
-        let x = arena.world.entities[&arena.shooter].position.x;
-        let still_unseen = arena.world.entities[&target].position.x - x
-            > SimScalar::from_num(f64::from(arena.sight_cells) + 1.0);
-        if !still_unseen {
-            break;
+    let destination = to(&arena);
+    arena.blink(target, destination)?;
+    Ok((arena, target, seen, struck + 1))
+}
+
+/// Switches `world` to the movement pipeline `pipeline`.
+fn on_pipeline(world: &mut SimWorld, pipeline: MovementPipeline) -> Result<(), String> {
+    let rules = world.catalog.movement_rules();
+    let rules = rules
+        .with_contact(ContactRules {
+            pipeline,
+            ..rules.contact()
+        })
+        .map_err(|e| format!("{e:?}"))?;
+    world.catalog.set_movement_rules(rules);
+    Ok(())
+}
+
+/// A cell the shooter never sees from its row: two columns inside its sight along the row and
+/// beyond its sight across it, so the walk to the last seen point (along the row) and a chase by
+/// the true position (across it) part at once.
+fn across(arena: &Arena) -> SimVec2 {
+    cell_centre(
+        SHOOTER_CELL.0 + arena.sight_cells - 2,
+        SHOOTER_CELL.1 + arena.sight_cells + 6,
+    )
+}
+
+/// Plan Amendment 2 (B-195, Q0106 part 1 (a)), on both movement pipelines: a player's attack
+/// order on a target that leaves its player's vision walks to where the target was last seen,
+/// stops there and ends; the shooter keeps to its row (it does not follow the target's true
+/// position) and strikes nothing on the way.
+#[test]
+fn a_players_order_on_a_lost_target_walks_to_where_it_was_last_seen_and_ends() -> TestResult {
+    for pipeline in [MovementPipeline::Solver, MovementPipeline::Legacy] {
+        let (mut arena, target, last_seen, from) =
+            lose_after_strike(0xB5C, pipeline, None, across)?;
+        let row = arena.world.entities[&arena.shooter].position.y;
+        let after = arena.hp(target);
+        let mut ended = None;
+        for tick in from..from + 300 {
+            arena.world.step(&bundle(tick));
+            let at = arena.world.entities[&arena.shooter].position;
+            assert!(
+                (at.y - row).abs() < SimScalar::HALF,
+                "{pipeline:?}, tick {tick}: the shooter keeps to its row, at {at:?}"
+            );
+            assert_eq!(
+                arena.hp(target),
+                after,
+                "{pipeline:?}, tick {tick}: no strike"
+            );
+            if !matches!(arena.front(), Some(UnitOrder::AttackTarget { .. })) {
+                ended = Some(tick);
+                break;
+            }
         }
+        let ended = ended.ok_or_else(|| format!("{pipeline:?}: the order ends"))?;
+        let at = arena.world.entities[&arena.shooter].position;
+        assert!(
+            at.distance(last_seen) <= SimScalar::HALF,
+            "{pipeline:?}: the shooter stops where the target was last seen, {at:?} against {last_seen:?}"
+        );
+        assert!(
+            matches!(arena.front(), None | Some(UnitOrder::Idle)),
+            "{pipeline:?}: nothing follows the ended order, front {:?}",
+            arena.front()
+        );
+        assert!(
+            ended > from + 10,
+            "{pipeline:?}: the shooter walked to the point, ending at tick {ended} (from {from})"
+        );
+    }
+    Ok(())
+}
+
+/// Plan Amendment 2 (B-195, Q0106 part 1 (a)), on both movement pipelines: a target lost to fog
+/// and seen again before the shooter reaches its last seen point is attacked again under the
+/// same order. Until a spotter of the shooter's player sees it, the shooter walks along its row
+/// toward the point.
+#[test]
+fn a_lost_target_seen_again_resumes_the_attack() -> TestResult {
+    for pipeline in [MovementPipeline::Solver, MovementPipeline::Legacy] {
+        let (mut arena, target, _, from) = lose_after_strike(0xB5D, pipeline, None, across)?;
+        let start = arena.world.entities[&arena.shooter].position;
+        steps(&mut arena.world, from, from + 9);
+        let walked = arena.world.entities[&arena.shooter].position;
+        assert!(
+            walked.x > start.x && (walked.y - start.y).abs() < SimScalar::HALF,
+            "{pipeline:?}: the shooter walks along its row to the point, {start:?} to {walked:?}"
+        );
         assert_eq!(
             arena.front(),
             Some(UnitOrder::attack(target)),
-            "tick {tick}: the order is kept"
+            "{pipeline:?}: the order lasts while the shooter walks"
         );
-        assert_eq!(
-            arena.hp(target),
-            after,
-            "tick {tick}: no strike while unseen"
-        );
+        let hidden_at = arena.world.entities[&target].position;
+        arena.dummy_at(0, hidden_at - SimVec2::from_i32(0, 2))?;
+        let mut struck = false;
+        let full = arena.hp(target);
+        for tick in from + 10..from + 300 {
+            arena.world.step(&bundle(tick));
+            if arena.hp(target) != full {
+                struck = true;
+                break;
+            }
+            assert_eq!(
+                arena.front(),
+                Some(UnitOrder::attack(target)),
+                "{pipeline:?}, tick {tick}: the order is kept once the target is seen"
+            );
+        }
+        assert!(struck, "{pipeline:?}: the target seen again is struck");
     }
+    Ok(())
+}
+
+/// Plan Amendment 2 (Q0106 part 4 (a)): a unit is seen when the cell at its centre is seen. A
+/// large target whose body reaches into the shooter's sight while the cell at its centre lies one
+/// column beyond is lost (the order walks to the last seen point); one column nearer, its centre
+/// cell seen, it is kept and struck again.
+#[test]
+fn seen_means_the_cell_at_the_centre() -> TestResult {
+    let radius = Some(SimScalar::ONE);
+    let (mut arena, target, last_seen, from) =
+        lose_after_strike(0xB5E, MovementPipeline::Solver, radius, |arena| {
+            ahead(arena.sight_cells + 1)
+        })?;
+    arena.world.step(&bundle(from));
+    let memory = arena.world.entities[&arena.shooter].movement.last_seen;
+    assert_eq!(
+        memory,
+        Some(LastSeen {
+            target,
+            point: last_seen,
+            lost: true
+        }),
+        "the target whose centre cell is unseen is lost"
+    );
+    let (mut arena, target, _, from) =
+        lose_after_strike(0xB5E, MovementPipeline::Solver, radius, |arena| {
+            ahead(arena.sight_cells)
+        })?;
+    arena.world.step(&bundle(from));
+    let memory = arena.world.entities[&arena.shooter].movement.last_seen;
+    assert_eq!(
+        memory.map(|seen| (seen.target, seen.lost)),
+        Some((target, false)),
+        "the target whose centre cell is seen is kept"
+    );
+    arena.until_struck(target, from + 1)?;
     Ok(())
 }
 
@@ -1267,6 +1419,83 @@ fn the_reveals_end_ends_the_answer() -> TestResult {
         world.entities[&victim].current_target, None,
         "the hold target is released"
     );
+    Ok(())
+}
+
+/// Plan Amendment 2 (B-195), on both movement pipelines: a target last seen where the walker
+/// cannot go (on a plateau with no ramp, seen by a spotter that then leaves) is walked to the
+/// nearest point the walker can reach, which the sighting keeps; the order ends there, at the
+/// foot of the cliff.
+#[test]
+fn an_unreachable_last_seen_point_is_replaced_by_the_nearest_reachable_one() -> TestResult {
+    for pipeline in [MovementPipeline::Solver, MovementPipeline::Legacy] {
+        let mut world = sim_fixtures::world(plateau_map()?, 0xB5F);
+        on_pipeline(&mut world, pipeline)?;
+        let (arch, mut weapon) = instant_archetype(&world)?;
+        weapon.max_range = arch.sight_radius + SimScalar::from_i32(6);
+        weapon.min_range = SimScalar::ZERO;
+        let shooter_type = register_armed(&mut world, &arch, weapon);
+        let dummy = register_blinker(&mut world)?;
+        let row = 16.5;
+        let shooter = world.spawn_unit(shooter_type, PlayerId(0), point(6.5, row))?;
+        let target = world.spawn_unit(dummy, PlayerId(1), point(f64::from(PLATEAU) + 2.5, row))?;
+        let spotter = world.spawn_unit(
+            dummy,
+            PlayerId(0),
+            point(f64::from(PLATEAU) + 4.5, row + 2.0),
+        )?;
+        for (id, order) in [
+            (target, UnitOrder::HoldPosition),
+            (shooter, UnitOrder::attack(target)),
+        ] {
+            world
+                .entities
+                .get_mut(&id)
+                .ok_or("spawned")?
+                .issue_order(order, false)
+                .map_err(|error| format!("{error:?}"))?;
+        }
+        steps(&mut world, 1, 3);
+        assert_eq!(
+            world.entities[&shooter]
+                .movement
+                .last_seen
+                .map(|seen| seen.lost),
+            Some(false),
+            "{pipeline:?}: the spotter shows the target"
+        );
+        assert!(
+            world.execute_ability(spotter, 0, Some(point(2.5, 2.5)), None),
+            "{pipeline:?}: the spotter blinks below"
+        );
+        let mut replaced = None;
+        let mut ended = false;
+        for tick in 4..400 {
+            world.step(&bundle(tick));
+            let unit = &world.entities[&shooter];
+            if !matches!(
+                unit.order_queue.front(),
+                Some(UnitOrder::AttackTarget { .. })
+            ) {
+                ended = true;
+                break;
+            }
+            if let Some(seen) = unit.movement.last_seen.filter(|seen| seen.lost) {
+                if seen.point.x < SimScalar::from_num(PLATEAU) {
+                    replaced = Some(seen.point);
+                }
+            }
+        }
+        assert!(ended, "{pipeline:?}: the order ends");
+        let replaced =
+            replaced.ok_or_else(|| format!("{pipeline:?}: the point is replaced below"))?;
+        let at = world.entities[&shooter].position;
+        assert!(
+            at.x < SimScalar::from_num(PLATEAU)
+                && at.x > SimScalar::from_num(f64::from(PLATEAU) - 2.0),
+            "{pipeline:?}: the shooter stops at the foot of the cliff, at {at:?}, the point {replaced:?}"
+        );
+    }
     Ok(())
 }
 

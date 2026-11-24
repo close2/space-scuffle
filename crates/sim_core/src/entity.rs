@@ -308,6 +308,31 @@ pub struct MovementMemory {
     /// nobody else reads it. Written only by the solver pipeline; `None` under the legacy
     /// pipeline and while the unit's own bearing point is free.
     pub slot: Option<SlotClaim>,
+    /// Where this unit's player last saw the target of the unit's attack order, and whether the
+    /// player has lost it since (plan `2026-11-24-weapon-validation` Amendment 2, B-195; Q0106
+    /// part 1 (a)). Written by target acquisition, for a player's attack order only, from the
+    /// first tick the player sees the target under the order; read by movement, which walks a
+    /// unit whose target is lost to the point instead of chasing it. `None` while the order's
+    /// target has not been seen under it, and under any other order.
+    pub last_seen: Option<LastSeen>,
+}
+
+/// The last sighting of an attack order's target by the attacker's player (plan
+/// `2026-11-24-weapon-validation` Amendment 2, B-195).
+///
+/// "Seen" is the weapon filter's rule ([`crate::SimWorld`]'s `sees_enemy`): the cell at the
+/// target's centre is `Visible` to the player, or the target is attack-revealed to it (Q0106 part
+/// 4 (a)).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LastSeen {
+    /// The target of the attack order this sighting belongs to.
+    pub target: EntityId,
+    /// The target's position when it was last seen, world units; an unreachable point is replaced
+    /// by the nearest reachable one the walk found.
+    pub point: SimVec2,
+    /// Whether the player has stopped seeing the target since: the unit then walks to
+    /// [`Self::point`] and its order ends there.
+    pub lost: bool,
 }
 
 /// The gap an attacker walks to on the ring round its target (plan `2026-11-20-contact-solver`
@@ -332,6 +357,40 @@ impl MovementMemory {
             flank_left: self.flank_left,
             ..Self::default()
         };
+    }
+
+    /// Records what the unit's player sees of `target`, the target of its attack order, this
+    /// tick: `Some(position)` (world units) when it sees the target there, `None` when it does
+    /// not. A target not seen under the order before has nothing to lose, so `None` then changes
+    /// nothing. When the target is lost or found again, the goal of the unit's walk changes
+    /// between the target and the point, so the progress measure and the solver's ring gap start
+    /// afresh, as for a new order (plan `2026-11-24-weapon-validation` Amendment 2, B-195).
+    pub(crate) fn sight(&mut self, target: EntityId, seen_at: Option<SimVec2>) {
+        let known = self.last_seen.filter(|seen| seen.target == target);
+        let next = match (seen_at, known) {
+            (Some(point), _) => LastSeen {
+                target,
+                point,
+                lost: false,
+            },
+            (None, Some(seen)) => LastSeen { lost: true, ..seen },
+            (None, None) => return,
+        };
+        if known.is_some_and(|seen| seen.lost != next.lost) {
+            self.progress_best = None;
+            self.stalled_ticks = 0;
+            self.slot = None;
+        }
+        self.last_seen = Some(next);
+    }
+
+    /// The point this unit walks to instead of chasing `target`: [`LastSeen::point`] when the
+    /// last sighting belongs to `target` and the target is lost (Amendment 2).
+    #[must_use]
+    pub(crate) fn lost_target_point(&self, target: EntityId) -> Option<SimVec2> {
+        self.last_seen
+            .filter(|seen| seen.target == target && seen.lost)
+            .map(|seen| seen.point)
     }
 }
 
@@ -2024,5 +2083,106 @@ mod can_attack_tests {
             mode.orders.attack
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod last_seen_tests {
+    //! Plan `2026-11-24-weapon-validation` Amendment 2 (B-195): `MovementMemory::sight` records the
+    //! last sighting of an attack order's target, marks it lost, and restarts the walk's progress
+    //! only when the goal changes between the target and its last seen point.
+    use super::{LastSeen, MovementMemory, SlotClaim};
+    use sim_types::{EntityId, SimScalar, SimVec2};
+
+    const TARGET: EntityId = EntityId(7);
+
+    fn at(x: i32, y: i32) -> SimVec2 {
+        SimVec2::from_i32(x, y)
+    }
+
+    /// A memory mid-chase: progress measured and a ring gap claimed.
+    fn chasing() -> MovementMemory {
+        MovementMemory {
+            progress_best: Some(SimScalar::from_i32(3)),
+            stalled_ticks: 4,
+            slot: Some(SlotClaim {
+                target: TARGET,
+                point: at(1, 1),
+            }),
+            ..MovementMemory::default()
+        }
+    }
+
+    #[test]
+    fn a_target_never_seen_has_nothing_to_lose() {
+        let mut memory = chasing();
+        memory.sight(TARGET, None);
+        assert_eq!(memory, chasing());
+    }
+
+    #[test]
+    fn each_sighting_moves_the_point_and_a_loss_keeps_it() {
+        let mut memory = chasing();
+        memory.sight(TARGET, Some(at(5, 5)));
+        memory.sight(TARGET, Some(at(6, 5)));
+        assert_eq!(
+            memory.last_seen,
+            Some(LastSeen {
+                target: TARGET,
+                point: at(6, 5),
+                lost: false
+            })
+        );
+        assert_eq!(
+            memory.lost_target_point(TARGET),
+            None,
+            "a seen target is chased"
+        );
+        assert_eq!(
+            memory.progress_best,
+            chasing().progress_best,
+            "the chase goes on"
+        );
+        memory.sight(TARGET, None);
+        memory.sight(TARGET, None);
+        assert_eq!(memory.lost_target_point(TARGET), Some(at(6, 5)));
+        assert_eq!(
+            memory.lost_target_point(EntityId(8)),
+            None,
+            "keyed by the target"
+        );
+    }
+
+    #[test]
+    fn losing_or_finding_the_target_restarts_the_walk() {
+        let mut memory = chasing();
+        memory.sight(TARGET, Some(at(5, 5)));
+        memory.sight(TARGET, None);
+        assert_eq!(memory.progress_best, None);
+        assert_eq!(memory.stalled_ticks, 0);
+        assert_eq!(memory.slot, None);
+        memory.progress_best = Some(SimScalar::ONE);
+        memory.stalled_ticks = 2;
+        memory.sight(TARGET, None);
+        assert_eq!(
+            memory.progress_best,
+            Some(SimScalar::ONE),
+            "still lost: no change"
+        );
+        memory.sight(TARGET, Some(at(9, 9)));
+        assert_eq!(memory.progress_best, None, "found again");
+        assert_eq!(memory.stalled_ticks, 0);
+    }
+
+    #[test]
+    fn another_targets_sighting_replaces_the_record_and_a_restart_clears_it() {
+        let mut memory = chasing();
+        memory.sight(TARGET, Some(at(5, 5)));
+        memory.sight(EntityId(8), None);
+        assert_eq!(memory.last_seen.map(|seen| seen.target), Some(TARGET));
+        memory.sight(EntityId(8), Some(at(2, 2)));
+        assert_eq!(memory.last_seen.map(|seen| seen.target), Some(EntityId(8)));
+        memory.restart();
+        assert_eq!(memory.last_seen, None);
     }
 }
