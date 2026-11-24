@@ -29,8 +29,8 @@
 use crate::catalog::UnitCatalog;
 use crate::catalog::{SplashSpec, UnitArchetype, WeaponSpec};
 use crate::combat::{
-    charge_random_delay, mitigate_weapon_strike, raw_strike_damage, shares_combat_plane,
-    splash_raw_damage, step_entity_weapon, WeaponTarget,
+    charge_random_delay, fires_without_attack_order, mitigate_weapon_strike, raw_strike_damage,
+    shares_combat_plane, splash_raw_damage, step_entity_weapon, Mandate, WeaponTarget,
 };
 use crate::entity::{
     ActiveProjectile, Entity, PendingLine, PendingLineView, PendingStrikes, WeaponPhase,
@@ -483,23 +483,14 @@ impl SimWorld {
                 continue;
             };
 
-            // A swing stays bound to the target it started on. Otherwise the orders decide:
-            // an attack order names the target, and turrets and holders use `current_target`.
+            // A swing stays bound to the target it started on. Otherwise the orders decide
+            // (plan `2026-11-23-turret-wind-up` D-2).
+            let ordered = Self::ordered_target(combat, entity, arch);
+            let mandate = ordered.map_or(Mandate::AttackOrder, |(_, mandate)| mandate);
             let target_opt_id = if let WeaponPhase::Windup { target_id, .. } = entity.weapon_phase {
                 Some(target_id)
-            } else if let Some(UnitOrder::AttackTarget { target, .. }) = entity.order_queue.front()
-            {
-                Some(*target)
             } else {
-                let has_turret = entity
-                    .siege_weapon
-                    .as_ref()
-                    .or(arch.ground_weapon.as_ref())
-                    .or(arch.weapon.as_ref())
-                    .is_some_and(|w| w.has_turret);
-                (has_turret || entity.is_on_hold())
-                    .then_some(entity.current_target)
-                    .flatten()
+                ordered.map(|(target, _)| target)
             };
 
             let target_snapshot = target_opt_id.and_then(|tid| combat.snapshot(tid));
@@ -535,7 +526,7 @@ impl SimWorld {
                     })
             });
 
-            if step_entity_weapon(entity, &weapon, target_info) {
+            if step_entity_weapon(entity, &weapon, target_info, mandate) {
                 charge_random_delay(entity, &weapon, rng);
                 if let Some(target) = target_info {
                     let strikes = Self::begin_strikes(entity, &weapon, target.id, target_mover);
@@ -554,6 +545,32 @@ impl SimWorld {
                 }
             }
         }
+    }
+
+    /// The target `entity` (of archetype `arch`) works against when it is not mid-swing, and why
+    /// (plan `2026-11-23-turret-wind-up` D-2, B-90). An attack order names its target; a holding
+    /// unit works against its `current_target` (`StarCraft` II's Hold Position acquires for it);
+    /// both are an attack order's [`Mandate`]. Otherwise only a weapon whose data lets it fire
+    /// outside an attack order ([`fires_without_attack_order`], the weapon `entity` would use
+    /// against the target's plane) works against the `current_target` acquisition tracks for it
+    /// ([`Mandate::OwnInitiative`]); every other weapon works against nothing. The mount plays no
+    /// part.
+    fn ordered_target(
+        combat: &CombatWorkspace,
+        entity: &Entity,
+        arch: &UnitArchetype,
+    ) -> Option<(EntityId, Mandate)> {
+        if let Some(UnitOrder::AttackTarget { target, .. }) = entity.order_queue.front() {
+            return Some((*target, Mandate::AttackOrder));
+        }
+        let current = entity.current_target?;
+        if entity.is_on_hold() {
+            return Some((current, Mandate::AttackOrder));
+        }
+        let mover = combat.snapshot(current)?.mover;
+        let weapon = arch.weapon_against(mover, entity.active_siege_weapon())?;
+        fires_without_attack_order(weapon, entity.order_walks())
+            .then_some((current, Mandate::OwnInitiative))
     }
 
     /// Starts the strikes of an attack `entity` releases with `weapon` at `target` on `plane`,

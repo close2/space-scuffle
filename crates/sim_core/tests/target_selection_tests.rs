@@ -15,16 +15,24 @@
 //! The tests drive the public world API (`SimWorld::step`) on a flat map and read the order
 //! acquisition gives the chooser, as a battle sees it.
 //!
+//! It also pins who may fire outside an attack order (plan `2026-11-23-turret-wind-up` D-2 to
+//! D-4, P-1 to P-3): a weapon works against `current_target` only under an attack order or on
+//! hold, unless its data clears `StarCraft` II's `OnlyFireWhileInAttackOrder`
+//! (`fires_outside_attack_order`); such a weapon fires while its unit's order walks it only when
+//! it is `Moving`, and acquisition tracks its target from where the unit is, never changing the
+//! unit's order. The mount plays no part.
+//!
 //! # Invariants
 //! Every archetype is a scratch archetype written in this file, never a shipped identity (C5),
 //! so a rebalance of the shipped catalog cannot break these tests. Positions are world units.
 
 use sim_core::catalog::UnitCatalog;
 use sim_core::SimWorld;
+use sim_core::WeaponPhase;
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
-    AttackOrigin, EntityId, PlayerCommand, PlayerId, SimScalar, SimVec2, Tick, TickBundle,
-    UnitOrder,
+    AttackOrigin, EntityId, PlayerCommand, PlayerId, ResourceNodeId, SimScalar, SimVec2, Tick,
+    TickBundle, UnitOrder,
 };
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -76,6 +84,8 @@ struct Scratch<'a> {
     scan: &'a str,
     /// `collision_radius` (and `separation_radius`) in world units, in RON.
     radius: &'a str,
+    /// `max_speed` in world units per tick, in RON.
+    speed: &'a str,
 }
 
 impl Scratch<'_> {
@@ -92,6 +102,7 @@ impl Scratch<'_> {
             air: "None",
             scan: "12.0",
             radius: "0.5",
+            speed: "0.1",
         }
     }
 
@@ -128,7 +139,7 @@ impl Scratch<'_> {
             hp_regen_per_tick: 0.0,
             shield_regen_per_tick: 0.0,
             energy_regen_per_tick: 0.0,
-            max_speed: 0.1,
+            max_speed: {speed},
             acceleration: 0.1,
             deceleration: 0.1,
             turn_rate_deg_per_tick: 180.0,
@@ -160,6 +171,7 @@ impl Scratch<'_> {
             air = self.air,
             scan = self.scan,
             radius = self.radius,
+            speed = self.speed,
         )
     }
 }
@@ -600,5 +612,278 @@ fn b12_a_sieged_unit_scans_to_its_siege_weapon_range() -> TestResult {
     tank.siege_weapon = Some(cannon);
     step(&mut world, 0, None);
     assert_eq!(acquired(&world, chooser), Some(target));
+    Ok(())
+}
+
+/// [`RIFLE`] on a turret (`turret` true, 180° a tick) or the hull, with `rules`: authored
+/// `allowed_movement` and `fires_outside_attack_order` fields, or nothing for the defaults.
+fn rifle(turret: bool, rules: &str) -> String {
+    let mount = if turret {
+        "has_turret: true,\n            turret_turn_rate_deg_per_tick: 180.0,"
+    } else {
+        "has_turret: false,\n            turret_turn_rate_deg_per_tick: 0.0,"
+    };
+    RIFLE
+        .replace(
+            "has_turret: false,\n            turret_turn_rate_deg_per_tick: 0.0,",
+            mount,
+        )
+        .replace("turret_idle: Hold,", &format!("turret_idle: Hold, {rules}"))
+}
+
+/// The order classes of plan `2026-11-23-turret-wind-up` P-1, each a front order queue and
+/// whether the unit's task walks to a goal.
+fn order_cases(enemy: EntityId) -> [(&'static str, Vec<UnitOrder>, bool); 6] {
+    let away = SimVec2::new(SimScalar::from_i32(10), SimScalar::from_i32(40));
+    [
+        ("Move", vec![UnitOrder::Move { target: away }], false),
+        (
+            "AttackMove with no attack in front",
+            vec![UnitOrder::AttackMove { target: away }],
+            false,
+        ),
+        (
+            "Stop, then a walking order",
+            vec![UnitOrder::Stop, UnitOrder::Move { target: away }],
+            false,
+        ),
+        (
+            "a task order walking to its goal",
+            vec![UnitOrder::Harvest {
+                target: ResourceNodeId(0),
+            }],
+            true,
+        ),
+        (
+            "AttackTarget",
+            vec![UnitOrder::AttackTarget {
+                target: enemy,
+                origin: AttackOrigin::Explicit,
+            }],
+            false,
+        ),
+        ("HoldPosition", vec![UnitOrder::HoldPosition], false),
+    ]
+}
+
+/// Whether a chooser armed with `ground`, whose `current_target` is an unarmed enemy 4 east (in
+/// reach), starts a swing in 10 runs of the combat phase alone under `orders` (its task walking
+/// to a goal when `task_goal`). Acquisition and movement do not run, so the order and the target
+/// stay as set: this reads the combat phase's own choice (D-2).
+fn swings_under(
+    ground: &str,
+    orders: impl FnOnce(EntityId) -> (Vec<UnitOrder>, bool),
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let mut world = world_with(&[
+        Scratch {
+            ground,
+            ..Scratch::unarmed(CHOOSER)
+        },
+        Scratch::unarmed("enemy"),
+    ])?;
+    let chooser = spawn(&mut world, CHOOSER, 0, 10, 16)?;
+    let enemy = spawn(&mut world, "enemy", 1, 14, 16)?;
+    let (orders, task_goal) = orders(enemy);
+    let unit = world.entities.get_mut(&chooser).ok_or("chooser")?;
+    unit.order_queue = orders.into_iter().collect();
+    unit.current_target = Some(enemy);
+    if task_goal {
+        unit.task.goal = Some(SimVec2::new(
+            SimScalar::from_i32(30),
+            SimScalar::from_i32(16),
+        ));
+    }
+    let mut swung = false;
+    for _ in 0..10 {
+        world.step_weapons_and_projectiles();
+        let unit = world.entities.get(&chooser).ok_or("chooser")?;
+        swung |= !matches!(
+            unit.weapon_phase,
+            WeaponPhase::Ready | WeaponPhase::RotatingToTarget { .. }
+        );
+    }
+    Ok(swung)
+}
+
+/// P-1: a weapon that keeps `OnlyFireWhileInAttackOrder` (the default) works against the unit's
+/// `current_target` only under an attack order or on hold, turreted or not: a move, an
+/// attack-move with no attack in front, a stop before a walking order and a task order start no
+/// swing (B-90).
+#[test]
+fn b90_a_weapon_fires_at_its_current_target_only_in_an_attack_order() -> TestResult {
+    for turret in [false, true] {
+        let weapon = rifle(turret, "");
+        for index in 0..6 {
+            let mut name = "";
+            let swung = swings_under(&weapon, |enemy| {
+                let (case, orders, goal) = order_cases(enemy)[index].clone();
+                name = case;
+                (orders, goal)
+            })?;
+            let in_attack_order = matches!(name, "AttackTarget" | "HoldPosition");
+            assert_eq!(
+                swung, in_attack_order,
+                "turret {turret}, {name}: a swing only in an attack order"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// P-2: a weapon with `fires_outside_attack_order` fires at its `current_target` under an order
+/// that does not walk its unit; under one that walks it, only when it is `Moving` (D-2, D-3).
+#[test]
+fn b90_a_weapon_outside_an_attack_order_fires_while_walking_only_when_moving() -> TestResult {
+    let walking = |_| {
+        let away = SimVec2::new(SimScalar::from_i32(10), SimScalar::from_i32(40));
+        (vec![UnitOrder::Move { target: away }], false)
+    };
+    // A harvester at its node: a task order with no goal to walk to.
+    let standing = |_| {
+        (
+            vec![UnitOrder::Harvest {
+                target: ResourceNodeId(0),
+            }],
+            false,
+        )
+    };
+    for (movement, fires_while_walking) in
+        [("Stopped", false), ("Slowing", false), ("Moving", true)]
+    {
+        let weapon = rifle(
+            false,
+            &format!("allowed_movement: {movement}, fires_outside_attack_order: true,"),
+        );
+        assert_eq!(
+            swings_under(&weapon, walking)?,
+            fires_while_walking,
+            "{movement}: a swing under a walking order only when Moving"
+        );
+        assert!(
+            swings_under(&weapon, standing)?,
+            "{movement}: a swing under an order that does not walk"
+        );
+    }
+    let moving_only = rifle(false, "allowed_movement: Moving,");
+    assert!(
+        !swings_under(&moving_only, walking)?,
+        "Moving without the option still needs an attack order"
+    );
+    Ok(())
+}
+
+/// The front order and current target of `unit`.
+fn orders_of(
+    world: &SimWorld,
+    unit: EntityId,
+) -> Result<(Option<UnitOrder>, Option<EntityId>), Box<dyn std::error::Error>> {
+    let entity = world.entities.get(&unit).ok_or("unit")?;
+    Ok((entity.order_queue.front().cloned(), entity.current_target))
+}
+
+/// P-3: under a move, a unit whose weapon is `Moving` and fires outside an attack order tracks the
+/// best enemy it reaches from where it is (by the acquisition ranking), never one beyond reach,
+/// never changes its order, and releases the target once it has left reach. A unit with a
+/// default weapon keeps its stale `current_target` untouched under the same order (D-4).
+#[test]
+fn b45_a_unit_that_fires_while_moving_tracks_the_best_enemy_in_reach() -> TestResult {
+    let free = rifle(
+        false,
+        "allowed_movement: Moving, fires_outside_attack_order: true,",
+    );
+    let mut world = world_with(&[
+        Scratch {
+            ground: &free,
+            speed: "0.5",
+            ..Scratch::unarmed(CHOOSER)
+        },
+        Scratch {
+            speed: "0.5",
+            ..Scratch::gunner("plain")
+        },
+        Scratch::unarmed("low"),
+        Scratch {
+            priority: 30,
+            ..Scratch::unarmed("high")
+        },
+        Scratch {
+            priority: 40,
+            ..Scratch::unarmed("far")
+        },
+    ])?;
+    let chooser = spawn(&mut world, CHOOSER, 0, 20, 24)?;
+    let plain = spawn(&mut world, "plain", 0, 20, 20)?;
+    let low = spawn(&mut world, "low", 1, 24, 24)?;
+    let high = spawn(&mut world, "high", 1, 24, 26)?;
+    // Beyond reach (9 from the chooser's centre, reach 6 + 1) but within its scan range.
+    let far = spawn(&mut world, "far", 1, 20, 33)?;
+    let goal = |y| UnitOrder::Move {
+        target: SimVec2::new(SimScalar::from_i32(2), SimScalar::from_i32(y)),
+    };
+    let command = |unit, order| PlayerCommand {
+        player_id: PlayerId(0),
+        entities: vec![unit],
+        order,
+        queue: false,
+    };
+    world.step(&TickBundle {
+        tick: Tick(0),
+        commands: vec![command(chooser, goal(24)), command(plain, goal(20))],
+        state_checksum: None,
+    });
+    // A target left over from before the move, as a unit that fought and was moved away has.
+    world
+        .entities
+        .get_mut(&plain)
+        .ok_or("plain")?
+        .current_target = Some(low);
+    assert_eq!(
+        orders_of(&world, chooser)?,
+        (Some(goal(24)), Some(high)),
+        "the best enemy in reach, the order kept"
+    );
+    let full_hp = SimScalar::from_i32(10_000);
+    let mut released_at = None;
+    for tick in 1..80 {
+        step(&mut world, tick, None);
+        let (front, target) = orders_of(&world, chooser)?;
+        assert!(
+            front.is_none() || front == Some(goal(24)),
+            "tick {tick}: the move stays the unit's order"
+        );
+        assert_ne!(
+            target,
+            Some(far),
+            "tick {tick}: never an enemy beyond reach"
+        );
+        if target.is_none() && released_at.is_none() {
+            released_at = Some(tick);
+        }
+        if released_at.is_some() {
+            assert_eq!(
+                target, None,
+                "tick {tick}: released for good once out of reach"
+            );
+        }
+        assert_eq!(
+            orders_of(&world, plain)?.1,
+            Some(low),
+            "tick {tick}: a default weapon's stale target is left as it was"
+        );
+        assert!(
+            matches!(
+                world.entities.get(&plain).ok_or("plain")?.weapon_phase,
+                WeaponPhase::Ready | WeaponPhase::RotatingToTarget { .. }
+            ),
+            "tick {tick}: a default weapon does not fire at its stale target"
+        );
+    }
+    assert!(released_at.is_some(), "the target is released out of reach");
+    let hp = |id| world.entities.get(&id).map(|e| e.hp);
+    assert!(
+        hp(high).is_some_and(|hp| hp < full_hp),
+        "the tracked enemy was fired at"
+    );
+    assert_eq!(hp(far), Some(full_hp));
     Ok(())
 }

@@ -2420,3 +2420,128 @@ fn an_edited_first_strike_delay_moves_the_first_missile_without_recompiling() ->
     bundle.finish()?;
     Ok(())
 }
+
+/// Whether a weapon fires while its unit moves under an order that is no attack (plan
+/// `2026-11-23-turret-wind-up` D-2): `Moving` and outside attack orders.
+fn fires_while_moving(weapon: &sim_types::WeaponSpec) -> bool {
+    weapon.allowed_movement == sim_types::AllowedMovement::Moving
+        && weapon.fires_outside_attack_order
+}
+
+/// The life and shields an air enemy holding beside its path loses while a unit of `shooter_type`
+/// moves past it for 25 ticks, in `catalogs`.
+fn damage_dealt_in_passing(
+    catalogs: RuntimeCatalogs,
+    shooter_type: UnitTypeId,
+    enemy_type: UnitTypeId,
+) -> Result<SimScalar, Box<dyn std::error::Error>> {
+    let map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?;
+    let mut world = SimWorld::with_catalogs(map, 7, catalogs.units, catalogs.upgrades)?;
+    let shooter = world.spawn_unit(shooter_type, PlayerId(0), SimVec2::from_i32(8, 8))?;
+    let enemy = world.spawn_unit(enemy_type, PlayerId(1), SimVec2::from_i32(10, 6))?;
+    let unit = world.entities.get_mut(&shooter).ok_or("shooter")?;
+    unit.heading = sim_types::SimAngle::DEG_90;
+    unit.turret_angle = sim_types::SimAngle::DEG_90;
+    let life = |world: &SimWorld| {
+        world
+            .entities
+            .get(&enemy)
+            .map_or(SimScalar::ZERO, |e| e.hp + e.shields)
+    };
+    let before = life(&world);
+    let mut commands = vec![
+        sim_types::PlayerCommand {
+            player_id: PlayerId(0),
+            entities: vec![shooter],
+            order: sim_types::UnitOrder::Move {
+                target: SimVec2::from_i32(8, 28),
+            },
+            queue: false,
+        },
+        sim_types::PlayerCommand {
+            player_id: PlayerId(1),
+            entities: vec![enemy],
+            order: sim_types::UnitOrder::HoldPosition,
+            queue: false,
+        },
+    ];
+    for tick in 0..25_u32 {
+        world.step(&sim_types::TickBundle {
+            tick: sim_types::Tick(tick),
+            commands: std::mem::take(&mut commands),
+            state_checksum: None,
+        });
+    }
+    Ok(before - life(&world))
+}
+
+/// Plan `2026-11-23-turret-wind-up` P-7: clearing the shipped weapon's `allowed_movement: Moving`
+/// and `fires_outside_attack_order: true` in a copied `units.ron` makes its unit hold fire while
+/// it moves past an enemy, in the same binary.
+#[test]
+fn an_edited_movement_rule_makes_a_unit_hold_fire_while_moving_without_recompiling() -> TestResult {
+    let shipped = RuntimeCatalogs::load_from_directory(catalog_directory())?;
+    let shooter = shipped
+        .units
+        .archetypes()
+        .find(|archetype| {
+            archetype.mover_type == sim_types::MoverType::Air
+                && archetype
+                    .air_weapon
+                    .as_ref()
+                    .is_some_and(fires_while_moving)
+        })
+        .ok_or("a shipped air weapon fires while moving outside attack orders")?;
+    let (shooter_type, faction) = (shooter.unit_type_id, shooter.faction);
+    let enemy_type = shipped
+        .units
+        .archetypes()
+        .filter(|archetype| {
+            archetype.mover_type == sim_types::MoverType::Air
+                && archetype.faction != faction
+                && archetype.max_hp >= SimScalar::from_i32(100)
+        })
+        .min_by_key(|archetype| archetype.unit_type_id)
+        .ok_or("an air unit of another faction")?
+        .unit_type_id;
+
+    let bundle = Bundle::new("weapon-movement")?;
+    let units = std::fs::read_to_string(bundle.directory.join(FILES[0]))?;
+    let rules = "allowed_movement: Moving,\n                fires_outside_attack_order: true,\n";
+    assert!(
+        units.contains(rules),
+        "premise: the shipped rules are written together"
+    );
+    std::fs::write(
+        bundle.directory.join(FILES[0]),
+        units.replacen(rules, "", 1),
+    )?;
+    let edited = bundle.load()?;
+    let edited_weapon = edited
+        .units
+        .get(shooter_type)?
+        .air_weapon
+        .clone()
+        .ok_or("the edited shooter keeps its air weapon")?;
+    assert_eq!(
+        (
+            edited_weapon.allowed_movement,
+            edited_weapon.fires_outside_attack_order
+        ),
+        (sim_types::AllowedMovement::Stopped, false),
+        "premise: the edited weapon reads the engine defaults"
+    );
+    let shipped_damage = damage_dealt_in_passing(shipped, shooter_type, enemy_type)?;
+    let edited_damage = damage_dealt_in_passing(edited, shooter_type, enemy_type)?;
+    assert!(
+        shipped_damage > SimScalar::ZERO,
+        "the shipped unit fires while it moves past the enemy"
+    );
+    assert_eq!(
+        edited_damage,
+        SimScalar::ZERO,
+        "the edited unit holds fire while it moves"
+    );
+    bundle.finish()?;
+    Ok(())
+}

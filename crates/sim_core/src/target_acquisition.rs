@@ -11,8 +11,11 @@
 //! ## Invariants Maintained
 //! 1. Player orders are never rewritten: only [`AttackOrigin::Acquired`] attacks are replaced,
 //!    and an explicit attack ends only when it can no longer be carried out.
-//! 2. A holding or immobile unit only considers targets its weapon reaches from where it
-//!    stands, and acquisition never moves a unit off a hold order.
+//! 2. A holding or immobile unit, and a unit tracking a target outside an attack order (plan
+//!    `2026-11-23-turret-wind-up` D-4), only considers targets its weapon reaches from where it
+//!    stands. Acquisition never moves a unit off a hold order and never changes the order of a
+//!    unit it tracks for: only its `current_target`, and only for a weapon whose data lets it
+//!    fire under that order.
 //! 3. Candidates are ranked by [`TargetPriorityKey`], so the choice is deterministic. As in
 //!    `StarCraft` II (Liquipedia "Automatic Targeting"), a unit keeps a target while it is valid
 //!    and inside weapon reach, unless a candidate of higher rank (threat, then attack target
@@ -25,7 +28,7 @@
 //!    scans at least to its own effective range.
 
 use crate::catalog::{AcquireLevel, AcquireTieBreak, UnitArchetype, WeaponSpec};
-use crate::combat::{is_threat_to, weapon_aim, TargetPriorityKey};
+use crate::combat::{fires_without_attack_order, is_threat_to, weapon_aim, TargetPriorityKey};
 use crate::entity::Entity;
 use crate::weapon_timing::SimulationDiagnostic;
 use crate::world::SimWorld;
@@ -53,6 +56,14 @@ enum Engagement {
     Acquired(EntityId),
     /// Under a player's attack order, which only impossibility ends.
     Explicit(EntityId),
+    /// Under an order that is no attack, with a weapon that may fire under it
+    /// ([`fires_without_attack_order`]; `walking` is whether the order walks the unit):
+    /// `current_target` tracks an enemy that weapon reaches from where the unit is, as for a
+    /// holder; the order never changes (plan `2026-11-23-turret-wind-up` D-4).
+    Track {
+        /// Whether the unit's front order walks it ([`Entity::order_walks`]).
+        walking: bool,
+    },
     /// The front order leaves no room for automatic targeting.
     Busy,
 }
@@ -62,7 +73,7 @@ enum Engagement {
 pub(crate) enum Acquisition {
     /// Attack this enemy.
     Engage(EntityId),
-    /// Forget a holding unit's target, which left its reach.
+    /// Forget the target of a holding or tracking unit, which left its reach.
     ReleaseHoldTarget,
     /// End an attack order an immobile unit can never carry out.
     AbandonAttack,
@@ -84,9 +95,12 @@ struct CatalogBounds {
 /// Where one unit's neighbourhood scan looks.
 #[derive(Clone, Copy)]
 struct ScanScope {
-    /// Whether the unit stays where it stands (holding or immobile), so only enemies inside its
-    /// weapon reach qualify.
+    /// Whether the unit stays where it stands (holding or immobile), or tracks outside an attack
+    /// order, so only enemies inside its weapon reach qualify.
     stationary: bool,
+    /// Under [`Engagement::Track`], whether the order walks the unit: only enemies whose plane
+    /// the unit meets with a weapon that may fire under that order qualify. `None` otherwise.
+    tracking: Option<bool>,
     /// The catalog's largest collision radius in world units ([`CatalogBounds::largest_radius`]).
     largest_radius: SimScalar,
 }
@@ -501,8 +515,8 @@ impl SimWorld {
             )
     }
 
-    /// Classifies what acquisition may do for `entity`.
-    fn engagement_of(entity: &Entity) -> Engagement {
+    /// Classifies what acquisition may do for `entity` (of archetype `arch`).
+    fn engagement_of(entity: &Entity, arch: &UnitArchetype) -> Engagement {
         match entity.order_queue.front() {
             None | Some(UnitOrder::Idle | UnitOrder::AttackMove { .. }) => Engagement::Seek,
             Some(UnitOrder::HoldPosition) => Engagement::Hold,
@@ -510,8 +524,45 @@ impl SimWorld {
                 AttackOrigin::Acquired => Engagement::Acquired(*target),
                 AttackOrigin::Explicit => Engagement::Explicit(*target),
             },
-            Some(_) => Engagement::Busy,
+            Some(_) => {
+                let walking = entity.order_walks();
+                let tracks = [
+                    arch.ground_weapon.as_ref(),
+                    arch.air_weapon.as_ref(),
+                    arch.weapon.as_ref(),
+                    entity.active_siege_weapon(),
+                ]
+                .into_iter()
+                .flatten()
+                .any(|weapon| fires_without_attack_order(weapon, walking));
+                if tracks {
+                    Engagement::Track { walking }
+                } else {
+                    Engagement::Busy
+                }
+            }
         }
+    }
+
+    /// Whether `entity` may work against `target` under `engagement`: always, except under
+    /// [`Engagement::Track`], where the weapon it would use against `target`'s plane must be one
+    /// that may fire under the unit's order.
+    fn licensed(
+        &self,
+        engagement: Engagement,
+        entity: &Entity,
+        arch: &UnitArchetype,
+        target: &Entity,
+    ) -> bool {
+        let Engagement::Track { walking } = engagement else {
+            return true;
+        };
+        self.catalog
+            .get(target.unit_type_id)
+            .is_ok_and(|target_arch| {
+                arch.weapon_against(target_arch.mover_type, entity.active_siege_weapon())
+                    .is_some_and(|weapon| fires_without_attack_order(weapon, walking))
+            })
     }
 
     /// Whether `entity`'s weapon can engage `target` from where it stands right now.
@@ -549,14 +600,14 @@ impl SimWorld {
         neighbors: &mut Vec<EntityId>,
         candidates: &mut Vec<(TargetPriorityKey, EntityId)>,
     ) -> Option<Acquisition> {
-        let engagement = Self::engagement_of(entity);
+        let engagement = Self::engagement_of(entity, arch);
         if Self::holds_fire(entity, arch, engagement) {
             return None;
         }
         let current = match engagement {
             Engagement::Busy => return None,
             Engagement::Seek => None,
-            Engagement::Hold => entity.current_target,
+            Engagement::Hold | Engagement::Track { .. } => entity.current_target,
             Engagement::Acquired(target) | Engagement::Explicit(target) => Some(target),
         };
         let reachable_current = current
@@ -564,6 +615,7 @@ impl SimWorld {
             .filter(|target| {
                 Self::is_entity_targetable(target, &self.map, &self.vision_maps, entity.owner)
                     && self.reaches_from_here(entity, arch, target)
+                    && self.licensed(engagement, entity, arch, target)
             });
 
         if matches!(engagement, Engagement::Explicit(_)) {
@@ -583,13 +635,19 @@ impl SimWorld {
             return None;
         }
 
-        let stationary = entity.is_immobile || matches!(engagement, Engagement::Hold);
+        let stationary =
+            entity.is_immobile || matches!(engagement, Engagement::Hold | Engagement::Track { .. });
+        let tracking = match engagement {
+            Engagement::Track { walking } => Some(walking),
+            _ => None,
+        };
         let scan = self.scan_candidates(
             entity,
             arch,
             current,
             ScanScope {
                 stationary,
+                tracking,
                 largest_radius: bounds.largest_radius,
             },
             neighbors,
@@ -597,7 +655,9 @@ impl SimWorld {
         );
         let Some(best) = scan.best else {
             return match engagement {
-                Engagement::Hold if current.is_some() && reachable_current.is_none() => {
+                Engagement::Hold | Engagement::Track { .. }
+                    if current.is_some() && reachable_current.is_none() =>
+                {
                     Some(Acquisition::ReleaseHoldTarget)
                 }
                 Engagement::Acquired(_) if entity.is_immobile && reachable_current.is_none() => {
@@ -695,6 +755,12 @@ impl SimWorld {
                 continue;
             }
             if !weapon.target_flags.intersects(target_arch.attributes) {
+                continue;
+            }
+            if scope
+                .tracking
+                .is_some_and(|walking| !fires_without_attack_order(weapon, walking))
+            {
                 continue;
             }
             if weapon.min_range > SimScalar::ZERO && dist < weapon.min_range + radii {

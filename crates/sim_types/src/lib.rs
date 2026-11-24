@@ -81,9 +81,9 @@ pub use upgrades::{
     PlayerUpgradeState, UnitStatDeltas, UpgradeApplicationError, UpgradeEffect, UpgradeStat,
 };
 pub use weapon::{
-    default_projectile_lifetime_ticks, Attribute, AttributeBonuses, ProjectileTargetLossBehavior,
-    SplashCliff, SplashImpact, SplashLine, SplashLineAxis, SplashLineOrigin, SplashShape,
-    SplashSpec, SplashZone, StructureStrike, TurretIdle, WeaponSpec,
+    default_projectile_lifetime_ticks, AllowedMovement, Attribute, AttributeBonuses,
+    ProjectileTargetLossBehavior, SplashCliff, SplashImpact, SplashLine, SplashLineAxis,
+    SplashLineOrigin, SplashShape, SplashSpec, SplashZone, StructureStrike, TurretIdle, WeaponSpec,
     DEFAULT_PROJECTILE_LIFETIME_TICKS,
 };
 
