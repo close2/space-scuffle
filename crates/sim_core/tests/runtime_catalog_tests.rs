@@ -3380,3 +3380,124 @@ fn an_authored_weapon_validation_off_follows_a_cloaking_target() -> TestResult {
     bundle.finish()?;
     Ok(())
 }
+
+/// The turret angles of a unit of `shooter_type` (with a turreted weapon) on the ticks of its
+/// first swing, from its start to its release, in `catalogs`: it stands at (8, 8) facing south
+/// under a player's attack on an enemy of `target_type` 4 south of it, which walks east across
+/// its front.
+fn turret_through_first_swing(
+    catalogs: RuntimeCatalogs,
+    shooter_type: UnitTypeId,
+    target_type: UnitTypeId,
+) -> Result<Vec<sim_types::SimAngle>, Box<dyn std::error::Error>> {
+    let map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?;
+    let mut world = SimWorld::with_catalogs(map, 7, catalogs.units, catalogs.upgrades)?;
+    let shooter = world.spawn_unit(shooter_type, PlayerId(0), SimVec2::from_i32(8, 8))?;
+    let target = world.spawn_unit(target_type, PlayerId(1), SimVec2::from_i32(8, 12))?;
+    let unit = world.entities.get_mut(&shooter).ok_or("shooter")?;
+    unit.heading = sim_types::SimAngle::DEG_90;
+    unit.turret_angle = sim_types::SimAngle::DEG_90;
+    let mut commands = vec![
+        sim_types::PlayerCommand {
+            player_id: PlayerId(0),
+            entities: vec![shooter],
+            order: sim_types::UnitOrder::AttackTarget {
+                target,
+                origin: sim_types::AttackOrigin::Explicit,
+            },
+            queue: false,
+        },
+        sim_types::PlayerCommand {
+            player_id: PlayerId(1),
+            entities: vec![target],
+            order: sim_types::UnitOrder::Move {
+                target: SimVec2::from_i32(28, 12),
+            },
+            queue: false,
+        },
+    ];
+    let mut angles = Vec::new();
+    for tick in 0..40_u32 {
+        world.step(&sim_types::TickBundle {
+            tick: sim_types::Tick(tick),
+            commands: std::mem::take(&mut commands),
+            state_checksum: None,
+        });
+        let unit = world.entities.get(&shooter).ok_or("shooter")?;
+        let winding = matches!(unit.weapon_phase, sim_core::WeaponPhase::Windup { .. });
+        if winding || !angles.is_empty() {
+            angles.push(unit.turret_angle);
+        }
+        if !winding && !angles.is_empty() {
+            return Ok(angles);
+        }
+    }
+    Err("the shooter never completed a swing".into())
+}
+
+/// Plan `2026-11-24-fire-rules` P-10, the lock half: removing the shipped
+/// `locks_turret_while_firing: true` from a copied `units.ron` makes its unit's turret turn
+/// through its wind-up at a target walking across its front, in the same binary.
+#[test]
+fn an_authored_lock_off_turns_the_turret() -> TestResult {
+    let shipped = RuntimeCatalogs::load_from_directory(catalog_directory())?;
+    let shooter = shipped
+        .units
+        .archetypes()
+        .find(|archetype| {
+            archetype.mover_type == sim_types::MoverType::Ground
+                && archetype
+                    .weapon
+                    .as_ref()
+                    .is_some_and(|weapon| weapon.locks_turret_while_firing)
+        })
+        .ok_or("a shipped ground weapon locks its turret")?;
+    let (shooter_type, faction) = (shooter.unit_type_id, shooter.faction);
+    let flags = shooter
+        .weapon
+        .as_ref()
+        .map(|weapon| weapon.target_flags)
+        .ok_or("the shooter's weapon")?;
+    let target_type = shipped
+        .units
+        .archetypes()
+        .filter(|archetype| {
+            archetype.mover_type == sim_types::MoverType::Ground
+                && archetype.faction != faction
+                && archetype.max_speed > SimScalar::ZERO
+                && flags.intersects(archetype.attributes)
+                && archetype.max_hp >= SimScalar::from_i32(100)
+        })
+        .min_by_key(|archetype| archetype.unit_type_id)
+        .ok_or("a ground unit of another faction the weapon strikes")?
+        .unit_type_id;
+
+    let bundle = Bundle::new("turret-lock")?;
+    let units = std::fs::read_to_string(bundle.directory.join(FILES[0]))?;
+    let lock = "locks_turret_while_firing: true,\n";
+    assert_eq!(units.matches(lock).count(), 1, "premise: one shipped lock");
+    std::fs::write(bundle.directory.join(FILES[0]), units.replacen(lock, "", 1))?;
+    let edited = bundle.load()?;
+    assert!(
+        !edited
+            .units
+            .get(shooter_type)?
+            .weapon
+            .as_ref()
+            .ok_or("the edited weapon")?
+            .locks_turret_while_firing,
+        "premise: the edited weapon reads the engine default"
+    );
+    let locked = turret_through_first_swing(shipped, shooter_type, target_type)?;
+    let free = turret_through_first_swing(edited, shooter_type, target_type)?;
+    assert!(
+        locked.iter().all(|angle| *angle == locked[0]),
+        "the shipped turret holds through its swing: {locked:?}"
+    );
+    assert!(
+        free.iter().any(|angle| *angle != free[0]),
+        "the edited turret turns through its swing: {free:?}"
+    );
+    bundle.finish()?;
+    Ok(())
+}

@@ -16,6 +16,8 @@
 //! 5. A weapon works against a target outside an attack order only when its data lets it
 //!    ([`fires_without_attack_order`]), and then a hull weapon never turns the hull: it fires at
 //!    what lies in its arc ([`Mandate::OwnInitiative`], plan `2026-11-23-turret-wind-up` D-5).
+//! 6. A turret whose weapon locks it while firing ([`WeaponSpec::locks_turret_while_firing`])
+//!    does not turn from the start of a swing to its release (plan `2026-11-24-fire-rules` D-2).
 
 use crate::catalog::{AcquireLevel, SplashSpec, UnitArchetype, WeaponSpec};
 use crate::entity::{Entity, WeaponPhase};
@@ -780,7 +782,9 @@ fn step_rotating_weapon(
 
 /// Steps a swing bound to `bound`. Returns true when the shot discharges.
 ///
-/// `target_opt` must be `bound` or absent. A swing without its target, or whose target left
+/// `target_opt` must be `bound` or absent. A turret follows the target through the wind-up,
+/// unless its weapon locks it while firing ([`WeaponSpec::locks_turret_while_firing`]). A swing
+/// without its target, or whose target left
 /// the engagement band, is cancelled: no shot, and no cooldown is charged. A wind-up releases
 /// on the step that brings `remaining_ticks` to 0 ([`release_swing`]). The rule never creates
 /// a `Windup` with 0 ticks left (a damage point of 0 releases in [`start_swing`]); one set
@@ -796,7 +800,9 @@ fn step_windup(
         entity.weapon_phase = WeaponPhase::Ready;
         return false;
     };
-    if weapon.has_turret {
+    // A locked turret holds while its weapon fires (plan `2026-11-24-fire-rules` D-2, B-179):
+    // the release checks the band, not the arc, so the lock changes no damage.
+    if weapon.has_turret && !weapon.locks_turret_while_firing {
         let delta = target.position - entity.position;
         slew_towards(entity, weapon, SimAngle::atan2(delta.y, delta.x));
     }
