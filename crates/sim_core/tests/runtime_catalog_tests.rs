@@ -3501,3 +3501,157 @@ fn an_authored_lock_off_turns_the_turret() -> TestResult {
     bundle.finish()?;
     Ok(())
 }
+
+/// The life and shields an air enemy holding beside the path loses while a unit of `shooter_type`
+/// chases, under a player's attack, an air enemy of `enemy_type` that flees at twice its own
+/// speed, for 80 ticks, in `catalogs`. The two enemies are of `enemy_type`; the fleeing one's
+/// speed is scaled in this world's copy of the catalog only.
+fn damage_dealt_in_a_chase(
+    catalogs: RuntimeCatalogs,
+    shooter_type: UnitTypeId,
+    enemy_type: UnitTypeId,
+) -> Result<SimScalar, Box<dyn std::error::Error>> {
+    let map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0)))?;
+    let mut world = SimWorld::with_catalogs(map, 7, catalogs.units, catalogs.upgrades)?;
+    let speed = world.catalog.get(shooter_type)?.max_speed;
+    let mut fleeing_arch = world.catalog.get(enemy_type)?.clone();
+    fleeing_arch.unit_type_id = UnitTypeId(
+        world
+            .catalog
+            .archetypes()
+            .map(|arch| arch.unit_type_id.0)
+            .max()
+            .unwrap_or(0)
+            + 1,
+    );
+    "scratch_fleeing".clone_into(&mut fleeing_arch.slug);
+    fleeing_arch.max_speed = speed * SimScalar::from_i32(2);
+    fleeing_arch.acceleration *= SimScalar::from_i32(4);
+    let fleeing_type = fleeing_arch.unit_type_id;
+    world.catalog.register(fleeing_arch);
+    let shooter = world.spawn_unit(shooter_type, PlayerId(0), SimVec2::from_i32(10, 30))?;
+    let fleeing = world.spawn_unit(fleeing_type, PlayerId(1), SimVec2::from_i32(17, 30))?;
+    let passed = world.spawn_unit(enemy_type, PlayerId(1), SimVec2::from_i32(20, 31))?;
+    let life = |world: &SimWorld| {
+        world
+            .entities
+            .get(&passed)
+            .map_or(SimScalar::ZERO, |e| e.hp + e.shields)
+    };
+    let before = life(&world);
+    let command = |player: u8, unit, order| sim_types::PlayerCommand {
+        player_id: PlayerId(player),
+        entities: vec![unit],
+        order,
+        queue: false,
+    };
+    let mut commands = vec![
+        command(
+            0,
+            shooter,
+            sim_types::UnitOrder::AttackTarget {
+                target: fleeing,
+                origin: sim_types::AttackOrigin::Explicit,
+            },
+        ),
+        command(
+            1,
+            fleeing,
+            sim_types::UnitOrder::Move {
+                target: SimVec2::from_i32(62, 30),
+            },
+        ),
+        command(1, passed, sim_types::UnitOrder::HoldPosition),
+    ];
+    for tick in 0..80_u32 {
+        world.step(&sim_types::TickBundle {
+            tick: sim_types::Tick(tick),
+            commands: std::mem::take(&mut commands),
+            state_checksum: None,
+        });
+    }
+    Ok(before - life(&world))
+}
+
+/// Plan `2026-11-24-fire-rules` P-10, the target half: removing the shipped
+/// `fires_at_other_targets: true` of an air weapon that fires while moving from a copied
+/// `units.ron` makes its unit hold fire at an enemy it passes while it chases its attack order's
+/// target, in the same binary.
+#[test]
+fn an_authored_order_target_only_weapon_holds_in_a_chase() -> TestResult {
+    let shipped = RuntimeCatalogs::load_from_directory(catalog_directory())?;
+    let shooter = shipped
+        .units
+        .archetypes()
+        .filter(|archetype| {
+            archetype.mover_type == sim_types::MoverType::Air
+                && archetype.air_weapon.as_ref().is_some_and(|weapon| {
+                    weapon.fires_at_other_targets
+                        && weapon.allowed_movement == sim_types::AllowedMovement::Moving
+                })
+        })
+        .min_by_key(|archetype| archetype.unit_type_id)
+        .ok_or("a shipped air weapon fires at other targets while moving")?;
+    let (shooter_type, faction) = (shooter.unit_type_id, shooter.faction);
+    let enemy_type = shipped
+        .units
+        .archetypes()
+        .filter(|archetype| {
+            archetype.mover_type == sim_types::MoverType::Air
+                && archetype.faction != faction
+                && archetype.max_speed > SimScalar::ZERO
+                && archetype.max_hp >= SimScalar::from_i32(100)
+        })
+        .min_by_key(|archetype| archetype.unit_type_id)
+        .ok_or("an air unit of another faction")?
+        .unit_type_id;
+
+    let bundle = Bundle::new("order-target-only")?;
+    let path = bundle.directory.join(FILES[0]);
+    let units = std::fs::read_to_string(&path)?;
+    // The shooter's own row: from its slug to the next slug.
+    let start = units
+        .find(&format!("slug: \"{}\"", shooter.slug))
+        .ok_or("the shooter's row")?;
+    let end = start
+        + 6
+        + units[start + 6..]
+            .find("slug: \"")
+            .unwrap_or(units.len() - start - 6);
+    let row = &units[start..end];
+    let option = "fires_at_other_targets: true,\n";
+    assert_eq!(
+        row.matches(option).count(),
+        1,
+        "premise: one option in the row"
+    );
+    let edited_row = row.replacen(option, "", 1);
+    std::fs::write(
+        &path,
+        format!("{}{edited_row}{}", &units[..start], &units[end..]),
+    )?;
+    let edited = bundle.load()?;
+    assert!(
+        !edited
+            .units
+            .get(shooter_type)?
+            .air_weapon
+            .as_ref()
+            .ok_or("the edited weapon")?
+            .fires_at_other_targets,
+        "premise: the edited weapon reads the engine default"
+    );
+    let shipped_damage = damage_dealt_in_a_chase(shipped, shooter_type, enemy_type)?;
+    let edited_damage = damage_dealt_in_a_chase(edited, shooter_type, enemy_type)?;
+    assert!(
+        shipped_damage > SimScalar::ZERO,
+        "the shipped unit strikes the enemy it passes in the chase"
+    );
+    assert_eq!(
+        edited_damage,
+        SimScalar::ZERO,
+        "the edited unit holds fire in the chase"
+    );
+    bundle.finish()?;
+    Ok(())
+}

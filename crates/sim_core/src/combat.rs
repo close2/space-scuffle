@@ -580,12 +580,30 @@ fn in_engagement_band(
     combined_radius: SimScalar,
     slop: SimScalar,
 ) -> bool {
-    let closest = if weapon.min_range > SimScalar::ZERO {
-        weapon.min_range + combined_radius
+    within_band(
+        distance,
+        weapon.min_range,
+        weapon.max_range + slop,
+        combined_radius,
+    )
+}
+
+/// Whether a centre `distance` (world units) lies in the band a weapon of `min_range` and
+/// `max_range` engages from, both measured between the edges, so `combined_radius` (both
+/// collision radii) is added to each; a `min_range` of 0 has no near limit. The combat phase
+/// asks it with the range its owner's upgrades resolve to.
+pub(crate) fn within_band(
+    distance: SimScalar,
+    min_range: SimScalar,
+    max_range: SimScalar,
+    combined_radius: SimScalar,
+) -> bool {
+    let closest = if min_range > SimScalar::ZERO {
+        min_range + combined_radius
     } else {
         SimScalar::ZERO
     };
-    distance <= weapon.max_range + combined_radius + slop && distance >= closest
+    distance <= max_range + combined_radius && distance >= closest
 }
 
 /// Releases the swing against `target`. Returns true when the shot discharges.
