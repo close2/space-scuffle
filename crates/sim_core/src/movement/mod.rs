@@ -26,7 +26,8 @@ pub use math::MovementMathError;
 use crate::{Entity, SimWorld, SimulationDiagnostic, SteeringObstacle, UnitCatalog};
 use sim_map::GameMap;
 use sim_types::{
-    AttackOrigin, EntityId, MoverType, PerPlayer, PlayerId, SimScalar, SimVec2, Tick, UnitOrder,
+    AttackCommand, AttackOrigin, EntityId, MoverType, PerPlayer, PlayerId, SimScalar, SimVec2,
+    Tick, UnitOrder,
 };
 use thiserror::Error;
 
@@ -489,6 +490,10 @@ impl SimWorld {
     }
 
     /// Atomically admits one Move/AttackMove order for all unique selected actors.
+    /// An `AttackMove` reaches only the actors that are mobile in their settled stance and
+    /// whose settled stance has an A command; the others are filtered out of the selection
+    /// rather than refusing it, and a command left with no recipient is admitted and changes
+    /// nothing (plan `2026-11-24-attack-orders` D-9).
     /// Queuing preserves existing orders; replacement preserves normal weapon interruption.
     /// Destination coordinates are world units, validated against each actual radius.
     ///
@@ -532,6 +537,16 @@ impl SimWorld {
         self.movement.recipients.extend_from_slice(recipients);
         self.movement.recipients.sort_unstable();
         self.movement.recipients.dedup();
+        if matches!(order, UnitOrder::AttackMove { .. }) {
+            let (catalog, entities) = (&self.catalog, &self.entities);
+            // Validation resolved every recipient's archetype; a lookup that fails here
+            // would have refused the command before any mutation.
+            self.movement.recipients.retain(|id| {
+                entities
+                    .get(id)
+                    .is_some_and(|entity| takes_attack_move(catalog, entity).unwrap_or(false))
+            });
+        }
         let receipt = MovementReceipt {
             recipient_count: self.movement.recipients.len(),
         };
@@ -582,6 +597,12 @@ impl SimWorld {
             }
             if entity.is_loaded_in_transport() {
                 return Err(MovementAdmissionError::LoadedRecipient(*id));
+            }
+            if matches!(order, UnitOrder::AttackMove { .. })
+                && !takes_attack_move(&self.catalog, entity)?
+            {
+                // Filtered out of the selection (D-9), so its domain is not asked.
+                continue;
             }
             let policy = MotionPolicy::resolve(&self.catalog, &self.map, entity)?;
             if !policy.contains(&self.map, target) {
@@ -687,6 +708,23 @@ impl SimWorld {
         }
         Ok(())
     }
+}
+
+/// Whether an `AttackMove` reaches `entity` under `ToSelection` (5.0.14 `core`
+/// AbilData:127-129; plan `2026-11-24-attack-orders` D-9, B-176's `AttackMove` half): the unit
+/// is mobile in the stance it is in or is switching to
+/// ([`Entity::immobile_after_channel`] is false), and that stance has an A command
+/// ([`Entity::settled_attack_command`] is not [`AttackCommand::None`]). Movement admission
+/// filters the others out of the selection instead of refusing the command.
+///
+/// # Errors
+/// [`MovementInvariant::MissingArchetype`] when `entity`'s archetype is not in `catalog`.
+fn takes_attack_move(catalog: &UnitCatalog, entity: &Entity) -> Result<bool, MovementInvariant> {
+    let archetype = catalog
+        .get(entity.unit_type_id)
+        .map_err(|_| MovementInvariant::MissingArchetype(entity.id))?;
+    Ok(!entity.immobile_after_channel(archetype)
+        && entity.settled_attack_command(archetype) != AttackCommand::None)
 }
 
 /// Euclidean distance in raw Q32.32, widening before squaring. The squared
