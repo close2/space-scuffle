@@ -530,17 +530,40 @@ mod tests {
     /// the two units and not the registered structure beside them.
     #[test]
     fn a_registered_structure_is_no_collision_body() -> Result<(), Box<dyn std::error::Error>> {
-        let (mut world, structure, _) = structure_and_units()?;
-        world.resolve_collisions_and_push();
-        assert!(world.drain_diagnostics().next().is_none());
-        let ids: Vec<EntityId> = world
-            .movement
-            .bodies
-            .iter()
-            .map(|body| body.entry.id)
-            .collect();
-        assert_eq!(ids.len(), 2, "the two units: {ids:?}");
-        assert!(!ids.contains(&structure), "{ids:?}");
+        // Both pipelines (plan `2026-11-20-contact-solver` §8.1, restated for the solver's bodies
+        // at WP6): the legacy pass's body list and the contact solver's.
+        for pipeline in [
+            MovementPipeline::Legacy,
+            MovementPipeline::Solver,
+        ] {
+            let (mut world, structure, _) = structure_and_units()?;
+            let rules = world.catalog.movement_rules();
+            world
+                .catalog
+                .set_movement_rules(rules.with_contact(crate::catalog::ContactRules {
+                    pipeline,
+                    ..rules.contact()
+                })?);
+            world.resolve_collisions_and_push();
+            assert!(world.drain_diagnostics().next().is_none());
+            let ids: Vec<EntityId> = match pipeline {
+                MovementPipeline::Legacy => world
+                    .movement
+                    .bodies
+                    .iter()
+                    .map(|body| body.entry.id)
+                    .collect(),
+                MovementPipeline::Solver => world
+                    .movement
+                    .solver
+                    .bodies
+                    .iter()
+                    .map(|body| body.id)
+                    .collect(),
+            };
+            assert_eq!(ids.len(), 2, "{pipeline:?}, the two units: {ids:?}");
+            assert!(!ids.contains(&structure), "{pipeline:?}: {ids:?}");
+        }
         Ok(())
     }
 

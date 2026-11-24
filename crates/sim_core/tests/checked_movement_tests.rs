@@ -517,9 +517,23 @@ fn widened_blink_and_flee_queries_preserve_exact_admission_and_payments() -> Tes
     Ok(())
 }
 
+/// The world of `f` on `pipeline` (plan `2026-11-20-contact-solver` WP6: the solver is the
+/// default, and a test of the legacy collision pass names the legacy pipeline until WP7).
+fn on_pipeline(f: &mut Fixture, pipeline: sim_core::catalog::MovementPipeline) -> TestResult {
+    let rules = f.world.catalog.movement_rules();
+    f.world
+        .catalog
+        .set_movement_rules(rules.with_contact(sim_core::catalog::ContactRules {
+            pipeline,
+            ..rules.contact()
+        })?);
+    Ok(())
+}
+
 #[test]
 fn late_collision_pose_failure_preserves_actor_and_keeps_valid_neighbor_work() -> TestResult {
     let mut f = Fixture::new(32, 32)?;
+    on_pipeline(&mut f, sim_core::catalog::MovementPipeline::Legacy)?;
     let a = f.spawn(f.air, point(8, 8))?;
     let b = f.spawn(
         f.air,
@@ -536,6 +550,32 @@ fn late_collision_pose_failure_preserves_actor_and_keeps_valid_neighbor_work() -
     assert_eq!(f.world.entities[&a], before);
     assert_ne!(f.world.entities[&b].position, neighbor);
     assert!(f.world.diagnostics().iter().any(|d|matches!(d,sim_core::SimulationDiagnostic::MovementInvariant{source:MovementInvariant::Arithmetic{entity,operation:"collision application",source:MovementMathError::Unrepresentable},..}if *entity==a)));
+    f.world.validate_supply_ledger()?;
+    Ok(())
+}
+
+/// The solver pipeline's form (WP6): a body whose tick-start position lies off the map is not
+/// moved (its terrain step refuses every correction from there), and its neighbour's contact is
+/// still resolved. No arithmetic fails, so no diagnostic is raised.
+#[test]
+fn an_off_map_tick_start_keeps_the_body_and_the_solver_resolves_its_neighbour() -> TestResult {
+    let mut f = Fixture::new(32, 32)?;
+    on_pipeline(&mut f, sim_core::catalog::MovementPipeline::Solver)?;
+    let a = f.spawn(f.air, point(8, 8))?;
+    let b = f.spawn(
+        f.air,
+        SimVec2::new(SimScalar::from_num(8.5), SimScalar::from_num(8)),
+    )?;
+    f.world
+        .entities
+        .get_mut(&a)
+        .ok_or("actor")?
+        .pos_at_tick_start = SimVec2::new(SimScalar::from_raw(i64::MIN), SimScalar::ZERO);
+    let before = f.world.entities[&a].clone();
+    let neighbor = f.world.entities[&b].position;
+    f.world.resolve_collisions_and_push();
+    assert_eq!(f.world.entities[&a], before);
+    assert_ne!(f.world.entities[&b].position, neighbor);
     f.world.validate_supply_ledger()?;
     Ok(())
 }
