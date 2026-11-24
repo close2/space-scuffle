@@ -40,3 +40,13 @@ Sanctioned by the owner's answer to [Q0095](0095-engaged-units-nudged-sideways.m
 - **D-δ:** allies who need room may nudge an attacking unit sideways along its attack ring. The data switch
   defaults to on. The unit is never pushed out of attack range and never by enemies. A unit on Hold Position is
   never nudged. With the switch off, StarCraft II's rule (attacking units are not pushed) applies.
+
+## Addendum (2026-11-25): an attacker snapshot lasts at most 1 second, from Q0112
+
+Sanctioned by the owner's answer to [Q0112](0112-attacker-snapshot.md), option 2(c), for plan
+`docs/plans/2026-11-24-attacker-snapshot.md` (Amendment 1):
+
+- **S-snapshot-cap:** an unseen attacker's snapshot ends when its struck player sees the spot or the attacker, as in
+  StarCraft II 5.0.14, and also at most 1 second (25 ticks) after the strike that made or last refreshed it. The cap
+  is authored in `assets/catalog/units.ron` (`attack_snapshot_cap_ticks`); leaving it out gives the game's rule.
+  Presentation only: no battle outcome, replay or checksum depends on it.
