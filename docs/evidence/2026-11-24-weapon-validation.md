@@ -99,3 +99,23 @@ as it should (a dead target is not followed either way).
 
 **Worlds.** Every output of §7.1 is byte-identical to WP0 (`compare-wp3.txt`: 483 files, 0 differing), as probe (e)
 predicted (no cloak against the Brood Lord analogue); the goldens and the sandbox pass unchanged on native debug.
+
+## WP4: battle 42
+
+**Positions (a deviation from §7.4's coordinates, by its own rule).** The plan's positions (tank at (50.0, 32.0),
+workers at x = 41.5) do not satisfy its rule, because sight is whole cells: a cell is seen when its offset from the
+viewer's cell is within the radius. The tank at x = 50.0 stands in cell 49 or 50 under the spawn jitter (±0.12), and
+a worker in cell 41 at dy 0 sees cell 49 (offset 8, within a worker's 8): on the first try the struck workers
+answered and killed the tank on 9 of 20 seeds. The battle now places the tank at a cell centre, (50.5, 32.5), and the
+column at x = 41.85 (cell 41 under the jitter), rows 30.25 to 34.75: every worker is 9 cells from the tank (beyond its
+8, inside the tank's 11), 8.56 to 9.10 world units away. §7.4's verify, on all 20 seeds (`scripts/b42check.py`):
+no worker ever swings; every worker is struck, flees once, and stops 13.55 to 14.09 from the tank, outside its
+sight and inside its reach of 14.25.
+
+**Recorded expectation** (B-185 open): the first shell strikes three workers, which flee out of the tank's sight;
+the tank takes the fourth, which flees too, and shells it beyond its sight until it dies (its last tick 180 to
+246). On all 20 seeds 3 workers and the tank are left at tick 900: `expect: (blue: (3, 3), red: (1, 1))`.
+
+**Worlds.** Every output of §7.1 is byte-identical to WP0 except the matrix's summary files, which gain battle 42's
+rows (`matrix.csv` equal to WP0's with battle 42's rows removed; 1,220 runs, 0 expectation failures on the seeds of
+record, 4 over all seeds, as on WP0).
