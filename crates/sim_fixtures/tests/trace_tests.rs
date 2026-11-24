@@ -592,7 +592,11 @@ fn the_matrix_mode_writes_every_battle_and_seed_and_compares_runs() -> TestResul
         lines[0],
         "battle,seed,of_record,end_tick,blue_survivors,red_survivors,blue_lead_hull,\
          red_lead_hull,expectation_met,blocked_attacker_ticks,reversals,stall_giveups,\
-         proposal_reversals,contact_reversals"
+         proposal_reversals,contact_reversals,blue_shove,red_shove,blue_r10_leash,\
+         blue_r10_terrain,blue_r10_unruled,blue_r10_free,red_r10_leash,red_r10_terrain,\
+         red_r10_unruled,red_r10_free,blue_churn_explained,blue_churn_unexplained,\
+         red_churn_explained,red_churn_unexplained,blue_blocked,red_blocked,blue_shots,\
+         red_shots,blue_unit_ticks,red_unit_ticks,enemy_overlap"
     );
     // The reversals split into proposal- and contact-caused ones that sum to them (plan
     // `2026-11-19-crowd-edge-steering` D-5).
