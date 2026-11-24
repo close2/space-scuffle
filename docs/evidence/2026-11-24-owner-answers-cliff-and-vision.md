@@ -160,3 +160,11 @@ running in parallel threads interleave differently (sorted, they are identical).
 schema 43), `full_match_tests`, `damage_and_shields_tests`, `vision_tests`, `ramp_vision_tests` and every
 `sim_fixtures` target (the sandbox) pass. `cargo gate quick` is green on the merged tree, `workspace_checks`
 included.
+
+**Merge of hidden-harvesters.** `main` at `d662274f` (plan `2026-11-24-hidden-harvesters`, schema 44) merged as
+`d02ae75a`. The merged tree's worlds, measured as in §7.1, are byte-identical to `main`'s own (`world-main` against
+`world-final`: 483 files, 0 differing; the matrix keeps 0 expectation failures on its seeds of record and 4 over all
+seeds), so this branch moves nothing on top of `main`. On the merged tree `cargo gate quick` is green, workspace
+clippy is clean, and the goldens (release, schema 44), `full_match_tests`, `damage_and_shields_tests`,
+`detection_circle_tests`, `splash_cliff_tests`, `attack_reveal_tests` and every `sim_map` and `sim_fixtures` target
+pass.
