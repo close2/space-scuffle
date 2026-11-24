@@ -586,7 +586,7 @@ pointer and the README row `Done`. `## As built` appended here. Commit `docs: cl
 
 ---
 
-## 15. Draft owner question (for the orchestrator to file as Q0112; not filed by this plan)
+## 15. Draft owner question (filed as [Q0112](../questions/open/0112-attacker-snapshot.md))
 
 ````markdown
 # Q0112: The attacker snapshot: the minimap, how long it stays, and concealed attackers
