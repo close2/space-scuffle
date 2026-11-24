@@ -114,7 +114,10 @@ use std::path::PathBuf;
 /// encodes each entity's teleport count, each projectile's target teleport count and each
 /// weapon's missile validation; a scratch build that leaves them unhashed and keeps schema 41
 /// reproduces `1_550_645_596_559_574_539`.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 17_697_741_365_715_682_877;
+/// Re-recorded for checksum schema 45 (plan `2026-11-24-fire-rules` WP1, D-8), which encodes each
+/// weapon's two fire rules and each entity's own weapon target; a scratch build that leaves them
+/// unhashed and keeps schema 43 reproduces `17_697_741_365_715_682_877`.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 16_215_936_981_767_392_313;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

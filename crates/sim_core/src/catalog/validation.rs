@@ -954,6 +954,28 @@ impl WeaponSpecDef {
         }
     }
 
+    /// Checks the fire rules of plan `2026-11-24-fire-rules` (D-7): a lock needs a turret to lock
+    /// (5.0.14's only `LockTurretWhileFiring` weapon is turreted), and a weapon that removes its
+    /// attacker when it fires may not fire at a target its attack order did not name (its unit
+    /// would detonate on a target it never chose; no 5.0.14 weapon combines the two).
+    fn validate_fire_rules(&self, definition: &str, prefix: &str) -> SimResult<()> {
+        if self.locks_turret_while_firing && !self.has_turret {
+            return Err(invalid(
+                definition,
+                &format!("{prefix}.locks_turret_while_firing"),
+                "a weapon without a turret has no turret to lock",
+            ));
+        }
+        if self.fires_at_other_targets && self.suicide_on_attack {
+            return Err(invalid(
+                definition,
+                &format!("{prefix}.fires_at_other_targets"),
+                "a weapon that removes its attacker when it fires fires only at its order's target",
+            ));
+        }
+        Ok(())
+    }
+
     /// Checks the turret rate: a turreted weapon turns at a rate in `0 < rate <= 180` degrees
     /// per tick; a hull-mounted weapon turns with the hull and authors exactly 0.
     fn validate_turret(&self, definition: &str, prefix: &str) -> SimResult<()> {
@@ -1019,6 +1041,7 @@ impl WeaponSpecDef {
         }
         self.validate_arcs(definition, prefix)?;
         self.validate_turret(definition, prefix)?;
+        self.validate_fire_rules(definition, prefix)?;
         // B-123 (plan `2026-11-17-effect-snapshot-identity` D-7): the delivery path is chosen by
         // the speed, and an instant hit publishes its event by `visual_kind`, which has no event
         // for `Projectile`: such a weapon would fire with no look at all.
@@ -4407,6 +4430,77 @@ mod attack_visibility_tests {
             weapon.attack_visibility = AttackVisibility::Visible { reveal_ticks: 54 };
         }
         unit.validate()?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod fire_rule_tests {
+    //! D-7 of plan `2026-11-24-fire-rules` (P-11): a lock needs a turret, a weapon that removes
+    //! its attacker may not fire at a target its attack order did not name, and both fields read
+    //! the engine defaults when omitted.
+    use super::strike_delay_tests::{refused_field, weapons};
+    use crate::catalog::{CatalogFile, WeaponSpecDef};
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    #[test]
+    fn a_lock_needs_a_turret() -> TestResult {
+        let hull = |weapon: &WeaponSpecDef| !weapon.has_turret;
+        let field = refused_field(hull, |weapon| weapon.locks_turret_while_firing = true)?;
+        assert!(field.ends_with(".locks_turret_while_firing"), "{field}");
+        let turret = |weapon: &WeaponSpecDef| weapon.has_turret;
+        let field = refused_field(turret, |weapon| weapon.locks_turret_while_firing = true)?;
+        assert_eq!(field, "accepted", "a turret may lock");
+        Ok(())
+    }
+
+    #[test]
+    fn a_suicide_weapon_fires_only_at_its_orders_target() -> TestResult {
+        let suicide = |weapon: &WeaponSpecDef| weapon.suicide_on_attack;
+        let field = refused_field(suicide, |weapon| weapon.fires_at_other_targets = true)?;
+        assert!(field.ends_with(".fires_at_other_targets"), "{field}");
+        let other = |weapon: &WeaponSpecDef| !weapon.suicide_on_attack;
+        for outside in [false, true] {
+            let field = refused_field(other, |weapon| {
+                weapon.fires_at_other_targets = true;
+                weapon.fires_outside_attack_order = outside;
+            })?;
+            assert_eq!(
+                field, "accepted",
+                "the target option is independent of the order option ({outside})"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn omitted_fire_rules_read_the_engine_defaults() -> TestResult {
+        let text: String = include_str!("../../../../assets/catalog/units.ron")
+            .lines()
+            .filter(|line| {
+                !line.contains("fires_at_other_targets")
+                    && !line.contains("locks_turret_while_firing")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let file: CatalogFile = ron::from_str(&text)?;
+        let mut checked = 0_usize;
+        for mut unit in file.units {
+            for weapon in weapons(&mut unit) {
+                assert_eq!(
+                    (
+                        weapon.fires_at_other_targets,
+                        weapon.locks_turret_while_firing
+                    ),
+                    (false, false),
+                    "{}",
+                    weapon.name
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked > 0, "premise: the catalog has weapons");
         Ok(())
     }
 }

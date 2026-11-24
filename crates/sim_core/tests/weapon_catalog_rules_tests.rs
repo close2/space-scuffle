@@ -1910,3 +1910,124 @@ fn attack_visibility_follows_starcraft() -> TestResult {
     assert!(visible > 0, "the shipped catalog has air-plane weapons");
     Ok(())
 }
+
+/// `StarCraft` II 5.0.14 weapons whose `OnlyFireAtAttackOrderTarget` or `LockTurretWhileFiring`
+/// differs from the engine defaults, resolved through the override chain with XML comments
+/// stripped: `(analogue, fires_at_other_targets, locks_turret_while_firing, source)` (plan
+/// `2026-11-24-fire-rules` §2.3, B-180, B-179). Every weapon of every other archetype, and every
+/// mode's weapon, has the defaults: `Options OnlyFireAtAttackOrderTarget 1` is on the `CWeapon`
+/// default (`core` WeaponData:21), and `LockTurretWhileFiring` appears only on the Hellion's
+/// `InfernalFlameThrower`. The Void Ray's options that would clear the target condition are
+/// commented out (`void` WeaponData:172–173), and the Siege Tank's hidden `90mmCannonsFake`, which
+/// clears it, is not modelled (B-198).
+const SC2_FIRE_RULES: [(&str, bool, bool, &str); 5] = [
+    (
+        "Phoenix",
+        true,
+        false,
+        "IonCannons OnlyFireAtAttackOrderTarget 0: libertymulti WeaponData:21, swarm WeaponData:178",
+    ),
+    (
+        "Immortal",
+        true,
+        false,
+        "PhaseDisruptors OnlyFireAtAttackOrderTarget 0: voidmulti WeaponData:206, balancemulti \
+         WeaponData:186",
+    ),
+    (
+        "Colossus",
+        true,
+        false,
+        "ThermalLances OnlyFireAtAttackOrderTarget 0: voidmulti WeaponData:257, balancemulti \
+         WeaponData:230",
+    ),
+    (
+        "Planetary Fortress",
+        true,
+        false,
+        "TwinIbiksCannon OnlyFireAtAttackOrderTarget 0: liberty WeaponData:140",
+    ),
+    (
+        "Hellion",
+        false,
+        true,
+        "InfernalFlameThrower LegacyOptions LockTurretWhileFiring 1: liberty WeaponData:590",
+    ),
+];
+
+/// P-8 of plan `2026-11-24-fire-rules`: every shipped weapon's `fires_at_other_targets` and
+/// `locks_turret_while_firing` equal §2.3's table, the defaults for every unlisted analogue and
+/// every mode's weapon.
+#[test]
+fn b180_b179_fire_rules_follow_starcraft() -> TestResult {
+    let world = flat_world(16)?;
+    for (unit, _, _, source) in SC2_FIRE_RULES {
+        assert!(
+            archetypes_with_analogue(&world, unit).next().is_some(),
+            "an archetype with the analogue {unit} ({source})"
+        );
+    }
+    let defaults = (false, false);
+    let default_source = "core WeaponData:21, no LockTurretWhileFiring";
+    for archetype in world.catalog.archetypes() {
+        let analogue = archetype
+            .sc2_analogue()
+            .and_then(|analogue| analogue.split(" (").next());
+        let listed = SC2_FIRE_RULES
+            .iter()
+            .find(|(unit, ..)| Some(*unit) == analogue);
+        let (expected, source) =
+            listed.map_or((defaults, default_source), |row| ((row.1, row.2), row.3));
+        // A mode's weapon is another 5.0.14 weapon; no modelled one differs from the defaults.
+        let checks = own_weapons(archetype)
+            .map(|weapon| (weapon, expected, source))
+            .chain(mode_weapons(archetype).map(|weapon| (weapon, defaults, default_source)));
+        for (weapon, expected, source) in checks {
+            assert_eq!(
+                (
+                    weapon.fires_at_other_targets,
+                    weapon.locks_turret_while_firing
+                ),
+                expected,
+                "{} {}: OnlyFireAtAttackOrderTarget (inverted) and LockTurretWhileFiring as \
+                 StarCraft II's weapon ({source})",
+                archetype.slug,
+                weapon.name,
+            );
+        }
+    }
+    Ok(())
+}
+
+/// P-11 of plan `2026-11-24-fire-rules` (D-7): a lock needs a turret to lock, and a weapon that
+/// removes its attacker when it fires may not fire at a target its attack order did not name;
+/// each refusal names its field.
+#[test]
+fn fire_rule_refusals_name_their_field() {
+    assert_rejected(
+        UNITS,
+        "has_turret: false,",
+        "has_turret: false, locks_turret_while_firing: true,",
+        "locks_turret_while_firing",
+    );
+    assert_rejected(
+        UNITS,
+        "suicide_on_attack: true,",
+        "suicide_on_attack: true, fires_at_other_targets: true,",
+        "fires_at_other_targets",
+    );
+}
+
+/// P-11 of plan `2026-11-24-fire-rules`: a turreted weapon may lock its turret, and any weapon
+/// that does not remove its attacker may fire at other targets; both fields may be set together.
+#[test]
+fn fire_rules_are_accepted_where_they_make_sense() -> TestResult {
+    let edited = UNITS.replacen(
+        "has_turret: true,",
+        "has_turret: true, locks_turret_while_firing: true, fires_at_other_targets: true,",
+        1,
+    );
+    assert_ne!(edited, UNITS, "premise: the shipped catalog has a turret");
+    UnitCatalog::from_ron_str_bundle(&sim_fixtures::shipped_factions(), &edited, STRUCTURES)?;
+    Ok(())
+}

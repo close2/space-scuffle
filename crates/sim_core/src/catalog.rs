@@ -1377,7 +1377,7 @@ impl TurretIdleDef {
 #[derive(Debug, Deserialize)]
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "independent authored facts of one weapon (turret, attack-order option, channel, suicide, melee)"
+    reason = "independent authored facts of one weapon (turret, turret lock, attack-order options, channel, suicide, melee)"
 )]
 struct WeaponSpecDef {
     name: String,
@@ -1407,6 +1407,16 @@ struct WeaponSpecDef {
     /// the engine default, `false`.
     #[serde(default)]
     pub(crate) fires_outside_attack_order: bool,
+    /// Whether the weapon may work against a target other than its attack order's, the inverse
+    /// of `StarCraft` II's `OnlyFireAtAttackOrderTarget` (see
+    /// [`WeaponSpec::fires_at_other_targets`]). Omitted reads the engine default, `false`.
+    #[serde(default)]
+    pub(crate) fires_at_other_targets: bool,
+    /// Whether the weapon's turret holds still while it fires, `StarCraft` II's
+    /// `LockTurretWhileFiring` (see [`WeaponSpec::locks_turret_while_firing`]). Omitted reads the
+    /// engine default, `false`; refused without `has_turret`.
+    #[serde(default)]
+    pub(crate) locks_turret_while_firing: bool,
     base_damage: f32,
     /// Bonus damage per strike against attributes: `(attribute, bonus)` pairs, at most one per
     /// attribute; required, `[]` for none, so a catalog written before the field fails to load.
@@ -1648,6 +1658,8 @@ impl UnitArchetypeDef {
             turret_idle: w.turret_idle.to_spec(),
             allowed_movement: w.allowed_movement,
             fires_outside_attack_order: w.fires_outside_attack_order,
+            fires_at_other_targets: w.fires_at_other_targets,
+            locks_turret_while_firing: w.locks_turret_while_firing,
             base_damage: SimScalar::from_f32_lossy(w.base_damage),
             attribute_bonuses: w.attribute_bonuses.iter().fold(
                 AttributeBonuses::NONE,

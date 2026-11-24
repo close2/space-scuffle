@@ -122,6 +122,8 @@ fn dummy_weapon_spec(
         turret_idle: sim_types::TurretIdle::Hold,
         allowed_movement: sim_types::AllowedMovement::Stopped,
         fires_outside_attack_order: false,
+        fires_at_other_targets: false,
+        locks_turret_while_firing: false,
         base_damage: base,
         attribute_bonuses: AttributeBonuses::NONE
             .with(Attribute::Armored, bonus_armored)
@@ -745,6 +747,8 @@ fn test_friendly_fire_splash_damages_allies_vs_enemy_only_splash() {
         turret_idle: sim_types::TurretIdle::Hold,
         allowed_movement: sim_types::AllowedMovement::Stopped,
         fires_outside_attack_order: false,
+        fires_at_other_targets: false,
+        locks_turret_while_firing: false,
         base_damage: SimScalar::from_num(40),
         attribute_bonuses: AttributeBonuses::NONE,
         attacks_count: 1,

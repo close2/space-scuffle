@@ -424,8 +424,15 @@
 // reproduce the lists recorded for plan 2026-11-23-vision-and-detection (schema 41), on native
 // debug and release and wasm32-wasip1 release and debug. Native debug and release and
 // wasm32-wasip1 release and debug agree on the list below.
+// Re-recorded for plan 2026-11-24-fire-rules WP1 (checksum schema 43 -> 45; 44 is reserved for
+// the hidden-harvesters work): each weapon also encodes whether it may fire at targets other than
+// its attack order's and whether it locks its turret while firing, and each entity the target its
+// weapon chose inside an attack order, so every checkpoint changed. No behaviour did: no rule
+// reads the fields yet, and with them left out of the encoding at schema 43 both fixtures
+// reproduce as recorded, on native debug and release and wasm32-wasip1 release and debug. Native
+// debug and release and wasm32-wasip1 release and debug agree on the list below.
 (
-    checksum_schema: 43,
+    checksum_schema: 45,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -451,25 +458,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x905f659572318b1d,
-        0x78417c07281b6698,
-        0x25383de5d7581651,
-        0x044e583fc75e685e,
-        0x1301b62948738547,
-        0xadf7c95284deec48,
-        0x4d3f2dac3839aff3,
-        0x0a66847b64c32362,
-        0x0a731488afeca738,
-        0x9ccdc225140f5ff5,
-        0xee6bb8849076e4a0,
-        0x326d2032dea962ec,
-        0x700c5a855420d521,
-        0x040f293f900dfb04,
-        0x6fd769d3fa728fc4,
-        0x4936a7f2c75e1d51,
-        0x91f0aad78d2ca9fe,
-        0x33981a09284c0486,
-        0x7922c3e6ed70c486,
-        0x8bfd498e25082bce,
+        0xb41d06bb3ddee685,
+        0x68d9266895ff1d70,
+        0x099d0f598fcb4995,
+        0x27b9fdd4abe23e1c,
+        0xd28ef1162bf9261b,
+        0x987427305da37a6f,
+        0x14204033c81229c7,
+        0xe0653111908af73b,
+        0x650123a450b07cc6,
+        0x035c3e5409bd7fe8,
+        0x68581d3207545d23,
+        0xf6b3a51fc570c070,
+        0x014a757b793d32e9,
+        0xf3ef338bd9589e94,
+        0x691aa66319745d6b,
+        0xd9489091e35092a3,
+        0x88ae9546cca83698,
+        0x40aa27317ac08041,
+        0xfda17b4f18a7f4b7,
+        0xb689df18ce8b58b2,
     ],
 )

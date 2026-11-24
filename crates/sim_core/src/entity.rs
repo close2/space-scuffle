@@ -532,6 +532,13 @@ pub struct Entity {
     pub hull_hit_flash_ticks: u8,
     /// Currently acquired combat target handle (used for independent turret tracking).
     pub current_target: Option<EntityId>,
+    /// The enemy this unit's weapon works against inside an attack order whose target it cannot
+    /// work against this tick, for a weapon whose data lets it fire at other targets
+    /// ([`WeaponSpec::fires_at_other_targets`], plan `2026-11-24-fire-rules` D-1, D-4).
+    /// Written only by target acquisition and read only by the combat phase; pursuit never reads
+    /// it, so the unit keeps chasing its order's target. Cleared by every order that replaces
+    /// the unit's orders, by boarding a transport, and when acquisition releases it.
+    pub weapon_target: Option<EntityId>,
     /// Where this unit's automatic target last stood, world units, recorded by target
     /// acquisition for an archetype whose tie-break is `AcquireTieBreak::ClosestToPrevious`, so
     /// that once the target is lost (dead, gone, out of reach) the unit takes the candidate
@@ -696,6 +703,7 @@ impl Entity {
             shield_hit_flash_ticks: 0,
             hull_hit_flash_ticks: 0,
             current_target: None,
+            weapon_target: None,
             previous_target_position: None,
             engaged_target: None,
             is_immobile: is_immobile_archetype,
@@ -958,6 +966,9 @@ impl Entity {
         }
 
         self.hold_through_return_wait();
+        // The weapon's own target belongs to the attack order being replaced (plan
+        // `2026-11-24-fire-rules` D-1); acquisition chooses anew under the new order.
+        self.weapon_target = None;
         self.movement.restart();
         self.abandon_task_leg();
         self.end_channeled_burst_for(&order);
@@ -1648,6 +1659,124 @@ mod order_walks_tests {
         }
         entity.order_queue.clear();
         assert!(!entity.order_walks(), "no order does not walk");
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod weapon_target_tests {
+    //! Plan `2026-11-24-fire-rules` D-1: the target a weapon chose inside an attack order belongs
+    //! to that order, so every order that replaces the unit's orders clears it, and a queued
+    //! order, which leaves the front order in place, keeps it.
+    use crate::test_support::world;
+    use sim_map::{CliffLevel, GameMap, MapCell};
+    use sim_types::{
+        AttackOrigin, EntityId, MoverType, PlayerId, RallyTarget, ResourceNodeId, SimScalar,
+        SimVec2, UnitOrder, UnitTypeId,
+    };
+
+    /// One order of every `UnitOrder` variant; the match keeps the list whole.
+    fn every_order(point: SimVec2) -> Vec<UnitOrder> {
+        let orders = vec![
+            UnitOrder::Idle,
+            UnitOrder::Move { target: point },
+            UnitOrder::AttackMove { target: point },
+            UnitOrder::AttackTarget {
+                target: EntityId(99),
+                origin: AttackOrigin::Explicit,
+            },
+            UnitOrder::HoldPosition,
+            UnitOrder::Stop,
+            UnitOrder::UseStim,
+            UnitOrder::Produce {
+                unit_type: UnitTypeId(0),
+            },
+            UnitOrder::Harvest {
+                target: ResourceNodeId(0),
+            },
+            UnitOrder::ReturnCargo,
+            UnitOrder::Build {
+                structure_type: UnitTypeId(0),
+                cell_x: 2,
+                cell_y: 2,
+            },
+            UnitOrder::Construct {
+                foundation: EntityId(99),
+            },
+            UnitOrder::CastAbility {
+                ability_index: 0,
+                target_pos: Some(point),
+                target_entity: None,
+            },
+            UnitOrder::CancelConstruction,
+            UnitOrder::Research { upgrade: 0 },
+            UnitOrder::CancelProduction { job_index: 0 },
+            UnitOrder::Load {
+                carrier: EntityId(99),
+            },
+            UnitOrder::UnloadAll,
+            UnitOrder::SetRally {
+                target: RallyTarget::Point(point),
+            },
+        ];
+        for order in &orders {
+            match order {
+                UnitOrder::Idle
+                | UnitOrder::Move { .. }
+                | UnitOrder::AttackMove { .. }
+                | UnitOrder::AttackTarget { .. }
+                | UnitOrder::HoldPosition
+                | UnitOrder::Stop
+                | UnitOrder::UseStim
+                | UnitOrder::Produce { .. }
+                | UnitOrder::Harvest { .. }
+                | UnitOrder::ReturnCargo
+                | UnitOrder::Build { .. }
+                | UnitOrder::Construct { .. }
+                | UnitOrder::CastAbility { .. }
+                | UnitOrder::CancelConstruction
+                | UnitOrder::Research { .. }
+                | UnitOrder::CancelProduction { .. }
+                | UnitOrder::Load { .. }
+                | UnitOrder::UnloadAll
+                | UnitOrder::SetRally { .. } => {}
+            }
+        }
+        orders
+    }
+
+    #[test]
+    fn commit_order_clears_the_weapon_target_for_every_order(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let map = GameMap::new(16, 16, MapCell::default_ground(CliffLevel(0)))?;
+        let mut world = world(map, 3);
+        let kind = world
+            .catalog
+            .archetypes()
+            .find(|arch| arch.mover_type == MoverType::Ground && arch.max_speed > SimScalar::ZERO)
+            .map(|arch| arch.unit_type_id)
+            .ok_or("the shipped catalog has a mobile ground unit")?;
+        let unit = world.spawn_unit(kind, PlayerId(0), SimVec2::from_i32(8, 8))?;
+        let entity = world.entities.get_mut(&unit).ok_or("unit")?;
+        assert_eq!(entity.weapon_target, None, "a new unit has chosen nothing");
+        for order in every_order(SimVec2::from_i32(4, 4)) {
+            entity.weapon_target = Some(EntityId(77));
+            entity.commit_order(order.clone(), false);
+            assert_eq!(entity.weapon_target, None, "{order:?} replaces the orders");
+            entity.order_queue = [UnitOrder::AttackTarget {
+                target: EntityId(98),
+                origin: AttackOrigin::Explicit,
+            }]
+            .into_iter()
+            .collect();
+            entity.weapon_target = Some(EntityId(77));
+            entity.commit_order(order.clone(), true);
+            assert_eq!(
+                entity.weapon_target,
+                Some(EntityId(77)),
+                "{order:?} queued leaves the front order and its weapon target"
+            );
+        }
         Ok(())
     }
 }
