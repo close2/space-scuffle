@@ -75,3 +75,6 @@ Battle 26 with the fix: the zerglings win 22 of 24.
   B-193).
 
 ## Answer
+
+- **Battle 26 — Option (a):** Restate the claim to what is measured (zerglings mostly win), citing the Q0095 melee ring-nudge (`D-δ`).
+- **Battle 28 — Option (a):** Restate the claim to what is measured (the immortals mostly win) so the movement solver merge proceeds cleanly. (`B-192` target switching and `B-193` enemy shoving can still be tracked and addressed as ordinary later improvements without blocking the merge.)
