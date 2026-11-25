@@ -19,6 +19,10 @@
 //! the mount: in a chase the turreted ground unit stands for each wind-up, and a hull weapon that
 //! is `Moving` (the Void Ray's analogue) keeps chasing through its wind-up inside an attack order.
 //!
+//! Between shots a mount faces its target (5.0.14 `FaceTargetWhileInCooldown`): a turret at its
+//! own rate (plan `2026-11-24-fire-rules` D-3), and the hull of a hull weapon on Hold Position at
+//! the stationary rate (plan `2026-11-25-wind-up-and-hold-facing` D-4, B-199).
+//!
 //! Positions are world units; angles are `SimAngle` binary angles.
 
 use sim_core::catalog::UnitArchetype;
@@ -383,14 +387,14 @@ fn a_hull_weapon_that_fires_while_moving_chases_through_its_wind_up() -> TestRes
 }
 
 /// One tick of the between-shots scene: the weapon phase, the turret angle, the hull heading,
-/// and the bearing to the enemy (`None` once it is gone).
+/// and the bearing to the enemy (`None` while it is not the unit's target).
 type ShotFrame = (WeaponPhase, SimAngle, SimAngle, Option<SimAngle>);
 
 /// The between-shots scene of B-197: a unit of `unit_type` at (20, 20) facing south, under a
 /// player's attack (or on Hold Position when `hold`) on an enemy of the same kind 5 south of it,
 /// which walks east across its front. Returns, for each of `ticks` ticks after the orders, the
 /// unit's weapon phase, turret angle, hull heading and the bearing from it to the enemy (binary
-/// angle, `None` once the enemy is gone).
+/// angle), `None` while the enemy is not the unit's target (gone, or released out of reach).
 fn between_shots_scene(
     unit_type: UnitTypeId,
     hold: bool,
@@ -425,10 +429,14 @@ fn between_shots_scene(
     for tick in 1..=ticks {
         step(&mut world, tick, Vec::new());
         let entity = world.entities.get(&unit).ok_or("unit")?;
-        let bearing = world.entities.get(&enemy).map(|other| {
-            let delta = other.position - entity.position;
-            SimAngle::atan2(delta.y, delta.x)
-        });
+        let bearing = entity
+            .current_target
+            .filter(|&target| target == enemy)
+            .and_then(|target| world.entities.get(&target))
+            .map(|other| {
+                let delta = other.position - entity.position;
+                SimAngle::atan2(delta.y, delta.x)
+            });
         frames.push((
             entity.weapon_phase.clone(),
             entity.turret_angle,
@@ -481,12 +489,13 @@ fn a_turret_follows_its_target_between_shots() -> TestResult {
     Ok(())
 }
 
-/// P-12 of plan `2026-11-24-fire-rules`: between shots, the weapon phase leaves a hull weapon's
-/// mount, the hull, where it is: a unit on Hold Position (no pursuit turns it) keeps its heading
-/// through every backswing and cooldown tick while its target walks across its front. Its hull
-/// turns again when its next swing needs it (R-7: B-199, the hull half of B-197).
+/// B-1 of plan `2026-11-25-wind-up-and-hold-facing` (D-4, B-199; restates fire-rules P-12, R-7):
+/// between shots a hull weapon of a unit on Hold Position, which no pursuit serves, turns the
+/// hull towards its target: on every backswing and cooldown tick the hull turns by exactly the
+/// stationary rate towards the target's bearing, or reaches it, while the target walks across
+/// its front (5.0.14 `FaceTargetWhileInCooldown 1`, `core` WeaponData:34).
 #[test]
-fn between_shots_a_hull_weapon_does_not_turn_its_hull() -> TestResult {
+fn between_shots_a_holding_hull_faces_its_target() -> TestResult {
     let world = shipped_world()?;
     let unit_type = world
         .catalog
@@ -503,21 +512,28 @@ fn between_shots_a_hull_weapon_does_not_turn_its_hull() -> TestResult {
         .min_by_key(|archetype| archetype.unit_type_id)
         .ok_or("a shipped ranged hull weapon")?
         .unit_type_id;
+    let rate = world.catalog.get(unit_type)?.stationary_turn_rate;
     let frames = between_shots_scene(unit_type, true, 80)?;
     let mut between = 0;
+    let mut turned = 0;
     for (tick, pair) in frames.windows(2).enumerate() {
         let ((before_phase, _, before, _), (after_phase, _, after, bearing)) = (&pair[0], &pair[1]);
-        if bearing.is_none() || !(between_shots(before_phase) && between_shots(after_phase)) {
+        let Some(bearing) = bearing else {
+            continue;
+        };
+        if !(between_shots(before_phase) && between_shots(after_phase)) {
             continue;
         }
         assert_eq!(
-            after,
-            before,
-            "tick {}: the hull holds between shots",
+            *after,
+            before.rotate_towards(*bearing, rate.raw()),
+            "tick {}: the hull faces its target between shots",
             tick + 2
         );
         between += 1;
+        turned += usize::from(after != before);
     }
     assert!(between > 0, "premise: the unit fired and cooled down");
+    assert!(turned > 0, "premise: the target moved between shots");
     Ok(())
 }

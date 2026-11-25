@@ -775,7 +775,9 @@ built (parts 1 to 4, answer (a) each), and the owner answered (a) on every part;
   attacker's pursuit splits them for that tick. Probe (b) counted none in the measured worlds. **WP6 is therefore
   needed** (§11), after the contact solver merges.
 - **R-7 found:** a hull unit on Hold Position does not face its target between shots; registered as **B-199**
-  (provisional), the hull half of B-197, deferred (a movement-side rule).
+  (provisional), the hull half of B-197, deferred (a movement-side rule). Fixed later by plan
+  [`2026-11-25-wind-up-and-hold-facing`](2026-11-25-wind-up-and-hold-facing.md) WP2, on the weapon side
+  (`face_target_between_shots`; the R-7 pin is restated as `between_shots_a_holding_hull_faces_its_target`).
 - **Numbers.** Schema 45, B-197, B-198 and B-199 are provisional: next free at merge.
 
 ## Amendment 1 (2026-11-25, orchestrator): WP6 after the contact solver merge

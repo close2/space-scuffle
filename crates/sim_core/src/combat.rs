@@ -907,25 +907,35 @@ pub fn step_entity_weapon(
             mandate,
         ),
         WeaponPhase::Cooldown => {
-            face_target_between_shots(entity, weapon, target_opt);
+            face_target_between_shots(entity, weapon, target_opt, mandate);
             false
         }
     }
 }
 
-/// Turns a turret towards its target between shots, at its own rate, without changing the
-/// weapon's phase (plan `2026-11-24-fire-rules` D-3, B-197): 5.0.14's `CWeaponLegacy` default
-/// `LegacyOptions FaceTargetWhileInCooldown 1` (`core` WeaponData:34), which no weapon clears.
-/// A hull weapon's hull is left to pursuit, which aims it in its band.
+/// Turns a weapon's mount towards its target between shots, without changing the weapon's
+/// phase: 5.0.14's `CWeaponLegacy` default `LegacyOptions FaceTargetWhileInCooldown 1` (`core`
+/// WeaponData:34), which no weapon clears.
+///
+/// A turret turns at its own rate (plan `2026-11-24-fire-rules` D-3, B-197). A hull weapon turns
+/// the hull, within what is left of this tick's hull budget ([`Entity::turn_hull_towards`]: the
+/// stationary rate for a standing unit, none for a structure), only when it works for an attack
+/// order (`mandate`, [`Mandate::AttackOrder`]) and no pursuit aims the hull
+/// ([`Entity::hull_aimed_by_weapon`]: the unit holds or is immobile); pursuit aims the hull of
+/// every other unit under an attack order in its band (plan `2026-11-25-wind-up-and-hold-facing`
+/// D-4, B-199). With no target nothing turns.
 fn face_target_between_shots(
     entity: &mut Entity,
     weapon: &WeaponSpec,
     target_opt: Option<WeaponTarget>,
+    mandate: Mandate,
 ) {
-    if !weapon.has_turret {
+    let Some(target) = target_opt else {
         return;
-    }
-    if let Some(target) = target_opt {
+    };
+    let hull_is_the_weapons =
+        matches!(mandate, Mandate::AttackOrder) && entity.hull_aimed_by_weapon();
+    if weapon.has_turret || hull_is_the_weapons {
         let delta = target.position - entity.position;
         slew_towards(entity, weapon, SimAngle::atan2(delta.y, delta.x));
     }
@@ -934,9 +944,10 @@ fn face_target_between_shots(
 /// Steps a backswing: a lock on orders that never delays the next attack.
 ///
 /// The backswing loses one tick. While the cooldown runs, it is only the follow-through of the
-/// last shot: it ends in `Cooldown`, or carries on, and a turret faces its target meanwhile
-/// ([`face_target_between_shots`]) unless its weapon locks it while firing (plan
-/// `2026-11-24-fire-rules` D-2, D-3). Once the cooldown has run out, the weapon
+/// last shot: it ends in `Cooldown`, or carries on, and the mount faces its target meanwhile
+/// ([`face_target_between_shots`]), a turret unless its weapon locks it while firing (plan
+/// `2026-11-24-fire-rules` D-2, D-3; the lock never holds a hull). Once the cooldown has run
+/// out, the weapon
 /// steps exactly as a `Ready` weapon would this tick. If that starts a swing or turns the
 /// weapon towards `target_opt`, the backswing has ended; if nothing starts (no target, or the
 /// target is out of the engagement band), the backswing runs on to its end as before, so the
@@ -947,7 +958,8 @@ fn face_target_between_shots(
 /// `2026-11-04-combat-sc2-alignment` D-2, Q0038). `bound` is the target of the swing whose
 /// follow-through this is; `remaining_ticks` is the backswing left before this tick. Returns
 /// true when the shot discharges in this call: a swing with damage point 0 that starts out of
-/// the backswing releases at once (D-3). `mandate` is passed on to the ready step.
+/// the backswing releases at once (D-3). `mandate` is passed on to the ready step and to the
+/// facing between shots.
 fn step_backswing(
     entity: &mut Entity,
     weapon: &WeaponSpec,
@@ -966,10 +978,10 @@ fn step_backswing(
             }
         }
     }
-    // Nothing started, so the ready step turned nothing: the turret faces its target as between
-    // any two shots, unless its weapon locks it until the follow-through ends (D-2).
-    if !weapon.locks_turret_while_firing {
-        face_target_between_shots(entity, weapon, target_opt);
+    // Nothing started, so the ready step turned nothing: the mount faces its target as between
+    // any two shots, unless its weapon locks its turret until the follow-through ends (D-2).
+    if !(weapon.has_turret && weapon.locks_turret_while_firing) {
+        face_target_between_shots(entity, weapon, target_opt, mandate);
     }
     entity.weapon_phase = match (remaining_ticks, entity.weapon_cooldown_remaining) {
         (0, 0) => WeaponPhase::Ready,

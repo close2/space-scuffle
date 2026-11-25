@@ -43,6 +43,12 @@
 //!     at the strike, in the unhashed presentation workspace, which no tick decision reads (plan
 //!     `2026-11-24-attacker-snapshot` D-2, D-3). The reveal and the snapshot are recorded by one
 //!     call, [`SimWorld::record_attack_presentation`], from the same two places.
+//! 11. A swing whose bound target fails the weapon's availability test has ended: it deals
+//!     nothing, charges no cooldown and holds nothing. [`SimWorld::end_lost_swings`] applies the
+//!     test after the vision update and before acquisition and movement, so no later phase of
+//!     the tick reads a lost swing; the weapon phase applies the same test
+//!     ([`SimWorld::swing_target_live`]) to a target lost during the tick's movement (plan
+//!     `2026-11-25-wind-up-and-hold-facing` D-1, B-207).
 
 use crate::catalog::UnitCatalog;
 use crate::catalog::{SplashSpec, UnitArchetype, WeaponSpec};
@@ -175,6 +181,8 @@ pub(crate) struct CombatWorkspace {
     splash_levels: Vec<CliffSpan>,
     /// Units with pending line searches this tick, in `EntityId` order.
     line_owners: Vec<EntityId>,
+    /// Units whose wind-up [`SimWorld::end_lost_swings`] ends this tick, in `EntityId` order.
+    lost_swings: Vec<EntityId>,
     finished_projectiles: Vec<(usize, ProjectileStep)>,
 }
 
@@ -492,29 +500,103 @@ impl SimWorld {
         let snapshots = &mut self.combat.snapshots;
         snapshots.clear();
         for (&id, entity) in &self.entities {
-            let (radius, mover) = self
-                .catalog
-                .get(entity.unit_type_id)
-                .map_or((SimScalar::HALF, MoverType::Ground), |a| {
-                    (a.collision_radius, a.mover_type)
-                });
-            // Retain authored weapon-selection metadata, but never expose cargo
-            // coordinates to aim/damage. Air-only windup timing must not silently
-            // switch to the missing-target Ground fallback when a target boards.
-            snapshots.push((
-                id,
-                TargetSnapshot {
-                    position: entity.position,
-                    radius,
-                    mover,
-                    damageable: Self::is_damageable(entity),
-                    cloaked: entity.is_concealed(),
-                    attack_revealed: PerPlayer::from_fn(|slot| {
-                        entity.is_attack_revealed_to(slot.id())
-                    }),
-                },
-            ));
+            snapshots.push((id, Self::target_snapshot(&self.catalog, entity)));
         }
+    }
+
+    /// The targeting data of `entity` as a weapon reads it now: position, collision radius and
+    /// plane from its archetype in `catalog` (half a world unit on the ground for a type the
+    /// catalog lacks), the damage gate, concealment and the per-player attack reveal. The one
+    /// constructor of [`TargetSnapshot`], shared by the weapon phase and
+    /// [`Self::end_lost_swings`], so both judge a target from the same facts.
+    fn target_snapshot(catalog: &UnitCatalog, entity: &Entity) -> TargetSnapshot {
+        let (radius, mover) = catalog
+            .get(entity.unit_type_id)
+            .map_or((SimScalar::HALF, MoverType::Ground), |a| {
+                (a.collision_radius, a.mover_type)
+            });
+        // Retain authored weapon-selection metadata, but never expose cargo
+        // coordinates to aim/damage. Air-only windup timing must not silently
+        // switch to the missing-target Ground fallback when a target boards.
+        TargetSnapshot {
+            position: entity.position,
+            radius,
+            mover,
+            damageable: Self::is_damageable(entity),
+            cloaked: entity.is_concealed(),
+            attack_revealed: PerPlayer::from_fn(|slot| entity.is_attack_revealed_to(slot.id())),
+        }
+    }
+
+    /// Whether `attacker`'s weapon may still work against the target `snapshot` describes: the
+    /// weapon's availability test ([`StrikeContext::is_available`]: damageable, seen and, if
+    /// concealed, detected by `attacker`'s player). For the target a swing is bound to this is
+    /// the statement of the rule that a swing whose target can no longer be struck has ended
+    /// (plan `2026-11-25-wind-up-and-hold-facing` D-1; 5.0.14 `CAbilAttack` `AcquireFilters`
+    /// `Dead`, `CWeapon` `TargetFilters Visible`): the weapon phase and
+    /// [`Self::end_lost_swings`] both ask it.
+    fn swing_target_live(
+        context: &StrikeContext<'_>,
+        attacker: &Entity,
+        snapshot: TargetSnapshot,
+    ) -> bool {
+        context.is_available(attacker.owner, snapshot)
+    }
+
+    /// Whether the weapon phase steps `entity`'s weapon this tick: it is alive, completed, not
+    /// hidden, not channelling a mode change and not locked after a cast. A weapon it does not
+    /// step keeps its phase, cooldown included.
+    fn steps_weapon(entity: &Entity) -> bool {
+        entity.is_alive()
+            && entity.channeling_remaining_ticks == 0
+            && !entity.is_action_locked()
+            && !entity.is_hidden()
+            && entity.is_completed
+    }
+
+    /// Ends every wind-up whose bound target is gone or fails the weapon's availability test
+    /// (`swing_target_live`): the weapon returns to `Ready` with no shot, no cooldown
+    /// charged and no random delay drawn, as the weapon phase ends such a swing. Orders,
+    /// targets and the cooldown are left to acquisition and the weapon phase.
+    ///
+    /// Runs in [`Self::step_into`] after the vision update and before acquisition (plan
+    /// `2026-11-25-wind-up-and-hold-facing` D-1, B-207): the dead were reaped at the end of the
+    /// last tick and this tick's vision is known, so acquisition, movement (which would hold the
+    /// unit for its swing, `wind_up_holds`) and the weapon phase all read the swing as
+    /// ended, and the unit may start its next swing this tick. `StarCraft` II 5.0.14 cancels an
+    /// attack whose target dies before the damage point. A target lost during this tick's
+    /// movement is still the weapon phase's to judge. Only units whose weapon the weapon phase
+    /// steps (`steps_weapon`) are judged, in `EntityId` order; nothing is random.
+    pub fn end_lost_swings(&mut self) {
+        let mut lost = std::mem::take(&mut self.combat.lost_swings);
+        lost.clear();
+        let context = StrikeContext {
+            catalog: &self.catalog,
+            upgrades: &self.player_upgrades,
+            map: &self.map,
+            vision_maps: &self.vision_maps,
+        };
+        for (&id, entity) in &self.entities {
+            let WeaponPhase::Windup { target_id, .. } = entity.weapon_phase else {
+                continue;
+            };
+            let live = self.entities.get(&target_id).is_some_and(|target| {
+                Self::swing_target_live(
+                    &context,
+                    entity,
+                    Self::target_snapshot(&self.catalog, target),
+                )
+            });
+            if !live && Self::steps_weapon(entity) {
+                lost.push(id);
+            }
+        }
+        for id in &lost {
+            if let Some(entity) = self.entities.get_mut(id) {
+                entity.weapon_phase = WeaponPhase::Ready;
+            }
+        }
+        self.combat.lost_swings = lost;
     }
 
     /// Advances each armed entity's weapon state machine, queueing the shots that discharge.
@@ -541,12 +623,7 @@ impl SimWorld {
                 }
             };
             Self::advance_pending_strikes(&context, combat, *id, entity, attack_mult);
-            if !entity.is_alive()
-                || entity.channeling_remaining_ticks > 0
-                || entity.is_action_locked()
-                || entity.is_hidden()
-                || !entity.is_completed
-            {
+            if !Self::steps_weapon(entity) {
                 continue;
             }
             let Ok(arch) = self.catalog.get(entity.unit_type_id) else {
@@ -587,13 +664,11 @@ impl SimWorld {
 
             let target_info = target_opt_id.and_then(|id| {
                 let snapshot = target_snapshot?;
-                context
-                    .is_available(entity.owner, snapshot)
-                    .then_some(WeaponTarget {
-                        id,
-                        position: snapshot.position,
-                        combined_radius: snapshot.radius + arch.collision_radius,
-                    })
+                Self::swing_target_live(&context, entity, snapshot).then_some(WeaponTarget {
+                    id,
+                    position: snapshot.position,
+                    combined_radius: snapshot.radius + arch.collision_radius,
+                })
             });
 
             if step_entity_weapon(entity, &weapon, target_info, mandate) {
@@ -841,10 +916,8 @@ impl SimWorld {
     /// A weapon's cooldown and backswing run on every tick whether or not the unit has a target,
     /// as in `StarCraft` II. Resolving against the ground alone found no weapon for an air-only
     /// unit, which then skipped its weapon step and froze its cooldown and backswing until it
-    /// next had a target (plan `2026-11-05-sc2-deviation-fixes` B-79). The movement phase reads
-    /// the same plane for a wind-up whose target is gone (plan `2026-11-23-turret-wind-up`
-    /// Amendment 2).
-    pub(crate) fn idle_weapon_plane(entity: &Entity, arch: &UnitArchetype) -> MoverType {
+    /// next had a target (plan `2026-11-05-sc2-deviation-fixes` B-79).
+    fn idle_weapon_plane(entity: &Entity, arch: &UnitArchetype) -> MoverType {
         if arch
             .weapon_against(MoverType::Ground, entity.active_siege_weapon())
             .is_some()
@@ -2463,5 +2536,147 @@ mod tests {
         );
         assert!(world.entities.contains_key(&structure));
         assert_eq!(strike(&mut world, attacker, victim, &weapon), 1);
+    }
+
+    /// A flat 32 × 32 world with an armed ground unit of player 0 at (10, 10), one of player 1
+    /// at (12, 10) and a second of player 1 at (14, 14), the carrier; vision updated.
+    fn lost_swing_bench() -> (
+        crate::SimWorld,
+        sim_types::EntityId,
+        sim_types::EntityId,
+        sim_types::EntityId,
+    ) {
+        let map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))
+            .expect("invariant: a flat map");
+        let mut world = world(map, 0x0207);
+        let kind = world
+            .catalog
+            .archetypes()
+            .filter(|arch| {
+                arch.mover_type == MoverType::Ground
+                    && arch.max_speed > SimScalar::ZERO
+                    && arch.weapon_against(MoverType::Ground, None).is_some()
+            })
+            .min_by_key(|arch| arch.unit_type_id)
+            .expect("the shipped catalog has a mobile armed ground unit")
+            .unit_type_id;
+        let at = |x: i32, y: i32| SimVec2::new(SimScalar::from_i32(x), SimScalar::from_i32(y));
+        let attacker = world
+            .spawn_unit(kind, PlayerId(0), at(10, 10))
+            .expect("invariant: a free spot");
+        let target = world
+            .spawn_unit(kind, PlayerId(1), at(12, 10))
+            .expect("invariant: a free spot");
+        let carrier = world
+            .spawn_unit(kind, PlayerId(1), at(14, 14))
+            .expect("invariant: a free spot");
+        world.update_vision();
+        (world, attacker, target, carrier)
+    }
+
+    /// Whether `attacker`'s swing on `target` lives in `world` now, by the shared rule.
+    fn live(
+        world: &crate::SimWorld,
+        attacker: sim_types::EntityId,
+        target: sim_types::EntityId,
+    ) -> bool {
+        let context = super::StrikeContext {
+            catalog: &world.catalog,
+            upgrades: &world.player_upgrades,
+            map: &world.map,
+            vision_maps: &world.vision_maps,
+        };
+        world.entities.get(&target).is_some_and(|target| {
+            crate::SimWorld::swing_target_live(
+                &context,
+                &world.entities[&attacker],
+                crate::SimWorld::target_snapshot(&world.catalog, target),
+            )
+        })
+    }
+
+    /// Plan `2026-11-25-wind-up-and-hold-facing` D-1: a swing's target is live while it is seen
+    /// and damageable, and each loss alone ends it: death, boarding, cloak without detection,
+    /// and leaving its player's sight.
+    #[test]
+    fn each_loss_alone_ends_a_swing() {
+        let (world, attacker, target, _) = lost_swing_bench();
+        assert!(live(&world, attacker, target), "seen and damageable");
+
+        let (mut dead, attacker, target, _) = lost_swing_bench();
+        dead.entities.get_mut(&target).expect("target").hp = SimScalar::ZERO;
+        assert!(!live(&dead, attacker, target), "dead");
+
+        let (mut boarded, attacker, target, carrier) = lost_swing_bench();
+        boarded
+            .try_load_unit_into_transport(target, carrier)
+            .expect("invariant: the carrier takes its own player's unit");
+        assert!(!live(&boarded, attacker, target), "boarded");
+
+        let (mut cloaked, attacker, target, _) = lost_swing_bench();
+        cloaked
+            .entities
+            .get_mut(&target)
+            .expect("target")
+            .is_cloaked = true;
+        assert!(!live(&cloaked, attacker, target), "cloaked, undetected");
+
+        let (mut unseen, attacker, target, _) = lost_swing_bench();
+        unseen.entities.get_mut(&target).expect("target").position =
+            SimVec2::new(SimScalar::from_i32(30), SimScalar::from_i32(30));
+        unseen.update_vision();
+        assert!(!live(&unseen, attacker, target), "out of sight");
+    }
+
+    /// Plan `2026-11-25-wind-up-and-hold-facing` D-1: the pass ends a wind-up on a gone target,
+    /// keeps one on a live target, and leaves a unit whose weapon the weapon phase does not step
+    /// (a boarded attacker) as it is.
+    #[test]
+    fn the_pass_ends_only_lost_swings_the_weapon_phase_steps() {
+        use crate::entity::WeaponPhase;
+        let windup = |target_id| WeaponPhase::Windup {
+            target_id,
+            remaining_ticks: 3,
+        };
+        let (mut world, attacker, target, carrier) = lost_swing_bench();
+        world
+            .entities
+            .get_mut(&attacker)
+            .expect("attacker")
+            .weapon_phase = windup(target);
+        world.end_lost_swings();
+        assert_eq!(
+            world.entities[&attacker].weapon_phase,
+            windup(target),
+            "live"
+        );
+
+        let gone = sim_types::EntityId(u32::MAX);
+        world
+            .entities
+            .get_mut(&attacker)
+            .expect("attacker")
+            .weapon_phase = windup(gone);
+        world.end_lost_swings();
+        assert_eq!(
+            world.entities[&attacker].weapon_phase,
+            WeaponPhase::Ready,
+            "gone"
+        );
+
+        world
+            .entities
+            .get_mut(&carrier)
+            .expect("carrier")
+            .weapon_phase = windup(gone);
+        world
+            .try_load_unit_into_transport(carrier, target)
+            .expect("invariant: the target carries its own player's unit");
+        world.end_lost_swings();
+        assert_eq!(
+            world.entities[&carrier].weapon_phase,
+            windup(gone),
+            "a carried unit's weapon is frozen"
+        );
     }
 }

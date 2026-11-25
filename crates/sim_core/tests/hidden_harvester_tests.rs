@@ -10,6 +10,8 @@
 //! `UnitTask::housed_in` holds on every tick of a long run. In the movement phase (WP5, D-11) it
 //! is no collision pair, push partner or displacement obstacle in either contact pipeline, by the
 //! hidden rule alone.
+//! A wind-up against a worker that goes inside ends before the movement phase of the tick it
+//! goes in (plan `2026-11-25-wind-up-and-hold-facing` A-3 (b)).
 //!
 //! # How it fits
 //! Worlds come from `sim_fixtures`' shipped catalogs on a flat map. Every archetype is found by
@@ -1027,5 +1029,64 @@ fn a_housed_worker_is_no_push_partner() -> TestResult {
             assert_eq!(after, before, "the housed worker is no push partner");
         }
     }
+    Ok(())
+}
+
+/// A-3 (b) of plan `2026-11-25-wind-up-and-hold-facing` (D-1, B-207): the distance, in world
+/// units, an enemy under a move order walks on tick `t + 1` when it is put, at the end of tick
+/// `t`, into a wind-up (weapon `Stopped`, damage point 6) against a gas gatherer whose grant
+/// falls on tick `grant`. The enemy stands 5 world units north of the worker, inside its sight.
+fn enemy_walk_on(t: u32) -> Result<SimScalar, Box<dyn Error>> {
+    let mut world = world()?;
+    let rifle = rifle_kind(&world)?;
+    let arch = world.catalog.get_mut(rifle)?;
+    for weapon in [&mut arch.weapon, &mut arch.ground_weapon]
+        .into_iter()
+        .flatten()
+    {
+        weapon.allowed_movement = sim_types::AllowedMovement::Stopped;
+        weapon.damage_point_ticks = 6;
+        weapon.period_ticks = weapon.period_ticks.max(12);
+    }
+    let worker = gatherer(&mut world, point(15.0, 6.0), GEYSER)?;
+    while world.current_tick < t {
+        step(&mut world, Vec::new());
+    }
+    let at = world.entities[&worker].position + point(0.0, 5.0);
+    let enemy = world.spawn_unit(rifle, RIVAL, at)?;
+    let entity = world.entities.get_mut(&enemy).ok_or("the enemy")?;
+    entity.issue_order(
+        UnitOrder::Move {
+            target: point(5.0, 30.0),
+        },
+        false,
+    )?;
+    entity.weapon_phase = sim_core::WeaponPhase::Windup {
+        target_id: worker,
+        remaining_ticks: 6,
+    };
+    let before = entity.position;
+    step(&mut world, Vec::new());
+    Ok(world.entities[&enemy].position.distance(before))
+}
+
+/// A-3 (b) of plan `2026-11-25-wind-up-and-hold-facing` (D-1, B-207): a wind-up against a
+/// worker that goes inside its extractor at the start of a tick (the task phase grants its
+/// gather) has ended before that tick's movement and holds nothing; on the tick before the
+/// grant, the same swing on the worker outside holds its unit.
+#[test]
+fn a_wind_up_on_a_worker_that_goes_inside_holds_nothing() -> TestResult {
+    let mut dry = world()?;
+    let worker = gatherer(&mut dry, point(15.0, 6.0), GEYSER)?;
+    let grant = until_granted(&mut dry, worker)?;
+    assert_eq!(
+        enemy_walk_on(grant - 2)?,
+        SimScalar::ZERO,
+        "a live swing of a `Stopped` weapon holds its unit"
+    );
+    assert!(
+        enemy_walk_on(grant - 1)? > SimScalar::ZERO,
+        "the swing on the worker gone inside holds nothing"
+    );
     Ok(())
 }
