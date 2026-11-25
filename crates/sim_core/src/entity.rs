@@ -13,9 +13,9 @@ use crate::movement::MovementMathError;
 use crate::weapon_timing::{combined_attack_rate, AttackRate, InvalidBuffAttackRate};
 use sim_types::{
     AbilityEffectSpec, AnimState, AttackCommand, AttackDashSpec, AttackOrigin, BarrierSpec,
-    EffectSource, EntityId, MoverType, OverclockSpec, PerPlayer, PlayerId, ResourceKind,
-    ResourceNodeId, ShapeKind, SimAngle, SimScalar, SimVec2, StanceOrders, UnitModeSpec, UnitOrder,
-    UnitTypeId,
+    EffectSource, EntityId, FollowKind, MoverType, OverclockSpec, PerPlayer, PlayerId,
+    ResourceKind, ResourceNodeId, ShapeKind, SimAngle, SimScalar, SimVec2, StanceOrders,
+    UnitModeSpec, UnitOrder, UnitTypeId,
 };
 use std::collections::VecDeque;
 
@@ -315,6 +315,11 @@ pub struct MovementMemory {
     /// unit whose target is lost to the point instead of chasing it. `None` while the order's
     /// target has not been seen under it, and under any other order.
     pub last_seen: Option<LastSeen>,
+    /// Where the target of this unit's follow stood, at the start of the tick, when the unit came
+    /// to rest on it, world units (plan `2026-11-26-follow-order` D-4). The follower walks again
+    /// once its target's tick-start position lies more than the movement rules'
+    /// `follow_range_slop` from here. `None` while it walks, and under any other order.
+    pub follow_rest: Option<SimVec2>,
 }
 
 /// The last sighting of an attack order's target by the attacker's player (plan
@@ -956,14 +961,15 @@ impl Entity {
         self.is_holding_position = false;
     }
 
-    /// Handles player move/stop input during combat, executing SC2 backswing cancellation.
-    fn handle_interrupting_move(&mut self, move_pos: SimVec2) {
+    /// Handles player move input during combat, executing SC2 backswing cancellation: `order` is
+    /// a `Move`, or a `Follow` of kind `Move`, the same command of the move ability on a unit.
+    fn handle_interrupting_move(&mut self, order: UnitOrder) {
         match self.weapon_phase {
             WeaponPhase::Windup { .. } => {
                 // ABORT: Shot was winding up; moving cancels the shot with zero damage.
                 self.weapon_phase = WeaponPhase::Ready;
                 self.order_queue.clear();
-                self.enqueue_order(UnitOrder::Move { target: move_pos });
+                self.enqueue_order(order);
                 self.current_funnel_waypoints.clear();
                 self.is_holding_position = false;
             }
@@ -973,13 +979,13 @@ impl Entity {
                 // The weapon cooldown continues to tick down in the background.
                 self.weapon_phase = WeaponPhase::Cooldown;
                 self.order_queue.clear();
-                self.enqueue_order(UnitOrder::Move { target: move_pos });
+                self.enqueue_order(order);
                 self.current_funnel_waypoints.clear();
                 self.is_holding_position = false;
             }
             _ => {
                 self.order_queue.clear();
-                self.enqueue_order(UnitOrder::Move { target: move_pos });
+                self.enqueue_order(order);
                 self.current_funnel_waypoints.clear();
                 self.is_holding_position = false;
             }
@@ -1039,6 +1045,14 @@ impl Entity {
             .wrapping_sub(u32::try_from(queued).unwrap_or(u32::MAX))
     }
 
+    /// Commits a follow of `target` after world selection preflight (plan
+    /// `2026-11-26-follow-order` D-2): queued behind the orders when `queue`, otherwise in
+    /// place of them, as a move or a scan move replaces them. A follow is no route order, so it
+    /// leaves [`Self::route_orders_issued`] alone.
+    pub(crate) fn commit_follow_order(&mut self, target: EntityId, kind: FollowKind, queue: bool) {
+        self.commit_order(UnitOrder::Follow { target, kind }, queue);
+    }
+
     /// Infallible concrete movement commit after world selection preflight.
     pub(crate) fn commit_movement_order(&mut self, target: SimVec2, attack: bool, queue: bool) {
         let order = if attack {
@@ -1082,13 +1096,23 @@ impl Entity {
         // Q0071).
         if matches!(
             order,
-            UnitOrder::Move { .. } | UnitOrder::Stop | UnitOrder::HoldPosition
+            UnitOrder::Move { .. }
+                | UnitOrder::Follow {
+                    kind: FollowKind::Move,
+                    ..
+                }
+                | UnitOrder::Stop
+                | UnitOrder::HoldPosition
         ) {
             self.end_attack_dash();
         }
         match order {
-            UnitOrder::Move { target } => {
-                self.handle_interrupting_move(target);
+            UnitOrder::Move { .. }
+            | UnitOrder::Follow {
+                kind: FollowKind::Move,
+                ..
+            } => {
+                self.handle_interrupting_move(order);
             }
             UnitOrder::HoldPosition => {
                 self.is_holding_position = true;
@@ -1675,8 +1699,8 @@ mod order_walks_tests {
     use crate::test_support::world;
     use sim_map::{CliffLevel, GameMap, MapCell};
     use sim_types::{
-        AttackOrigin, EntityId, MoverType, PlayerId, RallyTarget, ResourceNodeId, SimScalar,
-        SimVec2, UnitOrder, UnitTypeId,
+        AttackOrigin, EntityId, FollowKind, MoverType, PlayerId, RallyTarget, ResourceNodeId,
+        SimScalar, SimVec2, UnitOrder, UnitTypeId,
     };
 
     /// Whether `walking_goal` walks a unit whose front order is `order` and whose task leg has a
@@ -1704,7 +1728,8 @@ mod order_walks_tests {
             | UnitOrder::CancelConstruction
             | UnitOrder::Research { .. }
             | UnitOrder::CancelProduction { .. }
-            | UnitOrder::SetRally { .. } => false,
+            | UnitOrder::SetRally { .. }
+            | UnitOrder::Follow { .. } => false,
         }
     }
 
@@ -1762,6 +1787,10 @@ mod order_walks_tests {
             UnitOrder::SetRally {
                 target: RallyTarget::Point(point),
                 slot: None,
+            },
+            UnitOrder::Follow {
+                target: EntityId(99),
+                kind: FollowKind::Move,
             },
         ];
         let entity = world.entities.get_mut(&unit).ok_or("unit")?;
@@ -1842,8 +1871,8 @@ mod weapon_target_tests {
     use crate::test_support::world;
     use sim_map::{CliffLevel, GameMap, MapCell};
     use sim_types::{
-        AttackOrigin, EntityId, MoverType, PlayerId, RallyTarget, ResourceNodeId, SimScalar,
-        SimVec2, UnitOrder, UnitTypeId,
+        AttackOrigin, EntityId, FollowKind, MoverType, PlayerId, RallyTarget, ResourceNodeId,
+        SimScalar, SimVec2, UnitOrder, UnitTypeId,
     };
 
     /// One order of every `UnitOrder` variant; the match keeps the list whole.
@@ -1890,6 +1919,10 @@ mod weapon_target_tests {
                 target: RallyTarget::Point(point),
                 slot: None,
             },
+            UnitOrder::Follow {
+                target: EntityId(99),
+                kind: FollowKind::Move,
+            },
         ];
         for order in &orders {
             match order {
@@ -1911,7 +1944,8 @@ mod weapon_target_tests {
                 | UnitOrder::CancelProduction { .. }
                 | UnitOrder::Load { .. }
                 | UnitOrder::UnloadAll
-                | UnitOrder::SetRally { .. } => {}
+                | UnitOrder::SetRally { .. }
+                | UnitOrder::Follow { .. } => {}
             }
         }
         orders

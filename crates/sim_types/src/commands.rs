@@ -21,6 +21,18 @@ pub enum AttackOrigin {
     Acquired,
 }
 
+/// Which command of the move ability a follow is (`StarCraft` II 5.0.14 `CAbilMove`'s `Move` and
+/// `AcquireMove`, `core` AbilData:555–557; plan `2026-11-26-follow-order` D-1).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum FollowKind {
+    /// A plain move on a unit: the follower acquires nothing on the way, as under a `Move`.
+    #[default]
+    Move,
+    /// Scan Move on a unit: the follower acquires like an attack-move, fights, and then follows
+    /// again.
+    AcquireMove,
+}
+
 /// Concrete order issued to an individual unit or selection group.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum UnitOrder {
@@ -114,6 +126,18 @@ pub enum UnitOrder {
         /// first slot that takes the target; `Some(i)` for the card's entry of slot `i`.
         #[serde(default)]
         slot: Option<u8>,
+    },
+    /// Walk to a unit and stay with it (`StarCraft` II 5.0.14 `move` with a unit target; plan
+    /// `2026-11-26-follow-order`): the unit walks until it touches its target, or a follower
+    /// already resting on it, and walks again once the target has moved more than the movement
+    /// rules' `follow_range_slop` from where it stood. The order lasts until the target dies, is
+    /// carried or housed, or, with an order queued behind it, until the target is reached.
+    Follow {
+        /// The unit followed, of any owner.
+        target: EntityId,
+        /// `Move` acquires nothing; `AcquireMove` (Scan Move) acquires like an attack-move.
+        #[serde(default)]
+        kind: FollowKind,
     },
 }
 

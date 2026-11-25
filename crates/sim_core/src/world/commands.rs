@@ -150,7 +150,7 @@ impl SimWorld {
         }
         if matches!(
             cmd.order,
-            UnitOrder::Move { .. } | UnitOrder::AttackMove { .. }
+            UnitOrder::Move { .. } | UnitOrder::AttackMove { .. } | UnitOrder::Follow { .. }
         ) {
             self.dispatch_movement(command_index, cmd);
             return;
@@ -200,10 +200,9 @@ impl SimWorld {
         });
     }
 
-    /// Admits a move or attack-move through movement admission.
+    /// Admits a move, an attack-move or a follow through movement admission.
     fn dispatch_movement(&mut self, command_index: usize, cmd: &PlayerCommand) {
-        let result =
-            self.issue_movement_prevalidated(cmd.player_id, &cmd.entities, &cmd.order, cmd.queue);
+        let result = self.admit_movement_order(cmd.player_id, &cmd.entities, &cmd.order, cmd.queue);
         self.movement.outcomes.push(MovementOutcome {
             tick: Tick(self.current_tick),
             command_index,

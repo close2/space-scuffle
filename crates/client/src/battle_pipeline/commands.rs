@@ -9,8 +9,9 @@ use bevy::prelude::Resource;
 use sim_core::upgrades::OVERCLOCK_ABILITY_SLUG;
 use sim_core::{movement::MovementLayer, Entity, SimWorld, UnitArchetype};
 use sim_types::{
-    AbilityEffectSpec, AbilitySpec, AbilityTargetKind, AttackCommand, EntityId, PlayerCommand,
-    PlayerId, SimScalar, SimVec2, SiteRefusal, Tick, TickBundle, UnitOrder, UnitTypeId,
+    AbilityEffectSpec, AbilitySpec, AbilityTargetKind, AttackCommand, EntityId, FollowKind,
+    PlayerCommand, PlayerId, SimScalar, SimVec2, SiteRefusal, Tick, TickBundle, UnitOrder,
+    UnitTypeId,
 };
 
 /// Successful session-commit identity, independent of ticks and recycled entity IDs.
@@ -818,6 +819,14 @@ fn capable(
         // D-4).
         UnitOrder::AttackMove { .. } => mobile && attack != AttackCommand::None,
         UnitOrder::AttackTarget { .. } => attack == AttackCommand::Attack,
+        // A follow goes to every mobile member other than the unit followed, and a Scan Move on a
+        // unit (`AcquireMove`) to those whose settled stance has an A command: the simulation's
+        // admission (plan `2026-11-26-follow-order` D-2, D-10).
+        UnitOrder::Follow { target, kind } => {
+            mobile
+                && entity.id != *target
+                && (*kind == FollowKind::Move || attack != AttackCommand::None)
+        }
         UnitOrder::UseStim => can_overclock(world, entity, archetype),
         // Production and research authorize the entire group/product transaction in sim_core.
         // Client admission does not fabricate a receipt or preempt its typed outcome.
@@ -954,7 +963,8 @@ fn order_subject<'w>(
         | UnitOrder::CancelProduction { .. }
         | UnitOrder::Load { .. }
         | UnitOrder::UnloadAll
-        | UnitOrder::SetRally { .. } => return Ok(None),
+        | UnitOrder::SetRally { .. }
+        | UnitOrder::Follow { .. } => return Ok(None),
     };
     let entity = entity.ok_or(SubmissionError::InvalidTarget(aimed_at))?;
     world
