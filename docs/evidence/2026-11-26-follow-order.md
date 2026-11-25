@@ -194,3 +194,15 @@ Release, radv, each target under the gate lock, GPU children locking the GPU the
 | client `--lib` | 545 passed (after `75253b34`; 544 and 1 failure on `27604c11`, the idle-friend row test) |
 
 The skirmish match is won at tick 6,342 in 1,645 frames, and every stage of WP0's run (§1.4) recurs at its tick.
+
+## 6. The final tree (merge of `main` `263ef402`, `4f4ef72d`)
+
+`main` moved by documents only (the blank-sheet movement round and Q0120 to Q0124); the merge conflicted only in the
+plans README's last rows, both kept. On `4f4ef72d`:
+
+- `scripts/goldens.sh final 4f4ef72d`: both fixtures and `DEFAULT_SANDBOX_CHECKSUM` pass on native debug and release
+  and `wasm32-wasip1` release and debug, at WP1's lists (`golden-final/`).
+- `scripts/skirmish.sh final` on an archive of the commit: won at tick 6,342 in 1,645 frames; the stage log is
+  identical to WP0's (`client-final/`).
+- `cargo gate quick`: green (fmt, clippy on `client`, `sim_core`, `sim_fixtures` and `sim_types`, 147 test targets);
+  `cargo clippy --workspace --all-targets -- -D warnings`: clean.
