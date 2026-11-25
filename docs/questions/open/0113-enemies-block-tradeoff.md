@@ -50,3 +50,7 @@ Recommendation: (b) now, then a third attempt starting with B-209; (a) if you pr
 crowd side effects.
 
 ## Answer
+
+- **Option (b): Keep it parked for now.**
+
+**Note:** See the owner's blank-sheet movement redesign guidance and algorithm survey recorded in `Q0118` (`0118-crowd-overlap-solver-cost.md`). Fixing friend-crowd overlap and/or stepping back to evaluate a clean-sheet movement algorithm (with Hold Position, Attacking, and Enemy units non-pushable) should precede a third attempt on `B-193` / `B-192` / `B-209`.

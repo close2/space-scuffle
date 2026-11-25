@@ -23,4 +23,6 @@ Recommendation: (a).
 
 ## Answer
 
-```
+- **Option (a): Keep positional keys.**
+
+**Reasoning:** Keeps Space Scuffle's Grid-style positional command card consistent across all structures, and right-clicking sets most rallies anyway.

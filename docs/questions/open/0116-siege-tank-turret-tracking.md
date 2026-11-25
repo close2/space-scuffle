@@ -25,3 +25,5 @@ and 5.0.14 reverted that "due to causing unintentional retargeting".
 
 ## Answer
 
+- **1(a):** Always follow the **nearest enemy in range**, switching as soon as another enemy becomes nearer (matching StarCraft II 5.0.14's revert of 5.0.13).
+- **2(b):** **Do Immortals and Colossi next**, accepting that battles with Immortals or Colossi may shift slightly because their turrets start pre-aimed when they stop.
