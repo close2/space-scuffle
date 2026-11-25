@@ -682,6 +682,10 @@ Failing tests first (red on WP4's tree): §9's tests. Then the change: D-10. **A
 
 ## As built (implementation agent, 2026-11-23)
 
+The minor differences B-164, B-165 and B-166 of D-11 are fixed by plan
+[`2026-11-25-rallies`](2026-11-25-rallies.md) (rally slots, waypoints and rallies on enemy units); B-163 and B-167
+stay open there.
+
 | WP | Commit | Notes |
 |---|---|---|
 | WP0 | `8807620e` | B-163 to B-167 registered (D-11); B-59, B-60 and B-66 point here |
