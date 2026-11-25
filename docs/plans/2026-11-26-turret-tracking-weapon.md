@@ -774,3 +774,264 @@ fragile against compiler changes.
 **Acceptance unchanged.** T-1 to T-16, the world classification (all byte-identical so far), the latent proof at 48,
 the single re-record on the final tree, and stop rule 7 (≤ +0.5 % instructions per the plan's reading, ≥ 50 ticks/s)
 all apply to the amended tree. If the side table still exceeds the budget, the package stops again for review.
+
+## Amendment 2 (planner, 2026-11-25): B-218, the Immortal and Colossus turrets aim while their units walk
+
+The owner answered [Q0116](../questions/closed/0116-siege-tank-turret-tracking.md) part 2 with (b): "Do Immortals and
+Colossi next, accepting that battles with Immortals or Colossi may shift slightly because their turrets start
+pre-aimed when they stop." This amendment plans **B-218** (`DESIGN.md` §4) on this plan's built mechanism (D-3, D-4,
+Amendment 1's `SimWorld::tracked_targets`), and supersedes §14 F-1. It is written against `main` `b4a99fae`
+(checksum schema 49), branch `turret-tracking-b218`. Charter §8 and Q0103's standing guidance apply: a sound
+behaviour change that moves a close battle is restated with a trace; anything else that moves is reviewed.
+
+### A2.1 What StarCraft II 5.0.14 does
+
+Same sources and tags as §2.1 (SC2GameData `5444e12f13`, `~/scratch/combat_wp3_data/<layer>/`).
+
+| # | Fact | Data or source | Tag |
+|---|---|---|---|
+| S15 | The engine default for every weapon is `OnlyFireWhileInAttackOrder 1`, `OnlyFireAtAttackOrderTarget 1`, `CanInitiateAttackOrder 1` | `core` WeaponData:19–21 | [DATA] |
+| S16 | `PhaseDisruptors` (Immortal): `liberty` sets no option (WeaponData:507–511); `voidmulti` clears both attack-order options and sets `AllowedMovement Slowing` (WeaponData:205–207), kept by `balancemulti` (:185–186). It sits on `Turret="Immortal"` (`liberty` UnitData:10791) | as cited | [DATA] |
+| S17 | `ThermalLances` (Colossus): `liberty` sets no option and no `AllowedMovement` (WeaponData:493–506: `Arc 90`, `AcquirePrioritization ByDistanceFromTarget`); `voidmulti` clears both attack-order options (WeaponData:256–257), kept by `balancemulti` (:229–230). No layer sets `AllowedMovement`: the default, the unit stands to fire (S7). It sits on `Turret="Colossus"` (`liberty` UnitData:4099) | as cited | [DATA] |
+| S18 | The same layer, `voidmulti`, adds `90mmCannonsFake` (WeaponData:7–12) and clears the Immortal's and the Colossus' attack-order options (S16, S17): the Legacy of the Void multiplayer change of the 16 July 2015 beta note (S11) | as cited | [DATA] for the layer; [INF] that it is that note's change |
+| S19 | Turrets: `Immortal` is `FreeRotate` (`YawRate 720`) with `Idle FollowMovement`, `YawIdleRate 360` (`liberty` TurretData:73–76); `Colossus` is `FreeRotate` with `Idle FollowMovement`, `YawRate 999.8437`, `YawIdleRate 90` (:49–53). Ours: `turret_turn_rate` 40.32 and 55.99 degrees per tick, `FollowMovement(20.16)` and `FollowMovement(5.04)` (720, 999.84, 360 and 90 degrees per Normal second at 17.857 ticks per Normal second) | as cited; `units.ron` `void_goliath`, `tripod_annihilator` | [DATA] |
+| S20 | Of the 5.0.14 weapons that clear `OnlyFireWhileInAttackOrder` (`grep -n 'OnlyFireWhileInAttackOrder" value="0"' */WeaponData.xml`), the ones whose unit must slow or stand to fire are exactly `90mmCannonsFake`, `PhaseDisruptors` and `ThermalLances`. The others fire while moving (`AllowedMovement Moving`): `IonCannons` (Phoenix, `libertymulti` :18–24), `PrismaticBeam` and `VoidRaySwarm*` (Void Ray), `ATALaserBattery`, `ATSLaserBattery` (Battlecruiser), `MothershipBeam`; or are hidden helpers (`BattlecruiserWeaponSwitch`, `MothershipPurifyWeapon`, `BuildingShield`) | as cited | [DATA] |
+| S21 | 5.0.13 "Immortal Turret now tracks previously attacked unit", reverted in 5.0.14 (S12, S13); no patch note names the Colossus turret | S12, S13 | [COMM] |
+
+**What the Immortal and Colossus turrets do while walking.** By S10 (a weapon's turret follows the weapon's target;
+`AllowedMovement` gates only the fire) a weapon whose attack-order options are cleared picks a target under a Move
+order like the tank's fake, and cannot fire it while the unit walks (Immortal: `Slowing`, ours `Stopped` until
+B-178; Colossus: stands to fire). So both turrets turn towards the nearest enemy in reach while their units walk,
+and fire nothing until the unit stops. For the Immortal this is S11's note, which the owner accepted [COMM, wording
+**verify**]; for the Colossus it is the same data (S17, S18) with no note naming it [INF, **verify**]. The choice
+is re-ranked every tick (S21, rule 4 of §2.3), by the weapon's own prioritization: the Immortal's archetype ranks
+`Closest`, the Colossus' `ClosestToPrevious` (S17 `ByDistanceFromTarget`) [DATA for the field, **verify** that the
+engine applies it to a target picked under a Move]. Q0116 part 3 (an in-game check) was not answered.
+
+### A2.2 Decision D-A1: reuse the data flag, not a derived rule
+
+**The Immortal and Colossus analogues' weapons carry `turret_tracks_any_enemy: true` in `units.ron`;** no code
+reads a new condition. F-1's derived rule ("a turreted weapon with `fires_outside_attack_order` whose fire only the
+movement gate blocks") is kept as a **check on the shipped data** (T-A2), not as a rule of the simulation.
+
+Why:
+- **No silent change to other units.** A derived rule would apply to every present and future row (and every mod)
+  whose fields happen to match. Today it would select exactly the two analogues (the Phoenix analogue
+  `flying_saucer` fires while `Moving`; no other row sets `fires_outside_attack_order`), but a later row would start
+  aiming without anyone choosing it. With the flag, each carrier is one cited line of data, and adding or removing
+  one needs no code change (charter §3.3, C6; T-11 already proves it in the same binary).
+- **It is the flag's definition already.** D-1 defines `turret_tracks_any_enemy` as "the turret of this weapon also
+  aims, under any order, at the best enemy this weapon reaches from where its unit stands, whenever the weapon itself
+  leaves the turret free; nothing is fired". That is S10's behaviour for a weapon whose attack-order options are
+  cleared and whose movement gate blocks its fire. In 5.0.14 the tank gets it from a hidden second weapon and the
+  Immortal and Colossus from their own weapons (S18); the observable is the same, so one capability models both. Only
+  the field's documentation changes, to name both sources.
+- **No code change, no new hashed state.** Every reader of the carrier already reads the flag: the carrier test and
+  the `tracked` licence of `decide_tracked_target` and `scan_candidates` (`target_acquisition.rs`), and
+  `tracking_aim` (`combat_resolution.rs`). Validation (D-7) needs `has_turret`, which both weapons have.
+- **Rejected: derive it in code** (F-1). Three sites would test `fires_outside_attack_order && allowed_movement !=
+  Moving && has_turret` beside the flag, two ways of saying one thing, and the rule would reach rows nobody chose.
+- **Rejected: a new field** (for example `aims_while_walking`). Its meaning would equal the flag's.
+
+**How the existing rules apply to the two analogues** (verified by reading `b4a99fae`, re-checked in WP-A0):
+- Walking under a non-attack order (Move, flight, a rally), the unit's engagement is `Busy`
+  (`fires_without_attack_order(weapon, true)` is false for `Slowing` and `Stopped`), so `has_workable_target` is
+  false, the tracked scan runs (D-3) and the free turret slews at `turret_turn_rate` (D-4 rule 3) instead of the
+  `FollowMovement` idle. The idle runs as today when no enemy is in reach.
+- **The chase** (fire-rules P-5): under an explicit attack on a target out of reach, `weapon_target` stays unset
+  (`OwnTargetScan` licenses only a `Moving` weapon while chasing), so the turret is free (D-4 rule 2) and tracks the
+  passed enemy; the weapon still swings at nothing (P-5 unchanged).
+- Standing (`Engagement::Track { walking: false }`, hold, idle, attack-move): the real weapon has a target whenever an
+  enemy is in reach, so it owns the turret (D-4 rule 1), as today.
+- Ranking: the archetype's tie-break with `previous_target_position` (D-3 step 4); for the Colossus this is
+  `ClosestToPrevious` (A2.1).
+- The only channel from tracking to anything else remains the turret angle (T-15): with the Immortal's
+  `acquire_arc 0` and `firing_arc 11.25°` and the Colossus' `45°` and `56.25°`, a pre-aimed turret lets the first swing
+  after the unit stops start earlier (class P).
+
+### A2.3 Work packages
+
+Same branch and worktree, `CARGO_TARGET_DIR=/home/spacescuffle/cargo-target/turret-tracking-b218`, one commit per
+package, the scripts of §7.2 under `~/scratch/turret-tracking-b218/` (copied from `~/scratch/turret-tracking/scripts/`,
+paths changed), one measurement at a time across worktrees, never beside a `cargo gate` (charter §7). Implementation
+agents hand back after `cargo gate quick` and the targets named here; a verifier runs `cargo gate package` on the
+final tree (Q0061, charter §4.3). Check `docs/questions/open/` before the last commit.
+
+#### WP-A0: records, census, probes and the close-battle list (docs and scratch; before any change)
+
+- `DESIGN.md` B-218: "open; planned by plan `2026-11-26-turret-tracking-weapon` Amendment 2 (Q0116 part 2 (b))".
+- **Baseline** (§7.2) on WP-A0's tree: the matrix on its seeds of record and 16 development seeds, battles 31 (100
+  seeds) and 33 (64), the showcase and showcase effects (default and 1 to 8); throughput binary kept for WP-A2.
+- **Census (c):** which worlds carry a weapon of S20's class (turreted, `fires_outside_attack_order`, not `Moving`),
+  found by property; their orders and flight episodes. Expected from `b4a99fae`: matrix battles **2a, 2b, 3, 28, 30**
+  (Immortal analogue) and **12a, 12b, 12c, 26, 35** (Colossus analogue); none in battles 31 and 33, the showcase,
+  the showcase effects, both goldens, the sandbox (its turreted role resolves to the tank analogue, the first mobile
+  turreted archetype; **verify**), the throughput scenarios (`pulse_bot`, three casters) or the client skirmish.
+- **Probes** (scratch patch on WP-A0's tree, may name slugs): (t) each tick a carrier of S20's class has a free
+  turret by D-4's rule (no target, or a `Ready`/`RotatingToTarget` weapon whose target is outside its band) while a
+  ground enemy its weapon may strike is in reach, tagged with its engagement (`Busy` walking, explicit chase, other);
+  (p) each (t) episode followed, before the turret next lies along the hull, by a real swing start, with the
+  rotation ticks the twin would spend; a positive control (an Immortal analogue under a Move past an idle enemy) must
+  count (t) > 0. Stored, not committed; counts and the control committed to the evidence file.
+- **Close-battle list**, by §6.4's rule, recomputed from WP-A0's baseline only (`main` moved since WP0's list
+  `14, 26, 31, 33, 35, 38a, 38b`), committed with the command that derived it, and **not edited after WP-A1 starts**.
+  Battle 28 (`known_bug` B-192) is never on it.
+- **Gate:** docs only. Commit `docs(plans): turret-tracking Amendment 2 WP-A0, B-218 baseline, census, probes and
+  close battles`.
+
+#### WP-A1: the change (data, docs, tests; red first)
+
+Red first, on WP-A0's tree (no code change exists to precede them; the data flip turns them green), the red run
+pasted in the hand-back:
+
+- **T-A1 (shipped values, `weapon_catalog_rules_tests.rs`, extends T-10).** `SC2_TURRET_TRACKING` gains the rows
+  "Immortal" (S16, S19: `voidmulti` WeaponData:205–207, `liberty` UnitData:10791, TurretData:73–76) and "Colossus"
+  (S17, S19: `voidmulti` WeaponData:256–257, `liberty` UnitData:4099, TurretData:49–53); exactly three shipped
+  weapons carry the flag; every mode weapon and every other weapon omits it.
+- **T-A2 (the F-1 rule as a data check, same file).** Every shipped turreted weapon with `fires_outside_attack_order`
+  and `allowed_movement` other than `Moving` carries the flag, and every flagged weapon is either such a weapon or a
+  listed hidden tracking weapon (the tank row). Red today on the two analogues.
+- **T-A3 (tracks while walking, `turret_tracking_tests.rs`).** For each shipped carrier of S20's class (found by
+  property, both analogues), T-1's conditions under a Move past a ground enemy entering and leaving reach; with no
+  enemy in reach the `FollowMovement` idle runs as today.
+- **T-A4 (nothing else moves while walking).** T-2's and T-3's comparisons against the flag-off twin, over the Move
+  (until the order ends).
+- **T-A5 (the chase).** An explicit attack on a target out of reach with another ground enemy in reach: the turret
+  tracks that enemy; no swing at it (P-5); order, `current_target`, `weapon_target` (`None`) and pursuit goal equal the
+  twin's.
+- **T-A6 (pre-aim, class P, shipped narrow arcs).** The unit tracks enemy A while walking; its Move ends with A in
+  reach. Its first swing starts no later than the twin's, and strictly earlier whenever the twin's turret lies more
+  than one tick's `turret_turn_rate` from A when the order ends; with the turret angles set equal on that tick, every
+  later tick is equal but the table.
+- **T-A7 (ranking by the archetype's tie-break).** The Colossus analogue (`ClosestToPrevious`) tracks the enemy
+  nearest its previous target's position over a nearer one; the Immortal analogue (`Closest`) the nearest.
+- **T-11 extended (`runtime_catalog_tests.rs`).** Clearing the two new flags in a catalog copy restores the idle in
+  the same binary.
+
+The change:
+- `assets/catalog/units.ron`: `turret_tracks_any_enemy: true` on the `void_goliath` and `tripod_annihilator`
+  weapons, each with a comment citing A2.1 (S16 to S19) and this amendment.
+- Documentation: `WeaponSpec::turret_tracks_any_enemy` (`sim_types/src/weapon.rs`), the def field's doc
+  (`catalog.rs`), `combat.rs` invariant 8, `world/tracked_targets.rs` module doc, `turret_tracking_tests.rs` header:
+  the capability models either a hidden tracking weapon (the tank) or a weapon whose attack-order options are cleared
+  while its movement gate blocks its fire (Immortal, Colossus).
+- **Finders made explicit.** Tests that find "the" tracking unit by the flag (`turret_tracking_tests.rs` `tracker`,
+  `runtime_catalog_tests.rs` T-11, `attack_swing_snapshot_tests.rs` T-16, the `target_acquisition.rs` unit test) add
+  the property their claim needs (for example `acquire_arc` 180° or more for T-4), so none depends on catalog order.
+- No change to `crates/sim_core/src/` logic, `movement/`, the contact solver, or the encoding. A package that seems to
+  need a code change stops and reports (stop rule A-7).
+- **World check** against WP-A0's worlds; every moved world classed (A2.5). Guards that must pass unchanged:
+  `fire_rules_tests.rs` (P-5 to P-7 use these weapons), `turret_tracking_tests.rs`, `weapon_cadence_tests.rs`,
+  `hull_turning_tests.rs`, `target_selection_tests.rs`, `weapon_validation_tests.rs`,
+  `attack_move_simulation_tests.rs`, `sc2_who_wins_matchup_matrix_tests.rs`.
+- Commit `fix(sim_core): the Immortal and Colossus analogues' turrets track the nearest enemy while they walk,
+  5.0.14 cleared attack-order options (turret-tracking Amendment 2 WP-A1, B-218)`, stating which worlds moved and in
+  which class.
+
+#### WP-A2: confirmation and records
+
+- **Held-out seeds** (§7.4), once, on WP-A0's and the final tree, after every development-seed result is settled:
+  matrix seeds 7001 to 7016, battles 31 and 33 on 7001 to 7064, showcase and showcase effects on 9 to 16. Confirmation
+  only: nothing is tuned or restated from them; a contradiction is stop rule A-6.
+- **Throughput** (A2.7).
+- **Goldens and sandbox, on the final tree after merging `main`.** No carrier is in them and the encoding does not
+  change, so they are predicted to pass unchanged: no re-record. If one differs, it is the single re-record of this
+  amendment, made once on the final tree under §5's header and proof (four builds) **only after** the difference is
+  traced to class Y or P and reviewed; an untraced difference is stop rule A-2.
+- Records: `DESIGN.md` B-218 **fixed** (citing A2.1 and the Colossus' **verify**), this plan's `## As built` rows,
+  the evidence file's Amendment 2 section, README row back to "Done".
+
+### A2.4 Predicted reach (recorded before measuring; not thresholds)
+
+| Battle | Carriers | Orders | Prediction |
+|---|---|---|---|
+| 12c_viking_vs_colossus | 1 Colossus, holding | Viking only (air) | **Byte-identical, certain:** the lances strike ground only, so nothing is tracked |
+| 35_12_vikings_vs_6_colossi | 6 Colossi | Vikings only (air); colossi flee | **Byte-identical, certain:** fleeing colossi walk (`Busy`) but have no ground enemy |
+| 2a, 2b, 3, 12a, 12b, 30 | 1 to 10 carriers | Attack-move both ways | Byte-identical unless probe (t) counts: acquisition engages each enemy as it enters scan range (6.5 and 7.5, at least the weapons' ranges 6 and 7), so the real weapon owns the turret whenever an enemy is in reach. Where (t) counts, **class P**: an earlier first swing after a pre-aimed rotation (Immortal `acquire_arc 0` at 40.32° a tick: up to 5 ticks for a half turn; Colossus 45° at 55.99° a tick: up to 3) |
+| 26_100_lings_vs_6_colossi, 28_100_lings_vs_10_immortals | 6 Colossi, 10 Immortals | Attack-move into 100 zerglings | The likeliest to show (t) (acquired targets lost in the crowd's churn, carriers pushed); **class P** where it does, and outcome moves on some seeds are possible (26 is close; 28 is `known_bug`) |
+| Battles 31, 33, showcase, showcase effects, goldens, sandbox, client skirmish | none | — | Byte-identical (census) |
+
+The tank precedent (WP0 to WP2) counted zero (t) in every attack-moving world, so "no measured world moves" is a
+live outcome; the owner's acceptance covers the shifts, it does not predict them. Class Y cannot show in measured
+outputs (no trace records a turret angle, WP0 census), so a moved matrix world's first **measured** difference is a
+class-P event, traced to its turret angle with a scratch per-entity trace.
+
+### A2.5 Acceptance (fixed before WP-A1)
+
+- **Every moved world's first difference is class Y or class P** (§6.3), traced: Y, the `turret_angle` of a carrier
+  on a tick probe (t) counted; P, a later real-weapon event (swing start, rotation ticks, shot) of a carrier whose
+  turret tracked before, where the trace shows its aim gate read the moved angle. Anything else first (an order,
+  a position, a target, an RNG draw, a hold) is a defect.
+- **Close battles** (WP-A0's list): an outcome move is restated under charter §8 with the first differing tick of one
+  flipped seed traced to the carrier and its class-P event; if the claim's range breaks, it is re-derived over the
+  seeds of record and 1 to 20 with a fixture comment citing this amendment.
+- **Any other outcome move is a STOP for review** with its trace, not restated by the implementer, although the owner
+  accepted "may shift slightly": the acceptance covers close battles under §8, not non-close ones. So is any failed
+  behaviour check (T-A1 to T-A7, T-1 to T-16, the guards) and any stall (a carrier that stops advancing, swinging or
+  re-ranking where its twin does).
+- **Battle 28** is not close. Any change of its outcomes is a stop for review like any non-close battle. It keeps
+  `known_bug: Some("B-192")` while its claim fails on any seed of record. **If its claim starts to hold on every seed
+  of record**, the matrix test fails by design (a marker cannot outlive its claim's failure) and the package stops for
+  review; the implementer does not remove the marker. The reviewer reads the trace: tracking does not touch the
+  zerglings' chases (B-192's G-6), so a class-P cause means B-192 still stands but battle 28 no longer exhibits it on
+  the seeds of record. The reviewer then removes the marker, keeps the claim and its range unchanged, amends B-192's
+  row to say battle 28 stopped showing it (with the evidence and its development-seed misses) and that the bug needs
+  another exhibit, and adds battle 28 to the close-battle watch of the next plan that touches it. A cause that is not
+  class P is stop rule A-2.
+
+### A2.6 Stop rules (in addition to §8, which apply)
+
+- **A-1.** WP-A0 is records only; the close-battle list and the probes' counts are committed before WP-A1's first
+  build.
+- **A-2.** One cause: every moved world's first difference is class Y or P; another first difference stops the
+  package until traced, a second cause is registered from **B-224** (provisional; B-221 to B-223 are reserved by the
+  follow-order plan) and the package lands only if separable.
+- **A-3.** A non-close outcome move, battle 28 included (A2.5).
+- **A-4.** A failed behaviour check or a stall (A2.5); a carrier's order, path, target or weapon timing that differs
+  from its flag-off twin in a constructed test other than T-A6's pre-aim.
+- **A-5.** Throughput below 50 ticks/s on any scenario, or instructions above +0.5 % (A2.7).
+- **A-6.** The held-out run contradicts the development seeds.
+- **A-7.** The change needs code in `crates/sim_core/src/` (beyond documentation) or anything under `movement/`: stop
+  and report; D-A1 assumed none.
+- **A-8.** A golden or the sandbox differs on the final tree without a reviewed class Y or P trace.
+- **A-9.** No tuning constant; every value is the data's.
+
+### A2.7 Throughput
+
+`cargo bench -p sim_core --bench throughput`, WP-A0's and the final binary interleaved, two rounds, each with its
+tree's catalog, `perf stat -e instructions:u` over the whole run (as Amendment 1 read it): every scenario at **50
+ticks per second or more**, and **instructions at most +0.5 %** over WP-A0's tree. The scenarios carry no carrier
+(`pulse_bot` and three casters), and the change is data only, so about +0.00 % is predicted. Matrix wall time is
+recorded for the Immortal and Colossus battles (a walking carrier now scans each tick), not budgeted.
+
+### A2.8 Schema and numbers
+
+- **No schema change.** No new hashed state: `turret_tracks_any_enemy` is already encoded in each projectile's
+  `WeaponSpec` (neither carrier fires a projectile) and `tracked_targets` is already hashed; the catalog is not
+  hashed. `CHECKSUM_SCHEMA_VERSION` stays 49 (`main`). `friend-crowd-plan` is latent with no schema change, so no
+  conflict.
+- **Bug numbers:** B-218 is the one fixed here. Any new row starts at **B-224**, provisional, next free at merge.
+
+### A2.9 File ownership
+
+| File | WP | Change |
+|---|---|---|
+| `DESIGN.md` | WP-A0, WP-A2 | B-218 planned, then fixed |
+| `docs/evidence/2026-11-26-turret-tracking-weapon.md` | WP-A0 to WP-A2 | Amendment 2 section: census, probes, close-battle list, comparisons, traces, held-out, throughput |
+| `assets/catalog/units.ron` | WP-A1 | Two flags with citations |
+| `crates/sim_types/src/weapon.rs`, `crates/sim_core/src/catalog.rs`, `crates/sim_core/src/combat.rs`, `crates/sim_core/src/world/tracked_targets.rs` | WP-A1 | Documentation only |
+| `crates/sim_core/tests/weapon_catalog_rules_tests.rs`, `turret_tracking_tests.rs`, `runtime_catalog_tests.rs`, `attack_swing_snapshot_tests.rs`, `crates/sim_core/src/target_acquisition.rs` (unit test finder) | WP-A1 | T-A1 to T-A7, T-11 extended, finders explicit |
+| `crates/sim_core/tests/fixtures/matchup_matrix.ron` | WP-A1, only under A2.5 | A close battle restated with its trace |
+| Goldens, `fixture_tests.rs` | WP-A2, only under A-8's review | Predicted unchanged |
+| `docs/plans/README.md` | this amendment, WP-A2 | "Partly done", then "Done" |
+
+`crates/gate/suites.ron` needs no change: every test is in an existing target (**verify** in WP-A1).
+
+### A2.10 Out of scope
+
+- B-178 (`Slowing` treated as `Stopped`): unchanged; the Immortal tracks while walking either way.
+- A tracking range of its own (F-2): `MinScanRange` 6.5 and 7.5 against `Range` 6 and 7 are not modelled, as for the
+  tank.
+- The Phoenix, Void Ray, Battlecruiser and Mothership analogues: their weapons fire while moving (S20), so tracking
+  adds nothing; untouched.
+- `movement/`, the contact solver, collision classes, the friend-crowd and follow-order work: untouched.
