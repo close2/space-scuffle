@@ -224,3 +224,45 @@ the walk's caster: the image shows the caster whatever made it (D-3), so the poo
 case warms up 400 ticks after the attacker is ordered to hold: with the default 30, one bubble material was modified
 once early in the window (a live unit settling after its target became invulnerable; the listed image was unchanged
 throughout, so it is not the pool's).
+
+## Merge of `main` 2f922a50 (follow-order, schema 50)
+
+Merged as `89bfb0e8`; the conflicts were the schema line and constant (53 kept after main's 50), the encoding tests'
+schema bytes beside the follow order's new tests, and the bug rows. **Latent proof re-run against main's schema-50
+values:** a `git archive` copy of `89bfb0e8` with `launch_visibility` unhashed and schema 50 reproduces main's
+re-recorded checkpoints of both goldens and its `DEFAULT_SANDBOX_CHECKSUM` (`13_849_945_286_125_516_044`) on native
+debug and release and `wasm32-wasip1` release and debug, 8 of 8 (`proofcopy.sh merged-latent 89bfb0e8 unhash.py`).
+That tree holds the rule of WP2 as well, so neither the data nor the rule moves any hashed state of main's goldens.
+
+## WP4: re-record, held-out, throughput
+
+**Re-record (§5), `a04d71ce`.** `golden_replay.ron`, `golden_replay_orders.ron` (schema 50 → 53, with the header
+the plan prescribes) and `DEFAULT_SANDBOX_CHECKSUM` (now `1_324_710_836_022_737_298`) re-recorded once on the final
+tree; a fresh-target `git archive` copy of `a04d71ce` passes both goldens and the sandbox on native debug and
+release and `wasm32-wasip1` release and debug, 8 of 8 (`proofcopy.sh final-recorded a04d71ce`).
+
+**Worlds after the merge.** The final tree's worlds against `main` 2f922a50's (both built from fresh-mtime archive
+copies): 483 files, none differing; `matrixdiff.py` lists nothing.
+
+**Held-out (§7.3, stop rule 3).** Matrix seeds 7001–7016, battles 31 and 33 on 7001–7064, the showcase and showcase
+effects on seeds 9–16, on `main` 2f922a50 and on the final tree: 381 files, none differing. The comparison base is
+`main` rather than WP0's tree because the merge brings the follow order's own changes; this plan's changes are the
+only difference between the two trees.
+
+**Throughput (§5, stop rule 5).** `cargo bench -p sim_core --bench throughput` binaries of `main` and the final tree,
+run interleaved, two rounds each, with `perf stat -e instructions:u` (`~/scratch/launch-spell-visibility/bench-*`):
+
+| Scenario | `main` (r1, r2) ticks/s | final (r1, r2) ticks/s |
+|---|---|---|
+| 64x64, 0 units | 3140, 3130 | 3122, 3130 |
+| 64x64, 100 | 807, 806 | 802, 796 |
+| 64x64, 400 | 108, 107 | 107, 107 |
+| 128x128, 400 | 181, 180 | 177, 177 |
+| 256x256, 0 | 197, 196 | 196, 196 |
+| showcase_canyon, 400 | 82, 82 | 81, 81 |
+| 64x64, 67 casters, 400 | 200, 201 | 200, 200 |
+
+User-space instructions of the whole benchmark: `main` 275,777,076,792 and 275,777,196,618; final 275,790,208,649
+and 275,790,206,577: **+0.005 %**. Every scenario runs at 81 ticks/s or more (≥ 50). The instruction count is the
+whole run's, as the method of `DESIGN.md` §5 takes it; a whole-run +0.005 % bounds every scenario's share far below
++0.5 %. Stop rule 5 holds.

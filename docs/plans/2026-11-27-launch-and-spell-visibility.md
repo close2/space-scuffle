@@ -725,3 +725,31 @@ missile launch makes its caster targetable.
   `checksum.rs` and `checksum/encoding.rs`, `catalog/spells.rs`, `assets/catalog/ability_effects.ron`,
   `statuses.ron`, the missile rows of `units.ron` and `structures.ron`.
 - No prototype: the rule is three calls of an existing hook, and no hashed state moves in shipped data.
+
+---
+
+## As built
+
+Built on branch `launch-spell-visibility-plan` against Q0128's defaults 1(a), 2(a), 3(a); `main` 2f922a50
+(follow-order, schema 50) merged before WP4. Evidence:
+[`docs/evidence/2026-11-27-launch-and-spell-visibility.md`](../evidence/2026-11-27-launch-and-spell-visibility.md).
+
+| Package | Commit | What |
+|---|---|---|
+| WP0 | `7a37cdac` | B-205, B-206 restated; **B-227 registered** (the census finds three delivery mismatches: `flying_saucer` and `thorn_lasher_dome` instant where 5.0.14 launches a missile, `mothership_carrier` a missile where it does not); probe (v) zero everywhere; baseline 8/8; close battles 14, 26, 31, 33, 35, 38a, 38b |
+| WP1 | `d52957e3` | The three fields, validation (`CatalogError::ZeroReveal` for the spell nodes), the storm pulse `Hidden`, schema 53; latent proof 8/8 at schema 49; worlds byte-identical |
+| WP2 | `99bf0be7` | `AttackCause`; the release, spell damage and unit-aimed spell launch calls; worlds byte-identical; the showcase gains launch images on seeds 1, 7, 8 exactly as WP0 predicted (class P) |
+| WP3 | `bd2a188e` | Client tests only (V-23 to V-25); no `client/src` change |
+| Merge | `89bfb0e8` | `main` 2f922a50 merged; latent proof re-run at main's schema 50: 8/8 |
+| WP4 | `a04d71ce` and the records commit | Goldens and sandbox re-recorded at 53, proved on four builds; held-out, throughput, records |
+
+**Decisions recorded while building (Q0002).**
+- The census ran with a resolver over the eight layers (`~/scratch/launch-spell-visibility/census/sc2.py`); its
+  `Visibility` survey counts 50 damage overrides (46 `Visible`), one fewer than §2.1 S4, which changes no finding.
+- V-22 is a unit test in `world/snapshot.rs` (the image-clearing hook is crate-private); V-15's reveal half and the
+  loaded caster are V-21's dead and hidden rows for every cause.
+- No `suites.ron` entry: the new test file is a `fast` target, selected by every `sim_core` change.
+- The client stage casts the storm with a soldier that has media as the walk's caster, since no shipped spellcaster
+  has flipbook media and the client refuses to present one without it; the image is the caster's whatever caused it.
+- Held-out seeds and throughput compare the final tree with `main` 2f922a50 rather than WP0's tree, since the merge
+  brings the follow order's own changes; this plan's changes are the only difference between the two.
