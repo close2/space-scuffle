@@ -119,19 +119,47 @@ pub fn context_order(
     (order, OrderMarkerKind::Move, ground)
 }
 
-/// The rally a right click on `target` sets for the selection's production structures (plan
-/// `2026-11-23-production-queue` D-10): the ground at a point, a node, one of the player's units
-/// (the structure itself clears its rally), and for an enemy the ground under it, since a rally
-/// on another player's unit is refused (D-3, B-166).
-#[must_use]
-pub fn rally_target(target: PointerTarget) -> RallyTarget {
-    match target {
-        PointerTarget::Ground(ground) | PointerTarget::Enemy(_, ground) => {
-            RallyTarget::Point(sim_point(ground))
+impl PointerTarget {
+    /// The Bevy world point on the ground the target stands on or covers, where its order marker
+    /// shows.
+    #[must_use]
+    pub const fn ground(self) -> Vec3 {
+        match self {
+            Self::Enemy(_, ground)
+            | Self::Friendly(_, ground)
+            | Self::Node(_, ground)
+            | Self::Ground(ground) => ground,
         }
-        PointerTarget::Node(node, _) => RallyTarget::Node(node),
-        PointerTarget::Friendly(unit, _) => RallyTarget::Unit(unit),
     }
+}
+
+/// The rally a right click on `target` sets for the selection's production structures (plans
+/// `2026-11-23-production-queue` D-10 and `2026-11-25-rallies` D-8): the ground at a point, a
+/// node, an enemy unit (B-166: the new unit attacks it), and one of the player's units (the
+/// structure itself clears its rally). A completed gas extractor of `owner`'s standing on a node
+/// rallies to that node, the rule `friendly_order` gives a harvester (B-216: 5.0.14 counts a
+/// refinery as a harvestable resource), so new workers harvest there.
+#[must_use]
+pub fn rally_target(world: &SimWorld, owner: PlayerId, target: PointerTarget) -> RallyTarget {
+    match target {
+        PointerTarget::Ground(ground) => RallyTarget::Point(sim_point(ground)),
+        PointerTarget::Enemy(unit, _) => RallyTarget::Unit(unit),
+        PointerTarget::Node(node, _) => RallyTarget::Node(node),
+        PointerTarget::Friendly(unit, _) => own_extractor_node(world, owner, unit)
+            .map_or(RallyTarget::Unit(unit), RallyTarget::Node),
+    }
+}
+
+/// The node under `unit` when it is a completed gas extractor of `owner`'s (B-216).
+fn own_extractor_node(world: &SimWorld, owner: PlayerId, unit: EntityId) -> Option<ResourceNodeId> {
+    let entity = world.entities.get(&unit)?;
+    let extractor = entity.owner == owner
+        && entity.is_completed
+        && world
+            .catalog
+            .get(entity.unit_type_id)
+            .is_ok_and(|archetype| archetype.capabilities.is_gas_extractor);
+    extractor.then(|| node_under(world, unit)).flatten()
 }
 
 /// Converts a Bevy world point to the simulation's map plane, where Bevy's Z is map Y.
@@ -600,25 +628,54 @@ mod tests {
         Ok(())
     }
 
-    /// Plan `2026-11-23-production-queue` D-10: each pointer target's rally.
+    /// Plans `2026-11-23-production-queue` D-10 and `2026-11-25-rallies` D-8: each pointer
+    /// target's rally. An enemy is the unit itself (B-166), and the player's own completed
+    /// extractor is the node under it (B-216), while an unfinished one and a mere friend stay
+    /// units.
     #[test]
-    fn a_click_sets_the_rally_its_target_means() {
+    fn a_click_sets_the_rally_its_target_means() -> TestResult {
+        let mut world = flat_world()?;
+        let builder = worker(&mut world, 0)?;
+        let extractor = structure_where(&mut world, builder, EXTRACTOR_CORNER, |a| {
+            a.capabilities.is_gas_extractor
+        })?;
+        let friend = soldier(&mut world, 1)?;
         let ground = Vec3::new(12.0, 0.5, 34.0);
-        let point = RallyTarget::Point(sim_point(ground));
-        assert_eq!(rally_target(PointerTarget::Ground(ground)), point);
+        let rally = |world: &SimWorld, target| rally_target(world, ME, target);
         assert_eq!(
-            rally_target(PointerTarget::Enemy(EntityId(4), ground)),
-            point,
-            "an enemy is the ground under it"
+            rally(&world, PointerTarget::Ground(ground)),
+            RallyTarget::Point(sim_point(ground))
         );
         assert_eq!(
-            rally_target(PointerTarget::Node(ResourceNodeId(2), ground)),
+            rally(&world, PointerTarget::Enemy(EntityId(4), ground)),
+            RallyTarget::Unit(EntityId(4)),
+            "an enemy is the unit"
+        );
+        assert_eq!(
+            rally(&world, PointerTarget::Node(ResourceNodeId(2), ground)),
             RallyTarget::Node(ResourceNodeId(2))
         );
         assert_eq!(
-            rally_target(PointerTarget::Friendly(EntityId(9), ground)),
-            RallyTarget::Unit(EntityId(9))
+            rally(&world, PointerTarget::Friendly(friend, ground)),
+            RallyTarget::Unit(friend)
         );
+        assert_eq!(
+            rally(&world, PointerTarget::Friendly(extractor, ground)),
+            RallyTarget::Node(ResourceNodeId(0)),
+            "the own extractor is its node"
+        );
+        assert_eq!(
+            rally_target(&world, THEM, PointerTarget::Friendly(extractor, ground)),
+            RallyTarget::Unit(extractor),
+            "another player's extractor stays a unit"
+        );
+        unfinish(&mut world, extractor)?;
+        assert_eq!(
+            rally(&world, PointerTarget::Friendly(extractor, ground)),
+            RallyTarget::Unit(extractor),
+            "an unfinished extractor stays a unit"
+        );
+        Ok(())
     }
 
     #[test]

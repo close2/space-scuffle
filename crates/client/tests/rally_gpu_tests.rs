@@ -1,17 +1,20 @@
-//! A selected structure's rally on a real GPU: the reticle and the line are drawn while it is
-//! selected and gone once it is not (plan `2026-11-23-production-queue` D-10, WP5).
+//! A selected structure's rally on a real GPU: the reticles and the chained lines are drawn while
+//! it is selected and gone once it is not (plans `2026-11-23-production-queue` D-10, WP5, and
+//! `2026-11-25-rallies` D-8, WP5).
 //!
 //! # Responsibility
 //! Proves the rally display all the way to pixels. The production client plays the shipped
-//! skirmish on a real window; its child gives the local base a rally on open ground in sight and
-//! stages three shots with the clock stopped: the base not selected, selected, and not selected
-//! again. The parent compares two patches, the screen squares around the projected rally point
-//! (the reticle) and around a point three quarters of the way from the base to it (the line):
-//! - unselected against selected: at least [`RETICLE_SHARE`] of the reticle's patch and at least
-//!   [`LINE_PIXELS`] pixels of the line's patch change, so both are drawn where the simulation's
-//!   rally resolves;
-//! - unselected against deselected: at most [`TOLERATED_PIXELS`] pixels of either patch change, so
-//!   both are hidden again.
+//! skirmish on a real window; its child gives the local base a rally route of two waypoints on
+//! open ground in sight and stages three shots with the clock stopped: the base not selected,
+//! selected, and not selected again. The parent compares four patches, the screen squares around
+//! the two projected waypoints (the reticles), around a point three quarters of the way from the
+//! base to the first waypoint (the first line), and around the midpoint between the waypoints
+//! (the chained line):
+//! - unselected against selected: at least [`RETICLE_SHARE`] of each reticle's patch and at
+//!   least [`LINE_PIXELS`] pixels of each line's patch change, so every waypoint and the chain
+//!   are drawn where the simulation's rally resolves;
+//! - unselected against deselected: at most [`TOLERATED_PIXELS`] pixels of any patch change, so
+//!   all are hidden again.
 //!
 //! # How it fits
 //! The pixel test re-executes this test binary on the virtual GPU through `support/gpu_run.rs`
@@ -63,7 +66,7 @@ use client::{ClientMode, LabState, RtsCamera};
 use serde::{Deserialize, Serialize};
 use sim_core::SimWorld;
 use sim_map::CellFlags;
-use sim_types::{EntityId, PlayerId, RallyTarget, UnitOrder};
+use sim_types::{EntityId, PlayerId, RallyRoute, RallyTarget, UnitOrder};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -85,6 +88,12 @@ const SETTLE_FRAMES: u32 = 3;
 const STILL_CAMERA_FRAMES: u32 = 3;
 /// Distances from the base, in world units, at which the rally point is sought.
 const RALLY_DISTANCES: [f32; 4] = [9.0, 10.0, 8.0, 11.0];
+/// Distances from the base, in world units, at which the second waypoint is sought: the first's,
+/// since the ground in sight around the start is no wider.
+const SECOND_DISTANCES: [f32; 4] = RALLY_DISTANCES;
+/// Least and most distance, in world units, between the two waypoints, so their reticles and
+/// the chained line's patch stay apart, and the chain's midpoint off the first line.
+const WAYPOINT_GAP: (f32, f32) = (4.0, 8.0);
 /// Clearance around the rally point, in world units, from any unit and resource node.
 const RALLY_CLEARANCE: f32 = 2.5;
 /// Half the side of the reticle's patch, in world units: the reticle is 1.6 wide.
@@ -118,6 +127,10 @@ struct RallyReport {
     reticle: [u32; 4],
     /// The line's patch, likewise.
     line: [u32; 4],
+    /// The second waypoint's reticle patch, likewise.
+    second: [u32; 4],
+    /// The chained line's patch, between the waypoints, likewise.
+    chain: [u32; 4],
     /// Whether the view published the base's rally at the staged point.
     published: bool,
 }
@@ -152,6 +165,46 @@ fn a_selected_structures_rally_is_drawn_and_hidden_when_deselected() -> TestResu
         "the line's patch is on screen: {report:?}"
     );
 
+    for patch in [report.second, report.chain] {
+        assert!(
+            patch_pixels(patch, &unselected) > 9,
+            "the second waypoint's patches are on screen: {report:?}"
+        );
+    }
+    let second_pixels = patch_pixels(report.second, &unselected);
+    let second_drawn = compare(&unselected, &selected, report.second);
+    let chain_drawn = compare(&unselected, &selected, report.chain);
+    let second_hidden = compare(&unselected, &deselected, report.second);
+    let chain_hidden = compare(&unselected, &deselected, report.chain);
+    eprintln!(
+        "second waypoint patch {:?} of {second_pixels} pixels, chain patch {:?}; selected: \
+         second {} changed (largest {}), chain {} changed (largest {}); deselected: second {}, \
+         chain {}",
+        report.second,
+        report.chain,
+        second_drawn.changed,
+        second_drawn.largest,
+        chain_drawn.changed,
+        chain_drawn.largest,
+        second_hidden.changed,
+        chain_hidden.changed
+    );
+    assert!(
+        second_drawn.changed as f64 >= RETICLE_SHARE * second_pixels as f64,
+        "the second reticle changed only {} of {second_pixels} pixels",
+        second_drawn.changed
+    );
+    assert!(
+        chain_drawn.changed >= LINE_PIXELS,
+        "the chained line changed only {} pixels",
+        chain_drawn.changed
+    );
+    assert!(
+        second_hidden.changed <= TOLERATED_PIXELS && chain_hidden.changed <= TOLERATED_PIXELS,
+        "deselected, the second waypoint still changed {} and {} pixels",
+        second_hidden.changed,
+        chain_hidden.changed
+    );
     let reticle_drawn = compare(&unselected, &selected, report.reticle);
     let line_drawn = compare(&unselected, &selected, report.line);
     let reticle_hidden = compare(&unselected, &deselected, report.reticle);
@@ -262,9 +315,10 @@ struct Staging {
     phase: Phase,
     /// The viewer's base.
     base: Option<EntityId>,
-    /// The base's centre and the rally point, map positions in world units.
+    /// The base's centre, the first waypoint and the second, map positions in world units.
     from: Vec2,
     to: Vec2,
+    then: Vec2,
     report: RallyReport,
 }
 
@@ -292,8 +346,15 @@ fn open(world: &SimWorld, point: Vec2) -> bool {
     })
 }
 
-/// Open ground in the viewer's sight at a rally distance from `base`, clear of units and nodes.
-fn find_rally(world: &SimWorld, fog: &BattleFog, base: Vec2) -> Vec2 {
+/// Open ground in the viewer's sight at one of `distances` from `base`, clear of units and nodes,
+/// that `also` accepts.
+fn find_rally(
+    world: &SimWorld,
+    fog: &BattleFog,
+    base: Vec2,
+    distances: [f32; 4],
+    also: impl Fn(Vec2) -> bool,
+) -> Vec2 {
     let clear = |point: Vec2| {
         let units = world.entities.values().all(|unit| {
             let at = Vec2::new(unit.position.x.to_f32(), unit.position.y.to_f32());
@@ -305,14 +366,16 @@ fn find_rally(world: &SimWorld, fog: &BattleFog, base: Vec2) -> Vec2 {
         });
         units && nodes
     };
-    RALLY_DISTANCES
+    distances
         .iter()
         .flat_map(|distance| {
             (0..16).map(move |step| {
                 base + Vec2::from_angle(step as f32 * std::f32::consts::TAU / 16.0) * *distance
             })
         })
-        .find(|point| open(world, *point) && clear(*point) && fog.sees(point.x, point.y))
+        .find(|point| {
+            open(world, *point) && clear(*point) && fog.sees(point.x, point.y) && also(*point)
+        })
         .expect("the start area has open ground in sight")
 }
 
@@ -335,7 +398,10 @@ fn stage_rally(staging: &mut Staging, session: &mut BattleSession, fog: &BattleF
         world.entities[&base].position.x.to_f32(),
         world.entities[&base].position.y.to_f32(),
     );
-    let to = find_rally(world, fog, from);
+    let to = find_rally(world, fog, from, RALLY_DISTANCES, |_| true);
+    let then = find_rally(world, fog, from, SECOND_DISTANCES, |point| {
+        (WAYPOINT_GAP.0..=WAYPOINT_GAP.1).contains(&point.distance(to))
+    });
     let own: Vec<EntityId> = world
         .entities
         .values()
@@ -358,10 +424,17 @@ fn stage_rally(staging: &mut Staging, session: &mut BattleSession, fog: &BattleF
         .entities
         .get_mut(&base)
         .expect("the base stands")
-        .rally = Some(RallyTarget::Point(sim_position(to)));
+        .rallies = vec![RallyRoute {
+        slot: 0,
+        waypoints: vec![
+            RallyTarget::Point(sim_position(to)),
+            RallyTarget::Point(sim_position(then)),
+        ],
+    }];
     staging.base = Some(base);
     staging.from = from;
     staging.to = to;
+    staging.then = then;
 }
 
 /// The square of physical window pixels around the ground point `at` (map position), `half`
@@ -394,13 +467,16 @@ fn patch(camera: (&Camera, &GlobalTransform), world: &SimWorld, at: Vec2, half: 
 fn record(staging: &mut Staging, session: &BattleSession, camera: (&Camera, &GlobalTransform)) {
     let world = session.world().expect("a ready session has a world");
     let base = staging.base.expect("staged");
-    let point = world.rally_point(base);
+    let point = world.rally_point(base, 0);
     staging.report.published = point.is_some_and(|point| {
         Vec2::new(point.x.to_f32(), point.y.to_f32()).distance(staging.to) < 1e-3
     });
     staging.report.reticle = patch(camera, world, staging.to, RETICLE_HALF);
     let along = staging.from + (staging.to - staging.from) * LINE_FRACTION;
     staging.report.line = patch(camera, world, along, LINE_HALF);
+    staging.report.second = patch(camera, world, staging.then, RETICLE_HALF);
+    let middle = (staging.to + staging.then) * 0.5;
+    staging.report.chain = patch(camera, world, middle, LINE_HALF);
 }
 
 /// Applies shot `shot`'s selection: the base selected only in the second.

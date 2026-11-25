@@ -29,6 +29,7 @@ pub mod math;
 pub mod placement;
 pub mod player_view;
 pub mod presentation;
+pub mod rally;
 pub mod resource_kind_set;
 mod sin_table;
 pub mod snapshot;
@@ -39,7 +40,7 @@ pub mod weapon;
 pub use commands::{
     AbilityEffectSpec, AbilitySpec, AbilityTargetKind, ArchetypeCapabilities, AttackCommand,
     AttackDashSpec, AttackOrigin, AutoRallySpec, BarrierSpec, HarvesterSpec, OverclockSpec,
-    PlayerCommand, RallyTarget, StanceOrders, TickBundle, TickInputBundle, UnitModeSpec, UnitOrder,
+    PlayerCommand, StanceOrders, TickBundle, TickInputBundle, UnitModeSpec, UnitOrder,
 };
 pub use effects::{
     CancelOrdersDef, DamageDef, DamageResponses, DisplaceDef, DisplaceDestination, EffectAnchor,
@@ -72,6 +73,7 @@ pub use presentation::{
     SpellMissileView, StanceView, StatusFlags, StatusKind, StatusView, StrikeEnds, WeaponKey,
     WeaponSlot,
 };
+pub use rally::{RallyRoute, RallySlotSpec, RallySpec, RallyTarget, RallyUsers};
 pub use resource_kind_set::ResourceKindSet;
 pub use snapshot::{
     AttackSwing, BubbleRenderInstance, CombatEventVisual, MatchResult, PlayerStatusView,

@@ -1028,6 +1028,7 @@ fn the_unit_exits_nearest_the_rally_point() -> TestResult {
                 entities: vec![f.producer],
                 order: sim_types::UnitOrder::SetRally {
                     target: sim_types::RallyTarget::Point(rally),
+                    slot: None,
                 },
                 queue: false,
             }],

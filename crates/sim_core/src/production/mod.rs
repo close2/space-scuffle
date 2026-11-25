@@ -14,6 +14,7 @@ pub mod construction;
 mod exits;
 mod lifecycle;
 mod rally;
+mod rally_slots;
 mod research;
 
 use crate::upgrades::UpgradeId;

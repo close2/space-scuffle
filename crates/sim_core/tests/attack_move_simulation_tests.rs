@@ -403,6 +403,7 @@ fn test_dual_weapon_ground_air_and_cliffwalker_selection() {
         detection_radius: None,
         requires_structures: Vec::new(),
         trains_units: Vec::new(),
+        rally: None,
         researches_upgrades: Vec::new(),
         armor_class: None,
         modes: Vec::new(),

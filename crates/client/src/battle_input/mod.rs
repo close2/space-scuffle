@@ -521,6 +521,19 @@ fn handle_targeting_pointer(
                 return Ok((OrderMarkerKind::Attack, unit.ground));
             }
         }
+        // In a rally mode the click rallies the slot on what is under the pointer, as a right
+        // click would (plan `2026-11-25-rallies` D-8).
+        if let CommandMode::Rally { slot } = *mode {
+            let target = ray
+                .and_then(|ray| view.pointer_target(world, frame.owner, selection.ids(), ray))
+                .ok_or(SubmissionError::NoDestination)?;
+            let rally = UnitOrder::SetRally {
+                target: rally_target(world, frame.owner, target),
+                slot: Some(slot),
+            };
+            queue.submit_selection(world, frame.owner, selection.ids(), rally, frame.shift)?;
+            return Ok((OrderMarkerKind::Rally, target.ground()));
+        }
         let ground = ground.ok_or(SubmissionError::NoDestination)?;
         let (order, kind, position) = mode.order_at(world, frame.owner, ground)?;
         queue.submit_selection(world, frame.owner, selection.ids(), order, frame.shift)?;
@@ -626,7 +639,8 @@ fn issue_pointer_order(
     // structures alone submits only the rally, and the click is accepted when either submission
     // is, so a mixed selection reports no refusal its other half was spared.
     let rally = UnitOrder::SetRally {
-        target: rally_target(target),
+        target: rally_target(world, owner, target),
+        slot: None,
     };
     let rallies = any_recipient(world, owner, selection.ids(), &rally);
     let orders = !rallies || any_recipient(world, owner, selection.ids(), &order);

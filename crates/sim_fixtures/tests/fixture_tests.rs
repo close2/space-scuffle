@@ -131,7 +131,11 @@ use std::path::PathBuf;
 /// Amendment 2, on its merge with `main` `a59368a3`), which encodes each unit's last seen point of
 /// its attack order's target; a copy of the merged tree that leaves it unhashed and keeps schema
 /// 46 reproduces `9_879_951_760_932_463_822` on all four builds.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 16_195_585_963_966_674_183;
+/// Re-recorded for checksum schema 48, provisional (plan `2026-11-25-rallies` WP1), which encodes
+/// each entity's rally as its routes; a copy of the WP1 tree that encodes slot 0's first waypoint
+/// as the old rally and keeps schema 47 reproduces `16_195_585_963_966_674_183` on all four
+/// builds.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 601_552_017_353_564_848;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

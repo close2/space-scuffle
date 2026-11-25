@@ -2,6 +2,7 @@
 
 use crate::ids::{EntityId, PlayerId, ResourceNodeId, Tick, UnitTypeId};
 use crate::math::{SimScalar, SimVec2};
+use crate::rally::RallyTarget;
 use crate::resource_kind_set::ResourceKindSet;
 use crate::weapon::WeaponSpec;
 use serde::{Deserialize, Serialize};
@@ -18,22 +19,6 @@ pub enum AttackOrigin {
     Explicit,
     /// Chosen by automatic targeting or retaliation: a better target may replace it.
     Acquired,
-}
-
-/// Where a production structure sends the units it makes (`StarCraft` II's rally, 5.0.14
-/// `CAbilRally`, plan `2026-11-23-production-queue` D-3).
-///
-/// A structure holds at most one rally (`Entity::rally` in `sim_core`). The simulation resolves
-/// it to a point (world units) when a unit leaves the structure, when the exit is chosen and when
-/// the player view publishes it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum RallyTarget {
-    /// A point on the map, world units.
-    Point(SimVec2),
-    /// One of the player's own units: new units go where it stands when they leave.
-    Unit(EntityId),
-    /// A resource node: workers harvest it, other units go to its centre.
-    Node(ResourceNodeId),
 }
 
 /// Concrete order issued to an individual unit or selection group.
@@ -119,11 +104,16 @@ pub enum UnitOrder {
     },
     /// Set every passenger down around this carrier.
     UnloadAll,
-    /// Set the rally of the selected production structures (plan `2026-11-23-production-queue`
-    /// D-3); a rally on the structure itself clears it.
+    /// Set the rally of the selected production structures (plans `2026-11-23-production-queue`
+    /// D-3 and `2026-11-25-rallies` D-3); a rally on the structure itself clears the slot's
+    /// route. The command's `queue` (Shift) appends a waypoint to the slot's route.
     SetRally {
         /// Where the structures send the units they make.
         target: RallyTarget,
+        /// The rally slot to set: `None` for the smart command (a right click), which sets the
+        /// first slot that takes the target; `Some(i)` for the card's entry of slot `i`.
+        #[serde(default)]
+        slot: Option<u8>,
     },
 }
 
@@ -199,6 +189,9 @@ pub struct AutoRallySpec {
     pub radius: SimScalar,
     /// The kinds of resource the search accepts (the effect's validator, `Minerals`).
     pub kinds: ResourceKindSet,
+    /// The rally slot the auto-rally fills (`RallyHatchery` command 1 for the Hatchery, plan
+    /// `2026-11-25-rallies` D-4); below the structure's slot count.
+    pub slot: u8,
 }
 
 /// A damage-absorbing barrier that raises itself when its unit takes damage (`StarCraft` II's

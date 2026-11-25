@@ -1019,10 +1019,10 @@ fn stop_on_an_armed_structure_drops_its_attack_and_keeps_production_and_rally() 
     run_ticks(&mut harness, 1);
     let (queue, rally) = {
         let unit = &harness.world().entities[&structure];
-        (unit.production_queue.clone(), unit.rally)
+        (unit.production_queue.clone(), unit.rallies.clone())
     };
     assert!(!queue.is_empty(), "a job: {}", harness.status());
-    assert!(rally.is_some(), "a rally: {}", harness.status());
+    assert!(!rally.is_empty(), "a rally: {}", harness.status());
 
     for by_key in [true, false] {
         harness
@@ -1063,7 +1063,7 @@ fn stop_on_an_armed_structure_drops_its_attack_and_keeps_production_and_rally() 
         );
         let unit = &harness.world().entities[&structure];
         assert_eq!(unit.production_queue.len(), queue.len(), "by key {by_key}");
-        assert_eq!(unit.rally, rally, "by key {by_key}");
+        assert_eq!(unit.rallies, rally, "by key {by_key}");
     }
 }
 
@@ -1592,4 +1592,134 @@ fn a_hidden_enemy_structure_does_not_turn_the_preview_red() {
         Some(Err(SiteRefusal::KnownStructure))
     );
     assert_ghost_is(&mut harness, false);
+}
+
+/// The positions of the card's rally entries and their slots, in position order.
+fn rally_entries(harness: &Harness) -> Vec<(usize, u8)> {
+    card(harness)
+        .slots
+        .iter()
+        .enumerate()
+        .filter_map(|(position, slot)| match slot.as_ref()?.action {
+            CardAction::Mode(CommandMode::Rally { slot }) => Some((position, slot)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Plan `2026-11-25-rallies` D-8 (B-164, B-214): the card shows one rally entry per rally slot of
+/// the selected structures, named by data and on positional keys. A one-slot producer shows one;
+/// a structure with a worker slot shows two, named by its slots' labels; a selection of both
+/// shows the union, two entries, each named by the first selected structure that has the slot.
+/// The shipped structures with a worker slot have no media, so the skirmish base is given that
+/// ability in a temporary catalog ([`battle_harness::root_with_two_rally_slots`]).
+#[cfg(unix)]
+#[test]
+fn rally_entries_follow_the_selected_structures_slots() {
+    let slug = {
+        let shipped = skirmish();
+        let world = shipped.world();
+        let base = shipped.local_structure();
+        world
+            .catalog
+            .get(world.entities[&base].unit_type_id)
+            .expect("base")
+            .slug
+            .clone()
+    };
+    let root = battle_harness::root_with_two_rally_slots(&slug);
+    let mut harness = Harness::boot_root(root.path(), ClientMode::Skirmish, SKIRMISH_SCENARIO);
+    let position = harness.simulated_position(worker(&harness));
+    harness.look_at(position);
+    let two = harness.local_structure();
+    let labels = |harness: &Harness, unit_type: UnitTypeId| -> Vec<String> {
+        harness
+            .world()
+            .catalog
+            .get(unit_type)
+            .expect("an archetype")
+            .rally
+            .iter()
+            .flat_map(|rally| rally.slots.iter().map(|slot| slot.label.clone()))
+            .collect()
+    };
+    let two_type = harness.world().entities[&two].unit_type_id;
+    let two_labels = labels(&harness, two_type);
+    assert_eq!(two_labels.len(), 2, "the edited base has two slots");
+    // A presentable one-slot producer of the base's faction, placed near it.
+    let faction = harness.world().catalog.get(two_type).expect("base").faction;
+    let one_type = {
+        let model = harness.app.world().resource::<HudModel>();
+        harness
+            .world()
+            .catalog
+            .archetypes()
+            .find(|arch| {
+                arch.faction == faction
+                    && arch.unit_type_id != two_type
+                    && arch
+                        .rally
+                        .as_ref()
+                        .is_some_and(|rally| rally.slots.len() == 1)
+                    && model
+                        .catalog
+                        .archetype(arch.unit_type_id)
+                        .is_some_and(|entry| entry.unpresentable.is_none())
+            })
+            .expect("a presentable one-slot producer")
+            .unit_type_id
+    };
+    let one_labels = labels(&harness, one_type);
+    let ground = harness.open_ground(harness.simulated_position(two), 10.0);
+    let world = harness.world_mut();
+    let (x, y) = world
+        .map
+        .world_to_cell(battle_harness::sim_position(ground))
+        .expect("on the map");
+    let one = world
+        .spawn_structure(one_type, LOCAL_PLAYER, x, y)
+        .expect("open ground near the base");
+    harness.resume();
+    harness.step(3);
+    harness.pause();
+    let slots = |harness: &Harness| -> Vec<u8> {
+        rally_entries(harness).iter().map(|entry| entry.1).collect()
+    };
+    let captions = |harness: &Harness| -> Vec<String> {
+        rally_entries(harness)
+            .iter()
+            .map(|&(position, _)| card(harness).text[position].caption.clone())
+            .collect()
+    };
+
+    harness.select(one);
+    harness.step(1);
+    assert_eq!(slots(&harness), [0]);
+    assert!(
+        captions(&harness)[0].contains(one_labels[0].as_str()),
+        "{:?}",
+        captions(&harness)
+    );
+
+    harness.select(two);
+    harness.step(1);
+    assert_eq!(slots(&harness), [0, 1]);
+    for (caption, label) in captions(&harness).iter().zip(&two_labels) {
+        assert!(
+            caption.contains(label.as_str()),
+            "{caption} against {label}"
+        );
+    }
+
+    harness.select(one);
+    let at = harness.unit_on_screen(two);
+    harness.with_key_held(SHIFT_MODIFIERS[0], |harness| {
+        harness.click(MouseButton::Left, at);
+    });
+    harness.step(1);
+    assert!(harness.selection().contains(one) && harness.selection().contains(two));
+    assert_eq!(slots(&harness), [0, 1], "the union of the slots");
+    let captions = captions(&harness);
+    assert!(captions[0].contains(one_labels[0].as_str()), "{captions:?}");
+    assert!(captions[1].contains(two_labels[1].as_str()), "{captions:?}");
 }

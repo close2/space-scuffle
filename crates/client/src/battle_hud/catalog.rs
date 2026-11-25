@@ -73,6 +73,11 @@ pub struct ArchetypeCommands {
     pub trains: Vec<UnitTypeId>,
     /// Catalog IDs of the upgrades it can research, in catalog order.
     pub researches: Vec<u32>,
+    /// The card names of its rally slots, in slot order, from its authored rally ability (plan
+    /// `2026-11-25-rallies` D-1, D-8). Empty for an archetype that trains nothing, and for one
+    /// with the default ability, which has no name in data: it still rallies by a right click
+    /// but has no card entry.
+    pub rally_labels: Vec<String>,
     /// Structures this unit can raise, in catalog order. Empty for all but builders.
     pub raises: Vec<UnitTypeId>,
     /// Why this identity cannot be shown, if it cannot.
@@ -273,6 +278,12 @@ fn commands_of(
             .iter()
             .filter_map(|slug| upgrades.get_by_slug(slug))
             .map(|upgrade| upgrade.upgrade_id)
+            .collect(),
+        rally_labels: archetype
+            .rally
+            .iter()
+            .filter(|_| !archetype.trains_units.is_empty())
+            .flat_map(|rally| rally.slots.iter().map(|slot| slot.label.clone()))
             .collect(),
         raises: units
             .archetypes()
