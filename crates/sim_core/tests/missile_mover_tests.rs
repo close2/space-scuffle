@@ -26,8 +26,9 @@
 use sim_core::{ActiveProjectile, SimWorld, UnitArchetype, WeaponSpec};
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
-    CombatEventVisual, EntityId, MissileMover, MissilePhase, MoverType, PlayerId, SimScalar,
-    SimVec2, Tick, TickBundle, UnitOrder, UnitTypeId, TICKS_PER_SECOND,
+    AttackVisibility, CombatEventVisual, EntityId, MissileMover, MissilePhase, MoverType, PlayerId,
+    PlayerView, ShapeKind, SimScalar, SimVec2, Tick, TickBundle, UnitOrder, UnitTypeId,
+    TICKS_PER_SECOND,
 };
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -563,3 +564,476 @@ fn a_constant_missiles_event_lasts_as_before() -> TestResult {
     Ok(())
 }
 
+// ---------------------------------------------------------------------------------------------
+// The shipped weapons (W-11 to W-16, plan `2026-11-27-weapon-delivery` WP2)
+// ---------------------------------------------------------------------------------------------
+
+/// Registers a copy of `arch` under the next free identity, changed by `edit`.
+fn register(
+    world: &mut SimWorld,
+    arch: &UnitArchetype,
+    edit: impl FnOnce(&mut UnitArchetype),
+) -> UnitTypeId {
+    let id = free_type(world);
+    let mut copy = arch.clone();
+    copy.unit_type_id = id;
+    format!("scratch_mover_{}", id.0).clone_into(&mut copy.slug);
+    edit(&mut copy);
+    world.catalog.register(copy);
+    id
+}
+
+/// Strips `arch` of its weapons and gives it `sight` and a deep pool of life, so it neither
+/// fights back nor dies of the strikes a test counts.
+fn unarmed(sight: SimScalar) -> impl FnOnce(&mut UnitArchetype) {
+    move |copy: &mut UnitArchetype| {
+        copy.weapon = None;
+        copy.ground_weapon = None;
+        copy.air_weapon = None;
+        copy.sight_radius = sight;
+        copy.detection_radius = None;
+    }
+}
+
+/// The shipped mobile air unit whose air weapon flies movers: the Phoenix analogue.
+fn air_mover_unit(world: &SimWorld) -> Result<UnitArchetype, String> {
+    world
+        .catalog
+        .archetypes()
+        .find(|arch| {
+            arch.mover_type == MoverType::Air
+                && arch.max_speed > SimScalar::ZERO
+                && arch
+                    .air_weapon
+                    .as_ref()
+                    .is_some_and(|w| !w.missile_movers.is_empty())
+        })
+        .cloned()
+        .ok_or_else(|| "the shipped catalog has an air weapon with movers".to_owned())
+}
+
+/// The shipped structure whose ground weapon flies movers: the Spine Crawler analogue.
+fn ground_mover_structure(world: &SimWorld) -> Result<UnitArchetype, String> {
+    world
+        .catalog
+        .archetypes()
+        .find(|arch| {
+            matches!(arch.shape, ShapeKind::BuildingDome { .. })
+                && arch
+                    .ground_weapon
+                    .as_ref()
+                    .is_some_and(|w| !w.missile_movers.is_empty())
+        })
+        .cloned()
+        .ok_or_else(|| "the shipped catalog has a structure ground weapon with movers".to_owned())
+}
+
+/// The shipped unit whose ground weapon's release shows nothing (`launch_visibility: Hidden`):
+/// the Mothership Carrier analogue, whose game counterpart launches no missile (D-7).
+fn hidden_launch_unit(world: &SimWorld) -> Result<UnitArchetype, String> {
+    world
+        .catalog
+        .archetypes()
+        .find(|arch| {
+            arch.weapon_against(MoverType::Ground, None)
+                .is_some_and(|w| {
+                    w.projectile_speed.is_some() && w.launch_visibility == AttackVisibility::Hidden
+                })
+        })
+        .cloned()
+        .ok_or_else(|| "the shipped catalog has a missile weapon with a hidden launch".to_owned())
+}
+
+/// A duel on open ground between the shipped `attacker` (a structure when it has a dome) of
+/// player 0 and an unarmed copy of `victim` of player 1 seeing `sight`, `edge` world units
+/// apart edge to edge along the x axis; `edit` changes the attacker's copy first.
+fn shipped_duel(
+    seed: u64,
+    attacker: &UnitArchetype,
+    victim: &UnitArchetype,
+    sight: SimScalar,
+    edge: SimScalar,
+    edit: impl FnOnce(&mut UnitArchetype),
+) -> Result<Bench, Box<dyn std::error::Error>> {
+    let map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?;
+    let mut world = sim_fixtures::world(map, seed);
+    let shooter_type = register(&mut world, attacker, edit);
+    let target_type = register(&mut world, victim, unarmed(sight));
+    let shooter = if matches!(attacker.shape, ShapeKind::BuildingDome { .. }) {
+        world.spawn_structure(shooter_type, PlayerId(0), 6, 15)?
+    } else {
+        world.spawn_unit(shooter_type, PlayerId(0), SimVec2::from_i32(7, 16))?
+    };
+    let origin = world.entities[&shooter].position;
+    let at = SimVec2::new(
+        origin.x + attacker.collision_radius + victim.collision_radius + edge,
+        origin.y,
+    );
+    let target = world.spawn_unit(target_type, PlayerId(1), at)?;
+    let entity = world.entities.get_mut(&target).ok_or("spawned")?;
+    entity.max_hp = SimScalar::from_i32(100_000);
+    entity.hp = entity.max_hp;
+    // It holds, so it neither flees nor is pushed out of reach.
+    entity
+        .issue_order(UnitOrder::HoldPosition, false)
+        .map_err(|error| format!("{error:?}"))?;
+    let speed = attacker
+        .weapon_against(victim.mover_type, None)
+        .and_then(|w| w.projectile_speed)
+        .ok_or("the attacker's weapon against the victim is a missile")?;
+    Ok(Bench {
+        world,
+        shooter,
+        target,
+        shooter_radius: attacker.collision_radius,
+        target_radius: victim.collision_radius,
+        speed,
+    })
+}
+
+/// The images `viewer` is listed, by attacker.
+fn images(world: &SimWorld, viewer: u8) -> Vec<EntityId> {
+    let mut view = PlayerView::default();
+    world.write_player_view(PlayerId(viewer), &mut view);
+    view.attack_snapshots
+        .iter()
+        .map(|entry| entry.entity)
+        .collect()
+}
+
+/// W-11: the Phoenix analogue's release strikes nothing; both strikes land together on the
+/// tick of §2.3's table (2 ticks at edge 0.5, 8 at 3, 10 at 5, the release tick counted), and
+/// its `Visible` damage reveals it on that tick, not at the release.
+#[test]
+fn the_air_mover_weapon_lands_both_strikes_after_its_flight() -> TestResult {
+    let world = sim_fixtures::world(
+        GameMap::new(8, 8, MapCell::default_ground(CliffLevel(0)))?,
+        1,
+    );
+    let phoenix = air_mover_unit(&world)?;
+    for (seed, (edge, expected)) in (0x500_u64..).zip([(0.5, 2), (3.0, 8), (5.0, 10)]) {
+        let mut bench = shipped_duel(seed, &phoenix, &phoenix, scalar(10.0), scalar(edge), |_| {})?;
+        let mut revealed = Vec::new();
+        let flight = bench.fly(|_| Ok(()))?;
+        let first = flight.states.first().ok_or("the missile flew a tick")?;
+        assert_eq!(first.strikes, 2, "one missile carries both strikes");
+        assert!(first.mover.is_some(), "it flies a mover");
+        assert_eq!(flight.ticks(), Some(expected), "edge {edge}");
+        revealed.push(
+            bench
+                .world
+                .entities
+                .get(&bench.shooter)
+                .is_some_and(|e| e.is_attack_revealed_to(PlayerId(1))),
+        );
+        assert_eq!(revealed, vec![true], "the impact reveals the attacker");
+    }
+    // The reveal starts on the landing tick: stepped tick by tick, not before.
+    let mut bench = shipped_duel(0x510, &phoenix, &phoenix, scalar(10.0), scalar(5.0), |_| {})?;
+    let full = bench.vitals(bench.target);
+    let mut released = None;
+    let mut ticks = Vec::new();
+    for tick in 1..=120 {
+        if tick == 1 {
+            bench
+                .world
+                .entities
+                .get_mut(&bench.shooter)
+                .ok_or("the shooter exists")?
+                .issue_order(UnitOrder::attack(bench.target), false)
+                .map_err(|error| format!("{error:?}"))?;
+        }
+        bench.world.step(&bundle(tick));
+        if released.is_none() && !bench.world.projectiles.is_empty() {
+            released = Some(tick);
+        }
+        let shown = bench.world.entities[&bench.shooter].is_attack_revealed_to(PlayerId(1));
+        ticks.push((tick, shown, bench.vitals(bench.target) != full));
+        if bench.vitals(bench.target) != full {
+            break;
+        }
+    }
+    let released = released.ok_or("released")?;
+    for &(tick, shown, struck) in &ticks {
+        assert_eq!(
+            shown, struck,
+            "tick {tick} (released {released}): revealed only once struck"
+        );
+    }
+    assert_eq!(ticks.last().map(|t| t.0), Some(released + 9));
+    Ok(())
+}
+
+/// W-12: the Spine Crawler analogue's tentacle lands on the tick of §2.3's table; the short band
+/// (edge 3 or less) is the slower one.
+#[test]
+fn the_structure_mover_weapon_lands_after_its_band_s_flight() -> TestResult {
+    let world = sim_fixtures::world(
+        GameMap::new(8, 8, MapCell::default_ground(CliffLevel(0)))?,
+        1,
+    );
+    let spine = ground_mover_structure(&world)?;
+    let victim = missile_archetype(&world)?;
+    for (seed, (edge, expected)) in
+        (0x520_u64..).zip([(0.5, 6), (2.0, 7), (3.0, 7), (3.5, 4), (5.0, 4), (7.0, 5)])
+    {
+        let mut bench = shipped_duel(seed, &spine, &victim, scalar(10.0), scalar(edge), |_| {})?;
+        let flight = bench.fly(|_| Ok(()))?;
+        let first = flight.states.first().ok_or("the missile flew a tick")?;
+        assert_eq!(
+            first.mover,
+            Some(u8::from(edge > 3.0)),
+            "edge {edge}: its band"
+        );
+        assert_eq!(flight.ticks(), Some(expected), "edge {edge}");
+    }
+    Ok(())
+}
+
+/// What a target-loss case does to the bench right after the release.
+type Loss = fn(&mut Bench) -> Result<(), String>;
+
+fn dies(bench: &mut Bench) -> Result<(), String> {
+    bench
+        .world
+        .entities
+        .get_mut(&bench.target)
+        .ok_or("target")?
+        .hp = SimScalar::ZERO;
+    Ok(())
+}
+
+fn turns_invulnerable(bench: &mut Bench) -> Result<(), String> {
+    bench
+        .world
+        .entities
+        .get_mut(&bench.target)
+        .ok_or("target")?
+        .is_invulnerable = true;
+    Ok(())
+}
+
+fn cloaks(bench: &mut Bench) -> Result<(), String> {
+    bench
+        .world
+        .entities
+        .get_mut(&bench.target)
+        .ok_or("target")?
+        .is_cloaked = true;
+    Ok(())
+}
+
+fn blinks(bench: &mut Bench) -> Result<(), String> {
+    let entity = bench
+        .world
+        .entities
+        .get_mut(&bench.target)
+        .ok_or("target")?;
+    let away = SimVec2::new(
+        entity.position.x,
+        entity.position.y + SimScalar::from_i32(6),
+    );
+    entity.teleport_to(away);
+    Ok(())
+}
+
+fn loads(bench: &mut Bench) -> Result<(), String> {
+    let kind = bench.world.entities[&bench.target].unit_type_id;
+    let carrier = bench
+        .world
+        .spawn_unit(kind, PlayerId(1), SimVec2::from_i32(28, 28))
+        .map_err(|error| format!("{error:?}"))?;
+    bench
+        .world
+        .try_load_unit_into_transport(bench.target, carrier)
+        .map(|_| ())
+        .map_err(|error| format!("{error:?}"))
+}
+
+/// Plays `loss` on `bench` after the release: the missile flies on to the target's point at the
+/// release and lands there, and the target's vitals do not change after the loss.
+fn lands_on_the_last_point(mut bench: Bench, loss: Loss, case: &str) -> TestResult {
+    let last = bench.world.entities[&bench.target].position;
+    let mut after_loss = None;
+    let flight = bench.fly(|bench| {
+        loss(bench)?;
+        after_loss = Some(bench.vitals(bench.target));
+        Ok(())
+    })?;
+    let lost = flight.states.last().ok_or("the missile flew on")?;
+    assert_eq!(lost.target_id, None, "{case}: the target is lost");
+    assert_eq!(lost.target_pos, last, "{case}: it flies to the last point");
+    if let (Some(before), Some(now)) = (after_loss.flatten(), bench.vitals(bench.target)) {
+        assert_eq!(now, before, "{case}: the lost missile strikes no unit");
+    }
+    Ok(())
+}
+
+/// W-13: for both weapons, a target that dies, turns invulnerable, cloaks undetected or blinks
+/// in flight, or (the ground target) is loaded, is lost: the missile lands on the last point and
+/// damages nothing (§2.2 rule 3: `ValidateWeapon`, `ValidateTeleport`, `PointFallback`).
+#[test]
+fn a_mover_weapons_lost_target_is_missed_on_the_last_point() -> TestResult {
+    let world = sim_fixtures::world(
+        GameMap::new(8, 8, MapCell::default_ground(CliffLevel(0)))?,
+        1,
+    );
+    let phoenix = air_mover_unit(&world)?;
+    let spine = ground_mover_structure(&world)?;
+    let victim = missile_archetype(&world)?;
+    let air: [(&str, Loss); 4] = [
+        ("dies", dies),
+        ("invulnerable", turns_invulnerable),
+        ("cloaks", cloaks),
+        ("blinks", blinks),
+    ];
+    for (seed, (case, loss)) in (0x530_u64..).zip(air) {
+        let bench = shipped_duel(seed, &phoenix, &phoenix, scalar(10.0), scalar(5.0), |_| {})?;
+        lands_on_the_last_point(bench, loss, &format!("air, {case}"))?;
+    }
+    let ground: [(&str, Loss); 5] = [
+        ("dies", dies),
+        ("loaded", loads),
+        ("invulnerable", turns_invulnerable),
+        ("cloaks", cloaks),
+        ("blinks", blinks),
+    ];
+    for (seed, (case, loss)) in (0x540_u64..).zip(ground) {
+        let bench = shipped_duel(seed, &spine, &victim, scalar(10.0), scalar(2.0), |_| {})?;
+        lands_on_the_last_point(bench, loss, &format!("ground, {case}"))?;
+    }
+    Ok(())
+}
+
+/// W-14: both weapons release again one period after a release, whatever the flight between
+/// (the random delay cleared so the period is exact).
+#[test]
+fn a_mover_weapons_cooldown_runs_from_the_release() -> TestResult {
+    let world = sim_fixtures::world(
+        GameMap::new(8, 8, MapCell::default_ground(CliffLevel(0)))?,
+        1,
+    );
+    let phoenix = air_mover_unit(&world)?;
+    let spine = ground_mover_structure(&world)?;
+    let victim = missile_archetype(&world)?;
+    let no_delay = |copy: &mut UnitArchetype| {
+        for weapon in [
+            &mut copy.weapon,
+            &mut copy.ground_weapon,
+            &mut copy.air_weapon,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            weapon.random_delay_min = SimScalar::ZERO;
+            weapon.random_delay_max = SimScalar::ZERO;
+        }
+    };
+    for (seed, (attacker, target, edge)) in
+        (0x550_u64..).zip([(&phoenix, &phoenix, 5.0), (&spine, &victim, 2.0)])
+    {
+        let mut bench = shipped_duel(seed, attacker, target, scalar(10.0), scalar(edge), no_delay)?;
+        let period = attacker
+            .weapon_against(target.mover_type, None)
+            .map(|w| u32::from(w.period_ticks))
+            .ok_or("armed")?;
+        bench
+            .world
+            .entities
+            .get_mut(&bench.shooter)
+            .ok_or("the shooter exists")?
+            .issue_order(UnitOrder::attack(bench.target), false)
+            .map_err(|error| format!("{error:?}"))?;
+        let mut releases = Vec::new();
+        for tick in 1..=200 {
+            let snapshot = bench.world.step(&bundle(tick));
+            if snapshot
+                .combat_events
+                .iter()
+                .any(|event| matches!(event, CombatEventVisual::ProjectileVisual { .. }))
+            {
+                releases.push(tick);
+            }
+            if releases.len() == 3 {
+                break;
+            }
+        }
+        assert_eq!(releases.len(), 3, "{}: three releases", attacker.slug);
+        assert_eq!(releases[1] - releases[0], period, "{}", attacker.slug);
+        assert_eq!(releases[2] - releases[1], period, "{}", attacker.slug);
+    }
+    Ok(())
+}
+
+/// W-15: the Mothership Carrier analogue's salvo, released at a unit whose owner does not see
+/// it, leaves that owner no image (`Hidden`, D-7); its `Visible` impact reveals it as before.
+#[test]
+fn the_launchless_salvo_shows_nothing_at_its_release() -> TestResult {
+    let world = sim_fixtures::world(
+        GameMap::new(8, 8, MapCell::default_ground(CliffLevel(0)))?,
+        1,
+    );
+    let carrier = hidden_launch_unit(&world)?;
+    let victim = missile_archetype(&world)?;
+    let mut bench = shipped_duel(
+        0x560,
+        &carrier,
+        &victim,
+        SimScalar::ONE,
+        scalar(6.0),
+        |_| {},
+    )?;
+    let mut listed = Vec::new();
+    let mut revealed_at_release = None;
+    let flight = bench.fly(|bench| {
+        listed = images(&bench.world, 1);
+        revealed_at_release =
+            Some(bench.world.entities[&bench.shooter].is_attack_revealed_to(PlayerId(1)));
+        Ok(())
+    })?;
+    assert!(
+        !listed.contains(&bench.shooter),
+        "no image at the release: {listed:?}"
+    );
+    assert_eq!(revealed_at_release, Some(false));
+    assert!(flight.landed.is_some(), "the salvo lands");
+    if let AttackVisibility::Visible { .. } = carrier
+        .weapon_against(MoverType::Ground, None)
+        .map_or(AttackVisibility::Snapshot, |w| w.attack_visibility)
+    {
+        assert!(
+            bench.world.entities[&bench.shooter].is_attack_revealed_to(PlayerId(1)),
+            "its impact reveals it"
+        );
+    }
+    Ok(())
+}
+
+/// W-16: a release of either mover weapon at a unit whose owner does not see the attacker lists
+/// the attacker's image for that owner on the release tick (owner answer Q0128 1(a)).
+#[test]
+fn a_mover_weapons_release_shows_its_attacker() -> TestResult {
+    let world = sim_fixtures::world(
+        GameMap::new(8, 8, MapCell::default_ground(CliffLevel(0)))?,
+        1,
+    );
+    let phoenix = air_mover_unit(&world)?;
+    let spine = ground_mover_structure(&world)?;
+    let victim = missile_archetype(&world)?;
+    for (seed, (attacker, target, edge)) in
+        (0x570_u64..).zip([(&phoenix, &phoenix, 5.0), (&spine, &victim, 5.0)])
+    {
+        let mut bench = shipped_duel(seed, attacker, target, SimScalar::ONE, scalar(edge), |_| {})?;
+        let mut listed = Vec::new();
+        bench.fly(|bench| {
+            listed = images(&bench.world, 1);
+            Ok(())
+        })?;
+        assert!(
+            listed.contains(&bench.shooter),
+            "{}: image at the release",
+            attacker.slug
+        );
+    }
+    Ok(())
+}
