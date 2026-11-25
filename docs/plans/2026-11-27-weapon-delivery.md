@@ -789,3 +789,29 @@ Only matches with this unit change; it is in none of the test battles.
   `effects` blocks, `upgrades.ron` (`anion_pulse_crystals`, +2 range), the throughput scenarios, both goldens'
   squads, the visibility plan and its evidence.
 - No prototype: the integration is four lines and is pinned by W-2.
+
+---
+
+## As built
+
+Built on branch `weapon-delivery-plan` as written (WP0 to WP4); measurements in
+[`docs/evidence/2026-11-27-weapon-delivery.md`](../evidence/2026-11-27-weapon-delivery.md).
+
+| WP | Commit | Result |
+|---|---|---|
+| WP0 | `4cde25ea` | B-227 and B-52 restated, B-22 amended, B-228 registered (Q0129 was already filed on `main`); the mover census confirms §2.1 (stop rule 9 holds); the probe, with a positive control, finds no release of the three weapons in any measured world, the skirmish scenario included; baseline 8/8 at schema 53; close battles 14, 26, 31, 33, 35, 38a, 38b |
+| WP1 | `16934087` | `MissileMover`, `MissilePhase`, `WeaponSpec::missile_movers`, `ActiveProjectile::{mover, phase, travelled}`; new private module `combat_resolution/missile_flight.rs`; validation D-4; hashed at schema 56 (provisional: 54 and 55 reserved for the Gated plan); latent proof 8/8; worlds byte-identical. C7's float allowances of `catalog.rs` and `validation.rs` rose by five each (`workspace_checks/tests/charter.rs`, authored decimals) |
+| WP2 | `0cf9656b` | The two rows and the Carrier's `Hidden` launch; §2.3's flight ticks measured exactly at every distance (W-11, W-12); worlds byte-identical to WP1's, so no world is classed and no close battle restated |
+| WP3 | `c788b407` | `plasma_bolt` for the Phoenix analogue, new `impaler_tentacle` for the Spine Crawler analogue; no `client/src` change |
+| merge | `1943995d` | `main` `39df7177` (Q0129 answered (a)); latent proof on the merged tree 8/8 |
+| WP4 | `3518b58d`, this commit | Goldens and sandbox re-recorded at schema 56 and proved 8/8; final worlds and held-out seeds byte-identical to `main`'s; every bench scenario ≥ 51 ticks/s under heavy load, instructions −2.09 %; B-227 fixed, B-52 narrowed |
+
+**Deviations.** W-21 could not stage a Phoenix-analogue volley in the client harness (`flying_saucer` has no flipbook
+media); the steady-state and allocation tests pass unchanged with the shipped data. W-13's air target has no "loaded"
+case (an air unit boards nothing). W-14 clears the random delay on a scratch copy. The skirmish scenario was added to
+the measured worlds as §7.1's "skirmish stage".
+
+**Owner answer.** Q0129 was answered (a), the Carrier, during WP4. This plan built that default (the salvo stays a
+missile with a `Hidden` launch); the Carrier's vitals (300/150) and the interceptor hangar are B-22's own package, and
+the B-22 and B-228 rows say so. Q0129 is closed by the orchestrator.
+

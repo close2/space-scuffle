@@ -187,5 +187,29 @@ final-recorded 3518b58d`).
 **Final worlds against WP0's** (WP0's tree is `main` `c3c372c6` plus docs): 490 files, none differing; `matrixdiff.py`
 lists nothing.
 
-**Held-out (§7.3) and throughput (§5):** run by `~/scratch/weapon-delivery/scripts/wp4-all.sh 3518b58d`; results in
-`compare-heldout.txt` and `bench-{wp0,final}-r{1,2}.{log,perf}`, to be entered here.
+**Held-out (§7.3, stop rule 3).** Matrix seeds 7001–7016, battles 31 and 33 on 7001–7064, the showcase and showcase
+effects on seeds 9–16, on WP0's binaries and assets (`main` `c3c372c6`'s worlds) and on the final tree's
+(`~/scratch/weapon-delivery/scripts/wp4-all.sh 3518b58d`): 381 files, none differing. Stop rule 3 holds; nothing is
+restated or tuned from them.
+
+**Throughput (§5, stop rule 5).** `cargo bench -p sim_core --bench throughput` binaries of WP0 (`dff44e48`) and the
+final tree, run interleaved, two rounds each, with `perf stat -e instructions:u`
+(`~/scratch/weapon-delivery/bench-{wp0,final}-r{1,2}.{log,perf}`):
+
+| Scenario | WP0 (r1, r2) ticks/s | final (r1, r2) ticks/s |
+|---|---|---|
+| 64x64, 0 units | 3066, 3021 | 3031, 3100 |
+| 64x64, 100 | 784, 790 | 720, 796 |
+| 64x64, 400 | 100, 72 | 101, 91 |
+| 128x128, 400 | 162, 170 | 147, 151 |
+| 256x256, 0 | 189, 181 | 188, 177 |
+| showcase_canyon, 400 | 74, 65 | 72, 51 |
+| 64x64, 67 casters, 400 | 182, 136 | 191, 192 |
+
+The machine was heavily loaded during both rounds (load average 21 to 55 on 16 cores: another agent's measurement
+harness, and this plan's `cargo gate quick` overlapping round 1), so the ticks per second scatter by up to 30 % between
+rounds of the same binary (WP0's 64x64/400: 100 then 72). Every scenario still runs at 51 ticks/s or more (≥ 50). The
+instruction count is the load-independent measure: WP0 275,790,339,203 and 275,790,351,766; final 270,019,223,948 and
+270,019,233,867: **−2.09 %**, well inside +0.5 %. Stop rule 5 holds. No bench scenario fires a weapon with movers, so
+the mover path costs nothing there; the decrease is not traced to a cause here (the two trees differ only by this
+plan's code and data and a docs-only merge of `main`), and it is not a figure this plan relies on.
