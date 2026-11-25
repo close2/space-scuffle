@@ -653,7 +653,8 @@ and B-206 fixed. Commit `docs: close B-205 and B-206 (plan 2026-11-27-launch-and
 
 - **B-227 (conditional, provisional).** "A shipped weapon's delivery differs from 5.0.14: <rows>; the launch image
   therefore appears where the game has none, or is missing where it has one." Filed in WP0 only if the census finds
-  one; deferred, since a delivery change moves flight times and outcomes.
+  one; deferred, since a delivery change moves flight times and outcomes. *Taken up by plan
+  [`2026-11-27-weapon-delivery`](2026-11-27-weapon-delivery.md).*
 - **`Displace` (Abduct's pull).** 5.0.14's `YoinkLaunchTarget` is a `CEffectLaunchMissile` whose launched unit is the
   target and whose impact is a point (S7): it aims at no unit, so by §2.2 rule 3 it snapshots no one. Our `Displace`
   node gets no `visibility` field. The tongue's launch (V-12) already showed the Viper to the target's owner.

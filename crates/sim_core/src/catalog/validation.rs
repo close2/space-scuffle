@@ -12,8 +12,8 @@ use super::placement_rules::{
 };
 use super::CatalogError;
 use super::{
-    PrimaryWeapon, SplashShapeDef, SplashSpecDef, StructureArchetypeDef, TurretIdleDef,
-    UnitArchetypeDef, UnitModeSpecDef, WeaponSpecDef,
+    MissilePhaseDef, PrimaryWeapon, SplashShapeDef, SplashSpecDef, StructureArchetypeDef,
+    TurretIdleDef, UnitArchetypeDef, UnitModeSpecDef, WeaponSpecDef,
 };
 use crate::error::{SimCoreError, SimResult};
 use crate::movement::tuning::STALL_REPATH_TICKS;
@@ -24,6 +24,71 @@ use sim_types::{
     AttributeFlags, MissileValidation, MoverType, PlacementFlag, ProjectileTargetLossBehavior,
     ResourceKind, ShapeKind, SimAngle, SimScalar, SplashCliff, SplashImpact, WeaponVisualKind,
 };
+
+/// Most movers a weapon's missile may choose from, and most phases a mover may have (plan
+/// `2026-11-27-weapon-delivery` D-4): the Phoenix's launch has three movers counting its ammo
+/// unit's, and three phases; bounded lists keep a launch's clone and the flight time small.
+const MAX_MISSILE_MOVERS: usize = 4;
+
+/// Checks one mover's phases (plan `2026-11-27-weapon-delivery` D-4) under `field`: at least one
+/// and at most [`MAX_MISSILE_MOVERS`]; each start speed not negative and not above its top speed,
+/// each acceleration not negative, each top speed positive; every phase but the last ends after
+/// a positive path longer than the previous phase's end, and the last does not end. Returns the
+/// mover's top speed.
+fn validate_mover_phases(
+    definition: &str,
+    field: &str,
+    phases: &[MissilePhaseDef],
+) -> SimResult<SimScalar> {
+    let list = format!("{field}.phases");
+    if phases.is_empty() || phases.len() > MAX_MISSILE_MOVERS {
+        return Err(invalid(definition, &list, "one to four phases"));
+    }
+    let mut previous_end: Option<f32> = None;
+    let mut top = SimScalar::ZERO;
+    for (index, phase) in phases.iter().enumerate() {
+        let field = format!("{list}[{index}]");
+        positive(definition, &format!("{field}.max_speed"), phase.max_speed)?;
+        nonnegative(
+            definition,
+            &format!("{field}.acceleration"),
+            f64::from(phase.acceleration),
+        )?;
+        if let Some(speed) = phase.speed {
+            nonnegative(definition, &format!("{field}.speed"), f64::from(speed))?;
+            if speed > phase.max_speed {
+                return Err(invalid(
+                    definition,
+                    &format!("{field}.speed"),
+                    "must not exceed max_speed",
+                ));
+            }
+        }
+        let end = format!("{field}.ends_after");
+        match (phase.ends_after, index + 1 == phases.len()) {
+            (None, false) => {
+                return Err(invalid(definition, &end, "every phase but the last ends"));
+            }
+            (Some(_), true) => {
+                return Err(invalid(definition, &end, "the last phase does not end"))
+            }
+            (Some(after), false) => {
+                positive(definition, &end, after)?;
+                if previous_end.is_some_and(|previous| after <= previous) {
+                    return Err(invalid(
+                        definition,
+                        &end,
+                        "must exceed the previous phase's end",
+                    ));
+                }
+                previous_end = Some(after);
+            }
+            (None, true) => {}
+        }
+        top = top.max(SimScalar::from_f32_lossy(phase.max_speed));
+    }
+    Ok(top)
+}
 
 fn invalid(definition: &str, field: &str, reason: &'static str) -> SimCoreError {
     SimCoreError::CatalogInvalidValue {
@@ -1031,6 +1096,68 @@ impl WeaponSpecDef {
                 definition,
                 &format!("{prefix}.launch_visibility"),
                 "an instant weapon launches no missile to show",
+            ));
+        }
+        self.validate_movers(definition, prefix)
+    }
+
+    /// The missile movers (plan `2026-11-27-weapon-delivery` D-4): only a missile weapon has
+    /// them; at most [`MAX_MISSILE_MOVERS`], their range bounds ascending and not negative, every
+    /// bound but the last's set and the last's open, so that every release finds a mover; each
+    /// mover's phases well formed ([`validate_mover_phases`]); and the weapon's speed their top
+    /// speed (D-5).
+    fn validate_movers(&self, definition: &str, prefix: &str) -> SimResult<()> {
+        if self.missile_movers.is_empty() {
+            return Ok(());
+        }
+        let field = format!("{prefix}.missile_movers");
+        let Some(speed) = self.projectile_speed else {
+            return Err(invalid(
+                definition,
+                &field,
+                "an instant weapon launches no missile to move",
+            ));
+        };
+        if self.missile_movers.len() > MAX_MISSILE_MOVERS {
+            return Err(invalid(definition, &field, "at most four movers"));
+        }
+        let last = self.missile_movers.len() - 1;
+        let mut previous: Option<f32> = None;
+        let mut top = SimScalar::ZERO;
+        for (index, mover) in self.missile_movers.iter().enumerate() {
+            let field = format!("{field}[{index}]");
+            let bound = format!("{field}.up_to_range");
+            match mover.up_to_range {
+                None if index != last => {
+                    return Err(invalid(
+                        definition,
+                        &bound,
+                        "only the last mover admits any distance",
+                    ));
+                }
+                Some(_) if index == last => {
+                    return Err(invalid(
+                        definition,
+                        &bound,
+                        "the last mover admits any distance, so every release finds one",
+                    ));
+                }
+                Some(range) => {
+                    nonnegative(definition, &bound, f64::from(range))?;
+                    if previous.is_some_and(|previous| range <= previous) {
+                        return Err(invalid(definition, &bound, "range bounds must ascend"));
+                    }
+                    previous = Some(range);
+                }
+                None => {}
+            }
+            top = top.max(validate_mover_phases(definition, &field, &mover.phases)?);
+        }
+        if SimScalar::from_f32_lossy(speed) != top {
+            return Err(invalid(
+                definition,
+                &format!("{prefix}.projectile_speed"),
+                "a weapon with movers flies at most its movers' top speed, which it must equal",
             ));
         }
         Ok(())
@@ -4846,6 +4973,188 @@ mod turret_tracking_tests {
             field, "accepted",
             "tracking is coherent with the other flags"
         );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod missile_mover_tests {
+    //! W-5 of plan `2026-11-27-weapon-delivery` (D-4): every rule a weapon's missile movers
+    //! must keep is refused with a typed error naming the field; a well-formed list is accepted
+    //! on a missile weapon whose speed is its movers' top speed; an omitted list reads empty.
+    use super::strike_delay_tests::refused_field;
+    use crate::catalog::{CatalogFile, MissileMoverDef, MissilePhaseDef, WeaponSpecDef};
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    /// One edit of the well-formed list.
+    type Edit = fn(&mut Vec<MissileMoverDef>);
+
+    /// A phase with the given values.
+    fn phase(
+        speed: Option<f32>,
+        acceleration: f32,
+        max: f32,
+        ends: Option<f32>,
+    ) -> MissilePhaseDef {
+        MissilePhaseDef {
+            speed,
+            acceleration,
+            max_speed: max,
+            ends_after: ends,
+        }
+    }
+
+    /// A well-formed list: a constant short band, then an unbounded two-phase band whose top
+    /// speed is 2.
+    fn movers() -> Vec<MissileMoverDef> {
+        vec![
+            MissileMoverDef {
+                up_to_range: Some(1.0),
+                phases: vec![phase(Some(1.0), 0.0, 1.0, None)],
+            },
+            MissileMoverDef {
+                up_to_range: None,
+                phases: vec![
+                    phase(Some(0.25), 0.0, 0.25, Some(1.25)),
+                    phase(None, 0.25, 2.0, None),
+                ],
+            },
+        ]
+    }
+
+    fn missile(weapon: &WeaponSpecDef) -> bool {
+        weapon.projectile_speed.is_some()
+    }
+
+    fn instant(weapon: &WeaponSpecDef) -> bool {
+        weapon.projectile_speed.is_none()
+    }
+
+    /// The field refused once a shipped missile weapon carries `movers()` changed by `edit`,
+    /// with its speed set to 2, the list's top speed.
+    fn refused(
+        edit: impl FnOnce(&mut Vec<MissileMoverDef>),
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let mut list = movers();
+        edit(&mut list);
+        refused_field(missile, |weapon| {
+            weapon.projectile_speed = Some(2.0);
+            weapon.missile_movers = list;
+        })
+    }
+
+    #[test]
+    fn a_well_formed_list_is_accepted_and_an_omitted_one_reads_empty() -> TestResult {
+        assert_eq!(refused(|_| {})?, "accepted");
+        let file: CatalogFile =
+            ron::from_str(include_str!("../../../../assets/catalog/units.ron"))?;
+        let unit = file
+            .units
+            .into_iter()
+            .find(|unit| unit.ground_weapon.as_ref().is_some_and(missile))
+            .ok_or("a shipped missile ground weapon")?;
+        let weapon = unit.ground_weapon.as_ref().ok_or("picked above")?;
+        assert_eq!(weapon.missile_movers.len(), 0, "omitted reads empty");
+        Ok(())
+    }
+
+    #[test]
+    fn an_instant_weapon_launches_no_missile_to_move() -> TestResult {
+        let field = refused_field(instant, |weapon| weapon.missile_movers = movers())?;
+        assert!(field.ends_with(".missile_movers"), "{field}");
+        Ok(())
+    }
+
+    #[test]
+    fn every_phase_rule_names_its_field() -> TestResult {
+        let cases: [(&str, Edit); 9] = [
+            (".missile_movers[0].phases", |l| l[0].phases.clear()),
+            (".missile_movers[1].phases[1].max_speed", |l| {
+                l[1].phases[1].max_speed = 0.0;
+            }),
+            (".missile_movers[1].phases[1].acceleration", |l| {
+                l[1].phases[1].acceleration = -0.1;
+            }),
+            (".missile_movers[1].phases[0].speed", |l| {
+                l[1].phases[0].speed = Some(-0.1);
+            }),
+            (".missile_movers[1].phases[0].speed", |l| {
+                l[1].phases[0].speed = Some(0.5);
+            }),
+            (".missile_movers[1].phases[0].ends_after", |l| {
+                l[1].phases[0].ends_after = None;
+            }),
+            (".missile_movers[1].phases[1].ends_after", |l| {
+                l[1].phases[1].ends_after = Some(3.0);
+            }),
+            (".missile_movers[1].phases[0].ends_after", |l| {
+                l[1].phases[0].ends_after = Some(0.0);
+            }),
+            (".missile_movers[1].phases[1].ends_after", |l| {
+                l[1].phases.insert(1, phase(None, 0.25, 2.0, Some(1.0)));
+            }),
+        ];
+        for (expected, edit) in cases {
+            let field = refused(edit)?;
+            assert!(field.ends_with(expected), "{expected}: {field}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn every_band_rule_names_its_field() -> TestResult {
+        let cases: [(&str, Edit); 6] = [
+            (".missile_movers[1].up_to_range", |l| {
+                l[1].up_to_range = Some(3.0);
+            }),
+            (".missile_movers[0].up_to_range", |l| {
+                l[0].up_to_range = None;
+            }),
+            (".missile_movers[0].up_to_range", |l| {
+                l[0].up_to_range = Some(-1.0);
+            }),
+            (".missile_movers[1].up_to_range", |l| {
+                l[1].up_to_range = Some(0.5);
+                l.push(MissileMoverDef {
+                    up_to_range: None,
+                    phases: vec![phase(Some(1.0), 0.0, 1.0, None)],
+                });
+            }),
+            (".missile_movers", |l| {
+                for _ in 0..3 {
+                    l.insert(
+                        0,
+                        MissileMoverDef {
+                            up_to_range: Some(0.5),
+                            phases: vec![phase(Some(1.0), 0.0, 1.0, None)],
+                        },
+                    );
+                }
+            }),
+            (".missile_movers[1].phases", |l| {
+                let mut phases: Vec<MissilePhaseDef> = (1_u8..=4)
+                    .map(|n| phase(None, 0.25, 2.0, Some(f32::from(n))))
+                    .collect();
+                phases.push(phase(None, 0.25, 2.0, None));
+                l[1].phases = phases;
+            }),
+        ];
+        for (expected, edit) in cases {
+            let field = refused(edit)?;
+            assert!(field.ends_with(expected), "{expected}: {field}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn the_speed_of_a_weapon_with_movers_is_their_top_speed() -> TestResult {
+        let list = movers();
+        let field = refused_field(missile, |weapon| {
+            weapon.projectile_speed = Some(1.5);
+            weapon.missile_movers = list;
+        })?;
+        assert!(field.ends_with(".projectile_speed"), "{field}");
         Ok(())
     }
 }

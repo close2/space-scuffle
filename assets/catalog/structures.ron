@@ -1922,7 +1922,11 @@
             researches_upgrades: [],
             ground_weapon: Some((
                 name: "Impaler Spine",
-                visual_kind: MeleeSlash,
+                // 5.0.14 ImpalerTentacle (liberty WeaponData:365-375) launches ImpalerTentacleLM (liberty
+                // EffectData:2151-2162), one missile, the tentacle, whose ImpalerTentacleU strike (25, +5
+                // armored) lands at its impact; its return deals nothing and is not modelled. Plan
+                // 2026-11-27-weapon-delivery D-1, D-3 (B-227).
+                visual_kind: Projectile,
                 target_flags: (bits: 255),
                 min_range: 0.0,
                 max_range: 7.0,
@@ -1940,7 +1944,19 @@
                 backswing_ticks: 9,
                 random_delay_ticks: (-1.1161, 2.2321),
                 splash: None,
-                projectile_speed: None,
+                // The top speed of the movers below: MaxSpeed 200 x 0.056 (plan 2026-11-27-weapon-delivery D-5).
+                projectile_speed: Some(11.2),
+                // 5.0.14 ImpalerTentacleLM Movers (liberty EffectData:2156-2157): SpineCrawlerTentacleExtendShort
+                // IfRangeLTE 3 (liberty MoverData:243-265: Throw Speed 1, Acceleration 10, MaxSpeed 20 to Outro
+                // 0.2,0.4, switched at 0.3; then Guidance Acceleration 140 to MaxSpeed 200), then
+                // SpineCrawlerTentacleExtendLong IfRangeLTE 7 (:266-278: Guidance Speed 12, Acceleration 140,
+                // MaxSpeed 200), the weapon's range and the last band, so it admits any distance (its ammo unit
+                // SpineCrawlerWeapon has no mover). A Normal speed v is 0.056 v per tick, an acceleration a is
+                // 0.003136 a per tick squared. Plan 2026-11-27-weapon-delivery D-2, D-3 (B-52).
+                missile_movers: [
+                    (up_to_range: Some(3.0), phases: [(speed: Some(0.056), acceleration: 0.03136, max_speed: 1.12, ends_after: Some(0.3)), (speed: None, acceleration: 0.43904, max_speed: 11.2, ends_after: None)]),
+                    (up_to_range: None, phases: [(speed: Some(0.672), acceleration: 0.43904, max_speed: 11.2, ends_after: None)]),
+                ],
                 weapon_class: None,
                 upgrade_bonus_per_level: 0.0,
                 bonus_upgrade_per_level: 0.0,
@@ -1949,7 +1965,8 @@
             abilities: [],
             // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
             effects: (
-                weapons: [(weapon: Ground, impact: Some("impaler_strike"))],
+                // The tentacle reaches out over its flight, then strikes (plan 2026-11-27-weapon-delivery D-8).
+                weapons: [(weapon: Ground, travel: Some("impaler_tentacle"), impact: Some("impaler_strike"))],
             ),
             veo_prompts: {},
         ),

@@ -135,7 +135,13 @@ use std::collections::BTreeMap;
 /// hidden), `WeaponSpec::launch_visibility`, after `missile_validation` (plan
 /// `2026-11-27-launch-and-spell-visibility` D-5). The number is the next free at merge: 51 and 52
 /// are reserved for the Gated movement plan.
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 53;
+/// Schema 56 adds each weapon's missile movers, `WeaponSpec::missile_movers` (their count, then
+/// per mover its range bound and its phases, each phase's start speed, acceleration, top speed
+/// and end), after `launch_visibility`, and each projectile's mover index, phase and path flown,
+/// `ActiveProjectile::{mover, phase, travelled}`, after `target_teleport_count` (plan
+/// `2026-11-27-weapon-delivery` D-6). The number is the next free at merge: 54 and 55 are
+/// reserved for the Gated movement plan.
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 56;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.
