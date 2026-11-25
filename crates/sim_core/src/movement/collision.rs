@@ -410,7 +410,15 @@ impl SimWorld {
         let contact = self.catalog.movement_rules().contact();
         let mut solver = std::mem::take(&mut self.movement.solver);
         solver.bodies.clear();
-        for entry in entries.iter().filter(|entry| !entry.foundation) {
+        // The determinism probe (`set_movement_order_rotation`): the fill starts `offset` places
+        // in and wraps round; offset 0 fills in entity order, as shipped.
+        let start = super::rotation_start(self.movement.order_rotation, entries.len());
+        let (wrapped, first) = entries.split_at(start);
+        for entry in first
+            .iter()
+            .chain(wrapped)
+            .filter(|entry| !entry.foundation)
+        {
             if let Some(actor) = self.entities.get(&entry.id) {
                 solver.bodies.push(self.solver_body(*entry, actor));
             }

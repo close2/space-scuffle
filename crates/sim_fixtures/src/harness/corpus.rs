@@ -3,7 +3,8 @@
 //! # Responsibility
 //! [`generate`] turns a family and a seed into a [`Scenario`]: the map, the scratch archetypes in
 //! the catalog's RON form, the spawns, the order every unit is given, how many ticks it runs and
-//! the known answer the metrics judge it by (plan `2026-11-20-contact-solver` §6.2). The draws come
+//! the known answer the metrics judge it by (plan `2026-11-20-contact-solver` §6.2; the eight
+//! families of plan `2026-11-27-gated-movement` §5.2 are generated in [`families`]). The draws come
 //! from one [`SplitMix64`] stream per scenario. Every coordinate and size of the scene is an
 //! integer number of sixty-fourths of a world unit ([`Lattice`]), so its conversion to the
 //! simulation's Q32.32 is exact and the corpus is the same on every platform; the speeds and weapon
@@ -22,6 +23,11 @@
 //!   the entity ids the world gives out follow the spawn order, so relabelling permutes the ids.
 //! - Every spawn and goal lies inside the map's terrain-radius domain on open ground.
 
+mod families;
+
+pub use families::circle_corners;
+
+use super::answers::KnownAnswer;
 use super::Family;
 use std::fmt::Write as _;
 
@@ -171,13 +177,17 @@ impl ScratchArchetype {
     }
 }
 
-/// A scratch weapon of `range` world units: hitscan, 6 damage every 15 ticks, no random delay.
+/// Ticks between two releases of the scratch weapon ([`weapon_ron`]).
+pub const WEAPON_PERIOD: u32 = 15;
+
+/// A scratch weapon of `range` world units: hitscan, 6 damage every [`WEAPON_PERIOD`] ticks, no
+/// random delay.
 fn weapon_ron(range: &str) -> String {
     format!(
         r#"Some((name: "Scratch Rifle", visual_kind: Hitscan, target_flags: (bits: 255),
         min_range: 0.0, max_range: {range}, firing_arc_deg: 11.25, acquire_arc_deg: 0.0,
         has_turret: false, turret_turn_rate_deg_per_tick: 0.0, turret_idle: Hold, base_damage: 6.0,
-        attribute_bonuses: [], attacks_count: 1, strike_interval_ticks: 0, period_ticks: 15,
+        attribute_bonuses: [], attacks_count: 1, strike_interval_ticks: 0, period_ticks: {WEAPON_PERIOD},
         damage_point_ticks: 1, backswing_ticks: 13, random_delay_ticks: (0.0, 0.0), splash: None,
         projectile_speed: None, weapon_class: None, upgrade_bonus_per_level: 0.0,
         bonus_upgrade_per_level: 0.0))"#
@@ -223,10 +233,58 @@ pub enum Role {
         /// The destination.
         goal: (Lattice, Lattice),
     },
-    /// Attacks the scenario's pillar.
+    /// Attacks the scenario's target: its pillar, or the unit that walks a circle.
     Attack,
     /// The immobile enemy pillar; it has no order.
     Pillar,
+    /// Holds position where it spawned (`HoldPosition`, one command per owner).
+    Hold,
+    /// Stands where it spawned with no order: an idle body, or a dummy target.
+    Stand,
+    /// Attack-moves to `goal` (sixty-fourths) under one command shared with every other
+    /// attack-mover of its owner.
+    AttackMove {
+        /// The destination.
+        goal: (Lattice, Lattice),
+    },
+    /// Attacks the unit spawned at `target` (sixty-fourths) under an explicit order of its own.
+    /// The target is named by its spawn point, not its index, so relabelling keeps it.
+    AttackAt {
+        /// The target's spawn point.
+        target: (Lattice, Lattice),
+    },
+    /// Walks the sixteen-sided polygon of radius `radius` round `centre` (sixty-fourths), its
+    /// corners at [`HEADINGS`], under queued `Move`s, starting at the corner nearest its spawn;
+    /// the scenario's target when there is no pillar.
+    Circle {
+        /// The circle's centre.
+        centre: (Lattice, Lattice),
+        /// The circle's radius.
+        radius: Lattice,
+    },
+}
+
+/// An order given at a set tick after the opening, to every unit whose role is
+/// [`Role::Attack`] (the stutter family's back-and-forth).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Cue {
+    /// The tick whose bundle carries the order (the opening's bundle is tick 0).
+    pub tick: u32,
+    /// What the units are told.
+    pub order: CueOrder,
+}
+
+/// What a [`Cue`] tells the attackers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CueOrder {
+    /// `Move` to the unit's position when the cue is given plus `offset` (sixty-fourths), one
+    /// command per unit.
+    MoveBy {
+        /// The offset from the unit's position.
+        offset: (Lattice, Lattice),
+    },
+    /// Attack the scenario's target again, one command for them all.
+    Attack,
 }
 
 /// The terrain of a scenario: open ground with `blocked` cells and gas geysers.
@@ -282,6 +340,11 @@ pub struct Scenario {
     pub expected: u32,
     /// What the scene is judged against.
     pub answer: Answer,
+    /// Orders given after the opening, in tick order; empty but for the stutter family.
+    pub script: Vec<Cue>,
+    /// The known answer of a family of plan `2026-11-27-gated-movement` §5.2
+    /// ([`super::answers`]); `None` for the older families.
+    pub known: Option<KnownAnswer>,
 }
 
 /// The scenario of `family` and `seed`; `relabel` permutes its spawn order (§6.2).
@@ -298,6 +361,14 @@ pub fn generate(family: Family, seed: u64, relabel: bool) -> Scenario {
         Family::Cross => cross(&mut rng, seed),
         Family::Corridor => corridor(&mut rng, seed),
         Family::Corner => corner(&mut rng, seed),
+        Family::HoldLine => families::hold_line(&mut rng, seed),
+        Family::EnemyPress => families::enemy_press(&mut rng, seed),
+        Family::DeepQueue => families::deep_queue(&mut rng, seed),
+        Family::Wedge => families::wedge(&mut rng, seed),
+        Family::Hallway => families::hallway(&mut rng, seed),
+        Family::Stutter => families::stutter(&mut rng, seed),
+        Family::SurroundMoving => families::surround_moving(&mut rng, seed),
+        Family::Lanes => families::lanes(&mut rng, seed),
         Family::Mirror => Scenario {
             family,
             seed,
@@ -309,6 +380,8 @@ pub fn generate(family: Family, seed: u64, relabel: bool) -> Scenario {
             ticks: 0,
             expected: 0,
             answer: Answer::Moves,
+            script: Vec::new(),
+            known: None,
         },
     };
     if relabel {
@@ -503,6 +576,8 @@ fn walkers_through_wall(rng: &mut SplitMix64, scene: WallScene) -> Scenario {
             opening,
             passable,
         },
+        script: Vec::new(),
+        known: None,
     }
 }
 
@@ -603,6 +678,8 @@ fn arc(rng: &mut SplitMix64, seed: u64) -> Scenario {
         ticks: ticks_of(bound),
         expected: u32::try_from(k).unwrap_or(0).min(capacity),
         answer: Answer::Ring,
+        script: Vec::new(),
+        known: None,
     }
 }
 
@@ -659,6 +736,8 @@ fn corridor(rng: &mut SplitMix64, seed: u64) -> Scenario {
         ticks: ticks_of(bound),
         expected: u32::try_from(k).unwrap_or(0).min(capacity),
         answer: Answer::Ring,
+        script: Vec::new(),
+        known: None,
     }
 }
 
@@ -758,6 +837,8 @@ fn cross(rng: &mut SplitMix64, seed: u64) -> Scenario {
         ticks: ticks_of(bound),
         expected: u32::try_from(2 * n).unwrap_or(0),
         answer: Answer::Moves,
+        script: Vec::new(),
+        known: None,
     }
 }
 

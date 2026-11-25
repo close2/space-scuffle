@@ -20,8 +20,10 @@
 //!   same jitter rule), so a seed of record reproduces the matrix result.
 //! - A simulation diagnostic during a traced battle is an error, as it is in the matrix test.
 //! - Seeds are distinct and played in the order listed.
-//! - Exactly one of `--battle` and `--all-battles` is given; `--compare` and `--jobs` belong to
-//!   the whole-matrix mode.
+//! - Exactly one of `--battle`, `--all-battles` and `--clash` is given; `--compare` and `--jobs`
+//!   belong to the whole-matrix mode. Clash mode ([`super::clash`], plan
+//!   `2026-11-27-gated-movement` `WP0a`) plays the throughput benchmark's 400-unit battle of the
+//!   named unit with the battle meter.
 
 use super::report::{
     aggregate_markdown, run_markdown, seeds_csv, ticks_csv, units_csv, SeedResult,
@@ -36,9 +38,14 @@ pub const USAGE: &str = "usage: matchup_trace --battle <name> --out <dir> [--see
 [--seeds <count>] [--catalog-dir <dir>] [--fixture <file>] [--no-unit-csv]
        matchup_trace --all-battles --out <dir> [--seed <n>]... [--seeds <count>] \
 [--catalog-dir <dir>] [--fixture <file>] [--compare <matrix.csv>] [--jobs <n>]
+       matchup_trace --clash <unit> --out <dir> [--seed <n>]... [--seeds <count>] \
+[--catalog-dir <dir>]
   --battle <name>    trace one battle tick by tick into <dir>/<name>/
   --all-battles      play every battle of the fixture and write <dir>/matrix.csv and
                      <dir>/matrix.md (outcomes only, no per-tick files)
+  --clash <unit>     play the throughput benchmark's 400-unit 64x64 battle of <unit> for 300
+                     ticks with the battle meter into <dir>/clash_<unit>.csv; its seed of
+                     record is the benchmark's, 7
   --seed <n>         play world seed n (repeatable)
   --seeds <count>    play the fixture's seeds of record plus the first <count> positive
                      integers that are not seeds of record
@@ -135,6 +142,8 @@ pub struct TraceArgs {
     pub compare: Option<PathBuf>,
     /// Battles played at once in whole-matrix mode; at least 1.
     pub jobs: usize,
+    /// The unit whose 400-unit clash to play (clash mode); `None` otherwise.
+    pub clash: Option<String>,
 }
 
 impl TraceArgs {
@@ -159,6 +168,7 @@ impl TraceArgs {
             unit_csv: true,
             compare: None,
             jobs: DEFAULT_JOBS,
+            clash: None,
         };
         while let Some(flag) = args.next() {
             let mut value = || {
@@ -167,6 +177,7 @@ impl TraceArgs {
             };
             match flag.as_str() {
                 "--battle" => parsed.battle = Some(value()?),
+                "--clash" => parsed.clash = Some(value()?),
                 "--all-battles" => parsed.all_battles = true,
                 "--compare" => parsed.compare = Some(PathBuf::from(value()?)),
                 "--jobs" => jobs = Some(parse_number(&flag, &value()?)?),
@@ -180,23 +191,26 @@ impl TraceArgs {
             }
         }
         parsed.out = out.ok_or_else(|| RunError::Usage("--out is required".into()))?;
-        match (&parsed.battle, parsed.all_battles) {
-            (None, false) => {
+        let modes = usize::from(parsed.battle.is_some())
+            + usize::from(parsed.all_battles)
+            + usize::from(parsed.clash.is_some());
+        match modes {
+            0 => {
                 return Err(RunError::Usage(
-                    "--battle <name> or --all-battles is required".into(),
+                    "--battle <name>, --all-battles or --clash <unit> is required".into(),
                 ))
             }
-            (Some(_), true) => {
+            1 => {}
+            _ => {
                 return Err(RunError::Usage(
-                    "--battle and --all-battles exclude each other".into(),
+                    "--battle, --all-battles and --clash exclude each other".into(),
                 ))
             }
-            (Some(_), false) if parsed.compare.is_some() || jobs.is_some() => {
-                return Err(RunError::Usage(
-                    "--compare and --jobs need --all-battles".into(),
-                ))
-            }
-            _ => {}
+        }
+        if !parsed.all_battles && (parsed.compare.is_some() || jobs.is_some()) {
+            return Err(RunError::Usage(
+                "--compare and --jobs need --all-battles".into(),
+            ));
         }
         if let Some(jobs) = jobs {
             parsed.jobs = usize::try_from(jobs)
@@ -428,6 +442,9 @@ mod tests {
         assert!(matrix.all_battles);
         assert_eq!(matrix.compare, Some(PathBuf::from("m.csv")));
         assert_eq!(matrix.jobs, 8);
+        let clash = args("--clash some_unit --out o --seeds 4")?;
+        assert_eq!(clash.clash.as_deref(), Some("some_unit"));
+        assert_eq!(clash.seed_list(&[7]), vec![7, 1, 2, 3, 4]);
         Ok(())
     }
 
@@ -443,6 +460,9 @@ mod tests {
             "--battle b --out o --jobs 2",
             "--all-battles --out o --jobs 0",
             "--all-battles --out o --jobs x",
+            "--clash u --battle b --out o",
+            "--clash u --all-battles --out o",
+            "--clash u --out o --jobs 2",
         ] {
             assert!(matches!(args(bad), Err(RunError::Usage(_))), "{bad}");
         }

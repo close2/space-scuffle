@@ -39,6 +39,20 @@
 //!   for two friendly bodies, the pair-ticks counted above D-α's moving bound (the catalog's
 //!   `moving_overlap_permille`).
 //!
+//!
+//! The columns of plan `2026-11-27-gated-movement` (`WP0a`) are kept apart, in [`MovementChecks`]
+//! ([`ContactMeter::movement`]), so a table written before them still reads:
+//! - **H-1** ([`MovementSide::held_moved_ticks`], [`MovementSide::held_moved_max`]): unit-ticks,
+//!   and the largest displacement, of a unit that at the tick's start was holding or had its
+//!   attack target in its band, proposed no step ([`moved_by_others`]), and was displaced by
+//!   more than [`HELD_EPSILON`];
+//! - **M1 and M1-hi** ([`MovementSide::moving_ticks`], [`MovementSide::reversals`],
+//!   [`MovementSide::reversals_hi`]) with the harness's definition
+//!   ([`crate::harness::metrics::reverses`]): a moving unit-tick is a step above `v / 8`; a
+//!   reversal two consecutive steps of at least `v / 4` (`v / 2` for M1-hi) whose cosine is
+//!   below −0.5;
+//! - the cost probes of the world ([`sim_core::movement::MovementProbes`]), summed over the run.
+//!
 //! A body, for the overlaps and for "touching", is a living unit that does not pass through
 //! units (`Entity::passes_through_units`: hidden, mineral walking or collision suppressed) and
 //! whose archetype is not immobile by default (structures stand on footprints, not discs).
@@ -61,9 +75,9 @@
 
 use super::activity::{classify, Activity, ActivityInput};
 use super::{attack_target, in_band, to_f64};
-use crate::harness::metrics::Point;
+use crate::harness::metrics::{reverses, Point};
 use crate::harness::room::{classify_room, RingQuery, RoomClass};
-use sim_core::movement::{CollisionClass, MovementLayer};
+use sim_core::movement::{CollisionClass, MovementLayer, MovementProbes};
 use sim_core::{is_threat_to, Entity, SimWorld, UnitArchetype};
 use sim_types::{AttackOrigin, EntityId, PlayerId, SimScalar, SimVec2, UnitOrder};
 use std::collections::BTreeMap;
@@ -79,6 +93,88 @@ pub const SHOVE_TOUCH_SLACK: f64 = 1.0 / 64.0;
 /// this fraction of the radius sum at the end of a tick counts in
 /// [`ContactChecks::enemy_overlap_ticks`].
 pub const ENEMY_OVERLAP_BOUND: f64 = 0.005;
+
+/// The displacement in one tick above which a unit counts as moved, world units (2⁻²⁰, H-1).
+pub const HELD_EPSILON: f64 = 1.0 / 1_048_576.0;
+
+/// One side's columns of plan `2026-11-27-gated-movement` over a run (module documentation).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct MovementSide {
+    /// H-1: unit-ticks of a holding or engaged unit displaced by others.
+    pub held_moved_ticks: u32,
+    /// H-1: the largest such displacement, world units.
+    pub held_moved_max: f64,
+    /// M1's denominator: unit-ticks whose step exceeded `v / 8`.
+    pub moving_ticks: u32,
+    /// M1: reversals.
+    pub reversals: u32,
+    /// M1-hi: reversals of steps of at least `v / 2`.
+    pub reversals_hi: u32,
+}
+
+/// Both sides' columns of plan `2026-11-27-gated-movement`, and the cost probes, over a run.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct MovementChecks {
+    /// Per side, indexed by owner (player 0, player 1).
+    pub sides: [MovementSide; 2],
+    /// The world's cost probes ([`SimWorld::movement_probes`]) summed over the run's ticks.
+    pub gate_rays: u64,
+    /// See [`Self::gate_rays`].
+    pub orbit_refusals: u64,
+    /// See [`Self::gate_rays`].
+    pub terrain_transfers: u64,
+}
+
+/// What a unit was doing at a tick's start, as the checks read it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent facts about one unit's tick-start state, read by different checks"
+)]
+pub struct Standing {
+    /// On Hold Position, unpushable or immobile.
+    pub holding: bool,
+    /// Its attack target lies in its band (the solver's "engaged").
+    pub engaged: bool,
+    /// It proposed no motion: engaged, or no order, `Idle` or `Stop`.
+    pub proposed_none: bool,
+    /// Holding or engaged: a unit no other body may move (H-1).
+    pub held: bool,
+}
+
+/// The tick-start [`Standing`] of `entity`, of archetype `arch`, in `world`.
+#[must_use]
+pub fn standing_of(world: &SimWorld, entity: &Entity, arch: &UnitArchetype) -> Standing {
+    let engaged = attack_target(entity)
+        .and_then(|id| world.entities.get(&id))
+        .filter(|enemy| enemy.is_alive())
+        .is_some_and(|enemy| in_band(world, entity, arch, enemy, SimScalar::ZERO));
+    let standing_order = matches!(
+        entity.order_queue.front(),
+        None | Some(UnitOrder::Idle | UnitOrder::Stop)
+    );
+    let holding = entity.is_on_hold() || entity.cannot_be_pushed();
+    Standing {
+        holding,
+        engaged,
+        proposed_none: engaged || standing_order,
+        held: holding || engaged,
+    }
+}
+
+/// The displacement `moved` (world units) of a unit that others caused: all of it when the unit
+/// stood still at the tick's start (`still`) and proposed no step this tick (`proposed`, the
+/// world's [`SimWorld::proposed_step`], absent or zero); otherwise none, since a unit that
+/// stepped moved at least partly by its own step (H-1, H-2).
+#[must_use]
+pub fn moved_by_others(still: bool, proposed: Option<Point>, moved: Point) -> f64 {
+    let stepped = proposed.is_some_and(|(x, y)| x != 0.0 || y != 0.0);
+    if still && !stepped {
+        moved.0.hypot(moved.1)
+    } else {
+        0.0
+    }
+}
 
 /// One side's checks over a run.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -214,6 +310,10 @@ struct Seen {
     engaged: bool,
     proposed_none: bool,
     holding: bool,
+    /// Holding or engaged ([`Standing::held`]).
+    held: bool,
+    /// Top speed, world units per tick, for M1's floors.
+    speed: f64,
     target: Option<EntityId>,
     cooldown: u16,
 }
@@ -225,6 +325,9 @@ pub struct ContactMeter {
     seen: BTreeMap<EntityId, Seen>,
     churn: ChurnTracker,
     checks: ContactChecks,
+    /// Each unit's step of the latest tick, for M1.
+    steps: BTreeMap<EntityId, Point>,
+    movement: MovementChecks,
 }
 
 impl ContactMeter {
@@ -238,6 +341,12 @@ impl ContactMeter {
     #[must_use]
     pub const fn total(&self) -> ContactChecks {
         self.checks
+    }
+
+    /// The columns of plan `2026-11-27-gated-movement` so far (module documentation).
+    #[must_use]
+    pub const fn movement(&self) -> MovementChecks {
+        self.movement
     }
 
     /// Records the state `world` has reached after one more tick (the first call records the
@@ -276,8 +385,48 @@ impl ContactMeter {
                 .moving_overlap_permille,
         ) / 1000.0;
         self.count_overlaps(&now, moving);
+        if !self.seen.is_empty() {
+            let probes: MovementProbes = world.movement_probes();
+            self.movement.gate_rays += u64::from(probes.gate_rays);
+            self.movement.orbit_refusals += u64::from(probes.orbit_refusals);
+            self.movement.terrain_transfers += u64::from(probes.terrain_transfers);
+        }
+        self.count_movement(world, &now);
         self.seen = now;
         self.tick += 1;
+    }
+
+    /// Adds every side's H-1 and M1 counts of the tick that ended in `now`.
+    fn count_movement(&mut self, world: &SimWorld, now: &BTreeMap<EntityId, Seen>) {
+        for (&id, current) in now {
+            let Some(side) = side_of(current.owner) else {
+                continue;
+            };
+            let Some(before) = self.seen.get(&id) else {
+                continue;
+            };
+            let moved = (current.at.0 - before.at.0, current.at.1 - before.at.1);
+            let counts = &mut self.movement.sides[side];
+            let proposed = world.proposed_step(id).map(point);
+            let displaced = moved_by_others(before.held, proposed, moved);
+            if displaced > HELD_EPSILON {
+                counts.held_moved_ticks += 1;
+                counts.held_moved_max = counts.held_moved_max.max(displaced);
+            }
+            let speed = current.speed;
+            if moved.0.hypot(moved.1) > speed / 8.0 {
+                counts.moving_ticks += 1;
+            }
+            if let Some(&last) = self.steps.get(&id) {
+                if reverses(last, moved, speed / 4.0, -0.5) {
+                    counts.reversals += 1;
+                    if reverses(last, moved, speed / 2.0, -0.5) {
+                        counts.reversals_hi += 1;
+                    }
+                }
+            }
+            self.steps.insert(id, moved);
+        }
     }
 
     /// Adds one unit's tick to its side's checks; `before` is its tick-start state.
@@ -489,14 +638,7 @@ fn seen(
     class: CollisionClass,
 ) -> Seen {
     let target = attack_target(entity);
-    let engaged = target
-        .and_then(|id| world.entities.get(&id))
-        .filter(|enemy| enemy.is_alive())
-        .is_some_and(|enemy| in_band(world, entity, arch, enemy, SimScalar::ZERO));
-    let standing_order = matches!(
-        entity.order_queue.front(),
-        None | Some(UnitOrder::Idle | UnitOrder::Stop)
-    );
+    let standing = standing_of(world, entity, arch);
     Seen {
         owner: entity.owner,
         position: entity.position,
@@ -505,9 +647,11 @@ fn seen(
         class,
         layer: MovementLayer::from_mover(arch.mover_type),
         body: !entity.passes_through_units() && !arch.is_immobile_by_default(),
-        engaged,
-        proposed_none: engaged || standing_order,
-        holding: entity.is_on_hold() || entity.cannot_be_pushed(),
+        engaged: standing.engaged,
+        proposed_none: standing.proposed_none,
+        holding: standing.holding,
+        held: standing.held,
+        speed: to_f64(arch.max_speed),
         target,
         cooldown: entity.weapon_cooldown_remaining,
     }

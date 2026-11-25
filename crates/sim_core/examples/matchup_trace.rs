@@ -17,6 +17,10 @@
 //! # One battle, traced tick by tick into <out>/<battle>/:
 //! cargo run --release -p sim_core --example matchup_trace -- \
 //!     --battle 33_24_marines_vs_12_zealots --seeds 64 --no-unit-csv --out ~/scratch/b33
+//! # The throughput benchmark's 400-unit clash of one unit, with the battle meter, on the
+//! # benchmark's seed and four more (plan `2026-11-27-gated-movement` `WP0a`):
+//! cargo run --release -p sim_core --example matchup_trace -- \
+//!     --clash <unit-slug> --seeds 4 --out ~/scratch/clash
 //! # Every battle on the seeds of record plus 16, outcomes only, into <out>/matrix.{csv,md},
 //! # compared with an earlier run:
 //! cargo run --release -p sim_core --example matchup_trace -- \
@@ -27,13 +31,23 @@
 //! # Invariants
 //! - Exits with status 2 on a usage error and 1 on any other failure, after printing it.
 
+use sim_fixtures::trace::clash::run_clash;
 use sim_fixtures::trace::cli::{run, RunError, TraceArgs};
 use sim_fixtures::trace::matrix::run_matrix;
 use std::process::ExitCode;
 
 /// Plays what `args` selects and prints a short report.
 fn execute(args: &TraceArgs) -> Result<(), RunError> {
-    if args.all_battles {
+    if args.clash.is_some() {
+        let (path, rows) = run_clash(args)?;
+        for row in &rows {
+            println!(
+                "seed {}: {} ticks, alive blue {} red {}",
+                row.seed, row.ticks, row.alive[0], row.alive[1]
+            );
+        }
+        println!("wrote {}", path.display());
+    } else if args.all_battles {
         let output = run_matrix(args)?;
         let failures = |of_record: bool| {
             output

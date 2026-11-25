@@ -647,7 +647,9 @@ fn the_matrix_mode_writes_every_battle_and_seed_and_compares_runs() -> TestResul
          red_churn_explained,red_churn_unexplained,blue_blocked,red_blocked,blue_shots,\
          red_shots,blue_unit_ticks,red_unit_ticks,enemy_overlap,blue_shove_e,red_shove_e,\
          blue_engaged_ticks,red_engaged_ticks,enemy_overlap_ticks,friend_overlap,\
-         friend_overlap_ticks"
+         friend_overlap_ticks,blue_held_moved_ticks,red_held_moved_ticks,blue_held_moved_max,\
+         red_held_moved_max,blue_moving_ticks,red_moving_ticks,blue_reversals,red_reversals,\
+         blue_reversals_hi,red_reversals_hi,gate_rays,orbit_refusals,terrain_transfers"
     );
     // The reversals split into proposal- and contact-caused ones that sum to them (plan
     // `2026-11-19-crowd-edge-steering` D-5).
@@ -896,6 +898,56 @@ fn the_contact_meter_counts_only_pairs_of_one_class() -> TestResult {
     assert!(
         across.3 > 0,
         "bodies of another class leave the ring free: {across:?}"
+    );
+    Ok(())
+}
+
+/// W0-T8 (plan `2026-11-27-gated-movement` `WP0a`): the battle meter's M1 and M1-hi are the
+/// harness's: one synthetic track, fed to both, gives the same moving unit-ticks and the same
+/// reversals.
+#[test]
+fn m1_of_the_meter_matches_the_harness_definition() -> TestResult {
+    use sim_fixtures::harness::corpus::generate;
+    use sim_fixtures::harness::metrics::ScenarioMeter;
+    use sim_fixtures::harness::{build_world, Family, RunOptions};
+    use sim_fixtures::trace::contact_checks::ContactMeter;
+    use sim_types::{SimScalar, SimVec2};
+    let scene = generate(Family::Cross, 3, false);
+    let (mut world, ids) = build_world(&scene, &RunOptions::default())?;
+    let mut harness = ScenarioMeter::new(&world, &scene, &ids);
+    let mut battle = ContactMeter::new();
+    battle.observe(&world);
+    let id = ids[0];
+    let start = world.entities[&id].position;
+    let (x0, y0) = (f64::from(start.x.to_f32()), f64::from(start.y.to_f32()));
+    // Steps of the speed (0.1 a tick in this scene's draw or more), a half-speed turn back, a
+    // full turn back, a crawl below the moving line, and a sideways step.
+    let mut x = x0;
+    let mut y = y0;
+    for (dx, dy) in [
+        (0.2, 0.0),
+        (0.2, 0.0),
+        (-0.06, 0.0),
+        (0.2, 0.0),
+        (-0.2, 0.0),
+        (0.001, 0.0),
+        (0.0, 0.2),
+        (0.0, -0.2),
+    ] {
+        x += dx;
+        y += dy;
+        let entity = world.entities.get_mut(&id).ok_or("unit")?;
+        entity.position = SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(y));
+        world.current_tick += 1;
+        harness.observe(&world);
+        battle.observe(&world);
+    }
+    let row = harness.finish();
+    let side = battle.movement().sides[0];
+    assert!(row.rev_amp > 0 && row.rev_amp_hi > 0, "{row:?}");
+    assert_eq!(
+        (side.moving_ticks, side.reversals, side.reversals_hi),
+        (row.moving_ticks, row.rev_amp, row.rev_amp_hi)
     );
     Ok(())
 }
