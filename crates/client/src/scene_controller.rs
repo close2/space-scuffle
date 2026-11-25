@@ -263,6 +263,7 @@ fn preview_instance(
         speed_boosted: is_selected && lab.speed_boosted,
         stance: sim_types::StanceView::default(),
         status: sim_types::StatusFlags::default(),
+        construction_hp_ratio: None,
         barrier_ratio: 0.0,
         housed: false,
     }
@@ -339,6 +340,7 @@ fn swarm_instance(
         speed_boosted: false,
         stance: sim_types::StanceView::default(),
         status: sim_types::StatusFlags::default(),
+        construction_hp_ratio: None,
         barrier_ratio: 0.0,
         housed: false,
     }
@@ -1368,6 +1370,7 @@ mod tests {
             speed_boosted: false,
             stance: sim_types::StanceView::default(),
             status: sim_types::StatusFlags::default(),
+            construction_hp_ratio: None,
             barrier_ratio: 0.0,
             housed: false,
         };

@@ -792,6 +792,7 @@ fn battle_unit(entity_id: u32, pos: Vec3, velocity: [f32; 2]) -> client::BubbleI
         speed_boosted: false,
         stance: sim_types::StanceView::default(),
         status: sim_types::StatusFlags::default(),
+        construction_hp_ratio: None,
         barrier_ratio: 0.0,
         housed: false,
     })
@@ -882,6 +883,7 @@ fn a_bubble_field_the_smog_never_reads_does_not_move_the_system_hash() {
             mode: Some(1),
             transition: None,
         },
+        construction_hp_ratio: None,
         barrier_ratio: 0.75,
         silhouette: sim_types::enums::SilhouetteClass::HeavyHex,
         unit_type: sim_types::ids::UnitTypeId(7),

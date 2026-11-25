@@ -81,6 +81,25 @@ pub struct Construction {
     pub last_worked_tick: Option<Tick>,
 }
 
+impl Construction {
+    /// Hit points this construction has built so far on a structure whose maximum is `max_hp`:
+    /// the health an unhurt foundation has now. A foundation is laid with health `max_hp` less
+    /// what its worked ticks add (every tick `hp_per_tick`, the last also `final_hp_residue`),
+    /// so what it has built is `max_hp` less what its `remaining_ticks` would still add. An
+    /// upgrade that raises `max_hp` raises health by as much, so the identity survives it.
+    ///
+    /// Presentation reads it (the dome's damage look measures health against it, B-210); the
+    /// simulation's own growth is `SimWorld::work_on_foundation`'s.
+    #[must_use]
+    pub fn built_hp(&self, max_hp: SimScalar) -> SimScalar {
+        if self.remaining_ticks == 0 {
+            return max_hp;
+        }
+        let remaining = i32::try_from(self.remaining_ticks).unwrap_or(i32::MAX);
+        max_hp - self.final_hp_residue - self.hp_per_tick * SimScalar::from_i32(remaining)
+    }
+}
+
 /// Why a structure cannot be started, at admission or on the builder's arrival.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum BuildRejection {
@@ -815,5 +834,67 @@ impl SimWorld {
             }
             _ => self.end_task(id, Some(TaskEventKind::Unreachable)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A record laid for `max_hp` over `ticks` worked ticks, exactly as `prepare_foundation`
+    /// lays it, and the health it starts with.
+    fn laid(max_hp: SimScalar, ticks: u32) -> (Construction, SimScalar) {
+        let start = max_hp / SimScalar::from_i32(FOUNDATION_HP_DIVISOR);
+        let gained = max_hp - start;
+        let divisor = i32::try_from(ticks).unwrap_or(i32::MAX);
+        let hp_per_tick = gained / SimScalar::from_i32(divisor);
+        let record = Construction {
+            remaining_ticks: ticks,
+            total_ticks: ticks,
+            hp_per_tick,
+            final_hp_residue: gained - hp_per_tick * SimScalar::from_i32(divisor),
+            paid_minerals: 0,
+            paid_gas: 0,
+            last_worked_tick: None,
+        };
+        (record, start)
+    }
+
+    /// The built health is the start health at placement, follows each worked tick's gain
+    /// exactly, rounding residue included, and is the maximum once nothing remains.
+    #[test]
+    fn built_hp_tracks_the_growth_of_an_unhurt_foundation() {
+        for (max, ticks) in [(1000, 1000), (1500, 1300), (400, 7), (1, 1), (550, 3)] {
+            let max_hp = SimScalar::from_i32(max);
+            let (mut record, mut hp) = laid(max_hp, ticks);
+            assert_eq!(record.built_hp(max_hp), hp, "laid: {max} over {ticks}");
+            while record.remaining_ticks > 0 {
+                record.remaining_ticks -= 1;
+                hp += record.hp_per_tick;
+                if record.remaining_ticks == 0 {
+                    hp += record.final_hp_residue;
+                }
+                assert_eq!(
+                    record.built_hp(max_hp),
+                    hp,
+                    "{max} over {ticks}, {} left",
+                    record.remaining_ticks
+                );
+            }
+            assert_eq!(hp, max_hp, "the last tick reaches the maximum exactly");
+        }
+    }
+
+    /// An upgrade adds as much to health as to the maximum, so the unhurt foundation still
+    /// stands at its built health.
+    #[test]
+    fn built_hp_follows_a_raised_maximum() {
+        let max_hp = SimScalar::from_i32(1000);
+        let (mut record, start) = laid(max_hp, 100);
+        record.remaining_ticks = 40;
+        let hp = start + record.hp_per_tick * SimScalar::from_i32(60);
+        let delta = SimScalar::from_i32(150);
+        assert_eq!(record.built_hp(max_hp), hp);
+        assert_eq!(record.built_hp(max_hp + delta), hp + delta);
     }
 }
