@@ -573,6 +573,7 @@ fn showcase_render_instance(
         speed_boosted: false,
         stance: sim_types::StanceView::default(),
         status: sim_types::StatusFlags::default(),
+        construction_hp_ratio: None,
         barrier_ratio: 0.0,
         housed: false,
     }

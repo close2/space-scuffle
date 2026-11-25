@@ -403,6 +403,17 @@ fn published_share(share: SimScalar) -> f32 {
     share.to_f32().clamp(0.0, 1.0)
 }
 
+/// On a foundation, its health as a share of the health its construction has built so far,
+/// capped at 1 ([`crate::production::construction::Construction::built_hp`]); `None` on an
+/// entity not under construction. The dome's damage look reads it, so that missing build
+/// progress does not read as damage (B-210).
+fn construction_hp_ratio(entity: &Entity) -> Option<f32> {
+    entity
+        .construction
+        .as_ref()
+        .map(|record| published_share(fraction(entity.hp, record.built_hp(entity.max_hp))))
+}
+
 /// The render record of one entity of archetype `arch` standing on `map`, in the attack cycle
 /// `attack_swing` ([`SimWorld::published_swing`]); `barrier_hit` says whether its barrier
 /// absorbed damage this tick.
@@ -443,6 +454,7 @@ fn bubble_instance(
         anim_state: entity.current_anim,
         attack_swing,
         hp_ratio: published_share(fraction(entity.hp, entity.max_hp)),
+        construction_hp_ratio: construction_hp_ratio(entity),
         shield_ratio: published_share(fraction(entity.shields, arch.max_shields)),
         shield_hit_flash: shield_flash,
         hull_hit_angle_rad: entity.last_hit_angle.to_radians_f32(),
@@ -505,6 +517,7 @@ pub(crate) fn snapshot_bubble(
             transition: None,
         },
         status: StatusFlags::default(),
+        construction_hp_ratio: None,
         barrier_ratio: 0.0,
         speed_boosted: false,
         housed: false,

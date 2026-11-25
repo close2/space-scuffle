@@ -589,6 +589,7 @@ fn test_ground_unit_altitude_never_spawns_air_tether() -> Result<(), Box<dyn std
                     speed_boosted: false,
                     stance: sim_types::StanceView::default(),
                     status: sim_types::StatusFlags::default(),
+                    construction_hp_ratio: None,
                     barrier_ratio: 0.0,
                     housed: false,
                 };

@@ -590,6 +590,7 @@ mod tests {
             speed_boosted: false,
             stance: StanceView::default(),
             status: StatusFlags::default(),
+            construction_hp_ratio: None,
             barrier_ratio: 1.0,
             housed: false,
         }
