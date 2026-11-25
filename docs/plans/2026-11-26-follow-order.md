@@ -750,3 +750,55 @@ client.
 ## Answer
 
 ```
+
+---
+
+## As built
+
+Built on branch `follow-order-plan` (on `main` `b4a99fae`); evidence in
+[`docs/evidence/2026-11-26-follow-order.md`](../evidence/2026-11-26-follow-order.md).
+
+| WP | Commit | What |
+|---|---|---|
+| WP0 | `af52e314` | B-221 to B-223 registered (B-219 and B-220 are the friend-crowd branch's, so no renumbering); B-163, B-166, B-187 point here. P-0: no follow-type input in 1,410 measured worlds or the skirmish |
+| WP1 | `b913f97e`, `4e77c0b5` | `UnitOrder::Follow`, `FollowKind`, tag 19, `MovementMemory::follow_rest`, schema **50 (provisional)**, admission with four typed refusals; the goldens re-recorded by bytes only after §5's proof on four builds |
+| WP2 | `b5e9f218` | `movement/locomotion/follow.rs`, `stands_idle`, `SteeringObstacle::resting_on`, `pursuit.follow_range_slop` |
+| WP3 | `0a797bab` | Acquisition and sighting for follows, the lost-to-fog walk, D-9's rally rows |
+| WP4 | `27604c11`, `75253b34` | The right-click row and the A-click's three-way split; two more tests that pinned the old walk |
+| WP5 | this commit | Records |
+
+Differences from the text above, each needed to meet the plan's own acceptance:
+
+1. **Where the code lives.** `follow.rs` is `movement/locomotion/follow.rs`, a child of the locomotion module, so
+   it reuses the pursuit's private draft, stages and helpers without widening their visibility. Admission is in
+   `movement/mod.rs` as planned; `try_issue_movement` routes a `Follow` too (`admit_movement_order`), so a refusal
+   of a unit dead this tick is reachable through the public API.
+2. **A rest is an arrival (D-4).** A follower that comes to rest stands at once, as a move that arrives does
+   (`MotionProposal::finish` sets no glide); only the end of a follow glides (B-39). With a glide, twelve followers
+   converging on P-6's target pushed it about twice D-α's resting bound.
+3. **Rule 2 inherits its witness's anchor (D-4, D-8).** A follower that rests because it touches a resting
+   follower takes that follower's `follow_rest`, the lowest id's when it touches several, and `resting_on` carries
+   the target and the anchor (`steering::FollowRest`) and is set only while the target stands within the slop of
+   the anchor. As written (the anchor is the target's position whenever a follower comes to rest), a group behind a
+   walking target re-anchored in waves against each other and stood still; with the inherited anchor every rest of
+   a group traces back to a follower that touched the target, and the group resumes on one tick (D-8).
+4. **Braking (D-3).** The walk brakes to stop at the rest band's edge (radius sum plus `ARRIVAL_TOUCH_MARGIN`),
+   and also at the band of a resting follower of the same target ahead of it; on its last leg it steps toward the
+   point `touch` short of the target's centre, never onto it. Without the second brake, followers trailing a target
+   that stopped walked into the resting group and pushed the target about 0.16 on. No constant was added.
+5. **D-4 rule 3** rests the follower when a route search finds the target unreachable and the nearest reachable
+   point lies within one step (or nothing nearer is reachable at all). A follow pushes no `RouteOutcome`.
+6. **Existing tests that changed.** Besides T17, D-9 and D-10 change tests that pinned the snapshot `Move`:
+   `rally_tests::a_unit_rallied_to_a_friend_goes_where_the_friend_stood` (now `..._follows_it`),
+   `a_dead_waypoint_is_skipped_and_an_all_dead_route_is_cancelled` (the live waypoint is followed),
+   `a_unit_that_cannot_attack_moves_to_the_enemy` (now `..._follows_the_enemy`, its enemy in the producer's sight:
+   a follow of an enemy never seen ends at once), the queue unit test
+   `an_attack_on_a_unit_splits_the_selection_into_attackers_and_walkers` (the Medivac-class member follows),
+   `context_order::tests::open_ground_and_an_idle_friend_mean_move` (an idle friend is followed) and
+   `battle_mode_tests::an_a_click_on_ones_own_unit_attacks_it` (the Medivac-class member follows the own unit); the
+   last two were found by the release client run and updated in `75253b34`. Each asserted the behaviour this plan
+   fixes; none failed for another reason (stop rule 4).
+7. **`gate/suites.ron`.** Unchanged: unlisted targets are `fast`, which is where `follow_order_tests` belongs.
+8. **Q0119** was filed before WP0 (`cc1d0ecc`); its default (a) is what WP4 builds.
+
+Measured results (P-0, §7's worlds per package, §5's proof, P-13) are in the evidence.
