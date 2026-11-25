@@ -754,6 +754,37 @@ plan as written and its Amendment 1; Q0116's defaults (part 1 (a), part 2 (a)). 
   table's own unit test.
 - Schema 49 and B-218 stay provisional, next free at merge.
 
+**Amendment 2 (B-218).** Built on branch `turret-tracking-b218` from `98daf2e6` (`main` `263ef402`), `main`
+`3e7f661a` and `6bd0fc4b` (documents only) merged before WP-A2; Q0116 part 2 (b). Evidence: the evidence file's
+Amendment 2 section.
+
+| WP | Commit | What |
+|---|---|---|
+| WP-A0 | `28767f15` | B-218 planned; baseline, census (carriers in matrix 2a, 2b, 3, 12a, 12b, 12c, 26, 28, 30, 35 only); probe (t): positive control 94, battle 26 four ticks (seeds 1, 12), zero elsewhere; close-battle list 14, 26, 31, 33, 35, 38a, 38b |
+| WP-A1 | `f25cf62a` | The flag on the `void_goliath` and `tripod_annihilator` weapons; the flag's documentation; T-A1 to T-A7, T-11 extended, finders explicit; red on WP-A0's data (8 tests); no measured world moved |
+| WP-A2 | this commit | Held-out worlds identical; goldens and sandbox unchanged (no re-record); instructions −0.004 %; B-218 fixed |
+
+**Deviations and decisions (Amendment 2).**
+- **T-A6's "strictly earlier" condition.** A ready weapon turns and swings on the same tick when one turn brings the
+  target within its acquisition arc (`step_ready_weapon`, `slew_and_try_swing`), so a twin whose turret lies more
+  than one tick's `turret_turn_rate` from A but within `turret_turn_rate` plus `acquire_arc` loses no tick: the
+  Colossus analogue's twin, 90° off with a rate of 55.99° and an arc of 45°, swung on the same tick as the pre-aimed
+  carrier. The test therefore requires strictly earlier when the twin lies more than `turret_turn_rate` plus
+  `acquire_arc` from A, and places A (bearing about 121° from where the Move ends) so that this holds for both
+  shipped carriers; "no later" is asserted unconditionally.
+- **T-A5.** The chase's only swing, if any, starts at the order's target on the tick the chase brings it into reach;
+  the test asserts that no swing is at the tracked enemy, not that no swing starts.
+- **T-A7** sets the carrier's `previous_target_position` directly (as if its last target had stood next to F), since
+  nothing in a walking scene records one.
+- **T-16** iterates every shipped tracking unit on the ground plane instead of taking the first; **T-11** clears each
+  tracking unit's flag in its own row instead of the file's first occurrence.
+- **Throughput.** The first two interleaved rounds ran beside another worktree's `cargo gate package` on a host at a
+  load of 40 to 140; rounds 3 and 4 after that gate ended, on a host still shared. Instructions −0.004 % (the same
+  instructions; no carrier in any scenario); every scenario at 78 ticks/s or more in the quietest round, but the
+  showcase read 39 and 41 in final rounds 2 and 4 (WP-A0 read 47 on 64x64/400 in its round 1): contention, reported
+  for review against A-5's floor rather than taken as a stop. The instruction budget is read on the whole run.
+- The Colossus' tracking rests on data with no patch note naming it (A2.1, **verify**), as B-218's row says.
+
 
 ## Amendment 1 (2026-11-26, orchestrator review of the stop-rule-7 stop)
 

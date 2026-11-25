@@ -295,3 +295,60 @@ kept the work parked); `grep -n "close\|restated" crates/sim_core/tests/fixtures
 
 **The list: 14, 26, 31, 33, 35, 38a, 38b.** Battle 28 carries `known_bug` (B-192) and is never on it (A2.5). The
 list is not edited after WP-A1 starts. Of its battles, 26 and 35 carry carriers.
+
+### WP-A1: the change (`f25cf62a`)
+
+**Red first** on WP-A0's data (the tests applied, `units.ron` as on WP-A0;
+`~/scratch/b218/red/wp-a1-red-final.log`): T-A1 (`b198_turret_tracking_follows_starcraft`: `void_goliath Phase
+Disruptor` lacks the flag), T-A2 (`b218_every_weapon_that_stands_to_fire_outside_attack_orders_tracks`), T-A3 to
+T-A7 (`a_carrier_that_stands_to_fire_tracks_while_it_walks`: nothing tracked on tick 128;
+`a_walking_carrier_changes_nothing_but_its_turret`: the turrets never differ;
+`a_chasing_carrier_aims_at_another_enemy_and_never_swings_at_it`, `a_carrier_pre_aimed_while_walking_swings_no_later`,
+`a_walking_carrier_ranks_by_its_tie_break`) and the extended T-11 (`turret_tracking_follows_the_data`: one tracking
+unit shipped) fail, 8 tests. T-16, now over every tracking unit, passes there (only the tank tracks).
+
+**Green and guards.** With the two flags, `turret_tracking_tests` (21), `weapon_catalog_rules_tests` (42),
+`runtime_catalog_tests` (51), `attack_swing_snapshot_tests` (6), the `sim_core` unit tests (334), `fire_rules_tests`,
+`weapon_cadence_tests`, `hull_turning_tests`, `target_selection_tests`, `weapon_validation_tests`,
+`attack_move_simulation_tests` and `sc2_who_wins_matchup_matrix_tests` (release) pass. `crates/gate/suites.ron`
+needs no change: every test is in an existing target.
+
+**World check (A2.5).** WP-A1's worlds (binaries built from the change, assets from its tree) against WP-A0's:
+`compare.sh` finds 483 files and none differing (the matrix on the seeds of record and 1 to 16, battles 31 and 33,
+the showcase and the showcase effects on the default seed and 1 to 8). No measured world moved, so none is classed
+Y or P; no outcome moved, no close battle is restated, and battle 28 keeps its state (claim failing on both seeds of
+record, `known_bug` B-192). The four (t) ticks of battle 26 left no trace in any measured output: no later swing,
+shot or position moved (a turret angle alone, class Y, is not recorded by the traces).
+
+### WP-A2: confirmation and records
+
+**Held-out seeds (§7.4)**, run once on WP-A0's tree and on the final tree (`heldout.sh`: matrix seeds 7001 to 7016,
+battles 31 and 33 on 7001 to 7064, the showcase and the showcase effects on seeds 9 to 16): 381 files, none
+differing. They confirm the development seeds; nothing was tuned or restated from them.
+
+**Goldens and sandbox.** On the final tree (`main` `3e7f661a` merged, documents only), `golden_replay_tests` (4) and
+`sim_fixtures` `fixture_tests` (3, `DEFAULT_SANDBOX_CHECKSUM`) pass unchanged in release, as predicted (no carrier in
+either golden; the sandbox's turreted role is the tank; the encoding is unchanged). No re-record; schema stays 49.
+
+**Throughput (A2.7).** `cargo bench -p sim_core --bench throughput`, WP-A0's binary (`98daf2e6`) and the final binary
+(`f25cf62a`'s code; the later commits change documents only) interleaved, each with its tree's catalog, `perf stat -e
+instructions:u` over the whole run (`bench.sh`, `bench2.sh`). Rounds 1 and 2 ran beside another worktree's `cargo
+gate package` (host load 40 to 140 on 16 cores); rounds 3 and 4 after it ended, still on a shared host (load 17 to
+30). Ticks per second, medians of 3, rounds 1 / 2 / 3 / 4:
+
+| Scenario | WP-A0 | Final |
+|---|---:|---:|
+| 64x64, 0 units | 2340 / 1372 / 3108 / 2168 | 3118 / 2528 / 3017 / 2346 |
+| 64x64, 100 | 485 / 510 / 804 / 390 | 802 / 502 / 772 / 638 |
+| 64x64, 400 | 47 / 65 / 107 / 52 | 86 / 80 / 103 / 82 |
+| 128x128, 400 | 122 / 98 / 176 / 168 | 77 / 159 / 83 / 148 |
+| 256x256, 0 | 179 / 144 / 194 / 187 | 137 / 184 / 88 / 186 |
+| showcase_canyon, 400 | 70 / 66 / 79 / 59 | 70 / 39 / 78 / 41 |
+| 64x64, 67 casters, 400 | 93 / 187 / 196 / 151 | 170 / 187 / 197 / 182 |
+
+**Instructions:** WP-A0 269,046,008,059, 269,066,236,451, 269,066,215,571 and 269,066,243,253; final
+269,046,103,895, 269,066,354,175, 269,046,107,089 and 269,046,104,491: **−0.004 %** on the means (budget +0.5 %),
+the two binaries' counts within the run-to-run spread of either. Every scenario reads 70 ticks/s or more in final
+rounds 1 and 3 and 78 or more in round 3, the quietest; the showcase reads 39 and 41 in final rounds 2 and 4, as
+WP-A0 read 47 on 64x64/400 in its round 1: host contention, not the change, which executes the same instructions
+(no carrier in any scenario). Reported to review against A-5's floor.
