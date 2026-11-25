@@ -209,11 +209,22 @@ host below load 8.
 
 ### 5.5 WP2's own tree
 
-(Filled in from `worlds/wp2` against `worlds/wp1on`: see the hand-back if absent.)
+WP2's tree (`crowd_iterations: 151` on `ba3e639b`, `main` `c5f55598` and `b4a99fae` merged) built and run on the
+24-seed solver matrix: `matrix.csv` is byte-identical to the switched-on arm's, so §5.1 to §5.3 are WP2's figures.
 
 ## 6. Byte identity against `main` `c5f55598` (collision classes)
 
-(Filled in from `worlds/main2` against `worlds/head`: see the hand-back if absent.)
+`main` `c5f55598` merged collision classes, which change the solver's pair builder. Its 24-seed solver and Legacy
+matrices are byte-identical to the earlier `main`'s, and so equal to WP0's in every column `main` writes
+(`scripts/wp0_identity.py`: 0 cells moved). The merged head `da000a17` (WP0, WP1 latent, `c5f55598`) was then
+measured in full (§1, without the held-out runs) and compared file by file with WP0's base (`scripts/compare.sh wp0
+head`): **979 files, 0 differences** (matrix CSVs with every WP0 column, battles 31 and 33, 18 showcase routes per
+pipeline, every harness CSV of both pipelines). Goldens and the sandbox pass on the merged tree, and `cargo gate quick`
+is green. The latent extension leaves every world of the new `main` byte-identical.
+
+Instructions on the head (three runs): 64 × 64 16.437 G (+0.43 % over WP0), 128 × 128 11.002 G (+0.28 %), canyon
+27.374 G (+0.20 %); Legacy rises alike (+0.45 %, +0.28 %, +0.37 %), so the change is the merged collision classes',
+not the latent extension's (which adds one addition per corrected pair).
 
 ## 7. Deviations from the plan, recorded (Q0002)
 
