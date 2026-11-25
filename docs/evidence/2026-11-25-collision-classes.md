@@ -91,7 +91,17 @@ WP1 (`6bcb6f8b`, collision classes with no class authored) and WP2 (`82723f29`, 
 pipeline corrects across classes), and measured on every world of §1.1 against WP0 with
 `scripts/compare.sh` (every output file byte for byte, paths normalised, and the probe lines).
 
-IDENTITY_PLACEHOLDER
+| World (both pipelines) | WP1 | WP2 | WP3 |
+|---|---|---|---|
+| Matrix, 24 seeds (`matrix.csv` with its check columns, `matrix.md`, probe lines) | identical | identical | battle 26 only (§3) |
+| Battle 31 (100 seeds), battle 33 (64 seeds) | identical | identical | identical |
+| Showcases `showcase`, `showcase_effects` (default seed, 1 to 8; `route_trace`, 1,500 ticks) | identical | identical | identical |
+| Harness families gap, arc, cross, corridor, corner (original and relabelled), mirror; seeds 1 to 1,000 | identical | identical | identical |
+| Probe (b): pairs corrected across classes | 0 | 0 | 0 |
+
+The only bytes that differ in WP1's and WP2's output are the catalog directory named in the summaries' header line
+(`assets-wp0-…` against `assets-wpN-…`); `compare.sh` normalises it. Stop rules 2 and 3 hold. WP3's full run reproduces
+its early matrix run byte for byte.
 
 Tests, red first (logs under `~/scratch/collision-classes/red/`):
 
@@ -150,3 +160,23 @@ other battle moves.
 zerglings now win every seed, two seeds of record above the range), but B4, B6 and B7′ fail, so it is not restated:
 the fixture is unchanged and the matrix test fails on battle 26's seeds of record 22 and 33 on WP3's tree. No
 amendment was attempted and no tolerance was changed. B-209 stays open.
+
+## 4. Throughput and golden replays
+
+**Throughput** (`perf stat -e instructions:u`, single-scenario throughput binaries, 400 units, 300 ticks, three runs per
+arm; WP0 against WP3's tree):
+
+| Scenario | Solver WP0 → WP3 | Legacy WP0 → WP3 (reported) | Ticks/s WP3, solver |
+|---|---|---|---|
+| 64 × 64 | 16.355 G → 16.263 G (−0.56 %) | 9.784 G → 9.804 G (+0.21 %) | 108 to 109 |
+| 128 × 128 | 10.957 G → 10.959 G (+0.02 %) | 10.186 G → 10.199 G (+0.13 %) | 179 to 183 |
+| canyon | 27.307 G → 27.231 G (−0.28 %) | 17.384 G → 17.436 G (+0.30 %) | 79 to 82 |
+
+Every scenario runs at 50 ticks per second or more, and the solver stays within +1.0 % of WP0 (stop rule 9 holds).
+
+**Golden replays and the sandbox** on the tree with `main` `91350af1` merged (`8fa6c00d`, schema 48): a `git archive`
+copy built in a fresh target directory passes `golden_replay_tests` and `fixture_tests` on native debug and release
+and on `wasm32-wasip1` release and debug (`wasmtime --dir=<copy>`). No checkpoint moves; nothing is re-recorded; no
+hashed state is added, so the schema stays at main's 48.
+
+**Not run (the package stopped at WP3):** the held-out seeds (§7.4) and WP4's client capture (§9).
