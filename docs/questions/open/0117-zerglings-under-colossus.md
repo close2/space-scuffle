@@ -43,3 +43,5 @@ up to 45 left.
 Recommendation: (b) if friend crowding is to be fixed soon anyway; (a) if you prefer the game's rule now.
 
 ## Answer
+
+- **Option (b): Keep parked for now.** Fix friend crowding first (`Q0118` / `Q0120` movement redesign), then switch on `B-209` (ground units walking under Colossi) cleanly without introducing a 2× friendly-overlap regression on `main` beforehand.
