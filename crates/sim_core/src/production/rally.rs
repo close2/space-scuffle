@@ -43,12 +43,14 @@
 //! - No node qualifies: the rally is left as it was (no route on a new structure).
 
 use crate::economy::{GameCommandError, GameCommandReceipt};
+use crate::movement::MovementInvariant;
 use crate::production::rally_slots::RallyAbility;
 use crate::production::ProductionInvariant;
+use crate::weapon_timing::SimulationDiagnostic;
 use crate::{Entity, SimWorld};
 use sim_types::{
-    AutoRallySpec, EntityId, PlayerId, RallyRoute, RallyTarget, ResourceNodeId, SimScalar, SimVec2,
-    UnitOrder, UnitTypeId,
+    AttackOrigin, AutoRallySpec, EntityId, PlayerId, RallyRoute, RallyTarget, ResourceNodeId,
+    SimScalar, SimVec2, Tick, UnitOrder, UnitTypeId,
 };
 
 /// The route of `slot` in `rallies`, sorted by slot, if it holds one.
@@ -232,8 +234,8 @@ impl SimWorld {
     /// can rally; [`GameCommandError::NoRallySlotTakes`] when some can but none has a slot that
     /// takes the target; [`GameCommandError::RallyWaypointsFull`] when every recipient whose slot
     /// takes it holds a full route; [`GameCommandError::RallyOutsideMap`] for a point off the
-    /// map; [`GameCommandError::InvalidRallyTarget`] for a unit that does not exist, is dead or
-    /// is another player's; [`GameCommandError::UnknownResourceNode`] for a node not on the map;
+    /// map; [`GameCommandError::InvalidRallyTarget`] for a unit that does not exist or is dead;
+    /// [`GameCommandError::UnknownResourceNode`] for a node not on the map;
     /// [`GameCommandError::Invariant`] for a recipient whose routes break their invariants.
     pub(crate) fn admit_set_rally(
         &mut self,
@@ -244,7 +246,7 @@ impl SimWorld {
         queue: bool,
     ) -> Result<GameCommandReceipt, GameCommandError> {
         self.validate_selection(player, recipients)?;
-        self.validate_rally_target(player, target)?;
+        self.validate_rally_target(target)?;
         let (mut capable, mut taking, mut full) = (0, 0, 0);
         for &id in recipients {
             if self.rally_ability_of(id).is_none() {
@@ -339,13 +341,9 @@ impl SimWorld {
         RallyAbility::of(arch).slot_used_by(product)
     }
 
-    /// Checks a rally target once per command (D-3): a point on the map, a live unit of
-    /// `player`, or a node on the map.
-    fn validate_rally_target(
-        &self,
-        player: PlayerId,
-        target: RallyTarget,
-    ) -> Result<(), GameCommandError> {
+    /// Checks a rally target once per command (D-3): a point on the map, a live unit of any
+    /// player (D-6), or a node on the map.
+    fn validate_rally_target(&self, target: RallyTarget) -> Result<(), GameCommandError> {
         match target {
             RallyTarget::Point(point) => {
                 let inside = |value: SimScalar, extent: u32| {
@@ -356,10 +354,9 @@ impl SimWorld {
                 }
             }
             RallyTarget::Unit(unit) => {
-                let valid = self
-                    .entities
-                    .get(&unit)
-                    .is_some_and(|entity| entity.owner == player && entity.is_alive());
+                // Any player's live unit (plan `2026-11-25-rallies` D-6, B-166); visibility is
+                // not checked, as for a player's attack order.
+                let valid = self.entities.get(&unit).is_some_and(Entity::is_alive);
                 if !valid {
                     return Err(GameCommandError::InvalidRallyTarget(unit));
                 }
@@ -416,7 +413,8 @@ impl SimWorld {
     /// |---|---|
     /// | a point | `Move` to it |
     /// | a node | `Harvest` when admission accepts the child for it; else `Move` to its centre |
-    /// | a unit, not carried | `Load` when it is the player's and admission accepts the child as its passenger; else `Move` to where it stands now |
+    /// | a unit of the child's player, not carried | `Load` when admission accepts the child as its passenger; else `Move` to where it stands now (B-163) |
+    /// | another player's unit, not carried | `AttackTarget { origin: Explicit }` when the child can attack it (S11, D-6); else `Move` to where it stands now (Q0105's rule, B-187) |
     /// | a unit, carried | none this time; the waypoint stays |
     ///
     /// A refused order is skipped, so the next waypoint's order becomes the first issued, as a
@@ -540,6 +538,8 @@ impl SimWorld {
                         Err(GameCommandError::Invariant(source)) => return Err(source),
                         Err(_) => {}
                     }
+                } else if let Some(taken) = self.issue_rally_attack(owner, child, unit, queue) {
+                    return Ok(taken);
                 }
                 position
             }
@@ -549,6 +549,42 @@ impl SimWorld {
         Ok(self
             .issue_movement_prevalidated(owner, &recipients, &order, queue)
             .is_ok())
+    }
+
+    /// Gives `child` of `owner` an explicit attack on the enemy `unit` when the player's own
+    /// admission rule takes it ([`SimWorld::takes_order`]; plan `2026-11-25-rallies` D-6),
+    /// queued when `queue`. `Some(true)` when issued; `Some(false)` when the entity did not take
+    /// it, or its issue failed an invariant, which is reported as a diagnostic; `None` when the child
+    /// cannot attack the unit, so the caller moves it there instead.
+    fn issue_rally_attack(
+        &mut self,
+        owner: PlayerId,
+        child: EntityId,
+        unit: EntityId,
+        queue: bool,
+    ) -> Option<bool> {
+        let order = UnitOrder::AttackTarget {
+            target: unit,
+            origin: AttackOrigin::Explicit,
+        };
+        if !self.takes_order(owner, child, &order) {
+            return None;
+        }
+        let entity = self.entities.get_mut(&child)?;
+        match entity.issue_order(order, queue) {
+            Ok(taken) => Some(taken),
+            Err(source) => {
+                self.tick_diagnostics
+                    .push(SimulationDiagnostic::MovementInvariant {
+                        tick: Tick(self.current_tick),
+                        source: MovementInvariant::Admission {
+                            entity: child,
+                            source,
+                        },
+                    });
+                Some(false)
+            }
+        }
     }
 }
 

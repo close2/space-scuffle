@@ -29,8 +29,8 @@ use sim_map::PlacementFailureReason;
 use sim_types::{
     AbilityEffectSpec, AbilityLockView, AttackSnapshotView, CarrierView, CastStateView,
     CommandOptionView, CommandSubject, ModeStateView, PlacementFlag, PlayerId, PlayerStatusView,
-    PlayerView, QueuedItem, QueuedJobView, RallyView, ResourceNodeId, ShapeKind, SiteRefusal,
-    StructureQueueView, Tick, UnitTypeId, VisibilityState, VisibleNodeView,
+    PlayerView, QueuedItem, QueuedJobView, RallyTarget, RallyView, ResourceNodeId, ShapeKind,
+    SiteRefusal, StructureQueueView, Tick, UnitTypeId, VisibilityState, VisibleNodeView,
 };
 
 impl SimWorld {
@@ -168,6 +168,9 @@ impl SimWorld {
         // sorted by entity, slot and index.
         for route in &entity.rallies {
             for (&waypoint, index) in route.waypoints.iter().zip(0_u8..) {
+                if !self.waypoint_shown_to(entity.owner, waypoint) {
+                    continue;
+                }
                 if let Some(point) = self.waypoint_point(waypoint) {
                     out.rallies.push(RallyView {
                         entity: entity.id,
@@ -207,6 +210,22 @@ impl SimWorld {
         if entity.is_completed {
             out.completed_types.push(entity.unit_type_id);
         }
+    }
+
+    /// Whether `viewer` may see where a rally waypoint of its own structure lies (plan
+    /// `2026-11-25-rallies` D-6): a point, a node and a unit of the viewer's own always; another
+    /// player's unit only while the viewer is shown it ([`SimWorld::shown_to`], the rule of the
+    /// client's fog) and it is not hidden inside a structure. The simulation acts on the true
+    /// position; only the view is filtered, so it leaks nothing.
+    fn waypoint_shown_to(&self, viewer: PlayerId, waypoint: RallyTarget) -> bool {
+        let RallyTarget::Unit(unit) = waypoint else {
+            return true;
+        };
+        self.entities.get(&unit).is_some_and(|target| {
+            target.owner == viewer
+                || (!target.is_hidden()
+                    && Self::shown_to(&self.map, &self.vision_maps, viewer, target))
+        })
     }
 
     /// Adds the readiness of each effect-tree ability of `entity` to `out.cast_states`, in

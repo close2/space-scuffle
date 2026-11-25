@@ -143,7 +143,8 @@ pub enum GameCommandError {
     /// A rally point must lie on the map (world units).
     #[error("rally point {0:?} lies outside the map")]
     RallyOutsideMap(SimVec2),
-    /// A rally unit must exist, be alive and be the player's own.
+    /// A rally unit must exist and be alive; it may be any player's (plan `2026-11-25-rallies`
+    /// D-6).
     #[error("{0:?} cannot be a rally target")]
     InvalidRallyTarget(EntityId),
     /// Selected structures can rally, but none has a rally slot that takes this target (plan

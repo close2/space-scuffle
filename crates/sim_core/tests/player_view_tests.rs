@@ -1826,3 +1826,59 @@ fn the_view_publishes_each_resolvable_waypoint_with_its_index() -> TestResult {
     );
     Ok(())
 }
+
+/// Plan `2026-11-25-rallies` D-6, P-5 (WP4): a rally waypoint on an enemy unit is published only
+/// while the viewer is shown that unit. An enemy beside the viewer's base, in its sight, is
+/// published at its position; one at the far side of the map, under the fog, is left out, and
+/// the route keeps it.
+#[test]
+fn an_unseen_enemy_waypoint_is_not_published() -> TestResult {
+    use sim_types::RallyTarget;
+    let mut world = skirmish()?;
+    let (home, _) = base_of(&world, HOME)?;
+    let (away, _) = base_of(&world, AWAY)?;
+    let soldier = world
+        .catalog
+        .archetypes()
+        .find(|arch| {
+            !matches!(arch.shape, ShapeKind::BuildingDome { .. })
+                && arch.mover_type == sim_types::MoverType::Ground
+                && arch.capabilities.harvester.is_none()
+                && arch.weapon.is_some()
+        })
+        .ok_or("no ground soldier")?
+        .unit_type_id;
+    let near =
+        world.entities[&home].position + SimVec2::new(SimScalar::from_i32(5), SimScalar::ZERO);
+    let seen = world.spawn_unit(soldier, AWAY, near)?;
+    let far =
+        world.entities[&away].position + SimVec2::new(SimScalar::from_i32(5), SimScalar::ZERO);
+    let unseen = world.spawn_unit(soldier, AWAY, far)?;
+    let order = |target, queue| PlayerCommand {
+        queue,
+        ..command(HOME, vec![home], UnitOrder::SetRally { target, slot: None })
+    };
+    step(
+        &mut world,
+        vec![
+            order(RallyTarget::Unit(seen), false),
+            order(RallyTarget::Unit(unseen), true),
+        ],
+    );
+    let route = &world.entities[&home].rallies;
+    assert_eq!(
+        route[0].waypoints,
+        [RallyTarget::Unit(seen), RallyTarget::Unit(unseen)]
+    );
+    let published: Vec<(u8, [f32; 2])> = view_of(&world, HOME)
+        .rallies
+        .iter()
+        .filter(|rally| rally.entity == home)
+        .map(|rally| (rally.index, rally.point))
+        .collect();
+    assert_eq!(
+        published,
+        [(0, world.entities[&seen].position.to_f32_array())]
+    );
+    Ok(())
+}

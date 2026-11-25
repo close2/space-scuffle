@@ -406,8 +406,9 @@ impl Base {
 }
 
 /// D-3: `SetRally` sets the rally of every structure that trains units, and nothing else; a
-/// selection with none is refused, as are a point off the map, a unit that is another
-/// player's, dead or absent, and a node not on the map. Refusals change nothing.
+/// selection with none is refused, as are a point off the map, a unit that is dead or absent,
+/// and a node not on the map. Refusals change nothing. Another player's unit is a valid target
+/// since plan `2026-11-25-rallies` WP4 (D-6), so it is no longer among the refusals.
 #[test]
 fn set_rally_is_admitted_only_for_producers() -> TestResult {
     let mut b = Base::new()?;
@@ -436,7 +437,6 @@ fn set_rally_is_admitted_only_for_producers() -> TestResult {
         ),
         Err(GameCommandError::NoCapableProducer)
     );
-    let foreign = b.world.spawn_unit(b.worker, PlayerId(1), point(12, 14))?;
     let dead = b.world.spawn_unit(b.worker, PlayerId(0), point(12, 16))?;
     b.world.entities.get_mut(&dead).ok_or("dead absent")?.hp = SimScalar::ZERO;
     let off = SimVec2::new(SimScalar::from_i32(33), SimScalar::from_i32(4));
@@ -444,10 +444,6 @@ fn set_rally_is_admitted_only_for_producers() -> TestResult {
         (
             RallyTarget::Point(off),
             GameCommandError::RallyOutsideMap(off),
-        ),
-        (
-            RallyTarget::Unit(foreign),
-            GameCommandError::InvalidRallyTarget(foreign),
         ),
         (
             RallyTarget::Unit(dead),
@@ -1254,5 +1250,225 @@ fn a_refused_waypoint_order_is_skipped() -> TestResult {
     b.shift_rally(b.barracks, RallyTarget::Point(next), true)?;
     let (child, _) = b.train(b.barracks, b.soldier)?;
     assert_eq!(b.orders(child), [UnitOrder::Move { target: next }]);
+    Ok(())
+}
+
+/// P-5 (D-6, S4: the army rally's validator accepts enemy targets): a rally on another player's
+/// unit stores the unit, not a point on the ground.
+#[test]
+fn a_rally_on_an_enemy_is_stored_as_the_unit() -> TestResult {
+    let mut b = Base::new()?;
+    let enemy = b.world.spawn_unit(b.soldier, PlayerId(1), at(20.5, 26.5))?;
+    assert_eq!(
+        b.shift_rally(b.barracks, RallyTarget::Unit(enemy), false),
+        Ok(GameCommandReceipt::Accepted { recipients: 1 })
+    );
+    assert_eq!(b.waypoints(b.barracks), [RallyTarget::Unit(enemy)]);
+    Ok(())
+}
+
+/// P-5 (D-6, S11: "a … Attack command … is issued to the rallied unit upon creation"): a new
+/// unit that can attack its enemy rally target gets an explicit attack on it on its spawn tick.
+#[test]
+fn a_new_unit_attacks_its_enemy_rally_target() -> TestResult {
+    let mut b = Base::new()?;
+    let enemy = b.world.spawn_unit(b.soldier, PlayerId(1), at(20.5, 26.5))?;
+    b.shift_rally(b.barracks, RallyTarget::Unit(enemy), false)?;
+    let (child, _) = b.train(b.barracks, b.soldier)?;
+    assert_eq!(b.orders(child), [UnitOrder::attack(enemy)]);
+    Ok(())
+}
+
+/// Whether a new `product` could attack `target_type`, judged on two spawned entities of a
+/// throwaway world by the admission rule itself ([`sim_core::Entity::can_attack`]).
+fn could_attack(
+    product: UnitTypeId,
+    target_type: UnitTypeId,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let mut probe = Base::new()?;
+    let unit = probe
+        .world
+        .spawn_unit(product, PlayerId(0), at(10.5, 26.5))?;
+    let target = probe
+        .world
+        .spawn_unit(target_type, PlayerId(1), at(12.5, 26.5))?;
+    let (unit, target) = (&probe.world.entities[&unit], &probe.world.entities[&target]);
+    Ok(unit.can_attack(
+        probe.world.catalog.get(unit.unit_type_id)?,
+        target,
+        probe.world.catalog.get(target.unit_type_id)?,
+    ))
+}
+
+/// P-5 (D-6, Q0105's default, B-187): a new unit that cannot attack its enemy rally target (a
+/// product of a structure without workers whose weapons do not reach the target, found in the
+/// catalog by that rule) moves to where the enemy stands.
+#[test]
+fn a_unit_that_cannot_attack_moves_to_the_enemy() -> TestResult {
+    let b = Base::new()?;
+    let target_type = b.soldier;
+    let faction = b.world.catalog.get(b.soldier)?.faction;
+    let mut found = None;
+    'search: for producer in b.world.catalog.archetypes().filter(|arch| {
+        arch.faction == faction
+            && matches!(arch.shape, ShapeKind::BuildingDome { .. })
+            && arch.capabilities.auto_rally.is_none()
+            && !arch.trains_units.is_empty()
+    }) {
+        for slug in &producer.trains_units {
+            let Some(product) = b.world.catalog.get_by_slug(slug) else {
+                continue;
+            };
+            if matches!(product.shape, ShapeKind::BuildingDome { .. })
+                || product.capabilities.harvester.is_some()
+                || !product.requires_structures.is_empty()
+            {
+                continue;
+            }
+            if !could_attack(product.unit_type_id, target_type)? {
+                found = Some((producer.unit_type_id, product.unit_type_id));
+                break 'search;
+            }
+        }
+    }
+    let (producer_type, product) = found.ok_or("no product that cannot attack the soldier")?;
+    let mut b = Base::new()?;
+    let producer = b.world.spawn_structure(producer_type, PlayerId(0), 20, 4)?;
+    let enemy = b
+        .world
+        .spawn_unit(target_type, PlayerId(1), at(26.5, 26.5))?;
+    b.shift_rally(producer, RallyTarget::Unit(enemy), false)?;
+    let (child, _) = b.train(producer, product)?;
+    let stood = b.world.entities[&enemy].position;
+    assert_eq!(b.orders(child), [UnitOrder::Move { target: stood }]);
+    Ok(())
+}
+
+/// P-5 (D-5, D-6, S11: "The rally points are deleted if the target unit dies"): an enemy rally
+/// target that dies is pruned at the next spawn, and the new unit gets no order.
+#[test]
+fn an_enemy_rally_target_that_dies_is_pruned() -> TestResult {
+    let mut b = Base::new()?;
+    let enemy = b.world.spawn_unit(b.soldier, PlayerId(1), at(20.5, 26.5))?;
+    b.shift_rally(b.barracks, RallyTarget::Unit(enemy), false)?;
+    b.world.entities.get_mut(&enemy).ok_or("enemy")?.hp = SimScalar::ZERO;
+    let (child, _) = b.train(b.barracks, b.soldier)?;
+    assert_eq!(b.orders(child), []);
+    assert_eq!(b.world.entities[&b.barracks].rallies, []);
+    Ok(())
+}
+
+/// P-6: rallies end to end through `TickBundle`s only. Setup places the structures and an enemy
+/// structure; every rally and every production job is a `PlayerCommand`.
+/// - The Hatchery analogue: a right click on the ground sets its army rally (its worker rally
+///   holds its auto-rally's field). It trains a worker, which harvests the field, the
+///   non-worker of the army slot, which walks to the ground point, and the excluded product
+///   (the Queen analogue), which gets no order.
+/// - The Barracks analogue: a right click on the ground, then a Shift-right-click on the enemy
+///   structure. A soldier trained before the Shift-click walks to the point; one trained after
+///   walks to the point and then attacks.
+///
+/// Each child's order queue is checked on its spawn tick, and 200 ticks after the last spawn the
+/// worker carries or gathers, the soldier attacks, and the Queen analogue stands idle where it
+/// left.
+#[test]
+fn rallies_through_player_commands() -> TestResult {
+    let mut h = Hatch::new()?;
+    let enemy_type = h.base.world.entities[&h.base.barracks].unit_type_id;
+    let enemy = h
+        .base
+        .world
+        .spawn_structure(enemy_type, PlayerId(1), 4, 27)?;
+    let (hatch, barracks) = (h.hatch, h.base.barracks);
+    let (army_point, soldier_point) = (at(12.5, 26.5), at(14.5, 22.5));
+    let command = |entities: Vec<EntityId>, order: UnitOrder, queue: bool| PlayerCommand {
+        player_id: PlayerId(0),
+        entities,
+        order,
+        queue,
+    };
+    let rally = |target| UnitOrder::SetRally { target, slot: None };
+    let produce = |unit_type| UnitOrder::Produce { unit_type };
+    h.base.tick_with(vec![
+        command(vec![hatch], rally(RallyTarget::Point(army_point)), false),
+        command(
+            vec![barracks],
+            rally(RallyTarget::Point(soldier_point)),
+            false,
+        ),
+        command(vec![hatch], produce(h.worker), false),
+        command(vec![hatch], produce(h.army), false),
+        command(vec![hatch], produce(h.excluded), false),
+        command(vec![barracks], produce(h.base.soldier), false),
+    ]);
+    let outcomes = h.base.world.game_command_outcomes().to_vec();
+    assert!(outcomes.iter().all(|o| o.result.is_ok()), "{outcomes:?}");
+    // Every spawn: the child's type and its orders on its spawn tick.
+    let mut spawned: Vec<(EntityId, UnitTypeId, Vec<UnitOrder>)> = Vec::new();
+    let mut shifted = false;
+    for _ in 0..6_000 {
+        let next = h.base.world.next_entity_id;
+        if !shifted && spawned.iter().any(|(_, kind, _)| *kind == h.base.soldier) {
+            h.base.tick_with(vec![
+                command(vec![barracks], rally(RallyTarget::Unit(enemy)), true),
+                command(vec![barracks], produce(h.base.soldier), false),
+            ]);
+            shifted = true;
+        } else {
+            h.base.tick();
+        }
+        for id in next..h.base.world.next_entity_id {
+            let id = EntityId(id);
+            if let Some(entity) = h.base.world.entities.get(&id) {
+                spawned.push((id, entity.unit_type_id, h.base.orders(id)));
+            }
+        }
+        if spawned.len() == 5 {
+            break;
+        }
+    }
+    let of = |kind: UnitTypeId| spawned.iter().filter(move |(_, k, _)| *k == kind);
+    let field = UnitOrder::Harvest {
+        target: ResourceNodeId(0),
+    };
+    let (worker, _, orders) = of(h.worker).next().ok_or("no worker")?.clone();
+    assert_eq!(orders, [field.clone()]);
+    let (_, _, orders) = of(h.army).next().ok_or("no army unit")?.clone();
+    assert_eq!(orders, [UnitOrder::Move { target: army_point }]);
+    let (queen, _, orders) = of(h.excluded).next().ok_or("no excluded unit")?.clone();
+    assert_eq!(orders, []);
+    let soldiers: Vec<_> = of(h.base.soldier).cloned().collect();
+    assert_eq!(soldiers.len(), 2, "{spawned:?}");
+    assert_eq!(
+        soldiers[0].2,
+        [UnitOrder::Move {
+            target: soldier_point
+        }]
+    );
+    assert_eq!(
+        soldiers[1].2,
+        [
+            UnitOrder::Move {
+                target: soldier_point
+            },
+            UnitOrder::attack(enemy)
+        ]
+    );
+    let queen_left = h.base.world.entities[&queen].position;
+    for _ in 0..200 {
+        h.base.tick();
+    }
+    let world = &h.base.world;
+    let worker = &world.entities[&worker];
+    assert!(
+        worker.cargo.is_some() || worker.order_queue.front() == Some(&field),
+        "the worker harvests: {:?}",
+        worker.order_queue
+    );
+    let soldier = &world.entities[&soldiers[1].0];
+    assert_eq!(soldier.order_queue.front(), Some(&UnitOrder::attack(enemy)));
+    let queen = &world.entities[&queen];
+    assert!(queen.order_queue.is_empty());
+    assert_eq!(queen.position, queen_left);
     Ok(())
 }
