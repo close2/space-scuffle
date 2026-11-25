@@ -692,3 +692,23 @@ if you prefer the queueing look and a cheaper solver over the battle claims.
 `~/scratch/friend-crowd/`: `scripts/` (`arm_summary.py`, `ovl_classes.py`, `harness_sum.py`, `run_arms.sh`,
 `bench.sh`), `trees/proto*` (the prototypes: `FC_DEPTH`, `FC_SLIDE`, `FC_EXT`, `FC_PROBE`, `FC_PASSES`), `arms*/`,
 `proto*/` (battle traces), `harness/`, `bench-*.txt`, `perf-*.txt`, `arms-*.txt`, scratch catalogs `cat-*`.
+
+---
+
+## Amendment 1 (implementation agent, 2026-11-25): WP0 and WP1 built; WP2 measured and stopped
+
+- **WP0** (`a4262f83`) and **WP1** (`9ca4631b`) are built as written, with the deviations recorded in the evidence
+  file [`2026-11-26-friend-crowd-overlap`](../evidence/2026-11-26-friend-crowd-overlap.md) §7: P-1, P-2, P-3, P-5, P-6
+  and P-7 are unit tests of `movement::solver` (the solver is crate-private); P-1's crowd stands in a terrain channel;
+  P-5 accepts the switched-off value; P-7 is a collinear wedge, since the two-dimensional one did not exercise the
+  progress test; C-3′'s counters are WP0 columns; B-219 and B-220 are registered (provisional) in WP0.
+- **F-1's set** on WP0's corrected-pairs meter is battles 26, 27, 28 and 29 (§5.4's prediction of 13 was read from
+  the all-pairs, spawn-inclusive meter). The close-battle list is evidence §3's.
+- **P-1 derives `crowd_iterations` 151** on the shipped catalog (K alone leaves 59 %).
+- **WP2, after Q0118 (a):** with 151, F-1 passes in all four battles (−98.7 % to −99.0 %) and F-3 passes, but F-2
+  fails in battle 27 (11.0 %), B1 (27, 31), B4 (28) and B7′ (31, 34) fail, Class D battles 29, 30 and 34 move, and
+  harness T4 (corner) and T7's maxima worsen. The cap is never reached in the matrix (a cap of 1,000 gives the same
+  bytes), so stop rule 3's amendment does not apply. **Stop rules 3 and 4: the switch-over is not committed**; the
+  data stays off, WP3 is not started, and Q0118's (a) waits for review (evidence §5). Cost with 151: +47.2 % on
+  64 × 64, +0.04 % on 128 × 128, +42.9 % on canyon; canyon projected about 56 ticks per second (C-0 unmeasured on a
+  loaded host).

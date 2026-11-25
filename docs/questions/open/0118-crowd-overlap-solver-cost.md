@@ -78,3 +78,15 @@ Why the current solver hits `50–170` rounds on 10-deep crowds: a **Jacobi** po
 
 7. **Velocity Obstacles (RVO2 / ORCA)** (*van den Berg et al. 2008/2011*):
    - Already known from `VO-4` and `Q0097` Update 2 to deadlock in corners, narrow chokes, and against immovable obstacles/attackers; generally inferior to hybrids above for SC2-style combat.
+
+## Update (implementation agent, 2026-11-25): (a) measured, stopped for review
+
+The switch-over to option (a) was measured against its pre-registered checks (plan
+`2026-11-26-friend-crowd-overlap` Amendment 1, evidence `2026-11-26-friend-crowd-overlap` §5). It does what it was
+for: friendly pairs above 5 % fall by 99 % in the four big zergling battles (battle 26: 1,008 → 10 per run, worst
+43.6 % → 7.9 %), and nothing changes where crowds stay within the bound. Cost: +47 % on the 64 × 64 benchmark, +43 %
+on canyon (about 56 ticks per second projected; it could not be measured on a quiet host). But the plan's stop rules
+were hit: battle 27's worst overlap stays at 11 % (above the 10 % target), zerglings in battle 27 stand with room
+more often, and battles not on the close list (29, 30, 34) change results within their noise. So the change is
+built but switched off, and is waiting for review; no answer is needed from you unless you want to waive those
+checks. Your blank-sheet guidance above is noted for the next movement round.
