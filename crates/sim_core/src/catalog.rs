@@ -27,11 +27,11 @@ use sim_types::{
     default_projectile_lifetime_ticks, AbilitySpec, AllowedMovement, AnimState,
     ArchetypeCapabilities, ArmorClassId, AttackCommand, AttackDashSpec, AttackVisibility,
     Attribute, AttributeBonuses, AttributeFlags, AutoRallySpec, BarrierSpec, CollisionClass,
-    FactionId, FootprintShape, HarvesterSpec, MissileValidation, MoverType, OverclockSpec,
-    PlacementFlag, PlacementFlags, ProjectileTargetLossBehavior, ResourceKind, ResourceKindSet,
-    ShapeKind, SilhouetteClass, SimAngle, SimScalar, SplashCliff, SplashImpact, SplashLine,
-    SplashLineAxis, SplashLineOrigin, SplashShape, StanceOrders, StructureStrike, TurretIdle,
-    UnitModeSpec, UnitTypeId, UpgradeEffect, WeaponVisualKind,
+    FactionId, FootprintShape, HarvesterSpec, MissileMover, MissilePhase, MissileValidation,
+    MoverType, OverclockSpec, PlacementFlag, PlacementFlags, ProjectileTargetLossBehavior,
+    ResourceKind, ResourceKindSet, ShapeKind, SilhouetteClass, SimAngle, SimScalar, SplashCliff,
+    SplashImpact, SplashLine, SplashLineAxis, SplashLineOrigin, SplashShape, StanceOrders,
+    StructureStrike, TurretIdle, UnitModeSpec, UnitTypeId, UpgradeEffect, WeaponVisualKind,
 };
 pub use sim_types::{SplashSpec, SplashZone, WeaponSpec};
 mod collision_classes;
@@ -1623,6 +1623,57 @@ struct WeaponSpecDef {
     /// engine default. Refused on an instant weapon unless default.
     #[serde(default)]
     pub(crate) launch_visibility: AttackVisibility,
+    /// The movers the weapon's missile may fly, tried in order at the release (plan
+    /// `2026-11-27-weapon-delivery` D-2); omitted, none: a constant `projectile_speed`. Refused
+    /// on an instant weapon.
+    #[serde(default)]
+    pub(crate) missile_movers: Vec<MissileMoverDef>,
+}
+
+/// An authored missile mover (`StarCraft` II `CEffectLaunchMissile` `Movers` entry, plan
+/// `2026-11-27-weapon-delivery` D-2), in world units and ticks, converted to
+/// [`sim_types::MissileMover`] once at load.
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct MissileMoverDef {
+    /// Greatest edge-to-edge distance at the release that chooses this mover (`IfRangeLTE`);
+    /// `None` admits any distance, only on the last mover.
+    pub(crate) up_to_range: Option<f32>,
+    /// The mover's speed phases, in order.
+    pub(crate) phases: Vec<MissilePhaseDef>,
+}
+
+/// An authored speed phase of a missile mover (`MotionPhases`): world units per tick and per
+/// tick squared, the path length in world units.
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub(crate) struct MissilePhaseDef {
+    /// Start speed (`Speed`); `None` carries the speed in.
+    pub(crate) speed: Option<f32>,
+    /// Change of speed per tick (`Acceleration`).
+    pub(crate) acceleration: f32,
+    /// Greatest speed (`MaxSpeed`).
+    pub(crate) max_speed: f32,
+    /// Path flown since the release at which the next phase starts (`Outro`'s midpoint); `None`
+    /// on the last phase.
+    pub(crate) ends_after: Option<f32>,
+}
+
+impl MissileMoverDef {
+    /// The mover in fixed point (`SimScalar::from_f32_lossy`, as every authored distance).
+    fn to_spec(&self) -> MissileMover {
+        MissileMover {
+            up_to_range: self.up_to_range.map(SimScalar::from_f32_lossy),
+            phases: self
+                .phases
+                .iter()
+                .map(|phase| MissilePhase {
+                    speed: phase.speed.map(SimScalar::from_f32_lossy),
+                    acceleration: SimScalar::from_f32_lossy(phase.acceleration),
+                    max_speed: SimScalar::from_f32_lossy(phase.max_speed),
+                    ends_after: phase.ends_after.map(SimScalar::from_f32_lossy),
+                })
+                .collect(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1859,6 +1910,11 @@ impl UnitArchetypeDef {
             attack_visibility: w.attack_visibility,
             missile_validation: w.missile_validation,
             launch_visibility: w.launch_visibility,
+            missile_movers: w
+                .missile_movers
+                .iter()
+                .map(MissileMoverDef::to_spec)
+                .collect(),
         })
     }
 
