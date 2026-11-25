@@ -786,7 +786,7 @@ Binding on the implementation plan; written now, before any `Gated` code exists.
 
 ---
 
-## 9. Owner questions (drafts, numbered from Q0120, provisional; not filed)
+## 9. Owner questions (filed as Q0120–Q0124 in `docs/questions/open/`)
 
 ```markdown
 # Q0120: Rebuild movement as "aim well, never step into what won't move, then separate", keep today's solver, or swap in a different solver?
