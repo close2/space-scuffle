@@ -83,3 +83,70 @@ outside it are **12a** (24 / 0), **12b** (0 / 24) and **12c** (24 / 0): an outco
 
 So WP2 (exits by class) can move no measured world: no producer stands beside a burrowed body or an authored class
 (stop rule 3). WP3 can move only 12a, 12b, 12c, 26 and 35.
+
+## 2. WP1 and WP2: latent
+
+WP1 (`6bcb6f8b`, collision classes with no class authored) and WP2 (`82723f29`, exits by class) were each built from a
+`git archive` copy in a fresh target directory, with the same scratch probes (and probe (b), the count of pairs either
+pipeline corrects across classes), and measured on every world of §1.1 against WP0 with
+`scripts/compare.sh` (every output file byte for byte, paths normalised, and the probe lines).
+
+IDENTITY_PLACEHOLDER
+
+Tests, red first (logs under `~/scratch/collision-classes/red/`):
+
+- **A-1 to A-8** (`collision_class_tests.rs`) on WP0's tree: the file does not compile (no `CollisionClass`,
+  `SimWorld::collision_class`, `UnitCatalog::collision_classes`, `UnitModeSpec::collision_class`, typed errors). Its
+  behavioural tests alone (A-4 to A-8, the scratch bodies' `collision_class` ignored by WP0's loader): A-4, A-6, A-7 and
+  A-8's melee half fail, A-5 and A-8's line half pass (they hold on WP0 too). All green on WP1.
+- **A-9** (`trace_tests.rs`) on WP0's tree: fails (the meter counts the cross-class overlap); green on WP1.
+- **A-10** (`production::exits` unit test) on WP1's tree: fails (a burrowed occupant blocks a ground product's exit,
+  B-212); green on WP2.
+
+## 3. WP3: the colossus analogue's class — stopped
+
+WP3 (`d0c67ceb`): `tripod_annihilator` authors `collision_class: Some("tall_walker")`. A-11 and A-12 fail on WP2's
+tree (no archetype authors a class) and pass on WP3's.
+
+**Matrix, 24 seeds, against WP0.** Only battle 26 moves, under both pipelines; 12a, 12b, 12c, 35 and every other
+battle are byte-identical (CSV and probe lines), battle 28 included (stop rule 5 holds). Probe (b): no pair of
+different classes is corrected anywhere (B9 = 0, both pipelines).
+
+| Battle 26 | Lings / colossi wins (24) | Mean end tick | Mean lings left | Expectation failures (record / all) |
+|---|---|---|---|---|
+| Solver, WP0 | 20 / 4 | 439 | 14.9 | 0 / 1 |
+| Solver, WP3 | 24 / 0 | 322 | 33.2 | 2 / 13 |
+| Legacy, WP0 | 2 / 22 | 422 | 0.6 | 3 / 19 |
+| Legacy, WP3 | 0 / 24 | 420 | 0.0 | 2 / 19 |
+
+Seeds of record under the solver: 3203386110 colossi 2 left → lings 29 left; 11 lings 19 → 27; 22 lings 12 → **40**
+(outside the range 0 to 31); 33 colossi 2 left → lings **45** (outside).
+
+**Checks B1 to B9 (plan §7.2), battle 26, solver against WP0 (the default pipeline):**
+
+| Check | Result | Figures (WP3; WP0's 95 % interval) |
+|---|---|---|
+| B1 | ok | R10 free 710.5 / seed (2,529.2 to 3,341.0); blocked 2,621.1 (3,759.0 to 4,600.2) |
+| B2 | ok | D-SHOVE-E 0.000 both sides (blue 1.817 to 2.413, red 3.870 to 4.668) |
+| B3 | ok | largest one-class enemy overlap 0.00 % (base 1.96 %, which counted ling–colossus pairs); ticks 0.0 / seed |
+| **B4** | **fails** | D-CHURN unexplained 3.58 / seed (1.50 to 3.04) |
+| B5 | ok | give-ups 0 |
+| **B6** | **fails** | friend pair-ticks above 5 % 2,359.0 / seed (948.6 to 1,275.4); per 1,000 zergling-ticks 124.1 against 54.8 |
+| **B7′** | **fails** | zerglings 2.113 shots per engaged second (2.122 to 2.138); colossi 1.030 (1.006 to 1.030) |
+| B8 | ok | standing while able 0.0 / seed (0.0 to 0.0); none beside a body of another class |
+| B9 | ok | 0 cross-class corrections |
+
+Under Legacy (reported): B1 fails (R10 free 367.3 against 310.3 to 349.6; blocked 1,104.2 against 932.4 to 1,054.4);
+every other check passes.
+
+**First difference** (`firstdiff.py` on `matchup_trace --battle 26_100_lings_vs_6_colossi --seed 33 --seed 1`,
+solver): seed 33 (of record) at tick 43, 45 zerglings change position or velocity; seed 1 at tick 41, 20 zerglings.
+At the tick's start the nearest of them stands 1.95 (seed 33) and 2.01 (seed 1) from a colossus centre, beyond the
+radius sum 1.375, so no contact pair was removed there: the first change is in steering (neighbours) or the attack
+rings (a colossus no longer blocks a zergling's ring), both what the plan's stop rule 4 names. No colossus and no
+other battle moves.
+
+**Decision: stopped (plan §7.3, stop rule 7; the task's rule).** Battle 26 is Class R, and its outcome moves (the
+zerglings now win every seed, two seeds of record above the range), but B4, B6 and B7′ fail, so it is not restated:
+the fixture is unchanged and the matrix test fails on battle 26's seeds of record 22 and 33 on WP3's tree. No
+amendment was attempted and no tolerance was changed. B-209 stays open.
