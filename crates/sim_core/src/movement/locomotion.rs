@@ -951,7 +951,10 @@ impl SimWorld {
         casts.clear();
         self.prepare_movement_snapshot(&mut entries);
         self.movement.proposed_steps.clear();
-        for &entry in &entries {
+        self.movement.probes = super::MovementProbes::default();
+        // The determinism probe (`set_movement_order_rotation`): the visit starts `offset` places
+        // in and wraps round; offset 0 visits in entity order, as shipped.
+        for &entry in super::rotated(&entries, self.movement.order_rotation) {
             match self.prepare_actor_motion(entry) {
                 Ok(MotionAction::Commit(proposal)) => self.commit_motion(entry, proposal),
                 Ok(MotionAction::Pursue(target, origin)) => {

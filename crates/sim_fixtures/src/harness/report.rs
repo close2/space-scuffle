@@ -8,6 +8,12 @@
 //! [`wilson`] are the tests of M9 and M10; [`render`] prints the tables of several runs side by
 //! side and [`verdicts`] judges every run after the first against the first ("today").
 //!
+//! The eight families of plan `2026-11-27-gated-movement` ([`NEW_FAMILIES`]) are read and tabled
+//! like the others, with two more aggregates from their rows' verdict columns: the share of
+//! scenes whose known answer held, and the scenes in which a hard part (H-1, H-2, H-7) failed.
+//! Their verdict line (`K`) holds when at least 99.5 % of scenes hold and no hard part failed
+//! (the plan's §6.3).
+//!
 //! # How it fits
 //! The example `movement_harness --aggregate` calls [`render`]. Every random choice of the
 //! bootstrap comes from a seeded [`SplitMix64`], so the same CSVs always give the same tables. All
@@ -31,6 +37,22 @@ pub const RESAMPLES: usize = 2000;
 
 /// The families of the scene corpus, in report order.
 pub const FAMILIES: [&str; 5] = ["gap", "arc", "cross", "corridor", "corner"];
+
+/// The families of plan `2026-11-27-gated-movement`, in report order.
+pub const NEW_FAMILIES: [&str; 8] = [
+    "hold-line",
+    "enemy-press",
+    "deep-queue",
+    "wedge",
+    "hallway",
+    "stutter",
+    "surround-moving",
+    "lanes",
+];
+
+/// The share of scenes, per cent, in which a new family's known answer must hold (the T4
+/// standard, the plan's §6.3).
+pub const ANSWER_SHARE: f64 = 99.5;
 
 /// One run directory's rows: per family the original and relabelled rows, and the mirror rows.
 #[derive(Debug, Clone, Default)]
@@ -82,7 +104,7 @@ pub fn load_run(label: &str, dir: &Path) -> Result<Run, HarnessError> {
         label: label.to_owned(),
         ..Run::default()
     };
-    for family in FAMILIES {
+    for family in FAMILIES.into_iter().chain(NEW_FAMILIES) {
         run.scenes
             .insert(family.to_owned(), read(&format!("{family}.csv"))?);
         run.relabelled
@@ -298,7 +320,22 @@ pub fn aggregate(family: &str, rows: &[Row]) -> Aggregates {
         );
     }
     overlap(&all, &mut out);
+    known_answers(&all, &mut out);
     out
+}
+
+/// The new families' share of scenes whose known answer held, per cent, and the scenes in which a
+/// hard part failed; nothing for rows without the verdict columns.
+fn known_answers(all: &[&Row], out: &mut Aggregates) {
+    let judged: Vec<&&Row> = all.iter().filter(|r| r.contains_key("answer")).collect();
+    if judged.is_empty() {
+        return;
+    }
+    let held = judged.iter().filter(|r| number(r, "answer") > 0.0).count();
+    let hard = judged.iter().filter(|r| number(r, "hard") == 0.0).count();
+    out.values
+        .insert("answer_share", 100.0 * count(held) / count(judged.len()));
+    out.values.insert("hard_failed", count(hard));
 }
 
 /// M5 over the rows with room (`expected > 0`).
@@ -443,7 +480,7 @@ pub fn mirror_counts(rows: &[Row]) -> (u32, u32, u32) {
 }
 
 /// The rows of each table: label, aggregate name, decimals.
-const TABLE: [(&str, &str, usize); 25] = [
+const TABLE: [(&str, &str, usize); 27] = [
     ("M1 per 1,000 moving unit-ticks", "M1", 2),
     ("M1 under an order (E4)", "M1_order", 2),
     ("M1 idle (E4)", "M1_idle", 2),
@@ -471,6 +508,8 @@ const TABLE: [(&str, &str, usize); 25] = [
     ("Friend overlap max", "fo_max", 3),
     ("Enemy overlap max", "enemy_max", 4),
     ("Terrain penetration max", "terrain_max", 5),
+    ("Known answer holds, % of scenes", "answer_share", 1),
+    ("Scenes failing a hard part", "hard_failed", 0),
     ("Relabel sign test p (M1)", "rel_p1", 3),
     ("Relabel sign test p (completion tick)", "rel_p2", 3),
 ];
@@ -502,7 +541,7 @@ pub fn family_aggregates(run: &Run) -> BTreeMap<String, Aggregates> {
 pub fn render(runs: &[Run]) -> String {
     let all: Vec<BTreeMap<String, Aggregates>> = runs.iter().map(family_aggregates).collect();
     let mut text = String::new();
-    for family in FAMILIES {
+    for family in FAMILIES.into_iter().chain(NEW_FAMILIES) {
         if all.iter().all(|a| !a.contains_key(family)) {
             continue;
         }
@@ -708,6 +747,14 @@ fn verdict(
             ge("rel_p1", 0.01) && ge("rel_p2", 0.01),
             format!("p {:.3} / {:.3}", new.get("rel_p1"), new.get("rel_p2")),
         )),
+        "K" if NEW_FAMILIES.contains(&family) => Some((
+            ge("answer_share", ANSWER_SHARE) && le("hard_failed", 0.0),
+            format!(
+                "answer holds in {:.1} % of scenes, hard part failed in {}",
+                new.get("answer_share"),
+                new.get("hard_failed")
+            ),
+        )),
         _ => None,
     }
 }
@@ -731,7 +778,7 @@ pub fn verdicts(runs: &[Run]) -> String {
             text,
             "| Threshold | Family | Verdict | Values |\n|---|---|---|---|"
         );
-        for threshold in ["T1", "T2", "T3", "T4", "T5", "T6", "T7", "T8"] {
+        for threshold in ["T1", "T2", "T3", "T4", "T5", "T6", "T7", "T8", "K"] {
             for (family, aggregates) in &new {
                 if let Some((pass, values)) =
                     verdict(threshold, family, aggregates, base.get(family))

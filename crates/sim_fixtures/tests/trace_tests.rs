@@ -763,7 +763,10 @@ fn the_matrix_mode_writes_every_battle_and_seed_and_compares_runs() -> TestResul
          friend_overlap_ticks,friend_overlap_with_spawn,friend_overlap_corrected,\
          friend_overlap_corrected_ticks,blue_standing_able,red_standing_able,\
          blue_standing_able_cross,red_standing_able_cross,solver_extended_ticks,\
-         solver_extended_iterations"
+         solver_extended_iterations,blue_held_moved_ticks,red_held_moved_ticks,\
+         blue_held_moved_max,red_held_moved_max,blue_moving_ticks,red_moving_ticks,\
+         blue_reversals,red_reversals,blue_reversals_hi,red_reversals_hi,gate_rays,\
+         orbit_refusals,terrain_transfers"
     );
     // The reversals split into proposal- and contact-caused ones that sum to them (plan
     // `2026-11-19-crowd-edge-steering` D-5).
@@ -1012,6 +1015,59 @@ fn the_contact_meter_counts_only_pairs_of_one_class() -> TestResult {
     assert!(
         across.3 > 0,
         "bodies of another class leave the ring free: {across:?}"
+    );
+    Ok(())
+}
+
+/// W0-T8 (plan `2026-11-27-gated-movement` `WP0a`): the battle meter's M1 and M1-hi are the
+/// harness's: one synthetic track, fed to both, gives the same moving unit-ticks and the same
+/// reversals.
+#[test]
+fn m1_of_the_meter_matches_the_harness_definition() -> TestResult {
+    use sim_fixtures::harness::corpus::generate;
+    use sim_fixtures::harness::metrics::ScenarioMeter;
+    use sim_fixtures::harness::{build_world, Family, RunOptions};
+    use sim_fixtures::trace::contact_checks::ContactMeter;
+    use sim_types::{SimScalar, SimVec2};
+    let scene = generate(Family::Cross, 3, false);
+    let (mut world, ids) = build_world(&scene, &RunOptions::default())?;
+    let mut harness = ScenarioMeter::new(&world, &scene, &ids);
+    let mut battle = ContactMeter::new();
+    battle.observe(&world);
+    let id = ids[0];
+    let start = world.entities[&id].position;
+    let (x0, y0) = (f64::from(start.x.to_f32()), f64::from(start.y.to_f32()));
+    // Steps of twice the top speed or more (every corpus speed is 0.1 to 0.1875 a tick), a turn
+    // back of 0.06 (above a quarter of any corpus speed), a full turn back, a crawl below the
+    // moving line, a sideways step and its turn back, and a turn back of 0.024: above an eighth
+    // of every corpus speed and below a quarter, so it moves but never reverses.
+    let mut x = x0;
+    let mut y = y0;
+    for (dx, dy) in [
+        (0.2, 0.0),
+        (0.2, 0.0),
+        (-0.06, 0.0),
+        (0.2, 0.0),
+        (-0.2, 0.0),
+        (0.001, 0.0),
+        (0.0, 0.2),
+        (0.0, -0.2),
+        (0.0, 0.024),
+    ] {
+        x += dx;
+        y += dy;
+        let entity = world.entities.get_mut(&id).ok_or("unit")?;
+        entity.position = SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(y));
+        world.current_tick += 1;
+        harness.observe(&world);
+        battle.observe(&world);
+    }
+    let row = harness.finish();
+    let side = battle.movement().sides[0];
+    assert!(row.rev_amp > 0 && row.rev_amp_hi > 0, "{row:?}");
+    assert_eq!(
+        (side.moving_ticks, side.reversals, side.reversals_hi),
+        (row.moving_ticks, row.rev_amp, row.rev_amp_hi)
     );
     Ok(())
 }
