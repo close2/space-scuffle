@@ -57,8 +57,8 @@ pub use footprint::{
     FootprintShape, QuarterOutline, FOOTPRINT_QUARTERS_PER_CELL, QUARTER_OUTLINE_CAPACITY,
 };
 pub use ids::{
-    ArmorClassId, EntityId, FactionId, PerPlayer, PlayerId, PlayerSlot, PlayerSlotError,
-    ResourceNodeId, TeamId, Tick, UnitTypeId, WeaponClassId, MAX_PLAYERS,
+    ArmorClassId, CollisionClass, EntityId, FactionId, PerPlayer, PlayerId, PlayerSlot,
+    PlayerSlotError, ResourceNodeId, TeamId, Tick, UnitTypeId, WeaponClassId, MAX_PLAYERS,
 };
 pub use math::{SimAngle, SimScalar, SimVec2};
 pub use placement::{PlacementFlag, PlacementFlags};

@@ -631,6 +631,7 @@ fn author_stances(arena: &mut Arena, cast_ticks: u16) -> EntityId {
         unpushable: true,
         is_cloaked: false,
         burrowed: false,
+        collision_class: None,
         mover_type_override: None,
         sight_radius_override: None,
         ground_weapon_override,

@@ -101,6 +101,7 @@ fn dummy_target_archetype(
         effects: sim_core::catalog::ArchetypeEffects::default(),
         placement_excludes: sim_types::PlacementFlags::empty(),
         default_stance_orders: None,
+        collision_class: None,
     }
 }
 

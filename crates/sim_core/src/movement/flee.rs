@@ -41,7 +41,7 @@ impl SimWorld {
                 layer: MovementLayer::Ground,
                 radius: SimScalar::ONE,
                 terrain: SimScalar::ONE,
-                burrowed: false,
+                class: sim_types::CollisionClass::GROUND,
             },
             victim_pos,
             threat_pos,
