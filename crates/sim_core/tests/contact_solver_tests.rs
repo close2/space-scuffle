@@ -224,9 +224,7 @@ fn the_crowd_extension_ships_switched_off() {
 }
 
 /// The shipped catalogs with C-3′'s cap set to `crowd_iterations`.
-fn with_crowd_iterations(
-    crowd_iterations: u16,
-) -> Result<RuntimeCatalogs, Box<dyn Error>> {
+fn with_crowd_iterations(crowd_iterations: u16) -> Result<RuntimeCatalogs, Box<dyn Error>> {
     let mut catalogs = sim_fixtures::shipped_catalogs();
     let rules = catalogs.units.movement_rules();
     let contact = ContactRules {
@@ -241,10 +239,7 @@ fn with_crowd_iterations(
 
 /// Plays the first `ticks` ticks of battle 26 (100 zergling analogues against 6 colossus
 /// analogues, seed 15) with `catalogs`; returns each tick's solver iterations and checksum.
-fn battle_26(
-    catalogs: RuntimeCatalogs,
-    ticks: u32,
-) -> Result<Vec<(u16, u64)>, Box<dyn Error>> {
+fn battle_26(catalogs: RuntimeCatalogs, ticks: u32) -> Result<Vec<(u16, u64)>, Box<dyn Error>> {
     let matrix = Matrix::from_ron_str(MATRIX_RON)?;
     let battle = matrix.battle("26_100_lings_vs_6_colossi")?;
     let mut run = BattleRun::new(battle, catalogs, 15, matrix.jitter_for(15))?;
