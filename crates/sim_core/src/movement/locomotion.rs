@@ -21,6 +21,10 @@
 //! move order, to where the target was last seen, and the order ends there (plan
 //! `2026-11-24-weapon-validation` Amendment 2, B-195; Q0106 part 1 (a)).
 //!
+//! A follow (plan `2026-11-26-follow-order`) is a pursuit of a unit with a dead band instead of a
+//! weapon band: its submodule [`follow`] walks a follower to its target's tick-start position,
+//! rests it on touch, and walks it again once the target has moved past the slop.
+//!
 //! # Invariants
 //! - No route search runs twice for one actor within [`REPATH_COOLDOWN_TICKS`].
 //! - Everything that decides an outcome is read from the tick-start snapshot or the map, so the
@@ -63,6 +67,8 @@ use sim_types::{
     SimScalar, SimVec2, Tick, UnitOrder, MAX_PLAYERS,
 };
 use std::ops::ControlFlow;
+
+mod follow;
 
 /// An actor validated for this tick, with the rates it moves at.
 #[derive(Clone, Copy)]
@@ -256,7 +262,7 @@ impl MotionProposal {
                     *target = destination;
                 }
                 // A walk to a lost target's last seen point keeps the reachable point it found.
-                Some(UnitOrder::AttackTarget { target, .. }) => {
+                Some(UnitOrder::AttackTarget { target, .. } | UnitOrder::Follow { target, .. }) => {
                     if let Some(seen) = actor.movement.last_seen.as_mut() {
                         if seen.target == *target {
                             seen.point = destination;
@@ -293,6 +299,8 @@ enum MotionAction {
     Commit(MotionProposal),
     Pursue(EntityId, AttackOrigin),
     Cast(CastRequest),
+    /// The unit follows its front order's target ([`follow`]); prepared in entity order.
+    Follow(EntityId),
 }
 
 /// The result of asking for a route.
@@ -853,8 +861,9 @@ impl SimWorld {
             owner: actor.owner,
             push_priority: entry.push_priority,
             anchored: actor.cannot_be_pushed() || self.engaged(entry, actor),
-            idle: actor.is_idle(),
+            idle: actor.stands_idle(),
             settled_on: actor.movement.arrived_at.filter(|_| idle),
+            resting_on: self.resting_on(actor),
         }
     }
 
@@ -952,6 +961,10 @@ impl SimWorld {
                     pursuits.push((entry, target, origin));
                 }
                 Ok(MotionAction::Cast(cast)) => casts.push((entry, cast)),
+                Ok(MotionAction::Follow(target)) => match self.follow_motion(entry, target) {
+                    Ok(proposal) => self.commit_motion(entry, proposal),
+                    Err(error) => self.report_movement_invariant(error),
+                },
                 Err(error) => self.report_movement_invariant(error),
             }
         }
@@ -1179,6 +1192,15 @@ impl SimWorld {
                 match self.last_seen_goal(entry, actor, target, origin) {
                     Some(goal) => goal,
                     None => return Ok(ControlFlow::Break(MotionAction::Pursue(target, origin))),
+                }
+            }
+            // A follow walks by its own rules (plan `2026-11-26-follow-order` D-3), unless its
+            // enemy target is lost to fog: then it walks, as a move, to where the target was
+            // last seen, and ends there (D-5).
+            Some(&UnitOrder::Follow { target, .. }) => {
+                match self.follow_lost_goal(entry, actor, target) {
+                    Some(goal) => goal,
+                    None => return Ok(ControlFlow::Break(MotionAction::Follow(target))),
                 }
             }
             Some(&UnitOrder::CastAbility {

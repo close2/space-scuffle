@@ -1240,3 +1240,53 @@ fn a_units_last_seen_point_changes_the_world_checksum() {
         assert_ne!(changed, world.compute_checksum(), "checksum omitted {name}");
     }
 }
+
+/// Plan `2026-11-26-follow-order` P-1: a follow's target and kind, and the follower's rest point,
+/// are hashed; each is mutated alone.
+#[test]
+fn a_follow_and_its_rest_change_the_world_checksum() {
+    use sim_types::FollowKind;
+    let mut world = world();
+    let mut original = world.entities[&EntityId(1)].clone();
+    original.order_queue.clear();
+    original.order_queue.push_back(UnitOrder::Follow {
+        target: EntityId(2),
+        kind: FollowKind::Move,
+    });
+    original.movement.follow_rest = Some(point(5, 6));
+    let mutations: &[(&str, fn(&mut Entity))] = &[
+        ("target", |entity| {
+            entity.order_queue[0] = UnitOrder::Follow {
+                target: EntityId(3),
+                kind: FollowKind::Move,
+            };
+        }),
+        ("kind", |entity| {
+            entity.order_queue[0] = UnitOrder::Follow {
+                target: EntityId(2),
+                kind: FollowKind::AcquireMove,
+            };
+        }),
+        ("a move in its place", |entity| {
+            entity.order_queue[0] = UnitOrder::Move {
+                target: point(2, 0),
+            };
+        }),
+        ("follow_rest unset", |entity| {
+            entity.movement.follow_rest = None;
+        }),
+        ("follow_rest moved", |entity| {
+            entity.movement.follow_rest = Some(point(6, 5));
+        }),
+    ];
+    world.entities.insert(EntityId(1), original.clone());
+    let base = world.compute_checksum();
+    for (name, mutate) in mutations {
+        let mut entity = original.clone();
+        mutate(&mut entity);
+        assert!(entity != original, "mutation must change {name}");
+        world.entities.insert(EntityId(1), entity);
+        assert_ne!(base, world.compute_checksum(), "checksum omitted {name}");
+        world.entities.insert(EntityId(1), original.clone());
+    }
+}

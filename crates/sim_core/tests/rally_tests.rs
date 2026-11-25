@@ -17,9 +17,9 @@ use sim_core::scenario::load_scenario_world;
 use sim_core::{SimWorld, UpgradeCatalog};
 use sim_map::{CliffLevel, GameMap, MapCell, ResourceKind, ResourceNode};
 use sim_types::{
-    AutoRallySpec, EntityId, PlayerCommand, PlayerId, PlayerSlot, RallyRoute, RallyTarget,
-    RallyUsers, ResourceNodeId, ShapeKind, SimScalar, SimVec2, Tick, TickBundle, UnitOrder,
-    UnitTypeId,
+    AutoRallySpec, EntityId, FollowKind, PlayerCommand, PlayerId, PlayerSlot, RallyRoute,
+    RallyTarget, RallyUsers, ResourceNodeId, ShapeKind, SimScalar, SimVec2, Tick, TickBundle,
+    UnitOrder, UnitTypeId,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -545,10 +545,11 @@ fn a_worker_rallied_to_a_geyser_without_an_extractor_walks_to_it() -> TestResult
     Ok(())
 }
 
-/// D-4, B-163: a unit rallied to a friend goes to where the friend stood when it left the
-/// structure, even though the friend walks on (the game's unit follows; registered).
+/// D-4, B-163 (fixed by plan `2026-11-26-follow-order` D-9, P-9): a unit rallied to a walking
+/// friend follows it, as 5.0.14's does, instead of walking to where the friend stood when it left
+/// the structure.
 #[test]
-fn a_unit_rallied_to_a_friend_goes_where_the_friend_stood() -> TestResult {
+fn a_unit_rallied_to_a_friend_follows_it() -> TestResult {
     let mut b = Base::new()?;
     let start = SimVec2::new(SimScalar::from_num(16.5), SimScalar::from_num(16.5));
     let friend = b.world.spawn_unit(b.soldier, PlayerId(0), start)?;
@@ -569,19 +570,17 @@ fn a_unit_rallied_to_a_friend_goes_where_the_friend_stood() -> TestResult {
     let (child, before) = b.finish(b.soldier)?;
     let stood = before[&friend];
     assert_ne!(stood, start, "the friend was walking");
-    assert_eq!(
-        b.front_order(child),
-        Some(UnitOrder::Move { target: stood })
-    );
+    let follow = UnitOrder::Follow {
+        target: friend,
+        kind: FollowKind::Move,
+    };
+    assert_eq!(b.front_order(child), Some(follow.clone()));
     b.tick();
     assert_ne!(
         b.world.entities[&friend].position, stood,
         "the friend walks on"
     );
-    assert_eq!(
-        b.front_order(child),
-        Some(UnitOrder::Move { target: stood })
-    );
+    assert_eq!(b.front_order(child), Some(follow));
     Ok(())
 }
 
@@ -1224,8 +1223,14 @@ fn a_dead_waypoint_is_skipped_and_an_all_dead_route_is_cancelled() -> TestResult
     b.shift_rally(b.barracks, RallyTarget::Unit(second), true)?;
     b.world.entities.get_mut(&first).ok_or("first")?.hp = SimScalar::ZERO;
     let (child, _) = b.train(b.barracks, b.soldier)?;
-    let stood = b.world.entities[&second].position;
-    assert_eq!(b.orders(child), [UnitOrder::Move { target: stood }]);
+    assert_eq!(
+        b.orders(child),
+        [UnitOrder::Follow {
+            target: second,
+            kind: FollowKind::Move
+        }],
+        "the live waypoint is followed (plan 2026-11-26-follow-order D-9)"
+    );
     assert_eq!(
         b.waypoints(b.barracks),
         [RallyTarget::Unit(second)],
@@ -1301,9 +1306,10 @@ fn could_attack(
 
 /// P-5 (D-6, Q0105's default, B-187): a new unit that cannot attack its enemy rally target (a
 /// product of a structure without workers whose weapons do not reach the target, found in the
-/// catalog by that rule) moves to where the enemy stands.
+/// catalog by that rule) follows the enemy (B-166's remaining half, fixed by plan
+/// `2026-11-26-follow-order` D-9).
 #[test]
-fn a_unit_that_cannot_attack_moves_to_the_enemy() -> TestResult {
+fn a_unit_that_cannot_attack_follows_the_enemy() -> TestResult {
     let b = Base::new()?;
     let target_type = b.soldier;
     let faction = b.world.catalog.get(b.soldier)?.faction;
@@ -1333,13 +1339,21 @@ fn a_unit_that_cannot_attack_moves_to_the_enemy() -> TestResult {
     let (producer_type, product) = found.ok_or("no product that cannot attack the soldier")?;
     let mut b = Base::new()?;
     let producer = b.world.spawn_structure(producer_type, PlayerId(0), 20, 4)?;
+    // Within the producer's sight: a follow of an enemy its player never saw ends at once (plan
+    // `2026-11-26-follow-order` D-5).
     let enemy = b
         .world
-        .spawn_unit(target_type, PlayerId(1), at(26.5, 26.5))?;
+        .spawn_unit(target_type, PlayerId(1), at(24.5, 12.5))?;
     b.shift_rally(producer, RallyTarget::Unit(enemy), false)?;
     let (child, _) = b.train(producer, product)?;
-    let stood = b.world.entities[&enemy].position;
-    assert_eq!(b.orders(child), [UnitOrder::Move { target: stood }]);
+    assert_eq!(
+        b.orders(child),
+        [UnitOrder::Follow {
+            target: enemy,
+            kind: FollowKind::Move
+        }],
+        "B-166's remaining half (plan 2026-11-26-follow-order D-9): a follow, not a snapshot"
+    );
     Ok(())
 }
 
@@ -1469,5 +1483,70 @@ fn rallies_through_player_commands() -> TestResult {
     let queen = &world.entities[&queen];
     assert!(queen.order_queue.is_empty());
     assert_eq!(queen.position, queen_left);
+    Ok(())
+}
+
+/// Plan `2026-11-26-follow-order` P-9 (D-9): a rally on one's own structure stays a point move to
+/// where it stands, a structure being no body to follow.
+#[test]
+fn a_rally_on_an_own_structure_stays_a_point_move() -> TestResult {
+    let mut b = Base::new()?;
+    b.set_rally(b.barracks, RallyTarget::Unit(b.hall))?;
+    let (child, _) = b.train(b.barracks, b.soldier)?;
+    assert!(
+        matches!(b.front_order(child), Some(UnitOrder::Move { .. })),
+        "{:?}",
+        b.front_order(child)
+    );
+    Ok(())
+}
+
+/// Plan `2026-11-26-follow-order` P-9 (D-5, D-9; S11): a route of two own units is visited in
+/// turn: the new unit follows the first until it reaches it, then follows the second.
+#[test]
+fn a_route_of_two_own_units_is_followed_in_turn() -> TestResult {
+    let mut b = Base::new()?;
+    let first = b.world.spawn_unit(b.soldier, PlayerId(0), at(14.5, 26.5))?;
+    let second = b.world.spawn_unit(b.soldier, PlayerId(0), at(24.5, 28.5))?;
+    b.shift_rally(b.barracks, RallyTarget::Unit(first), false)?;
+    b.shift_rally(b.barracks, RallyTarget::Unit(second), true)?;
+    let (child, _) = b.train(b.barracks, b.soldier)?;
+    let follow = |target| UnitOrder::Follow {
+        target,
+        kind: FollowKind::Move,
+    };
+    assert_eq!(b.orders(child), [follow(first), follow(second)]);
+    for _ in 0..600 {
+        b.tick();
+        let entity = &b.world.entities[&child];
+        if entity.order_queue.len() == 1 && entity.movement.follow_rest.is_some() {
+            assert_eq!(b.orders(child), [follow(second)]);
+            let gap = (entity.position - b.world.entities[&second].position).length_sq();
+            assert!(gap < SimScalar::from_num(4), "it rests by the second unit");
+            return Ok(());
+        }
+    }
+    Err("the new unit never rested by the second unit".into())
+}
+
+/// Plan `2026-11-26-follow-order` P-9 (D-5; S9, S10): a new unit following its rally unit stops
+/// when that unit dies.
+#[test]
+fn a_new_unit_following_its_rally_unit_stops_when_it_dies() -> TestResult {
+    let mut b = Base::new()?;
+    let friend = b.world.spawn_unit(b.soldier, PlayerId(0), at(24.5, 28.5))?;
+    b.set_rally(b.barracks, RallyTarget::Unit(friend))?;
+    let (child, _) = b.train(b.barracks, b.soldier)?;
+    for _ in 0..10 {
+        b.tick();
+    }
+    assert!(matches!(
+        b.front_order(child),
+        Some(UnitOrder::Follow { .. })
+    ));
+    b.world.entities.get_mut(&friend).ok_or("friend")?.hp = SimScalar::ZERO;
+    b.tick();
+    b.tick();
+    assert_eq!(b.orders(child), []);
     Ok(())
 }

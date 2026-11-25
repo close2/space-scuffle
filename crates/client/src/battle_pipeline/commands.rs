@@ -9,8 +9,9 @@ use bevy::prelude::Resource;
 use sim_core::upgrades::OVERCLOCK_ABILITY_SLUG;
 use sim_core::{movement::MovementLayer, Entity, SimWorld, UnitArchetype};
 use sim_types::{
-    AbilityEffectSpec, AbilitySpec, AbilityTargetKind, AttackCommand, EntityId, PlayerCommand,
-    PlayerId, SimScalar, SimVec2, SiteRefusal, Tick, TickBundle, UnitOrder, UnitTypeId,
+    AbilityEffectSpec, AbilitySpec, AbilityTargetKind, AttackCommand, EntityId, FollowKind,
+    PlayerCommand, PlayerId, SimScalar, SimVec2, SiteRefusal, Tick, TickBundle, UnitOrder,
+    UnitTypeId,
 };
 
 /// Successful session-commit identity, independent of ticks and recycled entity IDs.
@@ -555,14 +556,17 @@ impl BattleCommandQueue {
 
     /// Sends an A-click on the unit `target` (plan `2026-11-24-attack-orders` D-5): an
     /// `AttackTarget` to the members of `selection` that can attack it ([`Entity::can_attack`],
-    /// whoever owns it), then an `AttackMove` to `point`, the ground under it, to every other
-    /// member with an A command except `target` itself. Either command is left out when it has
-    /// no recipient; both go into the same tick with disjoint recipients.
+    /// whoever owns it), and a `Follow` of kind `AcquireMove` to every other member with an A
+    /// command except `target` itself; when `target` is a structure, which cannot be followed,
+    /// those members get an `AttackMove` to `point`, the ground under it, instead. A command is
+    /// left out when it has no recipient; all go into the same tick with disjoint recipients.
     ///
-    /// A member with Scan Move walks, as 5.0.14's `AcquireMove` aimed at a unit goes to it (it
-    /// would follow it, B-187); so does a member with Attack that cannot attack the target, by
-    /// Q0105's default. An own target is attacked, by Q0104's default (B-175). Both commands
-    /// are checked before either is queued, so a refusal leaves the queue as it was. Returns
+    /// A member with Scan Move follows the target and fights on the way, as 5.0.14's
+    /// `AcquireMove` aimed at a unit does (plan `2026-11-26-follow-order` D-10, B-187); so does a
+    /// member with Attack that cannot attack the target, by the owner's answer to Q0119 (b),
+    /// which replaces Q0105's attack-move to the point for a unit target, so a mixed army stays
+    /// together. An own target is attacked, by Q0104's default (B-175). Every command is checked
+    /// before any is queued, so a refusal leaves the queue as it was. Returns
     /// the sequence of the last command queued. Allocation belongs to the user action.
     /// # Errors
     /// [`SubmissionError::EmptySelection`] if no member can take either order,
@@ -581,8 +585,14 @@ impl BattleCommandQueue {
         accepts_orders(world, player)?;
         let attack = UnitOrder::attack(target);
         let walk = UnitOrder::AttackMove { target: point };
+        let follow = UnitOrder::Follow {
+            target,
+            kind: FollowKind::AcquireMove,
+        };
         let subject = order_subject(world, player, &attack)?;
+        let followable = subject.is_some_and(|archetype| !archetype.is_immobile_by_default());
         let mut attackers = Vec::with_capacity(selection.len());
+        let mut followers = Vec::with_capacity(selection.len());
         let mut walkers = Vec::with_capacity(selection.len());
         for id in selection {
             let Some(entity) = world
@@ -598,16 +608,23 @@ impl BattleCommandQueue {
                 .map_err(|_| SubmissionError::MissingArchetype(*id))?;
             if can_execute(world, entity, archetype, &attack, subject) {
                 attackers.push(*id);
-            } else if *id != target && can_execute(world, entity, archetype, &walk, None) {
+            } else if followable && can_execute(world, entity, archetype, &follow, None) {
+                followers.push(*id);
+            } else if !followable
+                && *id != target
+                && can_execute(world, entity, archetype, &walk, None)
+            {
                 walkers.push(*id);
             }
         }
         let commands =
-            [(attackers, attack), (walkers, walk)].map(|(entities, order)| PlayerCommand {
-                player_id: player,
-                entities,
-                order,
-                queue: queued,
+            [(attackers, attack), (followers, follow), (walkers, walk)].map(|(entities, order)| {
+                PlayerCommand {
+                    player_id: player,
+                    entities,
+                    order,
+                    queue: queued,
+                }
             });
         if commands.iter().all(|command| command.entities.is_empty()) {
             return Err(SubmissionError::EmptySelection);
@@ -818,6 +835,14 @@ fn capable(
         // D-4).
         UnitOrder::AttackMove { .. } => mobile && attack != AttackCommand::None,
         UnitOrder::AttackTarget { .. } => attack == AttackCommand::Attack,
+        // A follow goes to every mobile member other than the unit followed, and a Scan Move on a
+        // unit (`AcquireMove`) to those whose settled stance has an A command: the simulation's
+        // admission (plan `2026-11-26-follow-order` D-2, D-10).
+        UnitOrder::Follow { target, kind } => {
+            mobile
+                && entity.id != *target
+                && (*kind == FollowKind::Move || attack != AttackCommand::None)
+        }
         UnitOrder::UseStim => can_overclock(world, entity, archetype),
         // Production and research authorize the entire group/product transaction in sim_core.
         // Client admission does not fabricate a receipt or preempt its typed outcome.
@@ -954,7 +979,8 @@ fn order_subject<'w>(
         | UnitOrder::CancelProduction { .. }
         | UnitOrder::Load { .. }
         | UnitOrder::UnloadAll
-        | UnitOrder::SetRally { .. } => return Ok(None),
+        | UnitOrder::SetRally { .. }
+        | UnitOrder::Follow { .. } => return Ok(None),
     };
     let entity = entity.ok_or(SubmissionError::InvalidTarget(aimed_at))?;
     world

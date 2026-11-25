@@ -49,8 +49,8 @@ use crate::production::ProductionInvariant;
 use crate::weapon_timing::SimulationDiagnostic;
 use crate::{Entity, SimWorld};
 use sim_types::{
-    AttackOrigin, AutoRallySpec, EntityId, PlayerId, RallyRoute, RallyTarget, ResourceNodeId,
-    SimScalar, SimVec2, Tick, UnitOrder, UnitTypeId,
+    AttackOrigin, AutoRallySpec, EntityId, FollowKind, PlayerId, RallyRoute, RallyTarget,
+    ResourceNodeId, SimScalar, SimVec2, Tick, UnitOrder, UnitTypeId,
 };
 
 /// The route of `slot` in `rallies`, sorted by slot, if it holds one.
@@ -501,6 +501,10 @@ impl SimWorld {
     /// Issues `child` the order one waypoint means (D-5), queued behind its orders when `queue`.
     /// Whether the child took an order; a refusal is not an error.
     ///
+    /// A unit waypoint the child neither boards (one's own carrier) nor attacks (an enemy it can
+    /// attack) is followed when the unit is mobile (plan `2026-11-26-follow-order` D-9; B-163,
+    /// B-166): 5.0.14's rally on a unit issues a follow. A structure stays a point move.
+    ///
     /// # Errors
     /// The [`ProductionInvariant`] a harvest or load admission reports.
     fn issue_waypoint_order(
@@ -532,6 +536,10 @@ impl SimWorld {
                     return Ok(false);
                 };
                 let (position, own) = (target.position, target.owner == owner);
+                let mobile = self
+                    .catalog
+                    .get(target.unit_type_id)
+                    .is_ok_and(|archetype| !archetype.is_immobile_by_default());
                 if own {
                     match self.admit_load(owner, &recipients, unit, queue) {
                         Ok(_) => return Ok(true),
@@ -540,6 +548,18 @@ impl SimWorld {
                     }
                 } else if let Some(taken) = self.issue_rally_attack(owner, child, unit, queue) {
                     return Ok(taken);
+                }
+                if mobile {
+                    // Movement admission reports its own invariant failures as diagnostics.
+                    return Ok(self
+                        .issue_follow_prevalidated(
+                            owner,
+                            &recipients,
+                            unit,
+                            FollowKind::Move,
+                            queue,
+                        )
+                        .is_ok_and(|receipt| receipt.recipient_count > 0));
                 }
                 position
             }

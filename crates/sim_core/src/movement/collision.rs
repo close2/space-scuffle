@@ -121,7 +121,7 @@ impl SimWorld {
             holding: actor.cannot_be_pushed(),
             engaged: self.is_anchored_in_combat(actor),
             ghost: actor.passes_through_units(),
-            idle: actor.is_idle(),
+            idle: actor.stands_idle(),
         }
     }
 
@@ -469,7 +469,7 @@ impl SimWorld {
                 fixed: actor.is_immobile || actor.unpushable,
                 holding: actor.cannot_be_pushed(),
                 engaged: self.engaged(entry, actor),
-                idle: actor.is_idle(),
+                idle: actor.stands_idle(),
                 moving: !within_distance(actor.position, actor.pos_at_tick_start, step),
                 nudge: self.nudge_radial(entry, actor),
             },

@@ -128,7 +128,10 @@ use std::collections::BTreeMap;
 /// unit's turret tracks, the world's `tracked_targets` table (its length, then each unit and
 /// enemy id in unit id order), after the route groups (plan `2026-11-26-turret-tracking-weapon`
 /// D-8, Amendment 1). The number is the next free at merge.
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 49;
+/// Schema 50 adds the `Follow` order (tag 19, then its target and kind, 0 `Move` and 1
+/// `AcquireMove`) and each unit's follow rest, `MovementMemory::follow_rest`, after `last_seen`
+/// (plan `2026-11-26-follow-order` D-1, D-4). The number is the next free at merge.
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 50;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.
