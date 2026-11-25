@@ -471,6 +471,15 @@
 // of both fixtures and DEFAULT_SANDBOX_CHECKSUM on native debug and release and wasm32-wasip1
 // release and debug (neither fixture gives a player's attack order). Native debug and release and
 // wasm32-wasip1 release and debug agree on the list below.
+// Re-recorded for plan 2026-11-25-wind-up-and-hold-facing (B-207, B-199; schema 47 unchanged), once,
+// on its final tree merged with main 4b3f0c7d. WP1 (a swing whose target is lost ends before
+// acquisition and movement, so its unit is neither held for a tick nor kept from its next swing)
+// first changes checkpoint 4 (tick 200) and every later one; checkpoints 1 to 3 are unchanged. WP2
+// (a holding hull faces its target between shots) changes no checkpoint: the holding "red_psi"
+// zealots' targets do not change bearing between their shots. golden_replay_orders and
+// DEFAULT_SANDBOX_CHECKSUM are unchanged. Native debug and release and wasm32-wasip1 release and
+// debug, each from a git-archive copy built in its own fresh target directory, agree on the list
+// below.
 (
     checksum_schema: 47,
     seed: 0x5EED_0F_5CAFF1E,
@@ -501,22 +510,22 @@
         0xc969bf8c8e8adf01,
         0xce8fa92e6a76673c,
         0x56871350d70c960d,
-        0x053bdd9af615e1e7,
-        0xc13cf15a856440e6,
-        0xec87579c871c5086,
-        0x19cee690218ff537,
-        0x643731caa4ec0ac4,
-        0xc3eefe7088f2b0ee,
-        0x2de1eca90932f113,
-        0xa2e228d31de95126,
-        0x57192e2177593ab9,
-        0x69b49b89d84c2044,
-        0x29a9306ad7bf1da7,
-        0x4413ca837b0e3ba9,
-        0x2e0769db17a48ce5,
-        0xa92cdb17b33e5ab4,
-        0x6ec8ce97fa1b2019,
-        0xd5774277208018bf,
-        0x64fd0fc4868c52f8,
+        0xbb73776896c4df45,
+        0xf9a03d8c11f9859b,
+        0x81bd4c0e4d8a8926,
+        0xed284852e3552ebd,
+        0x0a7862116277e0e7,
+        0xc4f1664cbc0fac33,
+        0x5de11c78e75d5245,
+        0x9716a5a706309d96,
+        0x255fa66062c85947,
+        0x06dfee19905874bb,
+        0x9d73786fd7cefc60,
+        0x950060501ad04c62,
+        0x68e2e297280d7441,
+        0x41c38af895cf7d40,
+        0x9eb523331b2c7092,
+        0xe2205593657f6e18,
+        0x3e64f6ca1d25f587,
     ],
 )
