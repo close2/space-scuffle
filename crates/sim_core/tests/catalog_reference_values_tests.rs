@@ -5315,7 +5315,7 @@ fn structures_with_energy_regenerate_as_5_0_14() {
 ///   1 for workers that a right click on the ground does not set (`SetOnGround 0`), both
 ///   excluding the Queen (`NotQueen`, liberty ValidatorData:1598-1601). Their auto-rally fills
 ///   slot 1 (voidmulti EffectData:2507-2537).
-/// - Every rally holds up to four waypoints (TeamLiquid 2011, plan S10; a community figure,
+/// - Every rally holds up to four waypoints (`TeamLiquid` 2011, plan S10; a community figure,
 ///   B-215).
 #[test]
 fn the_shipped_rallies_are_5_0_14s() -> TestResult {
@@ -5354,7 +5354,11 @@ fn the_shipped_rallies_are_5_0_14s() -> TestResult {
             assert_eq!(worker.used_by, RallyUsers::Workers, "{slug}");
             assert!(worker.on_resources && !worker.smart_on_ground, "{slug}");
             for slot in [army, worker] {
-                assert_eq!(slot.excludes, [queen.clone()], "{slug}: NotQueen");
+                assert_eq!(
+                    slot.excludes,
+                    std::slice::from_ref(&queen),
+                    "{slug}: NotQueen"
+                );
             }
             assert_eq!(auto_slot, Some(1), "{slug}: the worker rally");
         } else {

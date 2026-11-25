@@ -314,8 +314,7 @@ impl Base {
         self.world.entities[&producer]
             .rallies
             .first()
-            .map(|route| route.waypoints.clone())
-            .unwrap_or_default()
+            .map_or_else(Vec::new, |route| route.waypoints.clone())
     }
 
     /// The child's whole order queue.
@@ -786,7 +785,7 @@ fn corrupt_routes_are_invariant_failures() -> TestResult {
 /// The rally slots of a Hatchery analogue: the catalog's structure whose rally ability has a slot
 /// for workers and one for non-workers (5.0.14 `RallyHatchery`), read by capability, with its
 /// products sorted by which slot uses them.
-struct Hatch {
+struct TwoSlotBase {
     base: Base,
     hatch: EntityId,
     /// The slot used by non-workers, which refuses resources.
@@ -801,7 +800,7 @@ struct Hatch {
     excluded: UnitTypeId,
 }
 
-impl Hatch {
+impl TwoSlotBase {
     fn new() -> Result<Self, Box<dyn std::error::Error>> {
         let mut base = Base::new()?;
         let arch = base
@@ -905,7 +904,7 @@ fn at(x: f64, y: f64) -> SimVec2 {
 /// data names.
 #[test]
 fn the_hatchery_auto_rally_fills_the_worker_slot() -> TestResult {
-    let h = Hatch::new()?;
+    let h = TwoSlotBase::new()?;
     let spec = h
         .base
         .world
@@ -929,7 +928,7 @@ fn the_hatchery_auto_rally_fills_the_worker_slot() -> TestResult {
 /// resources.
 #[test]
 fn a_right_click_on_a_field_sets_the_worker_rally() -> TestResult {
-    let mut h = Hatch::new()?;
+    let mut h = TwoSlotBase::new()?;
     let geyser = RallyTarget::Node(ResourceNodeId(1));
     assert_eq!(
         h.set(geyser, None),
@@ -943,7 +942,7 @@ fn a_right_click_on_a_field_sets_the_worker_rally() -> TestResult {
 /// and leaves the worker rally as it was.
 #[test]
 fn a_right_click_on_the_ground_sets_the_army_rally() -> TestResult {
-    let mut h = Hatch::new()?;
+    let mut h = TwoSlotBase::new()?;
     let worker_route = RallyRoute::single(h.worker_slot, RallyTarget::Node(ResourceNodeId(0)));
     let ground = RallyTarget::Point(at(16.5, 26.5));
     h.set(ground, None)?;
@@ -971,7 +970,7 @@ fn a_right_click_on_the_ground_sets_the_army_rally() -> TestResult {
 /// the ground, which a right click cannot.
 #[test]
 fn the_worker_entry_sets_the_worker_rally_on_the_ground() -> TestResult {
-    let mut h = Hatch::new()?;
+    let mut h = TwoSlotBase::new()?;
     let ground = RallyTarget::Point(at(16.5, 26.5));
     h.set(ground, Some(h.worker_slot))?;
     assert_eq!(h.routes(), [RallyRoute::single(h.worker_slot, ground)]);
@@ -981,7 +980,7 @@ fn the_worker_entry_sets_the_worker_rally_on_the_ground() -> TestResult {
 /// P-2 (S4): the army entry refuses a resource, and nothing changes.
 #[test]
 fn the_army_rally_refuses_a_resource() -> TestResult {
-    let mut h = Hatch::new()?;
+    let mut h = TwoSlotBase::new()?;
     let before = h.routes().to_vec();
     assert_eq!(
         h.set(RallyTarget::Node(ResourceNodeId(1)), Some(h.army_slot)),
@@ -994,7 +993,7 @@ fn the_army_rally_refuses_a_resource() -> TestResult {
 /// P-2 (S3, S8): a worker uses the worker rally and a non-worker the army rally.
 #[test]
 fn workers_and_non_workers_use_their_own_slots() -> TestResult {
-    let mut h = Hatch::new()?;
+    let mut h = TwoSlotBase::new()?;
     let target = at(16.5, 26.5);
     h.set(RallyTarget::Point(target), None)?;
     let (worker, _) = h.base.train(h.hatch, h.worker)?;
@@ -1014,7 +1013,7 @@ fn workers_and_non_workers_use_their_own_slots() -> TestResult {
 /// the worker rally is set (no fall-through).
 #[test]
 fn the_queen_analogue_uses_no_rally() -> TestResult {
-    let mut h = Hatch::new()?;
+    let mut h = TwoSlotBase::new()?;
     let (army, _) = h.base.train(h.hatch, h.army)?;
     assert_eq!(
         h.base.front_order(army),
@@ -1031,7 +1030,7 @@ fn the_queen_analogue_uses_no_rally() -> TestResult {
 /// worker leaves on the side of its field, a non-worker on the side of the army rally.
 #[test]
 fn the_exit_faces_the_products_slot() -> TestResult {
-    let mut h = Hatch::new()?;
+    let mut h = TwoSlotBase::new()?;
     let field = h.base.world.map.resources()[0].pos;
     let south = at(6.5, 30.5);
     h.set(RallyTarget::Point(south), None)?;
@@ -1373,7 +1372,7 @@ fn an_enemy_rally_target_that_dies_is_pruned() -> TestResult {
 /// left.
 #[test]
 fn rallies_through_player_commands() -> TestResult {
-    let mut h = Hatch::new()?;
+    let mut h = TwoSlotBase::new()?;
     let enemy_type = h.base.world.entities[&h.base.barracks].unit_type_id;
     let enemy = h
         .base
@@ -1432,7 +1431,7 @@ fn rallies_through_player_commands() -> TestResult {
         target: ResourceNodeId(0),
     };
     let (worker, _, orders) = of(h.worker).next().ok_or("no worker")?.clone();
-    assert_eq!(orders, [field.clone()]);
+    assert_eq!(orders, std::slice::from_ref(&field));
     let (_, _, orders) = of(h.army).next().ok_or("no army unit")?.clone();
     assert_eq!(orders, [UnitOrder::Move { target: army_point }]);
     let (queen, _, orders) = of(h.excluded).next().ok_or("no excluded unit")?.clone();

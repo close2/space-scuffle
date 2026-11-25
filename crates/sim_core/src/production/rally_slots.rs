@@ -75,7 +75,7 @@ impl<'a> SlotRules<'a> {
             RallyUsers::Workers => worker,
             RallyUsers::NonWorkers => !worker,
         };
-        filter && !self.excludes.iter().any(|slug| *slug == product.slug)
+        filter && !self.excludes.contains(&product.slug)
     }
 }
 
