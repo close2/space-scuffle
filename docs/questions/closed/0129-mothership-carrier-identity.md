@@ -29,3 +29,11 @@ Only matches with this unit change; it is in none of the test battles.
 - **Option (a): The Carrier.** Align life and shields to the Carrier (`300` life / `150` shields) and build the Carrier's interceptor hangar (`B-22`: up to 8 interceptors built one by one, flying out to attack and recalled).
 
 **Reasoning:** Its cost (`350/250`), supply (`6`), build time, range (`8`), weapon name, and description already match the Carrier, and the Cosmic Enclave has no other Carrier; a separate Mothership unit can always be added independently later if desired.
+
+## Resolution
+
+Answered (a), the Carrier. Plan `2026-11-27-weapon-delivery` (merged `2afbad04`) gave the analogue's salvo a Hidden
+launch until interceptors exist and recorded the Carrier/Mothership mix as B-228. Plan `2026-11-28-carrier-interceptors`
+(branch `carrier-interceptors-plan`) builds the answer: Carrier life and shields 300/150 and radius 1.25 (B-228), and
+the interceptor hangar (B-22). Q0130 asks whether interceptors may hover instead of strafing until the movement
+redesign lands.
