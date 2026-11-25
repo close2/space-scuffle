@@ -627,6 +627,7 @@ fn issue_pointer_order(
     // is, so a mixed selection reports no refusal its other half was spared.
     let rally = UnitOrder::SetRally {
         target: rally_target(target),
+        slot: None,
     };
     let rallies = any_recipient(world, owner, selection.ids(), &rally);
     let orders = !rallies || any_recipient(world, owner, selection.ids(), &order);

@@ -146,6 +146,11 @@ pub enum GameCommandError {
     /// A rally unit must exist, be alive and be the player's own.
     #[error("{0:?} cannot be a rally target")]
     InvalidRallyTarget(EntityId),
+    /// Selected structures can rally, but none has a rally slot that takes this target (plan
+    /// `2026-11-25-rallies` D-3): the named slot does not exist or refuses the target, or no
+    /// slot takes it from a right click.
+    #[error("no selected structure has a rally slot that takes this target")]
+    NoRallySlotTakes,
     /// The transport lifecycle refused the operation.
     #[error(transparent)]
     Transport(#[from] TransportAdmissionError),
@@ -401,7 +406,9 @@ impl SimWorld {
             }
             UnitOrder::Load { carrier } => self.admit_load(player, recipients, carrier, cmd.queue),
             UnitOrder::UnloadAll => self.admit_unload(player, recipients, cmd.queue),
-            UnitOrder::SetRally { target } => self.admit_set_rally(player, recipients, target),
+            UnitOrder::SetRally { target, slot } => {
+                self.admit_set_rally(player, recipients, target, slot)
+            }
             _ => Err(GameCommandError::UnsupportedOrder),
         }
     }

@@ -1019,10 +1019,10 @@ fn stop_on_an_armed_structure_drops_its_attack_and_keeps_production_and_rally() 
     run_ticks(&mut harness, 1);
     let (queue, rally) = {
         let unit = &harness.world().entities[&structure];
-        (unit.production_queue.clone(), unit.rally)
+        (unit.production_queue.clone(), unit.rallies.clone())
     };
     assert!(!queue.is_empty(), "a job: {}", harness.status());
-    assert!(rally.is_some(), "a rally: {}", harness.status());
+    assert!(!rally.is_empty(), "a rally: {}", harness.status());
 
     for by_key in [true, false] {
         harness
@@ -1063,7 +1063,7 @@ fn stop_on_an_armed_structure_drops_its_attack_and_keeps_production_and_rally() 
         );
         let unit = &harness.world().entities[&structure];
         assert_eq!(unit.production_queue.len(), queue.len(), "by key {by_key}");
-        assert_eq!(unit.rally, rally, "by key {by_key}");
+        assert_eq!(unit.rallies, rally, "by key {by_key}");
     }
 }
 

@@ -41,8 +41,8 @@ use client::runtime_battle::{MapPresentation, SKIRMISH_SCENARIO};
 use client::LabState;
 use sim_core::entity::Cargo;
 use sim_types::{
-    EntityId, PlayerCommand, RallyTarget, ResourceKind, ResourceNodeId, SimScalar, UnitOrder,
-    UnitTypeId,
+    EntityId, PlayerCommand, RallyRoute, RallyTarget, ResourceKind, ResourceNodeId, SimScalar,
+    UnitOrder, UnitTypeId,
 };
 
 #[allow(
@@ -917,7 +917,7 @@ fn captured_rally(harness: &Harness, structure: EntityId) -> RallyTarget {
     let rallies: Vec<RallyTarget> = orders
         .iter()
         .filter_map(|command| match command.order {
-            UnitOrder::SetRally { target } if command.entities == [structure] => Some(target),
+            UnitOrder::SetRally { target, .. } if command.entities == [structure] => Some(target),
             _ => None,
         })
         .collect();
@@ -947,8 +947,8 @@ fn right_click_on_the_ground_sets_a_selected_structures_rally() {
     harness.resume();
     harness.step(2);
     assert_eq!(
-        harness.world().entities[&base].rally,
-        Some(RallyTarget::Point(point))
+        harness.world().entities[&base].rallies,
+        [RallyRoute::single(0, RallyTarget::Point(point))]
     );
 }
 
@@ -1004,7 +1004,7 @@ fn right_click_on_a_friend_or_the_structure_itself_rallies_to_it() {
     let mut harness = skirmish();
     let base = select_base(&mut harness);
     assert!(
-        harness.world().entities[&base].rally.is_some(),
+        !harness.world().entities[&base].rallies.is_empty(),
         "auto-rally"
     );
     let at = harness.unit_on_screen(base);
@@ -1012,7 +1012,7 @@ fn right_click_on_a_friend_or_the_structure_itself_rallies_to_it() {
     assert_eq!(captured_rally(&harness, base), RallyTarget::Unit(base));
     harness.resume();
     harness.step(2);
-    assert_eq!(harness.world().entities[&base].rally, None);
+    assert_eq!(harness.world().entities[&base].rallies, []);
 }
 
 /// D-10, B-166: a right click on an enemy rallies to the ground under it.

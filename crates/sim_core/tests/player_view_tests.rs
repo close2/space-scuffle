@@ -1485,8 +1485,8 @@ fn the_view_lists_only_the_viewers_own_resolved_rallies() -> TestResult {
     let mut world = skirmish()?;
     let (home, _) = base_of(&world, HOME)?;
     let (away, _) = base_of(&world, AWAY)?;
-    let rally = |world: &SimWorld, id| world.entities[&id].rally;
-    assert!(rally(&world, home).is_some() && rally(&world, away).is_some());
+    let rallied = |world: &SimWorld, id| !world.entities[&id].rallies.is_empty();
+    assert!(rallied(&world, home) && rallied(&world, away));
     let point = world
         .rally_point(home)
         .ok_or("the home hall's rally resolves")?;
@@ -1503,6 +1503,7 @@ fn the_view_lists_only_the_viewers_own_resolved_rallies() -> TestResult {
             vec![home],
             UnitOrder::SetRally {
                 target: sim_types::RallyTarget::Unit(crew[0]),
+                slot: None,
             },
         )],
     );

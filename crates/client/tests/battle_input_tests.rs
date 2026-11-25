@@ -707,7 +707,8 @@ fn a_producer_alone_takes_a_right_click_as_its_rally() {
         matches!(
             command.order,
             UnitOrder::SetRally {
-                target: sim_types::RallyTarget::Point(_)
+                target: sim_types::RallyTarget::Point(_),
+                slot: None,
             }
         ),
         "{:?}",

@@ -1348,7 +1348,12 @@ fn showcase_rallies(
         .entities
         .values()
         .filter(|entity| entity.is_immobile)
-        .map(|entity| entity.rally)
+        .map(|entity| {
+            entity
+                .rallies
+                .first()
+                .and_then(|route| route.waypoints.first().copied())
+        })
         .collect())
 }
 

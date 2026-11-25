@@ -63,7 +63,7 @@ use client::{ClientMode, LabState, RtsCamera};
 use serde::{Deserialize, Serialize};
 use sim_core::SimWorld;
 use sim_map::CellFlags;
-use sim_types::{EntityId, PlayerId, RallyTarget, UnitOrder};
+use sim_types::{EntityId, PlayerId, RallyRoute, RallyTarget, UnitOrder};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -358,7 +358,7 @@ fn stage_rally(staging: &mut Staging, session: &mut BattleSession, fog: &BattleF
         .entities
         .get_mut(&base)
         .expect("the base stands")
-        .rally = Some(RallyTarget::Point(sim_position(to)));
+        .rallies = vec![RallyRoute::single(0, RallyTarget::Point(sim_position(to)))];
     staging.base = Some(base);
     staging.from = from;
     staging.to = to;

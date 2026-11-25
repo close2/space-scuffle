@@ -575,10 +575,12 @@ pub struct Entity {
     pub captured_supply_used: u32,
     /// Completed supply provision captured at spawn, independent of later catalog edits.
     pub captured_supply_provided: u32,
-    /// Where this production structure sends the units it makes (plan
-    /// `2026-11-23-production-queue` D-3); `None` without a rally. Set by the town hall's
-    /// auto-rally at creation (D-7).
-    pub rally: Option<sim_types::RallyTarget>,
+    /// Where this production structure sends the units it makes: one route per rally slot that
+    /// holds a rally (plans `2026-11-23-production-queue` D-3 and `2026-11-25-rallies` D-2),
+    /// empty without a rally. Sorted by slot, at most one route per slot, no route empty, every
+    /// slot below the archetype's slot count and every route within its waypoint cap. Set by
+    /// `SetRally` and by the town hall's auto-rally at creation (D-7).
+    pub rallies: Vec<sim_types::RallyRoute>,
     /// Task order progress carried between ticks.
     pub task: UnitTask,
     /// Resources this harvester holds; survives order changes until delivered.
@@ -759,7 +761,7 @@ impl Entity {
             production_queue: VecDeque::new(),
             captured_supply_used: archetype.supply_cost,
             captured_supply_provided: archetype.supply_provided,
-            rally: None,
+            rallies: Vec::new(),
             task: UnitTask::default(),
             cargo: None,
             construction: None,
@@ -1759,6 +1761,7 @@ mod order_walks_tests {
             UnitOrder::UnloadAll,
             UnitOrder::SetRally {
                 target: RallyTarget::Point(point),
+                slot: None,
             },
         ];
         let entity = world.entities.get_mut(&unit).ok_or("unit")?;
@@ -1885,6 +1888,7 @@ mod weapon_target_tests {
             UnitOrder::UnloadAll,
             UnitOrder::SetRally {
                 target: RallyTarget::Point(point),
+                slot: None,
             },
         ];
         for order in &orders {
