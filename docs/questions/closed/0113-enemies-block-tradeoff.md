@@ -54,3 +54,9 @@ crowd side effects.
 - **Option (b): Keep it parked for now.**
 
 **Note:** See the owner's blank-sheet movement redesign guidance and algorithm survey recorded in `Q0118` (`0118-crowd-overlap-solver-cost.md`). Fixing friend-crowd overlap and/or stepping back to evaluate a clean-sheet movement algorithm (with Hold Position, Attacking, and Enemy units non-pushable) should precede a third attempt on `B-193` / `B-192` / `B-209`.
+
+## Resolution
+
+Answered (b): "enemies block" stays parked on branch `enemy-contact-plan` (head `7f686d23`). Per the owner's note, the
+friend-crowd fix (Q0118 (a), plan `2026-11-26-friend-crowd-overlap`) and a blank-sheet movement design round (Q0118's
+strategic guidance) come first; a third attempt at B-193, B-192 and B-209 follows from them.
