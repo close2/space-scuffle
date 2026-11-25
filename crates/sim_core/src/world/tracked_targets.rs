@@ -3,7 +3,9 @@
 //! Owns the world-level table of the enemy each tracking turret aims at this tick (plan
 //! `2026-11-26-turret-tracking-weapon` D-2 as amended by Amendment 1): 5.0.14's hidden
 //! `90mmCannonsFake`, which turns the unsieged Siege Tank's turret towards an enemy in reach
-//! under any order.
+//! under any order, and the Immortal's and the Colossus' own weapons, whose attack-order options
+//! are cleared while their unit must slow or stand to fire, so their turrets aim at the nearest
+//! enemy in reach while the unit walks (Amendment 2).
 //!
 //! ## How it fits
 //! Target acquisition writes the table (`SimWorld::acquire_targets`); the combat phase reads it
