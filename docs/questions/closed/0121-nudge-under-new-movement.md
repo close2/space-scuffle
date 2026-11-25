@@ -20,3 +20,9 @@ targets instead.
 
 ## Answer
 
+- **Option (a): Retire `D-δ` under the new movement.** Fighting units (as well as Hold Position units) are never pushed or nudged by allies, matching StarCraft II and the owner's `Q0118` rule; the new movement makes room through free-spot selection and target switching instead.
+
+## Resolution
+
+Answered as above. These answers (Q0120 (a), Q0121 (a), Q0122 (c), Q0123 (a), Q0124 (a)) govern the implementation
+plan of the movement redesign, written next from the design round `docs/plans/2026-11-26-movement-blank-sheet.md`.
