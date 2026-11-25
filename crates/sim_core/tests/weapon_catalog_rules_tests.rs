@@ -1327,7 +1327,7 @@ const SC2_ATTRIBUTE_BONUSES: [BonusRow; 41] = [
         &[(Attribute::Armored, 4.0)],
         "PrismaticBeamMUx1, liberty EffectData:2050",
     ),
-    ("Carrier / Mothership", None, &[], "none"),
+    ("Carrier", None, &[], "none"),
     ("Drone", None, &[], "none"),
     ("Zergling", None, &[], "none"),
     (

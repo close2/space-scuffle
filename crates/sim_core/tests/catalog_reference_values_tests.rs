@@ -1586,7 +1586,7 @@ const SC2_UNIT_ATTRIBUTES: [(&str, [f32; 1], &str); 41] = [
         "Armored+Mechanical, liberty UnitData:3745",
     ),
     (
-        "Carrier / Mothership",
+        "Carrier",
         [42.0],
         "Armored+Mechanical+Massive, liberty UnitData:3469",
     ),
@@ -1906,7 +1906,7 @@ fn b47_unit_weapon_damage_follows_starcraft() -> TestResult {
         "damage",
         false,
         &SC2_UNIT_DAMAGE,
-        &["Phoenix", "Carrier / Mothership", "Brood Lord"],
+        &["Phoenix", "Carrier", "Brood Lord"],
         |_| true,
         |w| f(w.base_damage),
     )?;
@@ -2033,7 +2033,7 @@ fn b47_bonus_damage_per_level_follows_starcraft() -> TestResult {
         "bonus per level",
         false,
         &SC2_BONUS_PER_LEVEL,
-        &["Phoenix", "Carrier / Mothership"],
+        &["Phoenix", "Carrier"],
         |w| {
             w.attribute_bonuses
                 .entries()
@@ -2065,8 +2065,9 @@ fn b47_bonus_damage_per_level_follows_starcraft() -> TestResult {
 }
 
 /// Unit life, shields and life armour (`CUnit` `LifeMax`, `ShieldsMax`, `LifeArmor`). The
-/// Carrier / Mothership composite and the saucer without one analogue are class E (evidence §10.1).
-const SC2_UNIT_VITALS: [(&str, [f32; 3], &str); 40] = [
+/// saucer without one analogue is class E (evidence §10.1); the Carrier takes the Carrier's
+/// (Q0129 (a); plan `2026-11-28-carrier-interceptors` D-1, B-228).
+const SC2_UNIT_VITALS: [(&str, [f32; 3], &str); 41] = [
     ("SCV", [45.0, 0.0, 0.0], "liberty UnitData:4729; default 0"),
     (
         "Thor",
@@ -2259,6 +2260,11 @@ const SC2_UNIT_VITALS: [(&str, [f32; 3], &str); 40] = [
         [200.0, 0.0, 0.0],
         "liberty UnitData:7361; default 0",
     ),
+    (
+        "Carrier",
+        [300.0, 150.0, 2.0],
+        "liberty UnitData:3474; liberty UnitData:3478; liberty UnitData:3475",
+    ),
 ];
 
 #[test]
@@ -2267,7 +2273,7 @@ fn b47_unit_vitals_follow_starcraft() -> TestResult {
         "life, shields, armour",
         false,
         &SC2_UNIT_VITALS,
-        &["Phoenix", "Carrier / Mothership"],
+        &["Phoenix"],
         |a| [f(a.max_hp), f(a.max_shields), f(a.life_armor)],
     )
 }
@@ -2300,7 +2306,7 @@ const SC2_UNIT_SIGHT: [(&str, [f32; 1], &str); 41] = [
     ("Observer", [11.0], "liberty UnitData:3442"),
     ("Warp Prism", [10.0], "liberty UnitData:3848"),
     ("Void Ray", [10.0], "liberty UnitData:3780"),
-    ("Carrier / Mothership", [12.0], "liberty UnitData:3507"),
+    ("Carrier", [12.0], "liberty UnitData:3507"),
     ("Drone", [8.0], "liberty UnitData:7063"),
     ("Zergling", [8.0], "liberty UnitData:7577"),
     ("Baneling", [8.0], "liberty UnitData:9340"),
@@ -2383,14 +2389,14 @@ fn b47_unit_weapon_ranges_follow_starcraft() -> TestResult {
         "range",
         false,
         &SC2_UNIT_RANGE,
-        &["Phoenix", "Carrier / Mothership"],
+        &["Phoenix", "Carrier"],
         |_| true,
         |w| f(w.max_range),
     )
 }
 
 /// Unit collision radius (`CUnit` `Radius`; `core` UnitData:41 is the class default 0.5).
-const SC2_UNIT_RADIUS: [(&str, [f32; 1], &str); 40] = [
+const SC2_UNIT_RADIUS: [(&str, [f32; 1], &str); 41] = [
     ("SCV", [0.375], "liberty UnitData:4743"),
     ("Marine", [0.375], "liberty UnitData:4837"),
     ("Roach", [0.5], "class default, core UnitData:41"),
@@ -2431,17 +2437,14 @@ const SC2_UNIT_RADIUS: [(&str, [f32; 1], &str); 40] = [
     ("Infestor", [0.625], "voidmulti UnitData:830"),
     ("Viper", [1.0], "swarm UnitData:2370"),
     ("Overlord", [1.0], "liberty UnitData:7376"),
+    ("Carrier", [1.25], "liberty UnitData:3491"),
 ];
 
 #[test]
 fn b47_unit_radii_follow_starcraft() -> TestResult {
-    check_table(
-        "radius",
-        false,
-        &SC2_UNIT_RADIUS,
-        &["Phoenix", "Carrier / Mothership"],
-        |a| [f(a.collision_radius)],
-    )
+    check_table("radius", false, &SC2_UNIT_RADIUS, &["Phoenix"], |a| {
+        [f(a.collision_radius)]
+    })
 }
 
 /// B-116: the radius of every ground unit's disc against terrain and structures, `StarCraft` II's
@@ -2730,7 +2733,7 @@ const SC2_UNIT_ACQUIRE_ARC: [WeaponRow; 41] = [
     ("Void Ray", "weapon", 0.0, ARC_UNSET),
     ("Void Ray", "air_weapon", 0.0, ARC_UNSET),
     (
-        "Carrier / Mothership",
+        "Carrier",
         "weapon",
         32_768.0,
         "Arc 360, liberty WeaponData:606",
@@ -3436,11 +3439,7 @@ const SC2_ACCELERATION: [(&str, f32, &str); 42] = [
     ("Observer", 2.125, "liberty UnitData:3423"),
     ("Warp Prism", 2.625, "voidmulti UnitData:2043"),
     ("Void Ray", 2.0, "liberty UnitData:3758"),
-    (
-        "Carrier / Mothership",
-        1.0625,
-        "liberty UnitData:3483 (Carrier)",
-    ),
+    ("Carrier", 1.0625, "liberty UnitData:3483 (Carrier)"),
     ("Drone", 2.5, "liberty UnitData:7041"),
     ("Zergling", 1000.0, "liberty UnitData:7554"),
     ("Baneling", 1000.0, "liberty UnitData:9311"),
@@ -5574,4 +5573,26 @@ fn missile_movers_follow_starcraft() -> TestResult {
         );
     }
     Ok(())
+}
+
+/// H-1 (plan `2026-11-28-carrier-interceptors` D-1, B-228): the Carrier's separation radius is the
+/// Carrier's `SeparationRadius` 1.25 (`liberty` UnitData:3492), as its collision radius is its
+/// `Radius` (the radius table). Found by analogue, never by slug (charter §3.3).
+#[test]
+fn the_carrier_separation_radius_follows_starcraft() {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let carriers: Vec<_> = catalogs
+        .units
+        .archetypes()
+        .filter(|archetype| analogue(archetype) == "Carrier")
+        .collect();
+    assert_eq!(carriers.len(), 1, "one archetype has the Carrier analogue");
+    for carrier in carriers {
+        assert!(
+            (f(carrier.separation_radius) - 1.25).abs() < 0.001,
+            "{}: separation radius {}, StarCraft II 1.25 (liberty UnitData:3492)",
+            carrier.slug,
+            f(carrier.separation_radius)
+        );
+    }
 }

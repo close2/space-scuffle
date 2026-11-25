@@ -2621,15 +2621,18 @@
             faction: "cosmic_enclave",
             display_name: "Mothership Carrier",
             lore: "Grand extraterrestrial flagship deploying swarms of autonomous saucer interceptors.",
-            sc2_analogue: "Carrier / Mothership (Capital Flagship with Interceptor Fleet)",
+            // Q0129 (a): the analogue is the Carrier (plan 2026-11-28-carrier-interceptors D-1, B-228).
+            sc2_analogue: "Carrier (Capital Flagship with Interceptor Fleet)",
             showcase_hero: false,
             showcase_order: None,
             shape: UnitSphere,
             silhouette: HeavyHex,
             mover_type: Air,
             attributes: (bits: 42),
-            max_hp: 350.0,
-            max_shields: 350.0,
+            // 5.0.14 Carrier LifeMax 300, ShieldsMax 150 (liberty UnitData:3474, :3478); plan
+            // 2026-11-28-carrier-interceptors D-1 (B-228: 350/350 were the Mothership's).
+            max_hp: 300.0,
+            max_shields: 150.0,
             max_energy: 0.0,
             start_energy: 0.0,
             life_armor: 2.0,
@@ -2642,8 +2645,10 @@
             acceleration: 0.003332,
             deceleration: 0.003332,
             turn_rate_deg_per_tick: 40.32,
-            collision_radius: 1.0,
-            separation_radius: 1.15,
+            // 5.0.14 Carrier Radius 1.25, SeparationRadius 1.25 (liberty UnitData:3491-3492); plan
+            // 2026-11-28-carrier-interceptors D-1.
+            collision_radius: 1.25,
+            separation_radius: 1.25,
             // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
             push_priority: 10,
             sight_radius: 12.0,
