@@ -672,9 +672,11 @@ fn surround_fill_time_starts_at_first_contact() -> TestResult {
     Ok(())
 }
 
-/// W0-T7: the lanes answer holds only when each gap passes at least a quarter of the group.
+/// W0-T7, as plan Amendment 2 corrects it: the lanes meter counts the walkers through each gap,
+/// and the answer does not judge the split (group routing, D-7, gives the group its leader's
+/// lane), so a group through one gap holds as one through both; the clump is still judged.
 #[test]
-fn lanes_answer_requires_both_gaps() -> TestResult {
+fn lanes_answer_reports_the_gaps_and_judges_the_clump() -> TestResult {
     let (scene, mut world, ids, mut meter) = known_scene(Family::Lanes, 6)?;
     let Some(KnownAnswer::Lanes { wall, gaps, .. }) = scene.known else {
         return Err("a lanes scene names its gaps".into());
@@ -699,15 +701,30 @@ fn lanes_answer_requires_both_gaps() -> TestResult {
     let row = meter.finish();
     let group = u32::try_from(walkers.len())?;
     assert_eq!(row.lanes, LaneUse([group, 0]), "{row:?}");
-    let verdict = judge(scene.known.ok_or("known")?, &ScenarioRow::default(), &row);
-    assert!(verdict.failed.contains(&"lanes"), "{verdict:?}");
-    // Half through each gap uses both.
-    let both = KnownRow {
-        lanes: LaneUse([group / 2, group - group / 2]),
-        ..row
+    let known = scene.known.ok_or("known")?;
+    let packed = KnownRow {
+        hull_ratio: 1.0,
+        ..row.clone()
     };
-    let verdict = judge(scene.known.ok_or("known")?, &ScenarioRow::default(), &both);
-    assert!(!verdict.failed.contains(&"lanes"), "{verdict:?}");
+    let one_gap = judge(known, &ScenarioRow::default(), &packed);
+    let both = judge(
+        known,
+        &ScenarioRow::default(),
+        &KnownRow {
+            lanes: LaneUse([group / 2, group - group / 2]),
+            ..packed.clone()
+        },
+    );
+    assert!(one_gap.holds && both.holds, "{one_gap:?} {both:?}");
+    let spread = judge(
+        known,
+        &ScenarioRow::default(),
+        &KnownRow {
+            hull_ratio: 2.5,
+            ..packed
+        },
+    );
+    assert_eq!(spread.failed, vec!["clump"], "{spread:?}");
     Ok(())
 }
 
