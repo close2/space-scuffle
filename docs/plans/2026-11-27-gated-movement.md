@@ -1192,3 +1192,99 @@ The design's Q0124 is re-asked (filed as a new number then) only under §6.6 rul
 
 `~/scratch/gated-movement/`: `scripts/` (arms, checks, the Q0122 rule as code, perf), `trees/<tag>`, `worlds/<arm>`,
 `harness/`, `red/` (red runs), `trace/`, `reference/` (the frozen WP4 binary for WP5's decision).
+
+## Amendment 1 (implementation, 2026-11-25): `WP0a` as built
+
+`WP0a` is built on branch `gated-movement-plan` (merged with `main` at `1ea9cf44`, friend-crowd's latent C-3′). No
+world changes: the older families' harness CSVs, the mirror, and the matrix's columns up to friend-crowd's are
+byte-identical to `main` (§A1.3). The decisions below are the implementation's, recorded under Q0002; none adds a
+rule to any pipeline.
+
+### A1.1 Where the code went (§14 extended)
+
+- The eight generators are a child module of `corpus.rs`, `harness/corpus/families.rs`; the answer meters a child of
+  `metrics.rs`, `harness/metrics/known.rs`; the permutation mode `harness/permutation.rs`; the clash mode
+  `trace/clash.rs` (not `matrix.rs` or `cli.rs`). Each file stays one responsibility.
+- Scenes gain `Scenario::script` (orders at set ticks, the stutter family's) and `Scenario::known` (the
+  `KnownAnswer`); `Role` gains `Hold`, `Stand`, `AttackMove`, `AttackAt` (named by spawn point, so relabelling keeps
+  it) and `Circle`. The older families' commands are issued first and unchanged.
+- The probe: `SimWorld::set_movement_order_rotation` and `movement_order_rotation`; one helper, `movement::rotated`,
+  used by the movement phase's visit and the contact solver's fill. The three cost probes are one struct,
+  `movement::MovementProbes`, read through `SimWorld::movement_probes`, counted per latest phase (cleared when the
+  movement phase starts) and summed by the meters; no rule of this tree writes them, so they read 0.
+
+### A1.2 How each known answer is measured (the plan's text, made exact)
+
+- **H-1 / H-2's "proposed no step":** the unit's tick-start state (holding, or attack target in band; for H-2 also
+  no order, `Idle` or `Stop`) and the world's `proposed_step` absent or zero; displaced = more than 2⁻²⁰.
+  `moved_by_others` and `standing_of` are shared by the harness and the battle meter. **Deferred to `WP1`** (where
+  H-1 and H-2 are first judged): the exclusion of overlap present at a pair's first contact.
+- **hold-line:** a quarter of priority 20 = every fourth walker in spawn order, same radius; bound = the gap
+  family's with one lane and the line's length (holders × pitch) added to the distance.
+- **enemy-press:** the idle and holding lines are unarmed (an armed idle enemy acquires and chases, which is its own
+  step); the attacking line has range 1, each enemy with an immobile friendly dummy of the attackers' side half a
+  unit behind its edge. Attackers' ranges are the corridor set (0.25 to 1). Enemy overlap is the largest over all
+  pairs of different owners.
+- **deep-queue:** ranks × files on a grid of pitch `2r + 1/4`, front rank three units before the pillar's edge;
+  capacity the corridor family's; per-rank overlap attributed to the pair's rear rank, T7 per scene as shares of
+  near pair-ticks above D-α's bounds ≤ 0.1 % and maximum ≤ 15 %.
+- **wedge:** the gap is the edge distance between the bodies, rounded down to an even number of sixty-fourths;
+  "passed" = the walker's centre crossing the segment between the bodies' centres; standing enemies are idle and
+  unarmed; bound `2 · 50 / v + 100`.
+- **hallway:** width `w` ∈ {2, 3, 4} cells with the larger radius `w / 4`, so two diameters is whole cells; a side
+  change = a change of sign of the lateral offset of an east/west pair while their centres are within the radius
+  sum along the corridor.
+- **stutter:** range ∈ {4, 5, 6}, two friends behind each attacker; cues at `40 + 50c`, the `Attack` `m` ticks
+  later. **The verify of §5.2 done:** the scratch archetypes' acceleration (3.136) is above their top speed, so
+  `accelerated_speed` makes it instant: the first tick's step is a whole `v`; the bound keeps the plan's
+  `0.9 · v · (ticks − 1)`. Lag = the observation of the first step along the order above `v / 8` minus the cue's
+  tick (lag 1 = the step of the tick that carried the order). Fire = the first release within one weapon period
+  (15) of the first tick in band.
+- **surround-moving:** the target's speed is the attackers' times 4 to 7 eighths (0.5 to 0.875, exact decimals for
+  the plan's 0.5 to 0.9); the circle is the sixteen-sided polygon of `HEADINGS`; melee ranges 0.125, 0.25, 0.5.
+- **lanes:** gaps symmetric about the group's route at ±3 to 6 cells. Clump = area of the convex hull of the discs
+  over `n · 2√3 · r²` ≤ 2 (the plan's "verify on main": reported). **A-1's clause is vacuous** in this scene (one
+  group, no stranger) and is not metered.
+- **Permutation:** compares every entity's life and position each tick; a first difference after a tick that began
+  with two coincident living centres is a tie, anything else unexplained. I-3's equal roots are not visible from
+  outside the world, so they count as unexplained until `WP2`, which judges H-3, adds what it needs.
+
+### A1.3 Evidence (scratch, `~/scratch/gated/wp0a/`)
+
+- **Red first** (`red/`): the new tests against `bf58581d`'s sources fail to compile (28 errors in
+  `harness_tests`, 1 in `trace_tests`, 3 in `contact_solver_tests`: the missing families, roles, meters and probe);
+  then by mutation, each pinned rule broken in turn fails its test (W0-T2 to W0-T8, W0-T10, the per-rank, side-change
+  and old-header tests, the solver-fill wiring). W0-T9 is red only for a setter that writes world state: both shipped
+  pipelines play identically under any rotation (below), so offset 0 cannot be told from another by outcome, and the
+  probe's wiring is pinned directly (`the_order_rotation_rotates_the_solver_fill`).
+- **Identity** (`identity/`, release, exported trees): against `main` `1ea9cf44`, the harness families gap, arc,
+  cross, corridor, corner (200 seeds, 50 relabelled) and mirror (20) under `Solver` and `Legacy` give 22 CSVs
+  byte-identical, and the whole matrix on its seeds of record plus 4 (488 runs) is byte-identical in its first 51
+  columns (all but `WP0a`'s 13). Rerun after merging `main` `8dde83cd` (`identity2/`: 50 seeds, 20 relabelled, 10
+  mirrors, the matrix's seeds of record, 244 runs): again 22 CSVs and the matrix's 51 columns byte-identical.
+- **Permutation, offset 7, `Solver`** (`figures/permute/`): 50 scenes of every family and 10 mirrors, all
+  `identical`: no order dependence is visible in the shipped pipeline (B-224's condition not met on this sample).
+  `Legacy` gave the same on the 4-seed spot check.
+- **The new families, seeds 1 to 200, reported, not judged** (share of scenes whose answer held; hard-part
+  failures; failing parts):
+
+| Family | S (`Solver`) | L (`Legacy`) |
+|---|---|---|
+| hold-line | 3.0 %; hard 0 (no holder moved); give-ups and incomplete in 194 | 2.0 %; hard 0; 196 |
+| enemy-press | 13.0 %; hard 64 (enemies moved 64, enemy overlap 30); friend overlap 173 | 0 %; hard 72 |
+| deep-queue | 53.5 %; fill 67, M1 31, rank overlap 4, M3 2 | 0 %; rank overlap 200, M1 199, M3 177, fill 44 |
+| wedge | 0 %: friends: the walker gives up (101); enemies: it passes between them, pushing them apart (99) | 0 %; passed 139, overlap 135, incomplete 61 |
+| hallway | 100 % | 100 % |
+| stutter | 100 % (lag 1, displacement and fire everywhere) | 0 %; hard 200 (displacement short) |
+| surround-moving | 0 %; fill 184, M1 194 (5.9 per 1,000) | 0 %; fill 157, M1 198 |
+| lanes | 2.0 %; one gap only in 187, clump 21 | 2.0 %; 195, 6 |
+
+  M1 per 1,000 moving unit-ticks under S: hold-line 28.2, enemy-press 10.9, deep-queue 93.9, stutter 49.4 (its
+  ordered reversals), surround 5.9, lanes 1.3, wedge and hallway 0. H-1's held-moved unit-ticks under S:
+  enemy-press 108,057, surround-moving 179,749 (D-δ's nudges, as §6.2 expects of S), deep-queue 3, stutter 74.
+  The R arm (C-3′ on) is not run here: the harness selects a pipeline, not a crowd cap; that is `WP0b`'s arm.
+- **The clashes** (`figures/clash/`, 400 units, 300 ticks, seeds 7 and 1 to 4, `Solver`): the friend overlap of
+  `pulse_bot` reaches 43.5 to 49.1 % (corrected pairs the same), 58,042 to 60,811 pair-ticks above D-α; of the
+  zergling analogue 13.4 to 15.7 %, 2,624 to 3,824. M1 6.5 to 8.8 (`pulse_bot`) and 0.5 to 1.3; H-1 held-moved
+  unit-ticks 267 to 525 and 2,502 to 2,917 per side. Probe counters 0 everywhere.
+- Every new-family scene played without a simulation diagnostic.
