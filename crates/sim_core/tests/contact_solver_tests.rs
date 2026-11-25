@@ -7,12 +7,18 @@
 //!   archetype's largest speed multiplier (Overclock, attack dash), so a faster unit or a smaller
 //!   radius in the catalog fails this test until the data follows;
 //! - `contact_shares` answers C-2's table for the public cases;
-//! - the shipped file runs the legacy pipeline until the plan's switch-over (WP6).
+//! - the shipped file runs the legacy pipeline until the plan's switch-over (WP6);
+//! - the crowd extension C-3′ of plan `2026-11-26-friend-crowd-overlap` ships switched off
+//!   (`crowd_iterations` equal to `iterations`, owner question Q0118), and a catalog that switches
+//!   it on reaches the solver of a running world: a dense battle then runs ticks past K, and with
+//!   it off none, every world equal to the shipped one (the solver-level properties P-1 to P-7
+//!   are unit tests of `movement::solver`, whose solver is crate-private).
 //!
 //! Floats appear only in this test's arithmetic on catalog values (charter §3.1).
 
-use sim_core::catalog::MovementPipeline;
+use sim_core::catalog::{ContactRules, MovementPipeline, RuntimeCatalogs};
 use sim_core::movement::solver::{contact_shares, ContactParty, PairShares};
+use sim_fixtures::matchup::{BattleRun, Matrix, MATRIX_RON};
 use sim_types::{MoverType, PlayerId, SimScalar};
 
 #[test]
@@ -114,4 +120,77 @@ fn contact_shares_answer_the_push_table() {
         PairShares::Weights(one, zero)
     );
     assert_eq!(contact_shares(&base, &base, false), PairShares::ByApproach);
+}
+
+/// WP1 (plan `2026-11-26-friend-crowd-overlap`): C-3′ ships latent, its cap equal to C-3's K.
+#[test]
+fn the_crowd_extension_ships_switched_off() {
+    let rules = sim_fixtures::shipped_catalogs()
+        .units
+        .movement_rules()
+        .contact();
+    assert_eq!(rules.crowd_iterations, u16::from(rules.iterations));
+    assert!(!rules.crowd_extension_on());
+}
+
+/// The shipped catalogs with C-3′'s cap set to `crowd_iterations`.
+fn with_crowd_iterations(
+    crowd_iterations: u16,
+) -> Result<RuntimeCatalogs, Box<dyn std::error::Error>> {
+    let mut catalogs = sim_fixtures::shipped_catalogs();
+    let rules = catalogs.units.movement_rules();
+    let contact = ContactRules {
+        crowd_iterations,
+        ..rules.contact()
+    };
+    catalogs
+        .units
+        .set_movement_rules(rules.with_contact(contact)?);
+    Ok(catalogs)
+}
+
+/// Plays the first `ticks` ticks of battle 26 (100 zergling analogues against 6 colossus
+/// analogues, seed 15) with `catalogs`; returns each tick's solver iterations and checksum.
+fn battle_26(
+    catalogs: RuntimeCatalogs,
+    ticks: u32,
+) -> Result<Vec<(u16, u64)>, Box<dyn std::error::Error>> {
+    let matrix = Matrix::from_ron_str(MATRIX_RON)?;
+    let battle = matrix.battle("26_100_lings_vs_6_colossi")?;
+    let mut run = BattleRun::new(battle, catalogs, 15, matrix.jitter_for(15))?;
+    let mut out = Vec::new();
+    while !run.is_finished() && run.ticks_played() < ticks {
+        assert!(run.step().is_empty(), "no diagnostics");
+        out.push((run.world.contact_iterations(), run.world.compute_checksum()));
+    }
+    Ok(out)
+}
+
+/// WP1 (plan `2026-11-26-friend-crowd-overlap`): the catalog's `crowd_iterations` reaches the
+/// solver. With C-3′ switched off in a test catalog, battle 26's first 150 ticks never run past
+/// K and every tick's checksum equals the shipped catalog's; switched on (cap 151, P-1's value
+/// on this catalog), its crowd runs ticks past K, and only ticks that did so or followed one
+/// differ.
+#[test]
+fn the_catalogs_crowd_cap_reaches_the_solver() -> Result<(), Box<dyn std::error::Error>> {
+    let k = sim_fixtures::shipped_catalogs()
+        .units
+        .movement_rules()
+        .contact()
+        .iterations;
+    let shipped = battle_26(sim_fixtures::shipped_catalogs(), 150)?;
+    let off = battle_26(with_crowd_iterations(u16::from(k))?, 150)?;
+    assert_eq!(off, shipped);
+    assert!(off
+        .iter()
+        .all(|&(iterations, _)| iterations <= u16::from(k)));
+    let on = battle_26(with_crowd_iterations(151)?, 150)?;
+    let first_extended = on
+        .iter()
+        .position(|&(iterations, _)| iterations > u16::from(k))
+        .ok_or("battle 26's crowd runs a tick past K")?;
+    assert!(on.iter().all(|&(iterations, _)| iterations <= 151));
+    assert_eq!(on[..first_extended], shipped[..first_extended]);
+    assert_ne!(on[first_extended].1, shipped[first_extended].1);
+    Ok(())
 }
