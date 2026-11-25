@@ -310,13 +310,10 @@ const PAIR_SLACK: SimScalar = SimScalar::from_raw(1 << 30);
 // Why: In a battle most pairs and most bodies do not change between iterations: a settled
 // pair stays in its dead band, and a body pressed into a wall or an anchored line is refused
 // the same correction again (evidence §5.3: 70 % to 92 % of battle ticks run all K iterations).
-// What: The active set (plan Amendment 3, item 1). A pair keeps its last correction with the
-// two bodies' move counts when it was computed, and reuses it while neither count has changed,
-// that is while neither body has moved since (K-1, evidence `2026-11-25-solver-pair-cache`:
-// a flag of the latest application alone let the enemy pass reuse a correction from before
-// the last averaged iteration, B-208); a body whose last terrain step left it in place is not
-// stepped again toward the same target. Both are functions of positions alone, so every result
-// is bit-identical to recomputing.
+// What: The active set (plan Amendment 3, item 1). A pair reuses its correction while both
+// bodies' move counts are those it was computed at (K-1, B-208); a body whose last terrain step
+// left it in place is not stepped again toward the same target. Both are functions of positions
+// alone, so every result is bit-identical to recomputing.
 // Trade-off: One cached correction and two counts per pair, and a count and a target per body,
 // kept in the retained buffers.
 #[derive(Debug, Default)]
