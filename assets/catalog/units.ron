@@ -2248,10 +2248,6 @@
             separation_radius: 1.0,
             // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
             push_priority: 10,
-            // Collision class (plan 2026-11-25-collision-classes D-2): bodies touch only bodies of the same class.
-            // 5.0.14 Colossus collides with Colossus, Structure and Flying only (liberty UnitData:4066-4068): small
-            // ground units walk beneath it. Structures meet it through footprints; air units do not (B-211).
-            collision_class: Some("tall_walker"),
             sight_radius: 10.0,
             scan_range: 7.5,
             attack_target_priority: 20,
