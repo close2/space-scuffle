@@ -1554,8 +1554,10 @@ struct WeaponSpecDef {
     #[serde(default)]
     pub(crate) locks_turret_while_firing: bool,
     /// Whether the weapon's turret also aims at any enemy it reaches when the weapon leaves it
-    /// free, 5.0.14's hidden `90mmCannonsFake` (see [`WeaponSpec::turret_tracks_any_enemy`]).
-    /// Omitted reads `false`; refused without `has_turret`.
+    /// free: 5.0.14's hidden `90mmCannonsFake`, or a weapon whose attack-order options are
+    /// cleared while its movement gate blocks its fire (the Immortal's and the Colossus'; see
+    /// [`WeaponSpec::turret_tracks_any_enemy`]). Omitted reads `false`; refused without
+    /// `has_turret`.
     #[serde(default)]
     pub(crate) turret_tracks_any_enemy: bool,
     base_damage: f32,

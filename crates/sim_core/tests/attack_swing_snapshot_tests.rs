@@ -508,25 +508,38 @@ fn publishing_swings_changes_no_checksum_over_a_thousand_ticks() {
     assert_eq!(plain, observed);
 }
 
-/// T-16 of plan `2026-11-26-turret-tracking-weapon` (D-5, §9): a unit whose turret only tracks
-/// (it walks under a Move past an idle enemy worker) publishes its turret's yaw in
-/// `aim_angle_rad` and no swing on every tick: tracking plays no attack animation.
+/// T-16 of plan `2026-11-26-turret-tracking-weapon` (D-5, §9), for every shipped tracking unit
+/// that walks on the ground plane (the Siege Tank analogue and, by Amendment 2, the Immortal and
+/// Colossus analogues): a unit whose turret only tracks (it walks under a Move past an idle enemy
+/// worker) publishes its turret's yaw in `aim_angle_rad` and no swing on every tick: tracking
+/// plays no attack animation.
 #[test]
 fn a_tracking_turret_publishes_its_yaw_and_no_swing() {
-    let map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0))).expect("flat map");
-    let mut world = sim_fixtures::world(map, 0x7716);
-    let tracker = world
+    let catalog_world = sim_fixtures::world(
+        GameMap::new(8, 8, MapCell::default_ground(CliffLevel(0))).expect("flat map"),
+        1,
+    );
+    let trackers: Vec<_> = catalog_world
         .catalog
         .archetypes()
         .filter(|arch| {
-            arch.mover_type == MoverType::Ground
+            arch.mover_type != MoverType::Air
                 && arch.max_speed > SimScalar::ZERO
                 && ground_weapon(arch).is_some_and(|w| w.turret_tracks_any_enemy && w.has_turret)
         })
-        .min_by_key(|arch| arch.unit_type_id)
-        .expect("a shipped tracking turret")
-        .clone();
-    let flags = ground_weapon(&tracker).expect("its weapon").target_flags;
+        .cloned()
+        .collect();
+    assert!(!trackers.is_empty(), "a shipped tracking turret");
+    for tracker in trackers {
+        a_tracker_publishes_its_yaw_and_no_swing(&tracker);
+    }
+}
+
+/// T-16's scene for one tracking archetype, `tracker`.
+fn a_tracker_publishes_its_yaw_and_no_swing(tracker: &UnitArchetype) {
+    let map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0))).expect("flat map");
+    let mut world = sim_fixtures::world(map, 0x7716);
+    let flags = ground_weapon(tracker).expect("its weapon").target_flags;
     let worker = world
         .catalog
         .archetypes()
@@ -581,6 +594,7 @@ fn a_tracking_turret_publishes_its_yaw_and_no_swing() {
     }
     assert!(
         tracking > 10,
-        "premise: the turret tracked off its hull ({tracking} ticks)"
+        "premise: the turret of {} tracked off its hull ({tracking} ticks)",
+        tracker.slug
     );
 }

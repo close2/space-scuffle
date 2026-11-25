@@ -2187,6 +2187,11 @@
                 // 5.0.14 PhaseDisruptors: OnlyFireAtAttackOrderTarget 0 (voidmulti WeaponData:206, balancemulti
                 // WeaponData:186); plan 2026-11-24-fire-rules D-6.
                 fires_at_other_targets: true,
+                // B-218 (plan 2026-11-26-turret-tracking-weapon Amendment 2, A2.1 S16-S19, Q0116 part 2 (b)):
+                // PhaseDisruptors clears both attack-order options (voidmulti WeaponData:205-207) on
+                // Turret Immortal (liberty UnitData:10791, TurretData:73-76) but fires only once its
+                // unit slows, so the turret aims at the nearest enemy in reach while the unit walks.
+                turret_tracks_any_enemy: true,
                 base_damage: 20.0,
                 attribute_bonuses: [(Armored, 30.0)],
                 attacks_count: 1,
@@ -2287,6 +2292,12 @@
                 // 5.0.14 ThermalLances: OnlyFireAtAttackOrderTarget 0 (voidmulti WeaponData:257, balancemulti
                 // WeaponData:230); plan 2026-11-24-fire-rules D-6.
                 fires_at_other_targets: true,
+                // B-218 (plan 2026-11-26-turret-tracking-weapon Amendment 2, A2.1 S17-S19, Q0116 part 2 (b)):
+                // ThermalLances clears both attack-order options (voidmulti WeaponData:256-257) on
+                // Turret Colossus (liberty UnitData:4099, TurretData:49-53) but its unit stands to
+                // fire, so the turret aims at the nearest enemy in reach while the unit walks
+                // (no patch note names it: verify).
+                turret_tracks_any_enemy: true,
                 base_damage: 10.0,
                 attribute_bonuses: [(Light, 5.0)],
                 attacks_count: 2,

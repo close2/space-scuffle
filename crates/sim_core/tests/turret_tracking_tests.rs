@@ -23,12 +23,15 @@
 //! own rate (plan `2026-11-24-fire-rules` D-3), and the hull of a hull weapon on Hold Position at
 //! the stationary rate (plan `2026-11-25-wind-up-and-hold-facing` D-4, B-199).
 //!
-//! A turret whose weapon tracks any enemy (`turret_tracks_any_enemy`, 5.0.14's hidden
-//! `90mmCannonsFake` on the unsieged Siege Tank; plan `2026-11-26-turret-tracking-weapon`, B-198)
-//! aims at the nearest enemy in reach whenever the real weapon leaves the turret free: under a
-//! Move, chasing a target out of reach, or between shots without a target. It never changes an
-//! order, a target, a phase, a cooldown, a position or a random draw: every such test compares its
-//! world with a twin whose catalog copy clears the flag (T-1 to T-9, T-14, T-15 of that plan).
+//! A turret whose weapon tracks any enemy (`turret_tracks_any_enemy`; plan
+//! `2026-11-26-turret-tracking-weapon`, B-198, B-218) aims at the nearest enemy in reach whenever
+//! the real weapon leaves the turret free: under a Move, chasing a target out of reach, or between
+//! shots without a target. The capability models either a hidden tracking weapon (5.0.14's
+//! `90mmCannonsFake` on the unsieged Siege Tank) or a weapon whose attack-order options are
+//! cleared while its movement gate blocks its fire as its unit walks (the Immortal's and the
+//! Colossus', Amendment 2). It never changes an order, a target, a phase, a cooldown, a position
+//! or a random draw: every such test compares its world with a twin whose catalog copy clears the
+//! flag (T-1 to T-9, T-14, T-15 of that plan; T-A3 to T-A7 of Amendment 2).
 //!
 //! Positions are world units; angles are `SimAngle` binary angles.
 
@@ -553,10 +556,17 @@ fn between_shots_a_holding_hull_faces_its_target() -> TestResult {
 // enemies by capability, and compare each world with a twin whose catalog copy clears the flag.
 // ---------------------------------------------------------------------------------------------
 
-/// The shipped mobile ground archetype of lowest type id whose weapon's turret tracks any enemy.
+/// The shipped mobile ground archetype of lowest type id whose weapon's turret tracks any enemy
+/// and whose weapon acquires and fires in every direction (half arcs of 180° or more), the
+/// property the claims of T-1 to T-9, T-14 and T-15 rest on (T-4's same-tick swing, T-15's
+/// scratch narrow arcs against a wide original): the Siege Tank analogue's tank-mode weapon, not
+/// the narrow-arc carriers of Amendment 2, whatever the catalog's order.
 fn tracker(world: &SimWorld) -> Result<UnitTypeId, Box<dyn std::error::Error>> {
     find(world, MoverType::Ground, |weapon| {
-        weapon.turret_tracks_any_enemy && weapon.has_turret
+        weapon.turret_tracks_any_enemy
+            && weapon.has_turret
+            && weapon.acquire_arc >= SimAngle::DEG_180
+            && weapon.firing_arc >= SimAngle::DEG_180
     })
 }
 
@@ -698,9 +708,19 @@ struct Pass {
 impl Pass {
     /// The scene, with the tracker's flag cleared in this world's catalog copy unless `track`.
     fn new(track: bool) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::with(tracker(&shipped_world()?)?, track)
+    }
+
+    /// The scene for a walker of `unit_type` (any shipped mobile unit whose ground weapon tracks),
+    /// with its flag cleared in this world's catalog copy unless `track`.
+    fn with(unit_type: UnitTypeId, track: bool) -> Result<Self, Box<dyn std::error::Error>> {
         let mut world = shipped_world()?;
-        let unit_type = tracker(&world)?;
-        let flags = tracking_weapon(&world, unit_type)?.target_flags;
+        let flags = world
+            .catalog
+            .get(unit_type)?
+            .weapon_against(MoverType::Ground, None)
+            .ok_or("the walker's ground weapon")?
+            .target_flags;
         if !track {
             edit_weapons(&mut world, unit_type, |weapon| {
                 weapon.turret_tracks_any_enemy = false;
@@ -1543,6 +1563,526 @@ fn tracking_reaches_the_real_weapon_only_through_the_turret_angle() -> TestResul
     assert!(
         on_swing <= off_swing,
         "the pre-aimed swing starts no later ({on_swing} vs {off_swing})"
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------------------------
+// The turret that aims while its unit walks (plan `2026-11-26-turret-tracking-weapon` Amendment 2,
+// B-218, Q0116 part 2 (b)): 5.0.14's Immortal and Colossus weapons clear both attack-order options
+// (`voidmulti` WeaponData:205–207, :256–257) but may not fire while their unit walks, so, like the
+// tank's hidden weapon, they turn their turret to the nearest enemy in reach under a Move and fire
+// nothing until the unit stops. The tests find these carriers by property (a turreted weapon that
+// may fire outside attack orders but not while moving), never by name, and compare each world with
+// a twin whose catalog copy clears the flag (T-A3 to T-A7 of the amendment).
+// ---------------------------------------------------------------------------------------------
+
+/// Whether `weapon` is of the amendment's class (A2.1 S20): turreted, it may fire outside attack
+/// orders (`fires_outside_attack_order`), and its unit must slow or stand to fire
+/// (`allowed_movement` other than `Moving`).
+fn aims_only_while_walking(weapon: &WeaponSpec) -> bool {
+    weapon.has_turret
+        && weapon.fires_outside_attack_order
+        && weapon.allowed_movement != AllowedMovement::Moving
+}
+
+/// Every shipped mobile ground-plane archetype (not `Air`) whose ground weapon is of the
+/// amendment's class, by type id: the Immortal and Colossus analogues in the shipped data.
+fn walking_carriers(world: &SimWorld) -> Result<Vec<UnitTypeId>, Box<dyn std::error::Error>> {
+    let carriers: Vec<_> = world
+        .catalog
+        .archetypes()
+        .filter(|archetype| {
+            archetype.mover_type != MoverType::Air
+                && archetype.max_speed > SimScalar::ZERO
+                && archetype
+                    .weapon_against(MoverType::Ground, None)
+                    .is_some_and(aims_only_while_walking)
+        })
+        .map(|archetype| archetype.unit_type_id)
+        .collect();
+    if carriers.is_empty() {
+        return Err(
+            "premise: a shipped carrier that may fire outside attack orders but not while \
+                    moving"
+                .into(),
+        );
+    }
+    Ok(carriers)
+}
+
+/// The ground weapon of carrier `unit_type`, the amendment's class (whether or not its flag is
+/// set, so that a world without the flag reaches the behaviour's assertions).
+fn carrier_weapon(
+    world: &SimWorld,
+    unit_type: UnitTypeId,
+) -> Result<WeaponSpec, Box<dyn std::error::Error>> {
+    Ok(world
+        .catalog
+        .get(unit_type)?
+        .weapon_against(MoverType::Ground, None)
+        .filter(|weapon| aims_only_while_walking(weapon))
+        .ok_or("the carrier's ground weapon")?
+        .clone())
+}
+
+/// The rate at which `weapon`'s idle turret returns to the hull on a tick its unit moved
+/// (`ResetIfMoving` or `FollowMovement`, which `idle_turret` treats alike).
+fn idle_rate(weapon: &WeaponSpec) -> Result<SimAngle, Box<dyn std::error::Error>> {
+    match weapon.turret_idle {
+        sim_types::TurretIdle::ResetIfMoving { rate }
+        | sim_types::TurretIdle::FollowMovement { rate } => Ok(rate),
+        _ => Err("premise: the turret returns to the hull while its unit moves".into()),
+    }
+}
+
+/// T-A3 of Amendment 2 (T-1's conditions, A2.2): each carrier walking under a Move past two idle
+/// workers turns its turret on every tick by at most its rate towards the nearest worker in
+/// reach, both in turn, while the Move stays its order; with no enemy in reach its idle runs as
+/// before (`FollowMovement`: towards the hull while it moves).
+#[test]
+fn a_carrier_that_stands_to_fire_tracks_while_it_walks() -> TestResult {
+    for unit_type in walking_carriers(&shipped_world()?)? {
+        let mut scene = Pass::with(unit_type, true)?;
+        let weapon = carrier_weapon(&scene.world, unit_type)?;
+        let rate = idle_rate(&weapon)?;
+        let walk = UnitOrder::Move {
+            target: point(56, 30),
+        };
+        let (mut tracked, mut turned, mut idled_after) = (0, 0, 0);
+        let mut seen = std::collections::BTreeSet::new();
+        for _ in 0..600 {
+            let expected = scene.nearest_in_reach(&weapon)?;
+            let before = scene
+                .world
+                .entities
+                .get(&scene.unit)
+                .ok_or("unit")?
+                .turret_angle;
+            scene.step();
+            let tick = scene.tick - 1;
+            let unit = scene.world.entities.get(&scene.unit).ok_or("unit")?;
+            if unit.order_queue.front() != Some(&walk) {
+                break;
+            }
+            assert_eq!(
+                scene.world.tracked_target(scene.unit),
+                expected,
+                "{unit_type:?} tick {tick}: the nearest enemy in reach is tracked"
+            );
+            if let Some(enemy) = expected {
+                let towards = bearing(&scene.world, scene.unit, enemy)?;
+                assert_eq!(
+                    unit.turret_angle,
+                    before.rotate_towards(towards, weapon.turret_turn_rate.raw()),
+                    "{unit_type:?} tick {tick}: the turret turns towards the enemy at its rate"
+                );
+                tracked += 1;
+                turned += usize::from(unit.turret_angle != before);
+                seen.insert(enemy);
+            } else {
+                let moving = unit.velocity != SimVec2::ZERO;
+                let idle = if moving {
+                    before.rotate_towards(unit.heading, rate.raw())
+                } else {
+                    before
+                };
+                assert_eq!(
+                    unit.turret_angle, idle,
+                    "{unit_type:?} tick {tick}: the turret idles"
+                );
+                idled_after += usize::from(!seen.is_empty() && moving && idle != before);
+            }
+        }
+        let unit = scene.world.entities.get(&scene.unit).ok_or("unit")?;
+        assert_ne!(
+            unit.order_queue.front(),
+            Some(&walk),
+            "{unit_type:?}: premise: the Move ended"
+        );
+        assert!(
+            tracked > 20,
+            "{unit_type:?}: premise: the workers were in reach ({tracked})"
+        );
+        assert!(
+            turned > 10,
+            "{unit_type:?}: the turret turned while tracking ({turned})"
+        );
+        assert_eq!(
+            seen.len(),
+            2,
+            "{unit_type:?}: both workers in turn: {seen:?}"
+        );
+        assert!(
+            idled_after > 0,
+            "{unit_type:?}: after the pass the turret returned towards the hull"
+        );
+    }
+    Ok(())
+}
+
+/// T-A4 of Amendment 2 (T-2's and T-3's comparisons, stop rule A-4): over each carrier's Move past
+/// the workers, every entity equals its flag-off twin's but for the turret and the generators are
+/// alike; nothing is fired, the carrier never swings or reveals itself, and the workers keep
+/// their life, place and (lack of) orders.
+#[test]
+fn a_walking_carrier_changes_nothing_but_its_turret() -> TestResult {
+    for unit_type in walking_carriers(&shipped_world()?)? {
+        let mut on = Pass::with(unit_type, true)?;
+        let mut off = Pass::with(unit_type, false)?;
+        let walk = UnitOrder::Move {
+            target: point(56, 30),
+        };
+        let start: Vec<_> = on
+            .workers
+            .iter()
+            .map(|id| {
+                on.world
+                    .entities
+                    .get(id)
+                    .map(|w| (w.position, w.hp, w.shields))
+            })
+            .collect();
+        let (mut differ, mut walked) = (0, 0);
+        loop {
+            let walking = on
+                .world
+                .entities
+                .get(&on.unit)
+                .is_some_and(|unit| unit.order_queue.front() == Some(&walk));
+            if !walking || on.tick > 600 {
+                break;
+            }
+            on.step();
+            off.step();
+            walked += 1;
+            let tick = on.tick - 1;
+            assert_twins(&on.world, &off.world, tick);
+            let unit = on.world.entities.get(&on.unit).ok_or("unit")?;
+            let twin = off.world.entities.get(&off.unit).ok_or("twin")?;
+            differ += usize::from(unit.turret_angle != twin.turret_angle);
+            assert_eq!(
+                off.world.tracked_target(off.unit),
+                None,
+                "tick {tick}: twin"
+            );
+            assert!(
+                on.world.projectiles.is_empty(),
+                "tick {tick}: nothing fired"
+            );
+            assert!(
+                !matches!(
+                    unit.weapon_phase,
+                    WeaponPhase::Windup { .. } | WeaponPhase::Backswing { .. }
+                ),
+                "{unit_type:?} tick {tick}: tracking never swings"
+            );
+            assert!(
+                !unit.is_attack_revealed_to(PlayerId(1)),
+                "{unit_type:?} tick {tick}: tracking reveals nothing"
+            );
+            for (index, id) in on.workers.iter().enumerate() {
+                let worker = on.world.entities.get(id).ok_or("worker")?;
+                assert_eq!(
+                    Some((worker.position, worker.hp, worker.shields)),
+                    start[index],
+                    "{unit_type:?} tick {tick}: worker {index} is untouched and stays"
+                );
+                assert!(
+                    matches!(worker.order_queue.front(), None | Some(UnitOrder::Idle)),
+                    "{unit_type:?} tick {tick}: worker {index} is neither alerted nor sent away"
+                );
+            }
+        }
+        assert!(
+            walked < 600,
+            "{unit_type:?}: premise: the Move ended ({walked} ticks)"
+        );
+        assert!(
+            differ > 10,
+            "{unit_type:?}: premise: the turrets differed ({differ} ticks)"
+        );
+    }
+    Ok(())
+}
+
+/// T-A5 of Amendment 2 (the chase, fire-rules P-5): each carrier under a player's attack on a
+/// worker out of reach, with another worker in reach, tracks that other worker and never swings
+/// at it (its only swing, if any, starts at the order's target on the tick it comes into reach);
+/// its order, `current_target`, `weapon_target` (`None`: its weapon may not fire while
+/// the unit chases) and pursuit equal the flag-off twin's on every tick until the target comes
+/// into reach.
+#[test]
+fn a_chasing_carrier_aims_at_another_enemy_and_never_swings_at_it() -> TestResult {
+    for unit_type in walking_carriers(&shipped_world()?)? {
+        let scene = |track: bool| -> Result<
+            (SimWorld, EntityId, EntityId, EntityId),
+            Box<dyn std::error::Error>,
+        > {
+            let mut world = shipped_world()?;
+            let flags = carrier_weapon(&world, unit_type)?.target_flags;
+            if !track {
+                edit_weapons(&mut world, unit_type, |w| w.turret_tracks_any_enemy = false)?;
+            }
+            let worker_type = worker(&world, flags)?;
+            let unit = spawn_facing(&mut world, unit_type, point(10, 30), SimAngle::ZERO)?;
+            let target = world.spawn_unit(worker_type, PlayerId(1), point(40, 30))?;
+            let other = world.spawn_unit(worker_type, PlayerId(1), point(13, 35))?;
+            step(
+                &mut world,
+                0,
+                vec![order(0, unit, UnitOrder::attack(target))],
+            );
+            Ok((world, unit, target, other))
+        };
+        let (mut on, unit, target, other) = scene(true)?;
+        let (mut off, ..) = scene(false)?;
+        let weapon = carrier_weapon(&on, unit_type)?;
+        let mut tracked = 0;
+        for tick in 1..400 {
+            let other_in_reach = in_reach(&on, &weapon, unit, other)?;
+            if in_reach(&on, &weapon, unit, target)? {
+                break;
+            }
+            step(&mut on, tick, Vec::new());
+            step(&mut off, tick, Vec::new());
+            assert_twins(&on, &off, tick);
+            let entity = on.entities.get(&unit).ok_or("unit")?;
+            assert_eq!(
+                entity.order_queue.front(),
+                Some(&UnitOrder::attack(target)),
+                "{unit_type:?} tick {tick}: the attack stays the order"
+            );
+            assert_eq!(entity.current_target, Some(target), "tick {tick}: target");
+            assert_eq!(
+                entity.weapon_target, None,
+                "{unit_type:?} tick {tick}: no own target while chasing"
+            );
+            // A swing may start on the tick the chase brings the order's target into reach; it is
+            // never one at the tracked enemy.
+            if let WeaponPhase::Windup { target_id, .. }
+            | WeaponPhase::Backswing { target_id, .. } = entity.weapon_phase
+            {
+                assert_eq!(
+                    target_id, target,
+                    "{unit_type:?} tick {tick}: no swing at the tracked enemy"
+                );
+            }
+            let expected = other_in_reach.then_some(other);
+            assert_eq!(
+                on.tracked_target(unit),
+                expected,
+                "{unit_type:?} tick {tick}: the other worker is tracked"
+            );
+            tracked += usize::from(expected.is_some());
+        }
+        assert!(
+            tracked > 5,
+            "{unit_type:?}: premise: the other worker was tracked ({tracked})"
+        );
+        assert!(
+            in_reach(&on, &weapon, unit, target)?,
+            "{unit_type:?}: premise: the chase reached its target"
+        );
+    }
+    Ok(())
+}
+
+/// T-A6's scene: a carrier of `unit_type` walks east under a Move from (10, 30) to (20, 30), hull
+/// and turret facing east, past a durable idle worker A at (17, 35), which comes into reach on
+/// the way and is in reach where the Move ends, behind the hull's quarter (a bearing of about
+/// 121° from where the Move ends); its flag is cleared in this world's catalog
+/// copy unless `track`. Returns the world, the carrier and A.
+fn pre_aim_scene(
+    unit_type: UnitTypeId,
+    track: bool,
+) -> Result<(SimWorld, EntityId, EntityId), Box<dyn std::error::Error>> {
+    let mut world = shipped_world()?;
+    let flags = carrier_weapon(&world, unit_type)?.target_flags;
+    if !track {
+        edit_weapons(&mut world, unit_type, |w| w.turret_tracks_any_enemy = false)?;
+    }
+    let worker_type = worker(&world, flags)?;
+    let unit = spawn_facing(&mut world, unit_type, point(10, 30), SimAngle::ZERO)?;
+    let enemy = world.spawn_unit(worker_type, PlayerId(1), point(17, 35))?;
+    let durable = world.entities.get_mut(&enemy).ok_or("enemy")?;
+    durable.max_hp = SimScalar::from_i32(100_000);
+    durable.hp = durable.max_hp;
+    let walk = UnitOrder::Move {
+        target: point(20, 30),
+    };
+    step(&mut world, 0, vec![order(0, unit, walk)]);
+    Ok((world, unit, enemy))
+}
+
+/// Whether `unit` is winding up in `world`.
+fn winding_up(world: &SimWorld, unit: EntityId) -> bool {
+    world
+        .entities
+        .get(&unit)
+        .is_some_and(|e| matches!(e.weapon_phase, WeaponPhase::Windup { .. }))
+}
+
+/// T-A6 of Amendment 2 (class P with the shipped narrow arcs, A2.2): each carrier tracks worker A
+/// while it walks, and its Move ends with A in reach. Its first swing then starts no later than
+/// the flag-off twin's, and strictly earlier when the twin's turret lies more than one tick's
+/// turn outside its swing arc of A on the tick the Move ends (a ready weapon turns and swings on
+/// the same tick when one turn brings A within its acquisition arc, so a smaller error costs the
+/// twin no tick; the scene places A so that it lies farther for both shipped carriers). A third world, tracking, whose turret is set to the
+/// twin's on that tick equals the twin on every later tick: the turret's angle is the only
+/// channel from tracking to the real weapon.
+#[test]
+fn a_carrier_pre_aimed_while_walking_swings_no_later() -> TestResult {
+    for unit_type in walking_carriers(&shipped_world()?)? {
+        let (mut on, unit, enemy) = pre_aim_scene(unit_type, true)?;
+        let (mut off, ..) = pre_aim_scene(unit_type, false)?;
+        let (mut equalized, ..) = pre_aim_scene(unit_type, true)?;
+        let weapon = carrier_weapon(&on, unit_type)?;
+        let mut ended = None;
+        for tick in 1..300 {
+            step(&mut on, tick, Vec::new());
+            step(&mut off, tick, Vec::new());
+            step(&mut equalized, tick, Vec::new());
+            assert_twins(&on, &off, tick);
+            let entity = on.entities.get(&unit).ok_or("unit")?;
+            if !matches!(entity.order_queue.front(), Some(UnitOrder::Move { .. })) {
+                ended = Some(tick);
+                break;
+            }
+        }
+        let ended = ended.ok_or("premise: the Move ended")?;
+        assert!(
+            in_reach(&on, &weapon, unit, enemy)?,
+            "{unit_type:?}: premise: A is in reach where the Move ends"
+        );
+        let towards = bearing(&on, unit, enemy)?;
+        let twin_turret = off.entities.get(&unit).ok_or("twin")?.turret_angle;
+        let tracked_turret = on.entities.get(&unit).ok_or("unit")?.turret_angle;
+        assert!(
+            tracked_turret.diff(towards).unsigned_abs() < twin_turret.diff(towards).unsigned_abs(),
+            "{unit_type:?}: premise: the tracking turret is pre-aimed at A"
+        );
+        let strictly = u32::from(twin_turret.diff(towards).unsigned_abs())
+            > u32::from(weapon.turret_turn_rate.raw()) + u32::from(weapon.acquire_arc.raw());
+        assert!(
+            strictly,
+            "{unit_type:?}: premise: the twin's turret needs more than one turn to bring A into \
+             its arc"
+        );
+        equalized
+            .entities
+            .get_mut(&unit)
+            .ok_or("unit")?
+            .turret_angle = twin_turret;
+        let (mut on_swing, mut off_swing) = (None, None);
+        for tick in ended + 1..ended + 120 {
+            step(&mut on, tick, Vec::new());
+            step(&mut off, tick, Vec::new());
+            step(&mut equalized, tick, Vec::new());
+            assert_twins(&equalized, &off, tick);
+            assert_eq!(
+                equalized.entities.get(&unit).ok_or("unit")?.turret_angle,
+                off.entities.get(&unit).ok_or("twin")?.turret_angle,
+                "{unit_type:?} tick {tick}: with equal turrets the worlds stay equal"
+            );
+            if on_swing.is_none() && winding_up(&on, unit) {
+                on_swing = Some(tick);
+            }
+            if off_swing.is_none() && winding_up(&off, unit) {
+                off_swing = Some(tick);
+            }
+        }
+        let on_swing = on_swing.ok_or("the carrier swings")?;
+        let off_swing = off_swing.ok_or("the twin swings")?;
+        assert!(
+            on_swing <= off_swing,
+            "{unit_type:?}: the pre-aimed swing starts no later ({on_swing} vs {off_swing})"
+        );
+        assert!(
+            on_swing < off_swing,
+            "{unit_type:?}: the pre-aimed swing starts earlier ({on_swing} vs {off_swing})"
+        );
+    }
+    Ok(())
+}
+
+/// T-A7 of Amendment 2 (D-3 step 4, A2.1 S17): a walking carrier ranks the enemies it may track
+/// by its archetype's tie-break. A worker N stands nearer than a worker F, and the carrier's
+/// previous target stood next to F: a carrier that breaks ties by the previous target's position
+/// (`ClosestToPrevious`, the Colossus analogue) tracks F, one that breaks them by distance
+/// (`Closest`, the Immortal analogue) tracks N, on every tick both are in reach.
+#[test]
+fn a_walking_carrier_ranks_by_its_tie_break() -> TestResult {
+    let world = shipped_world()?;
+    let mut breaks = std::collections::BTreeSet::new();
+    for unit_type in walking_carriers(&world)? {
+        let tie_break = world.catalog.get(unit_type)?.acquire_tie_break;
+        let mut world = shipped_world()?;
+        let weapon = carrier_weapon(&world, unit_type)?;
+        let worker_type = worker(&world, weapon.target_flags)?;
+        let unit = spawn_facing(&mut world, unit_type, point(20, 30), SimAngle::ZERO)?;
+        let near = world.spawn_unit(worker_type, PlayerId(1), point(22, 32))?;
+        let far = world.spawn_unit(worker_type, PlayerId(1), point(17, 34))?;
+        // As if its last target had stood next to F.
+        world
+            .entities
+            .get_mut(&unit)
+            .ok_or("unit")?
+            .previous_target_position = Some(point(16, 35));
+        step(
+            &mut world,
+            0,
+            vec![order(
+                0,
+                unit,
+                UnitOrder::Move {
+                    target: point(30, 30),
+                },
+            )],
+        );
+        let expected = match tie_break {
+            sim_core::catalog::AcquireTieBreak::ClosestToPrevious => far,
+            sim_core::catalog::AcquireTieBreak::Closest => near,
+            sim_core::catalog::AcquireTieBreak::LeastTurning => continue,
+        };
+        let mut both = 0;
+        for tick in 1..120 {
+            let reach = (
+                in_reach(&world, &weapon, unit, near)?,
+                in_reach(&world, &weapon, unit, far)?,
+            );
+            let nearer = {
+                let at = world.entities.get(&unit).ok_or("unit")?.position;
+                let n = world.entities.get(&near).ok_or("near")?.position;
+                let f = world.entities.get(&far).ok_or("far")?.position;
+                at.distance_sq(n) < at.distance_sq(f)
+            };
+            step(&mut world, tick, Vec::new());
+            let walking = world
+                .entities
+                .get(&unit)
+                .is_some_and(|e| matches!(e.order_queue.front(), Some(UnitOrder::Move { .. })));
+            if !walking {
+                break;
+            }
+            if reach == (true, true) && nearer {
+                assert_eq!(
+                    world.tracked_target(unit),
+                    Some(expected),
+                    "{unit_type:?} ({tie_break:?}) tick {tick}: ranked by the tie-break"
+                );
+                both += 1;
+            }
+        }
+        assert!(
+            both > 5,
+            "{unit_type:?}: premise: both workers were in reach, N nearer ({both})"
+        );
+        breaks.insert(format!("{tie_break:?}"));
+    }
+    assert!(
+        breaks.len() >= 2,
+        "premise: carriers with both tie-breaks are shipped: {breaks:?}"
     );
     Ok(())
 }

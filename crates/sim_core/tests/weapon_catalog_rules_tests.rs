@@ -2000,33 +2000,67 @@ fn b180_b179_fire_rules_follow_starcraft() -> TestResult {
     Ok(())
 }
 
-/// `StarCraft` II 5.0.14 units whose turret also aims, under any order, at an enemy its weapon
-/// reaches, through a hidden weapon on the same turret that never harms: `(analogue, source)`
-/// (plan `2026-11-26-turret-tracking-weapon` §2.2, D-6, B-198). The survey of every `Fake` and
-/// `Dummy` weapon of the eight layers finds no other tracking-only weapon on a 5.0.14
-/// multiplayer unit.
-const SC2_TURRET_TRACKING: [(&str, &str); 1] = [(
-    "Siege Tank",
-    "90mmCannonsFake (Options Hidden 1, OnlyFireAtAttackOrderTarget 0, a CEffectDamage without \
-     amount) on Turret SiegeTank beside 90mmCannons: balancemulti WeaponData:7-20, UnitData:1473, \
-     EffectData:1066-1072",
-)];
+/// Where a 5.0.14 unit's turret-tracking behaviour comes from (plan
+/// `2026-11-26-turret-tracking-weapon` D-1, Amendment 2 D-A1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TrackingSource {
+    /// A hidden weapon on the same turret that never harms (the Siege Tank's `90mmCannonsFake`).
+    HiddenWeapon,
+    /// The unit's own weapon, whose attack-order options are cleared while its movement gate
+    /// blocks its fire as the unit walks (the Immortal's and the Colossus' weapons, A2.1 S20).
+    ClearedOptions,
+}
 
-/// T-10 of plan `2026-11-26-turret-tracking-weapon`: exactly one shipped weapon tracks any enemy
-/// with its turret, the tank-mode weapon of the Siege Tank analogue (S1, S4). Its siege mode's
-/// weapon, every mode's weapon and every other weapon, structures' included, omit it:
-/// `SiegeTankSieged` carries only `CrucioShockCannon` (`liberty` UnitData:5181), and 5.0.14
-/// disables the fake through each morph (`balancemulti` AbilData:772-778, :954-958).
+/// `StarCraft` II 5.0.14 units whose turret also aims, under any order, at an enemy its weapon
+/// reaches: `(analogue, source of the behaviour, data)` (plan `2026-11-26-turret-tracking-weapon`
+/// §2.2, D-6, B-198; Amendment 2 A2.1, B-218). The survey of every `Fake` and `Dummy` weapon of
+/// the eight layers finds no other tracking-only weapon on a 5.0.14 multiplayer unit, and of the
+/// weapons that clear `OnlyFireWhileInAttackOrder` only `PhaseDisruptors` and `ThermalLances` (and
+/// the tank's fake) must slow or stand to fire (S20).
+const SC2_TURRET_TRACKING: [(&str, TrackingSource, &str); 3] = [
+    (
+        "Siege Tank",
+        TrackingSource::HiddenWeapon,
+        "90mmCannonsFake (Options Hidden 1, OnlyFireAtAttackOrderTarget 0, a CEffectDamage without \
+         amount) on Turret SiegeTank beside 90mmCannons: balancemulti WeaponData:7-20, \
+         UnitData:1473, EffectData:1066-1072",
+    ),
+    (
+        "Immortal",
+        TrackingSource::ClearedOptions,
+        "PhaseDisruptors OnlyFireWhileInAttackOrder 0, OnlyFireAtAttackOrderTarget 0, \
+         AllowedMovement Slowing: voidmulti WeaponData:205-207 (balancemulti :185-186), on \
+         Turret Immortal (liberty UnitData:10791; FreeRotate, YawRate 720, Idle FollowMovement, \
+         YawIdleRate 360: liberty TurretData:73-76)",
+    ),
+    (
+        "Colossus",
+        TrackingSource::ClearedOptions,
+        "ThermalLances OnlyFireWhileInAttackOrder 0, OnlyFireAtAttackOrderTarget 0, no \
+         AllowedMovement (stands to fire): voidmulti WeaponData:256-257 (balancemulti :229-230), \
+         on Turret Colossus (liberty UnitData:4099; FreeRotate, YawRate 999.8437, Idle \
+         FollowMovement, YawIdleRate 90: liberty TurretData:49-53)",
+    ),
+];
+
+/// T-10 of plan `2026-11-26-turret-tracking-weapon`, extended by Amendment 2's T-A1: exactly three
+/// shipped weapons track any enemy with their turret, the tank-mode weapon of the Siege Tank
+/// analogue (S1, S4) and the weapons of the Immortal and Colossus analogues (A2.1 S16, S17, S19).
+/// The tank's siege mode's weapon, every mode's weapon and every other weapon, structures'
+/// included, omit it: `SiegeTankSieged` carries only `CrucioShockCannon` (`liberty`
+/// UnitData:5181), and 5.0.14 disables the fake through each morph (`balancemulti`
+/// AbilData:772-778, :954-958).
 #[test]
 fn b198_turret_tracking_follows_starcraft() -> TestResult {
     let world = flat_world(16)?;
-    for (unit, source) in SC2_TURRET_TRACKING {
+    for (unit, _, source) in SC2_TURRET_TRACKING {
         assert!(
             archetypes_with_analogue(&world, unit).next().is_some(),
             "an archetype with the analogue {unit} ({source})"
         );
     }
-    let default_source = "no hidden tracking weapon on the 5.0.14 unit or mode";
+    let default_source = "no hidden tracking weapon and no cleared attack-order options with a \
+                          movement gate on the 5.0.14 unit or mode";
     let mut tracking = std::collections::BTreeSet::new();
     for archetype in world.catalog.archetypes() {
         let analogue = archetype
@@ -2034,8 +2068,8 @@ fn b198_turret_tracking_follows_starcraft() -> TestResult {
             .and_then(|analogue| analogue.split(" (").next());
         let listed = SC2_TURRET_TRACKING
             .iter()
-            .find(|(unit, _)| Some(*unit) == analogue);
-        let (expected, source) = listed.map_or((false, default_source), |row| (true, row.1));
+            .find(|(unit, ..)| Some(*unit) == analogue);
+        let (expected, source) = listed.map_or((false, default_source), |row| (true, row.2));
         let checks = own_weapons(archetype)
             .map(|weapon| (weapon, expected, source))
             .chain(mode_weapons(archetype).map(|weapon| (weapon, false, default_source)));
@@ -2052,8 +2086,56 @@ fn b198_turret_tracking_follows_starcraft() -> TestResult {
     }
     assert_eq!(
         tracking.len(),
-        1,
-        "exactly one shipped weapon tracks any enemy: {tracking:?}"
+        SC2_TURRET_TRACKING.len(),
+        "exactly one shipped weapon per listed unit tracks any enemy: {tracking:?}"
+    );
+    Ok(())
+}
+
+/// T-A2 of plan `2026-11-26-turret-tracking-weapon` Amendment 2 (D-A1: F-1's rule kept as a check
+/// on the shipped data, not as a rule of the simulation). Every shipped turreted weapon, modes'
+/// included, that may fire outside attack orders (`fires_outside_attack_order`) but not while its
+/// unit moves (`allowed_movement` other than `Moving`) carries `turret_tracks_any_enemy`, and
+/// every weapon carrying it is either such a weapon or the weapon of a unit listed with a hidden
+/// tracking weapon.
+#[test]
+fn b218_every_weapon_that_stands_to_fire_outside_attack_orders_tracks() -> TestResult {
+    let world = flat_world(16)?;
+    let mut classed = 0;
+    for archetype in world.catalog.archetypes() {
+        let analogue = archetype
+            .sc2_analogue()
+            .and_then(|analogue| analogue.split(" (").next());
+        let hidden = SC2_TURRET_TRACKING.iter().any(|(unit, source, _)| {
+            Some(*unit) == analogue && *source == TrackingSource::HiddenWeapon
+        });
+        for weapon in own_weapons(archetype).chain(mode_weapons(archetype)) {
+            let stands_outside_orders = weapon.has_turret
+                && weapon.fires_outside_attack_order
+                && weapon.allowed_movement != AllowedMovement::Moving;
+            classed += usize::from(stands_outside_orders);
+            if stands_outside_orders {
+                assert!(
+                    weapon.turret_tracks_any_enemy,
+                    "{} {}: a turreted weapon that may fire outside attack orders but not while \
+                     moving aims its turret while the unit walks (A2.1 S10, S20)",
+                    archetype.slug, weapon.name,
+                );
+            }
+            if weapon.turret_tracks_any_enemy {
+                assert!(
+                    stands_outside_orders || hidden,
+                    "{} {}: tracks without standing to fire outside attack orders or a listed \
+                     hidden tracking weapon",
+                    archetype.slug,
+                    weapon.name,
+                );
+            }
+        }
+    }
+    assert!(
+        classed > 0,
+        "premise: a shipped turreted weapon fires outside attack orders but not while moving"
     );
     Ok(())
 }
