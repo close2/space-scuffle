@@ -3,7 +3,8 @@
 //! Statuses take ids in name order. Named effect nodes take ids in name order, a named node
 //! that is only a `Use` alias takes none and resolves to its target, and inline nodes follow,
 //! depth-first pre-order under their named parent. Every per-node value bound of D-17 is
-//! checked here, where the authored label is at hand; graph rules are in `checks`.
+//! checked here, where the authored label is at hand; graph rules are in `checks`. A damage or
+//! missile node keeps its authored visibility, a visible one revealing for at least a tick.
 
 use super::{
     min_missile_speed, CatalogError, EffectNode, FlatNode, ResolvedFilter, ResolvedStatus,
@@ -11,9 +12,9 @@ use super::{
     MAX_SEARCH_COUNT, MAX_SEARCH_RADIUS, MAX_SET_CHILDREN,
 };
 use sim_types::{
-    AttributeBonuses, DamageDef, EffectDef, EffectId, EffectNodeDef, ModifyVitalsDef,
-    PersistentDef, SearchDef, SetDef, SimScalar, StatusId, StatusSpec, TargetFilter, TargetPlane,
-    VitalChange,
+    AttackVisibility, AttributeBonuses, DamageDef, EffectDef, EffectId, EffectNodeDef,
+    ModifyVitalsDef, PersistentDef, SearchDef, SetDef, SimScalar, StatusId, StatusSpec,
+    TargetFilter, TargetPlane, VitalChange,
 };
 use std::collections::BTreeMap;
 
@@ -302,6 +303,7 @@ impl Builder {
                 {
                     return Err(CatalogError::InvalidMissileSpeed { effect: label });
                 }
+                let visibility = visibility(missile.visibility, &label)?;
                 let require = self.require(missile.require.as_ref(), &label)?;
                 let impact = self.child(&missile.impact, root, counter)?;
                 FlatNode {
@@ -310,6 +312,7 @@ impl Builder {
                         speed: missile.speed,
                         view: missile.view,
                         impact,
+                        visibility,
                     },
                     require,
                 }
@@ -482,6 +485,7 @@ impl Builder {
                 amount: damage.amount,
                 attribute_bonus,
                 responses: damage.responses,
+                visibility: visibility(damage.visibility, &label)?,
             },
             require: self.require(damage.require.as_ref(), &label)?,
         })
@@ -522,4 +526,16 @@ impl Builder {
 
 fn fraction_in_bounds(change: VitalChange) -> bool {
     change.change_fraction >= -SimScalar::ONE && change.change_fraction <= SimScalar::ONE
+}
+
+/// A spell damage's or missile's visibility, refused when `Visible` for no tick: it would reveal
+/// its caster to no one (plan `2026-11-27-launch-and-spell-visibility` D-1).
+fn visibility(value: AttackVisibility, label: &str) -> Result<AttackVisibility, CatalogError> {
+    if value == (AttackVisibility::Visible { reveal_ticks: 0 }) {
+        return Err(CatalogError::ZeroReveal {
+            effect: label.to_owned(),
+            field: "visibility",
+        });
+    }
+    Ok(value)
 }

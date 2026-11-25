@@ -165,6 +165,7 @@ impl SimWorld {
                 amount,
                 attribute_bonus,
                 responses,
+                ..
             } => {
                 self.apply_spell_damage(unit?, amount, &attribute_bonus, responses, &context);
                 None

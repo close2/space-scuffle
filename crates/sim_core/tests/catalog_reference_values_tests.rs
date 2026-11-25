@@ -23,7 +23,7 @@
 use sim_core::catalog::UnitArchetype;
 use sim_core::WeaponSpec;
 use sim_types::upgrades::UpgradeEffect;
-use sim_types::{AttackCommand, AttributeFlags, SimAngle, SimScalar, TurretIdle};
+use sim_types::{AttackCommand, AttackVisibility, AttributeFlags, SimAngle, SimScalar, TurretIdle};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -3665,23 +3665,39 @@ fn psionic_storm_values_follow_starcraft() -> TestResult {
         "0.571 Normal s, liberty BehaviorData:714",
     );
     let EffectNode::Damage {
-        amount, responses, ..
+        amount,
+        responses,
+        visibility,
+        ..
     } = node(status.initial_effect.ok_or("initial damage")?)?
     else {
         return Err("the initial effect is damage".into());
     };
     assert_close(amount, 10.0, "liberty EffectData:2091");
+    assert_eq!(
+        visibility,
+        AttackVisibility::Snapshot,
+        "PsiStormDamageInitial names no Visibility: the CEffectDamage default, core EffectData:62"
+    );
     assert!(
         responses.acquire && responses.flee,
         "liberty EffectData:2093-2094"
     );
     let EffectNode::Damage {
-        amount, responses, ..
+        amount,
+        responses,
+        visibility,
+        ..
     } = node(status.periodic_effect.ok_or("periodic damage")?)?
     else {
         return Err("the periodic effect is damage".into());
     };
     assert_close(amount, 10.0, "liberty EffectData:2100");
+    assert_eq!(
+        visibility,
+        AttackVisibility::Hidden,
+        "PsiStormDamage Visibility Hidden, liberty EffectData:2099"
+    );
     assert!(
         !responses.acquire && !responses.flee,
         "no responses on a pulse"
@@ -3803,11 +3819,17 @@ fn abduct_values_follow_starcraft() -> TestResult {
         speed,
         view: MissileView::Tether,
         impact,
+        visibility,
     } = node(start(1)?)?
     else {
         return Err("a homing tether missile, swarm EffectData:1486-1494".into());
     };
     assert_close(speed, 1.05, "18.75 x 1.4 / 25, swarm MoverData:147");
+    assert_eq!(
+        visibility,
+        AttackVisibility::Snapshot,
+        "YoinkLaunchMissile names no Visibility: the CEffectLaunchMissile default, core EffectData:102"
+    );
     let EffectNode::Set { first, len: 3 } = node(impact)? else {
         return Err("the contact set of three, swarm EffectData:1498-1509".into());
     };
@@ -3913,11 +3935,17 @@ fn fungal_growth_values_follow_starcraft() -> TestResult {
         speed,
         view: MissileView::Projectile,
         impact,
+        visibility,
     } = node(spells.effect_id(root).ok_or("the root")?)?
     else {
         return Err("a missile to the point, void EffectData:1141-1146".into());
     };
     assert_close(speed, 0.672, "12 x 1.4 / 25, void MoverData:18");
+    assert_eq!(
+        visibility,
+        AttackVisibility::Snapshot,
+        "FungalGrowthLaunchMissile names no Visibility: the CEffectLaunchMissile default, core EffectData:102"
+    );
     let EffectNode::Search {
         radius,
         filter,
@@ -3949,11 +3977,17 @@ fn fungal_growth_values_follow_starcraft() -> TestResult {
         amount,
         attribute_bonus,
         responses,
+        visibility,
     } = node(child(2)?)?
     else {
         return Err("FungalGrowthSearchDummy, liberty EffectData:736-741".into());
     };
     assert_close(amount, 0.0, "a dummy");
+    assert_eq!(
+        visibility,
+        AttackVisibility::Snapshot,
+        "FungalGrowthSearchDummy names no Visibility: the CEffectDamage default, core EffectData:62"
+    );
     assert_eq!(attribute_bonus, AttributeBonuses::NONE);
     assert!(
         responses.acquire && responses.flee,
@@ -3985,11 +4019,17 @@ fn fungal_growth_values_follow_starcraft() -> TestResult {
         amount,
         attribute_bonus,
         responses,
+        visibility,
     } = node(damage.periodic_effect.ok_or("periodic damage")?)?
     else {
         return Err("FungalGrowthDamage".into());
     };
     assert_close(amount, 1.5625, "voidmulti EffectData:2389");
+    assert_eq!(
+        visibility,
+        AttackVisibility::Snapshot,
+        "FungalGrowthDamage names no Visibility: the CEffectDamage default, core EffectData:62"
+    );
     assert_eq!(
         attribute_bonus,
         AttributeBonuses::NONE,
@@ -5378,5 +5418,38 @@ fn the_shipped_rallies_are_5_0_14s() -> TestResult {
     {
         assert!(archetype.rally.is_none(), "{}: no rally", archetype.slug);
     }
+    Ok(())
+}
+
+/// V-19 (plan `2026-11-27-launch-and-spell-visibility` §2.1 S4, S5, D-1): of every shipped spell
+/// damage and missile node, only Psionic Storm's periodic pulse shows nothing of its caster
+/// (`PsiStormDamage` `Visibility Hidden`, `liberty` EffectData:2099); every other one keeps the
+/// engine default, a snapshot (`core` EffectData:62, :102), and none is visible.
+#[test]
+fn shipped_spell_visibility_follows_starcraft() -> TestResult {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let spells = catalogs.units.spells();
+    let mut nodes = 0;
+    for index in 0..spells.node_count() {
+        let id = sim_types::EffectId(u16::try_from(index)?);
+        let label = spells.label(id).ok_or("a label")?;
+        let (sim_core::catalog::EffectNode::Damage { visibility, .. }
+        | sim_core::catalog::EffectNode::LaunchMissile { visibility, .. }) =
+            spells.node(id).ok_or("a node")?.kind
+        else {
+            continue;
+        };
+        nodes += 1;
+        let expected = if label == "psionic_storm_damage" {
+            AttackVisibility::Hidden
+        } else {
+            AttackVisibility::Snapshot
+        };
+        assert_eq!(visibility, expected, "{label}");
+    }
+    assert_eq!(
+        nodes, 6,
+        "the storm's two damages, Abduct's tongue, Fungal's missile and two damages"
+    );
     Ok(())
 }

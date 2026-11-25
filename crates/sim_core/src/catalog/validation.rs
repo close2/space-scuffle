@@ -1004,6 +1004,38 @@ impl WeaponSpecDef {
         Ok(())
     }
 
+    /// The fields of a weapon's missile launch: an instant weapon launches no missile, so a
+    /// missile validation (plan `2026-11-24-weapon-validation` D-1) or a launch visibility (plan
+    /// `2026-11-27-launch-and-spell-visibility` D-1) it authors would be read by nothing; a
+    /// visible launch reveals its attacker for at least one tick.
+    fn validate_launch(&self, definition: &str, prefix: &str) -> SimResult<()> {
+        if self.projectile_speed.is_none()
+            && self.missile_validation != MissileValidation::default()
+        {
+            return Err(invalid(
+                definition,
+                &format!("{prefix}.missile_validation"),
+                "an instant weapon launches no missile to validate",
+            ));
+        }
+        if self.launch_visibility == (AttackVisibility::Visible { reveal_ticks: 0 }) {
+            return Err(invalid(
+                definition,
+                &format!("{prefix}.launch_visibility"),
+                "a visible launch reveals its attacker for at least one tick",
+            ));
+        }
+        if self.projectile_speed.is_none() && self.launch_visibility != AttackVisibility::default()
+        {
+            return Err(invalid(
+                definition,
+                &format!("{prefix}.launch_visibility"),
+                "an instant weapon launches no missile to show",
+            ));
+        }
+        Ok(())
+    }
+
     fn validate(&self, definition: &str, prefix: &str) -> SimResult<()> {
         for (field, value) in [
             ("min_range", self.min_range),
@@ -1061,17 +1093,7 @@ impl WeaponSpecDef {
                 "an instant weapon publishes no projectile",
             ));
         }
-        // Plan `2026-11-24-weapon-validation` D-1: an instant weapon launches no missile, so a
-        // missile validation it authors would be read by nothing.
-        if self.projectile_speed.is_none()
-            && self.missile_validation != MissileValidation::default()
-        {
-            return Err(invalid(
-                definition,
-                &format!("{prefix}.missile_validation"),
-                "an instant weapon launches no missile to validate",
-            ));
-        }
+        self.validate_launch(definition, prefix)?;
         if let Some(speed) = self.projectile_speed {
             positive(definition, &format!("{prefix}.projectile_speed"), speed)?;
             if self.max_projectile_lifetime_ticks == 0 {
@@ -4656,6 +4678,70 @@ mod attack_visibility_tests {
             weapon.attack_visibility = AttackVisibility::Visible { reveal_ticks: 54 };
         }
         unit.validate()?;
+        Ok(())
+    }
+
+    /// The field a shipped unit's validation refuses once its first ground weapon that `pick`
+    /// admits is changed by `edit`, or `"accepted"`.
+    fn refused_ground_weapon(
+        pick: fn(&crate::catalog::WeaponSpecDef) -> bool,
+        edit: impl Fn(&mut crate::catalog::WeaponSpecDef),
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let file: CatalogFile =
+            ron::from_str(include_str!("../../../../assets/catalog/units.ron"))?;
+        let mut unit = file
+            .units
+            .into_iter()
+            .find(|unit| unit.ground_weapon.as_ref().is_some_and(pick))
+            .ok_or("a shipped unit with such a ground weapon")?;
+        let weapon = unit
+            .ground_weapon
+            .as_mut()
+            .ok_or("invariant: the unit was chosen for its ground weapon")?;
+        edit(weapon);
+        Ok(match unit.validate() {
+            Err(SimCoreError::CatalogInvalidValue { field, .. }) => field,
+            Err(other) => format!("{other}"),
+            Ok(()) => "accepted".to_owned(),
+        })
+    }
+
+    /// V-17 (plan `2026-11-27-launch-and-spell-visibility` D-1): an instant weapon launches no
+    /// missile, so a launch visibility other than the default is refused on it; a missile
+    /// weapon's visible launch reveals for at least one tick; every value of a missile weapon's
+    /// launch visibility is otherwise accepted.
+    #[test]
+    fn a_launch_visibility_needs_a_missile_and_a_visible_one_a_tick(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let instant = |weapon: &crate::catalog::WeaponSpecDef| weapon.projectile_speed.is_none();
+        let missile = |weapon: &crate::catalog::WeaponSpecDef| weapon.projectile_speed.is_some();
+        for visibility in [
+            AttackVisibility::Hidden,
+            AttackVisibility::Visible { reveal_ticks: 54 },
+        ] {
+            let field = refused_ground_weapon(instant, |weapon| {
+                weapon.launch_visibility = visibility;
+            })?;
+            assert!(
+                field.ends_with(".launch_visibility"),
+                "{visibility:?}: {field}"
+            );
+            let field = refused_ground_weapon(missile, |weapon| {
+                weapon.launch_visibility = visibility;
+            })?;
+            assert_eq!(field, "accepted", "{visibility:?} on a missile weapon");
+        }
+        let field = refused_ground_weapon(missile, |weapon| {
+            weapon.launch_visibility = AttackVisibility::Visible { reveal_ticks: 0 };
+        })?;
+        assert!(field.ends_with(".launch_visibility"), "{field}");
+        let field = refused_ground_weapon(instant, |weapon| {
+            weapon.launch_visibility = AttackVisibility::Snapshot;
+        })?;
+        assert_eq!(
+            field, "accepted",
+            "the default is accepted on an instant weapon"
+        );
         Ok(())
     }
 }

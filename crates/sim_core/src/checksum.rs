@@ -128,7 +128,11 @@ use std::collections::BTreeMap;
 /// unit's turret tracks, the world's `tracked_targets` table (its length, then each unit and
 /// enemy id in unit id order), after the route groups (plan `2026-11-26-turret-tracking-weapon`
 /// D-8, Amendment 1). The number is the next free at merge.
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 49;
+/// Schema 53 adds each weapon's launch visibility (0 snapshot, 1 visible with its reveal ticks, 2
+/// hidden), `WeaponSpec::launch_visibility`, after `missile_validation` (plan
+/// `2026-11-27-launch-and-spell-visibility` D-5). The number is the next free at merge: 50 is
+/// the follow-order plan's, 51 and 52 the Gated movement plan's.
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 53;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.
