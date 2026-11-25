@@ -713,20 +713,15 @@ fn the_air_mover_weapon_lands_both_strikes_after_its_flight() -> TestResult {
     let phoenix = air_mover_unit(&world)?;
     for (seed, (edge, expected)) in (0x500_u64..).zip([(0.5, 2), (3.0, 8), (5.0, 10)]) {
         let mut bench = shipped_duel(seed, &phoenix, &phoenix, scalar(10.0), scalar(edge), |_| {})?;
-        let mut revealed = Vec::new();
         let flight = bench.fly(|_| Ok(()))?;
         let first = flight.states.first().ok_or("the missile flew a tick")?;
         assert_eq!(first.strikes, 2, "one missile carries both strikes");
         assert!(first.mover.is_some(), "it flies a mover");
         assert_eq!(flight.ticks(), Some(expected), "edge {edge}");
-        revealed.push(
-            bench
-                .world
-                .entities
-                .get(&bench.shooter)
-                .is_some_and(|e| e.is_attack_revealed_to(PlayerId(1))),
+        assert!(
+            bench.world.entities[&bench.shooter].is_attack_revealed_to(PlayerId(1)),
+            "edge {edge}: the impact reveals the attacker"
         );
-        assert_eq!(revealed, vec![true], "the impact reveals the attacker");
     }
     // The reveal starts on the landing tick: stepped tick by tick, not before.
     let mut bench = shipped_duel(0x510, &phoenix, &phoenix, scalar(10.0), scalar(5.0), |_| {})?;

@@ -1965,7 +1965,8 @@
             abilities: [],
             // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
             effects: (
-                weapons: [(weapon: Ground, impact: Some("impaler_strike"))],
+                // The tentacle reaches out over its flight, then strikes (plan 2026-11-27-weapon-delivery D-8).
+                weapons: [(weapon: Ground, travel: Some("impaler_tentacle"), impact: Some("impaler_strike"))],
             ),
             veo_prompts: {},
         ),

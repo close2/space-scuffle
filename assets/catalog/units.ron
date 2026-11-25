@@ -701,7 +701,9 @@
             ),
             // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
             effects: (
-                weapons: [(weapon: Air, travel: Some("prism_beam"), impact: Some("beam_burn"))],
+                // The Ion Cannons' two missiles fly as the Enclave's energy bolt (plan
+                // 2026-11-27-weapon-delivery D-8); a sustained beam look rides only an instant beam.
+                weapons: [(weapon: Air, travel: Some("plasma_bolt"), impact: Some("beam_burn"))],
             ),
             veo_prompts: {
                 Idle: "Roswell Flying Saucer: Spinning metallic disc with rotating perimeter lights and ventral purple anti-grav glow.",
