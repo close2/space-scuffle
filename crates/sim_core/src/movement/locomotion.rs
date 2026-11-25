@@ -262,7 +262,7 @@ impl MotionProposal {
                     *target = destination;
                 }
                 // A walk to a lost target's last seen point keeps the reachable point it found.
-                Some(UnitOrder::AttackTarget { target, .. }) => {
+                Some(UnitOrder::AttackTarget { target, .. } | UnitOrder::Follow { target, .. }) => {
                     if let Some(seen) = actor.movement.last_seen.as_mut() {
                         if seen.target == *target {
                             seen.point = destination;
@@ -1191,9 +1191,14 @@ impl SimWorld {
                     None => return Ok(ControlFlow::Break(MotionAction::Pursue(target, origin))),
                 }
             }
-            // A follow walks by its own rules (plan `2026-11-26-follow-order` D-3).
+            // A follow walks by its own rules (plan `2026-11-26-follow-order` D-3), unless its
+            // enemy target is lost to fog: then it walks, as a move, to where the target was
+            // last seen, and ends there (D-5).
             Some(&UnitOrder::Follow { target, .. }) => {
-                return Ok(ControlFlow::Break(MotionAction::Follow(target)));
+                match self.follow_lost_goal(entry, actor, target) {
+                    Some(goal) => goal,
+                    None => return Ok(ControlFlow::Break(MotionAction::Follow(target))),
+                }
             }
             Some(&UnitOrder::CastAbility {
                 ability_index,

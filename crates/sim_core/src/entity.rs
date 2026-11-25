@@ -308,12 +308,14 @@ pub struct MovementMemory {
     /// nobody else reads it. Written only by the solver pipeline; `None` under the legacy
     /// pipeline and while the unit's own bearing point is free.
     pub slot: Option<SlotClaim>,
-    /// Where this unit's player last saw the target of the unit's attack order, and whether the
-    /// player has lost it since (plan `2026-11-24-weapon-validation` Amendment 2, B-195; Q0106
-    /// part 1 (a)). Written by target acquisition, for a player's attack order only, from the
-    /// first tick the player sees the target under the order; read by movement, which walks a
-    /// unit whose target is lost to the point instead of chasing it. `None` while the order's
-    /// target has not been seen under it, and under any other order.
+    /// Where this unit's player last saw the target of the unit's attack order, or of its follow
+    /// of another player's unit, and whether the player has lost it since (plan
+    /// `2026-11-24-weapon-validation` Amendment 2, B-195; Q0106 part 1 (a); plan
+    /// `2026-11-26-follow-order` D-5). Written by target acquisition, for a player's attack order
+    /// or such a follow only, from the first tick the player sees the target under the order;
+    /// read by movement, which walks a unit whose target is lost to the point instead of chasing
+    /// or following it. `None` while the order's target has not been seen under it, and under
+    /// any other order.
     pub last_seen: Option<LastSeen>,
     /// Where the target of this unit's follow stood, at the start of the tick, when the unit came
     /// to rest on it, world units (plan `2026-11-26-follow-order` D-4). The follower walks again

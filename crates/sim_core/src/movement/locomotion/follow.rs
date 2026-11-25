@@ -81,6 +81,32 @@ impl SimWorld {
         within_distance(at, anchor, i128::from(slop.raw())).then_some(FollowRest { target, anchor })
     }
 
+    /// Where a follower walks instead of following `target`, another player's unit its player has
+    /// lost to fog (D-5, the B-195 rule of an attack order): the last-seen point, clamped into the
+    /// follower's domain. The walk is a move's: it ends there ([`MotionProposal::finish`]).
+    /// `None` while the target is seen, never seen under the order, gone, or one's own.
+    pub(super) fn follow_lost_goal(
+        &self,
+        entry: MotionEntry,
+        actor: &Entity,
+        target: EntityId,
+    ) -> Option<SimVec2> {
+        let point = actor.movement.lost_target_point(target)?;
+        self.followable(target)?;
+        Some(clamp_into_domain(entry.policy, &self.map, point))
+    }
+
+    /// Whether `actor` follows another player's `target` that its player neither shows now nor
+    /// saw under the order (D-5): such a follow ends at once.
+    fn never_seen(&self, actor: &Entity, target: &Entity) -> bool {
+        target.owner != actor.owner
+            && actor
+                .movement
+                .last_seen
+                .is_none_or(|seen| seen.target != target.id)
+            && !Self::shown_to(&self.map, &self.vision_maps, actor.owner, target)
+    }
+
     /// `target` when it can be followed: alive and neither carried nor housed (D-5).
     fn followable(&self, target: EntityId) -> Option<&Entity> {
         self.entities
@@ -139,6 +165,9 @@ impl SimWorld {
             return Ok(FollowStep::End);
         };
         let actor = self.follower(entry.id)?;
+        if self.never_seen(actor, followed) {
+            return Ok(FollowStep::End);
+        }
         let (target_at, _) = self.pursued_motion(target, followed);
         let target_radius = MotionPolicy::resolve(&self.catalog, &self.map, followed)?.radius;
         let (position, anchor) = (actor.position, actor.movement.follow_rest);

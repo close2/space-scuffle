@@ -395,7 +395,7 @@ fn a_follow_refuses_a_foreign_dead_or_carried_recipient_and_an_empty_selection()
 fn the_target_and_immobile_members_are_skipped_and_the_receipt_counts_the_takers() -> TestResult {
     let mut f = fixture()?;
     let target = f.spawn(f.kinds.soldier, ME, at(20, 20))?;
-    let enemy = f.spawn(f.kinds.soldier, THEM, at(40, 40))?;
+    let enemy = f.spawn(f.kinds.scanner, THEM, at(16, 14))?;
     let a = f.spawn(f.kinds.soldier, ME, at(10, 10))?;
     let b = f.spawn(f.kinds.scanner, ME, at(12, 10))?;
     let anchored = f.spawn(f.kinds.soldier, ME, at(14, 10))?;
@@ -771,5 +771,230 @@ fn resting_followers_yield_to_their_target_walking_back_through_them() -> TestRe
     );
     let arrived = f.world.entities[&target].position;
     assert_ne!(arrived, start);
+    Ok(())
+}
+
+/// The scene of P-7: a friend to follow at the far end of open ground, and an enemy of the
+/// soldier's kind holding position beside the follower's way, nearer than the follower's scan
+/// range but out of the enemy's own weapon reach, with one hit point. Returns the follower,
+/// the friend and the enemy.
+fn passing_scene(f: &mut Fixture, kind: FollowKind) -> Result<[EntityId; 3], Box<dyn Error>> {
+    let arch = f.world.catalog.get(f.kinds.soldier)?;
+    let weapon = arch
+        .weapon
+        .as_ref()
+        .or(arch.ground_weapon.as_ref())
+        .ok_or("armed")?;
+    let reach = weapon.max_range + arch.collision_radius + arch.collision_radius;
+    let scan = arch.scan_range + arch.collision_radius + arch.collision_radius;
+    // Whole cells past the reach plus one: the raw value rounded up to the next whole unit.
+    let offset = i32::try_from(((reach + SimScalar::ONE).raw() >> 32) + 1)?;
+    if SimScalar::from_num(offset) + SimScalar::ONE > scan {
+        return Err("the soldier's scan range does not exceed its reach by two".into());
+    }
+    let friend = f.spawn(f.kinds.soldier, ME, at(40, 10))?;
+    let follower = f.spawn(f.kinds.soldier, ME, at(6, 10))?;
+    let enemy = f.spawn(f.kinds.soldier, THEM, at(20, 10 + offset))?;
+    f.command(THEM, vec![enemy], UnitOrder::HoldPosition, false);
+    if let Some(entity) = f.world.entities.get_mut(&enemy) {
+        entity.hp = SimScalar::ONE;
+    }
+    f.follow(vec![follower], friend, kind, false);
+    Ok([follower, friend, enemy])
+}
+
+/// P-7 (D-6; S7 "the attack command will stick"): a Scan Move on a unit acquires an enemy in scan
+/// range, fights it, and once it is dead follows again and rests by its target.
+#[test]
+fn a_scan_move_follower_fights_on_the_way_and_follows_again() -> TestResult {
+    let mut f = fixture()?;
+    let [follower, friend, enemy] = passing_scene(&mut f, FollowKind::AcquireMove)?;
+    let mut fought = false;
+    for _ in 0..800 {
+        f.idle(1);
+        fought |= matches!(
+            f.front(follower),
+            Some(UnitOrder::AttackTarget { target, .. }) if target == enemy
+        );
+        if fought && !f.world.entities.contains_key(&enemy) && f.rests(follower) {
+            assert_eq!(
+                f.front(follower),
+                Some(follow_of(friend, FollowKind::AcquireMove))
+            );
+            assert!(f.gap(follower, friend) <= TOUCH_MARGIN_RAW);
+            return Ok(());
+        }
+    }
+    Err(format!("fought {fought}; the follower never rested by its friend after the fight").into())
+}
+
+/// P-7 (D-6): a plain follow acquires nothing: in the same scene the follower walks past the
+/// enemy, its order the follow on every tick, and the enemy lives.
+#[test]
+fn a_plain_follower_acquires_nothing() -> TestResult {
+    let mut f = fixture()?;
+    let [follower, friend, enemy] = passing_scene(&mut f, FollowKind::Move)?;
+    for tick in 0..800 {
+        f.idle(1);
+        assert_eq!(
+            f.front(follower),
+            Some(follow_of(friend, FollowKind::Move)),
+            "tick {tick}"
+        );
+        if f.rests(follower) {
+            assert!(f.world.entities.contains_key(&enemy), "the enemy lives");
+            return Ok(());
+        }
+    }
+    Err("the follower never rested by its friend".into())
+}
+
+/// P-7 (D-5, the B-195 rule): a follow of an enemy lost to fog walks to where the enemy was last
+/// seen and ends there; a follow of an enemy never seen under the order ends at once.
+#[test]
+fn a_follow_of_an_enemy_lost_to_fog_ends_at_its_last_seen_point() -> TestResult {
+    let mut f = fixture()?;
+    let follower = f.spawn(f.kinds.soldier, ME, at(6, 10))?;
+    let enemy = f.spawn(f.kinds.scanner, THEM, at(12, 10))?;
+    f.follow(vec![follower], enemy, FollowKind::Move, false);
+    f.idle(5);
+    let seen = f.world.entities[&follower]
+        .movement
+        .last_seen
+        .ok_or("the enemy is seen under the follow")?;
+    assert_eq!(seen.target, enemy);
+    let last = f.world.entities[&enemy].position;
+    f.teleport(enemy, at(44, 44));
+    f.idle_until(400, |f| f.front(follower).is_none())
+        .ok_or("the follow never ended")?;
+    let reached = checked_distance(f.world.entities[&follower].position, last)
+        .map_or(i128::MAX, |d| i128::from(d.raw()));
+    assert!(
+        reached <= 3_i128 << 32,
+        "it walked to the last-seen point ({reached})"
+    );
+
+    let unseen = f.spawn(f.kinds.scanner, THEM, at(44, 4))?;
+    let second = f.spawn(f.kinds.soldier, ME, at(4, 44))?;
+    f.follow(vec![second], unseen, FollowKind::Move, false);
+    assert_eq!(
+        f.outcome(),
+        Ok(MovementReceipt { recipient_count: 1 }),
+        "visibility is not checked at admission"
+    );
+    f.idle(1);
+    assert_eq!(
+        f.front(second),
+        None,
+        "a follow of an enemy never seen ends"
+    );
+    Ok(())
+}
+
+/// A completed producer of `ME` that trains a mobile ground product without the harvest
+/// capability or prerequisites, a town hall of its faction for supply, and that product.
+fn barracks(f: &mut Fixture) -> Result<(EntityId, UnitTypeId), Box<dyn Error>> {
+    let found = f.world.catalog.archetypes().find_map(|producer| {
+        if !matches!(producer.shape, ShapeKind::BuildingDome { .. })
+            || producer.capabilities.auto_rally.is_some()
+        {
+            return None;
+        }
+        producer.trains_units.iter().find_map(|slug| {
+            let product = f.world.catalog.get_by_slug(slug)?;
+            (product.mover_type == MoverType::Ground
+                && !product.is_immobile_by_default()
+                && product.capabilities.harvester.is_none()
+                && product.requires_structures.is_empty())
+            .then_some((
+                producer.unit_type_id,
+                producer.faction,
+                product.unit_type_id,
+            ))
+        })
+    });
+    let (producer, faction, product) = found.ok_or("no producer of a ground soldier")?;
+    let hall = find(&f.world, |a| {
+        a.faction == faction && a.capabilities.auto_rally.is_some()
+    })
+    .ok_or("no town hall")?;
+    f.world.spawn_structure(hall, ME, 2, 2)?;
+    let barracks = f.world.spawn_structure(producer, ME, 2, 36)?;
+    let bank = &mut f.world.player_resources[sim_types::PlayerSlot::ALL[0]];
+    bank.minerals = 100_000;
+    bank.gas = 100_000;
+    Ok((barracks, product))
+}
+
+/// P-10: the follow through player commands alone. Three soldiers and a carrier follow a walking
+/// soldier, an unarmed unit Scan-Moves on it, a structure rallies to it and trains a unit; the
+/// soldier walks a route and stops, and all of them rest round it; when enemies kill it, every
+/// follower's orders are empty.
+#[test]
+fn the_follow_works_through_player_commands_alone() -> TestResult {
+    let mut f = fixture()?;
+    let (producer, product) = barracks(&mut f)?;
+    let leader = f.spawn(f.kinds.soldier, ME, at(12, 20))?;
+    let mut followers = Vec::new();
+    for (x, y) in [(6, 18), (6, 20), (6, 22)] {
+        followers.push(f.spawn(f.kinds.soldier, ME, at(x, y))?);
+    }
+    let carrier = f.spawn(f.kinds.carrier, ME, at(4, 20))?;
+    let scanner = f.spawn(f.kinds.scanner, ME, at(4, 24))?;
+    let mut enemies = Vec::new();
+    for x in 40..46 {
+        enemies.push(f.spawn(f.kinds.soldier, THEM, at(x, 44))?);
+    }
+    f.command(THEM, enemies.clone(), UnitOrder::HoldPosition, false);
+    let mut walkers = followers.clone();
+    walkers.push(carrier);
+    f.follow(walkers, leader, FollowKind::Move, false);
+    f.follow(vec![scanner], leader, FollowKind::AcquireMove, false);
+    f.command(
+        ME,
+        vec![producer],
+        UnitOrder::SetRally {
+            target: sim_types::RallyTarget::Unit(leader),
+            slot: None,
+        },
+        false,
+    );
+    f.command(
+        ME,
+        vec![producer],
+        UnitOrder::Produce { unit_type: product },
+        false,
+    );
+    f.walk(leader, at(24, 20), false);
+    f.walk(leader, at(24, 30), true);
+    let next = f.world.next_entity_id;
+    let child = EntityId(next);
+    f.idle_until(1_000, |f| f.world.entities.contains_key(&child))
+        .ok_or("the unit was never trained")?;
+    assert_eq!(f.front(child), Some(follow_of(leader, FollowKind::Move)));
+    followers.extend([carrier, scanner, child]);
+    let all = |f: &Fixture| followers.iter().all(|&id| f.rests(id));
+    f.idle_until(1_500, |f| {
+        f.world.entities[&leader].order_queue.is_empty() && all(f)
+    })
+    .ok_or("not every follower rested round the leader")?;
+    let reached = touching_graph(&f, leader, &followers);
+    assert_eq!(reached.len(), followers.len() + 1, "they rest round it");
+
+    f.command(THEM, enemies, UnitOrder::attack(leader), false);
+    f.idle_until(1_500, |f| !f.world.entities.contains_key(&leader))
+        .ok_or("the enemies never killed the leader")?;
+    // The follows end in the movement phase after the leader's death; a tick later an idle
+    // follower may acquire an enemy by itself.
+    f.idle(1);
+    for id in followers {
+        if let Some(entity) = f.world.entities.get(&id) {
+            assert!(
+                entity.order_queue.is_empty(),
+                "{id:?}: {:?}",
+                entity.order_queue
+            );
+        }
+    }
     Ok(())
 }
