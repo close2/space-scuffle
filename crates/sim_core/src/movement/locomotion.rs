@@ -868,9 +868,18 @@ impl SimWorld {
                 .filter(|e| e.takes_part_in_movement())
                 .map(|e| e.id),
         );
-        self.movement.largest_radius = [SimScalar::ZERO; super::BODY_CLASSES];
-        for layer in &mut self.movement.obstacles {
-            layer.clear();
+        // One steering list, grid and largest radius per collision class of the catalog (plan
+        // `2026-11-25-collision-classes` D-3); the catalog is fixed for a world, so the tables
+        // are sized once and only cleared afterwards.
+        let classes = self.catalog.collision_class_count();
+        self.movement.obstacles.resize_with(classes, Vec::new);
+        self.movement.grids.resize_with(classes, Default::default);
+        self.movement.largest_radius.clear();
+        self.movement
+            .largest_radius
+            .resize(classes, SimScalar::ZERO);
+        for class in &mut self.movement.obstacles {
+            class.clear();
         }
         // `ids` follow the entity table's order, so the record is sorted by id.
         self.movement.tick_start.clear();
@@ -893,7 +902,7 @@ impl SimWorld {
                         .filter(|a| !entry.foundation && !a.passes_through_units())
                     {
                         let obstacle = self.obstacle_of(entry, actor);
-                        let class = entry.policy.body_class();
+                        let class = entry.policy.class.index();
                         self.movement.obstacles[class].push(obstacle);
                         self.movement.largest_radius[class] =
                             self.movement.largest_radius[class].max(entry.policy.radius);
@@ -905,7 +914,7 @@ impl SimWorld {
         }
         self.movement.phase_ids = ids;
         let (width, height) = (self.map.width(), self.map.height());
-        for class in 0..super::BODY_CLASSES {
+        for class in 0..classes {
             let positions = self.movement.obstacles[class].iter().map(|o| o.pos);
             self.movement.grids[class].rebuild(width, height, positions);
         }
@@ -1620,14 +1629,14 @@ struct MotionScene<'a> {
 }
 
 impl MotionScene<'_> {
-    /// Collects the tick-start bodies near `position` of `entry`'s body class into `out`.
+    /// Collects the tick-start bodies near `position` of `entry`'s collision class into `out`.
     fn gather_neighbours(
         &self,
         entry: MotionEntry,
         position: SimVec2,
         out: &mut Vec<SteeringObstacle>,
     ) {
-        let class = entry.policy.body_class();
+        let class = entry.policy.class.index();
         gather_neighbours(
             &NeighbourIndex {
                 grid: &self.movement.grids[class],
@@ -3052,7 +3061,7 @@ mod tests {
             layer: MovementLayer::Ground,
             radius: SimScalar::from_num(0.5),
             terrain: SimScalar::from_num(0.3125),
-            burrowed: false,
+            class: sim_types::CollisionClass::GROUND,
         };
         assert_eq!(
             clamp_into_domain(policy, &map, v(-3.0, 0.1)),
@@ -3186,7 +3195,7 @@ mod tests {
                 layer: MovementLayer::Ground,
                 radius,
                 terrain: radius,
-                burrowed: false,
+                class: sim_types::CollisionClass::GROUND,
             },
             speed: SimScalar::from_num(0.126),
             body: ContactBody {

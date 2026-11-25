@@ -21,7 +21,7 @@
 use super::ProductionInvariant;
 use crate::SimWorld;
 use sim_map::CliffLevel;
-use sim_types::{EntityId, ShapeKind, SimScalar, SimVec2, UnitTypeId};
+use sim_types::{CollisionClass, EntityId, ShapeKind, SimScalar, SimVec2, UnitTypeId};
 
 impl SimWorld {
     /// Rebuilds the exit occupancy from the live units that are not hidden (carried, or inside a
@@ -225,8 +225,15 @@ impl SimWorld {
                 })?;
         let radius = target.collision_radius;
         let terrain_radius = target.terrain_radius;
-        let airborne = crate::movement::MovementLayer::from_mover(target.mover_type)
-            == crate::movement::MovementLayer::Air;
+        let layer = crate::movement::MovementLayer::from_mover(target.mover_type);
+        let airborne = layer == crate::movement::MovementLayer::Air;
+        // A product is never in a mode: its class is its archetype's, else its layer's (plan
+        // `2026-11-25-collision-classes` D-6).
+        let class = target.collision_class.unwrap_or(if airborne {
+            CollisionClass::AIR
+        } else {
+            CollisionClass::GROUND
+        });
         if radius <= SimScalar::ZERO {
             return Err(ProductionInvariant::InvalidDefinition {
                 unit_type: product,
@@ -283,14 +290,15 @@ impl SimWorld {
             radius,
             terrain_radius,
             airborne,
+            class,
         }))
     }
 
     /// The centre of exit cell `(x, y)` when the product may emerge there, otherwise `None`.
     ///
     /// A free cell lies on the map with the product's terrain disc, connects to the producer's
-    /// boundary on the ground at that disc, and overlaps no unit of the product's own layer at
-    /// the product's collision radius (structures are not in the occupancy; their footprints
+    /// boundary on the ground at that disc, and overlaps no unit of a class the product's
+    /// touches at the product's collision radius (structures are not in the occupancy; their footprints
     /// are the egress checks').
     fn free_exit_point(
         &mut self,
@@ -342,8 +350,9 @@ impl SimWorld {
         Some(point)
     }
 
-    /// `Some(point)` when no unit of the product's own layer overlaps the product at `point` at
-    /// the sum of their collision radii.
+    /// `Some(point)` when no unit whose collision class the product's touches (a burrowed body
+    /// or one of another authored class does not; plan `2026-11-25-collision-classes` D-6)
+    /// overlaps the product at `point` at the sum of their collision radii.
     fn exit_point_clear(
         &mut self,
         ring: &ExitRing,
@@ -365,9 +374,10 @@ impl SimWorld {
                     unit_type: other.unit_type_id,
                 }
             })?;
-            if (crate::movement::MovementLayer::from_mover(arch.mover_type)
-                == crate::movement::MovementLayer::Air)
-                != ring.airborne
+            let layer = crate::movement::MovementLayer::from_mover(arch.mover_type);
+            if !ring
+                .class
+                .touches(crate::movement::collision_class_of(other, arch, layer))
             {
                 continue;
             }
@@ -412,8 +422,11 @@ struct ExitRing {
     /// The product's terrain radius in world units: its disc against terrain, structures and
     /// the map edge (plan `2026-11-18-inner-radius` T7).
     terrain_radius: SimScalar,
-    /// Whether the product flies, so ground connectivity does not apply and only air bodies block.
+    /// Whether the product flies, so ground connectivity does not apply.
     airborne: bool,
+    /// The product's collision class: only occupants whose class it touches block an exit
+    /// (plan `2026-11-25-collision-classes` D-6, B-212).
+    class: CollisionClass,
 }
 
 /// Which test a ring's cells take (plan `2026-11-23-production-queue` D-9).
@@ -575,6 +588,138 @@ mod tests {
             Some(point(left + 0.5, bottom - 0.5)),
             "the body within the collision radii moves the exit along the ring"
         );
+        Ok(())
+    }
+
+    /// A burrowed stance that changes nothing else, for A-10.
+    fn burrowed_mode() -> sim_types::UnitModeSpec {
+        use sim_types::SimScalar;
+        sim_types::UnitModeSpec {
+            mode_name: "exit_class_test_burrowed".into(),
+            cast_ticks: 0,
+            leave_cast_ticks: 0,
+            cast_random_delay_max_ticks: SimScalar::ZERO,
+            leave_random_delay_max_ticks: SimScalar::ZERO,
+            is_immobile: true,
+            unpushable: true,
+            is_cloaked: false,
+            burrowed: true,
+            collision_class: None,
+            mover_type_override: None,
+            sight_radius_override: None,
+            ground_weapon_override: None,
+            air_weapon_override: None,
+            energy_cost_per_second: SimScalar::ZERO,
+            orders: sim_types::StanceOrders::ALL,
+        }
+    }
+
+    /// A-10 (plan `2026-11-25-collision-classes` D-6, B-212): an exit cell is blocked only by an
+    /// occupant whose collision class the product's touches. A ground product exits onto a
+    /// burrowed body or a body of an authored class `x`, and not onto a ground body; an `x`
+    /// product exits onto a ground or burrowed body and not onto an `x` body; an air product
+    /// ignores them all.
+    #[test]
+    fn an_exit_cell_is_blocked_only_by_the_products_collision_class(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use crate::SimWorld;
+        use sim_types::{MoverType, PlayerId, SimScalar, SimVec2, UnitTypeId};
+        let map = sim_map::GameMap::new(
+            32,
+            32,
+            sim_map::MapCell::default_ground(sim_map::CliffLevel(0)),
+        )?;
+        let mut world = crate::test_support::world(map, 3);
+        let x = world.catalog.author_collision_class_for_test("x");
+        let dome = |shape: &ShapeKind| matches!(shape, ShapeKind::BuildingDome { .. });
+        let producer_type = world
+            .catalog
+            .archetypes()
+            .find(|a| dome(&a.shape))
+            .map(|a| a.unit_type_id)
+            .ok_or("catalog has no structure")?;
+        let mobile = |mover: MoverType| {
+            world
+                .catalog
+                .archetypes()
+                .find(|a| !dome(&a.shape) && a.mover_type == mover && a.max_speed > SimScalar::ZERO)
+                .cloned()
+                .ok_or("a mobile unit of the layer")
+        };
+        let (ground_base, air_base) = (mobile(MoverType::Ground)?, mobile(MoverType::Air)?);
+        let free = |world: &SimWorld, after: u16| {
+            (after..=u16::MAX)
+                .map(UnitTypeId)
+                .find(|id| world.catalog.get(*id).is_err())
+                .ok_or("a free unit type id")
+        };
+        let mut register = |base: &crate::UnitArchetype,
+                            class: Option<sim_types::CollisionClass>,
+                            burrowed: bool|
+         -> Result<UnitTypeId, Box<dyn std::error::Error>> {
+            let mut arch = base.clone();
+            arch.unit_type_id = free(&world, 200)?;
+            arch.slug = format!("exit_class_test_{}", arch.unit_type_id.0);
+            arch.collision_radius = SimScalar::HALF;
+            arch.terrain_radius = SimScalar::HALF;
+            arch.collision_class = class;
+            arch.modes.clear();
+            if burrowed {
+                arch.modes.push(burrowed_mode());
+            }
+            let id = arch.unit_type_id;
+            world.catalog.register(arch);
+            Ok(id)
+        };
+        let ground = register(&ground_base, None, false)?;
+        let burrower = register(&ground_base, None, true)?;
+        let tall = register(&ground_base, Some(x), false)?;
+        let air = register(&air_base, None, false)?;
+        let producer = world.spawn_structure(producer_type, PlayerId(0), 10, 10)?;
+        let (left, bottom) = world.map.structures()[&producer].top_left;
+        let first = SimVec2::new(
+            SimScalar::from_num(f64::from(left) - 0.5),
+            SimScalar::from_num(f64::from(bottom) - 0.5),
+        );
+        world.rebuild_production_occupancy()?;
+        for product in [ground, tall, air] {
+            assert_eq!(
+                world.production_exit(producer, product)?,
+                Some(first),
+                "open ring"
+            );
+        }
+        // One occupant on the first exit cell at a time.
+        let cases = [
+            (burrower, true, [true, true, true]),
+            (tall, false, [true, false, true]),
+            (ground, false, [false, true, true]),
+        ];
+        for (occupant_type, burrowed, open) in cases {
+            let occupant = world.spawn_unit(occupant_type, PlayerId(1), first)?;
+            if burrowed {
+                world
+                    .entities
+                    .get_mut(&occupant)
+                    .ok_or("occupant")?
+                    .active_mode = Some("exit_class_test_burrowed".into());
+            }
+            world.rebuild_production_occupancy()?;
+            for (product, expect_first) in [ground, tall, air].into_iter().zip(open) {
+                let exit = world.production_exit(producer, product)?;
+                assert_eq!(
+                    exit == Some(first),
+                    expect_first,
+                    "occupant {occupant_type:?} (burrowed {burrowed}), product {product:?}: {exit:?}"
+                );
+            }
+            // Out of the way of the next case, in the map's far corner.
+            world
+                .entities
+                .get_mut(&occupant)
+                .ok_or("occupant")?
+                .position = SimVec2::new(SimScalar::from_num(30), SimScalar::from_num(30));
+        }
         Ok(())
     }
 

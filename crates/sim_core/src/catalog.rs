@@ -20,19 +20,21 @@
 
 use crate::error::{SimCoreError, SimResult};
 use crate::upgrades::{UpgradeCatalog, ATTACK_DASH_ABILITY_SLUG, OVERCLOCK_ABILITY_SLUG};
+use collision_classes::CollisionClassTable;
 use serde::{Deserialize, Serialize};
 use sim_map::MAX_SIGHT_RADIUS_CELLS;
 use sim_types::{
     default_projectile_lifetime_ticks, AbilitySpec, AllowedMovement, AnimState,
     ArchetypeCapabilities, ArmorClassId, AttackCommand, AttackDashSpec, AttackVisibility,
-    Attribute, AttributeBonuses, AttributeFlags, AutoRallySpec, BarrierSpec, FactionId,
-    FootprintShape, HarvesterSpec, MissileValidation, MoverType, OverclockSpec, PlacementFlag,
-    PlacementFlags, ProjectileTargetLossBehavior, ResourceKind, ResourceKindSet, ShapeKind,
-    SilhouetteClass, SimAngle, SimScalar, SplashCliff, SplashImpact, SplashLine, SplashLineAxis,
-    SplashLineOrigin, SplashShape, StanceOrders, StructureStrike, TurretIdle, UnitModeSpec,
-    UnitTypeId, UpgradeEffect, WeaponVisualKind,
+    Attribute, AttributeBonuses, AttributeFlags, AutoRallySpec, BarrierSpec, CollisionClass,
+    FactionId, FootprintShape, HarvesterSpec, MissileValidation, MoverType, OverclockSpec,
+    PlacementFlag, PlacementFlags, ProjectileTargetLossBehavior, ResourceKind, ResourceKindSet,
+    ShapeKind, SilhouetteClass, SimAngle, SimScalar, SplashCliff, SplashImpact, SplashLine,
+    SplashLineAxis, SplashLineOrigin, SplashShape, StanceOrders, StructureStrike, TurretIdle,
+    UnitModeSpec, UnitTypeId, UpgradeEffect, WeaponVisualKind,
 };
 pub use sim_types::{SplashSpec, SplashZone, WeaponSpec};
+mod collision_classes;
 mod effects;
 mod factions;
 mod movement_rules;
@@ -297,6 +299,15 @@ pub struct UnitArchetype {
     /// for a structure. Catalog data, not hashed.
     #[serde(default)]
     pub default_stance_orders: Option<StanceOrders>,
+    /// The collision class of the archetype's default stance when authored (`collision_class:
+    /// Some("…")` in `units.ron`, resolved to its index at load; plan
+    /// `2026-11-25-collision-classes` D-2): `StarCraft` II's `Collide` set of a unit that touches
+    /// only its own kind, such as the Colossus (`Colossus`, `Structure`, `Flying`; `liberty`
+    /// UnitData:4066–4068). `None` leaves the class to the movement layer. A mode's own
+    /// [`UnitModeSpec::collision_class`] and a burrowed mode come first; the resolution is
+    /// `crate::movement`'s. Always `None` for a structure. Catalog data, not hashed.
+    #[serde(default)]
+    pub collision_class: Option<CollisionClass>,
 }
 
 impl UnitArchetype {
@@ -524,6 +535,8 @@ pub struct UnitCatalog {
     spells: Arc<SpellCatalog>,
     /// `units.ron`'s `attack_snapshot_cap_ticks`; see [`Self::attack_snapshot_cap`].
     attack_snapshot_cap: Option<NonZeroU32>,
+    /// The authored collision class names, sorted; see [`Self::collision_classes`].
+    collision_classes: Vec<String>,
 }
 
 impl UnitCatalog {
@@ -540,6 +553,7 @@ impl UnitCatalog {
         let catalog_file: CatalogFile = ron::from_str(ron_data)
             .map_err(|e| SimCoreError::RonDeserializationError(e.to_string()))?;
         let attack_snapshot_cap = attack_snapshot_cap(catalog_file.attack_snapshot_cap_ticks)?;
+        let classes = CollisionClassTable::from_units(&catalog_file.units)?;
 
         let mut catalog = Self {
             archetypes: vec![None; 128],
@@ -549,13 +563,48 @@ impl UnitCatalog {
             placement_rules: PlacementRules::NONE,
             spells: Arc::new(SpellCatalog::default()),
             attack_snapshot_cap,
+            collision_classes: Vec::new(),
         };
         catalog.register_authored_batch(catalog_file.units.into_iter().map(|def| {
             def.validate()?;
-            def.into_archetype(factions)
+            def.into_archetype(factions, &classes)
         }))?;
+        catalog.collision_classes = classes.into_names();
         catalog.slug_index();
         Ok(catalog)
+    }
+
+    /// The names of the collision classes `units.ron` authors, sorted (plan
+    /// `2026-11-25-collision-classes` D-1): the name at position `i` is class
+    /// `CollisionClass(CollisionClass::BUILT_IN + i)`. Empty when no unit authors one.
+    #[must_use]
+    pub fn collision_classes(&self) -> &[String] {
+        &self.collision_classes
+    }
+
+    /// The number of collision classes a body of this catalog can have: the three built-in
+    /// classes (ground, air, burrowed) and one per authored name. Every class a loaded archetype
+    /// or mode resolves to has an index below it.
+    #[must_use]
+    pub fn collision_class_count(&self) -> usize {
+        usize::from(CollisionClass::BUILT_IN) + self.collision_classes.len()
+    }
+
+    /// Adds the authored class `name` to the table as loading would (sorted by name) and returns
+    /// its class, for unit tests that author a class on an archetype they edit. Classes already
+    /// resolved on archetypes keep their indices only while `name` sorts after every held name.
+    #[cfg(test)]
+    pub(crate) fn author_collision_class_for_test(&mut self, name: &str) -> CollisionClass {
+        let position = match self
+            .collision_classes
+            .binary_search_by(|held| held.as_str().cmp(name))
+        {
+            Ok(position) | Err(position) => position,
+        };
+        if self.collision_classes.get(position).map(String::as_str) != Some(name) {
+            self.collision_classes.insert(position, name.to_owned());
+        }
+        CollisionClass(CollisionClass::BUILT_IN + u8::try_from(position).unwrap_or(u8::MAX))
     }
 
     /// The faction, weapon-class and armor-class identities this catalog was resolved against.
@@ -1261,6 +1310,10 @@ struct UnitModeSpecDef {
     is_cloaked: bool,
     #[serde(default)]
     burrowed: bool,
+    /// The mode's collision class name (plan `2026-11-25-collision-classes` D-2); omitted keeps
+    /// the burrowed or archetype class.
+    #[serde(default)]
+    collision_class: Option<String>,
     #[serde(default)]
     mover_type_override: Option<MoverType>,
     #[serde(default)]
@@ -1280,8 +1333,14 @@ impl UnitModeSpecDef {
     fn into_mode_spec(
         self,
         factions: &FactionCatalog,
+        classes: &CollisionClassTable,
         definition: &str,
     ) -> SimResult<UnitModeSpec> {
+        let collision_class = classes.resolve_authored(
+            definition,
+            &format!("modes.{}.collision_class", self.mode_name),
+            self.collision_class.as_deref(),
+        )?;
         let resolve = |weapon: Option<Option<WeaponSpecDef>>| {
             weapon
                 .map(|w_opt| {
@@ -1305,6 +1364,7 @@ impl UnitModeSpecDef {
             unpushable: self.unpushable,
             is_cloaked: self.is_cloaked,
             burrowed: self.burrowed,
+            collision_class,
             mover_type_override: self.mover_type_override,
             sight_radius_override: self.sight_radius_override.map(SimScalar::from_f32_lossy),
             ground_weapon_override: resolve(self.ground_weapon_override)?,
@@ -1674,6 +1734,10 @@ struct UnitArchetypeDef {
     /// rule (plan `2026-11-24-attack-orders` D-1); omitted derives them.
     #[serde(default)]
     default_stance_orders: Option<StanceOrders>,
+    /// The default stance's collision class name (plan `2026-11-25-collision-classes` D-2);
+    /// omitted leaves the class to the movement layer.
+    #[serde(default)]
+    collision_class: Option<String>,
 }
 
 /// Converts authored degrees in `0..=180` to binary angle units (65 536 per turn).
@@ -1808,6 +1872,7 @@ impl UnitArchetypeDef {
     fn capabilities(
         &mut self,
         factions: &FactionCatalog,
+        classes: &CollisionClassTable,
     ) -> SimResult<(ArchetypeCapabilities, Vec<AbilitySpec>, Vec<UnitModeSpec>)> {
         let authored = std::mem::take(&mut self.capabilities);
         let overclock = authored.overclock.map(|o| OverclockSpec {
@@ -1844,7 +1909,7 @@ impl UnitArchetypeDef {
         };
         let modes = authored_modes
             .into_iter()
-            .map(|mode| mode.into_mode_spec(factions, &self.slug))
+            .map(|mode| mode.into_mode_spec(factions, classes, &self.slug))
             .collect::<SimResult<Vec<_>>>()?;
         let capabilities = ArchetypeCapabilities {
             overclock,
@@ -1865,14 +1930,23 @@ impl UnitArchetypeDef {
 
     /// Converts this definition, resolving its faction, armor class and weapon classes against
     /// `factions`.
-    fn into_archetype(mut self, factions: &FactionCatalog) -> SimResult<UnitArchetype> {
+    fn into_archetype(
+        mut self,
+        factions: &FactionCatalog,
+        classes: &CollisionClassTable,
+    ) -> SimResult<UnitArchetype> {
         let faction = factions.resolve_faction(&self.slug, &self.faction)?;
         let armor_class = self
             .armor_class
             .as_deref()
             .map(|slug| factions.resolve_armor_class(&self.slug, slug))
             .transpose()?;
-        let (capabilities, abilities, modes) = self.capabilities(factions)?;
+        let (capabilities, abilities, modes) = self.capabilities(factions, classes)?;
+        let collision_class = classes.resolve_authored(
+            &self.slug,
+            "collision_class",
+            self.collision_class.as_deref(),
+        )?;
         let convert = |weapon: Option<WeaponSpecDef>| {
             weapon
                 .map(|w| Self::convert_weapon(w, factions, &self.slug))
@@ -1958,6 +2032,7 @@ impl UnitArchetypeDef {
             effects: self.effects,
             placement_excludes: PlacementFlags::empty(),
             default_stance_orders: self.default_stance_orders,
+            collision_class,
         })
     }
 }
@@ -2275,6 +2350,7 @@ impl StructureArchetypeDef {
             // Structures always derive their default stance (plan `2026-11-24-attack-orders`
             // D-1): every shipped one follows the rule.
             default_stance_orders: None,
+            collision_class: None,
         })
     }
 }

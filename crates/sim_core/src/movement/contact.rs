@@ -272,7 +272,7 @@ mod tests {
             layer: MovementLayer::Ground,
             radius: s(radius),
             terrain: s(radius),
-            burrowed: false,
+            class: sim_types::CollisionClass::GROUND,
         }
     }
 

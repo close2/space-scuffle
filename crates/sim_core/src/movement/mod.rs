@@ -49,17 +49,9 @@ impl MovementLayer {
             MoverType::Ground | MoverType::CliffJumper | MoverType::CliffWalker => Self::Ground,
         }
     }
-
-    pub(crate) const fn index(self) -> usize {
-        match self {
-            Self::Ground => 0,
-            Self::Air => 1,
-        }
-    }
 }
 
-/// Number of body classes ([`MotionPolicy::body_class`]): ground, air and burrowed.
-pub(crate) const BODY_CLASSES: usize = 3;
+pub use sim_types::CollisionClass;
 
 /// Corruption or arithmetic that cannot be represented, distinct from player error.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -245,9 +237,14 @@ pub(crate) struct MovementWorkspace {
     pub outcomes: Vec<MovementOutcome>,
     pub route_outcomes: Vec<RouteOutcome>,
     pub path_searches: u64,
-    pub obstacles: [Vec<SteeringObstacle>; BODY_CLASSES],
-    grids: [grid::BodyGrid; BODY_CLASSES],
-    largest_radius: [SimScalar; BODY_CLASSES],
+    /// Steering obstacles, one list per collision class ([`CollisionClass::index`]); sized to
+    /// the catalog's [`UnitCatalog::collision_class_count`] at the first movement phase and kept,
+    /// so steady state allocates nothing.
+    pub obstacles: Vec<Vec<SteeringObstacle>>,
+    /// One body grid per collision class, sized as [`Self::obstacles`].
+    grids: Vec<grid::BodyGrid>,
+    /// The largest collision radius per collision class this tick, sized as [`Self::obstacles`].
+    largest_radius: Vec<SimScalar>,
     neighbours: Vec<SteeringObstacle>,
     recipients: Vec<EntityId>,
     entries: Vec<locomotion::MotionEntry>,
@@ -256,6 +253,8 @@ pub(crate) struct MovementWorkspace {
     bodies: Vec<collision::CollisionBody>,
     pushes: Vec<collision::BodyPush>,
     collision_grid: grid::BodyGrid,
+    /// The legacy collision pass's largest radius per collision class ([`largest_by_class`]).
+    class_largest: Vec<SimScalar>,
     pair_scratch: Vec<usize>,
     /// The contact solver's retained buffers (plan `2026-11-20-contact-solver` C-1).
     pub(crate) solver: solver::ContactSolver,
@@ -303,8 +302,10 @@ pub(crate) struct MotionPolicy {
     /// The body's disc against terrain, structures and the map edge (`terrain_radius`), in world
     /// units; `0 < terrain_radius <= radius`. Read through [`Self::terrain_radius`].
     pub terrain: SimScalar,
-    /// The body is burrowed ([`Entity::is_burrowed`]): it touches only burrowed bodies.
-    pub burrowed: bool,
+    /// Which bodies this one touches (plan `2026-11-25-collision-classes` D-1, resolved by
+    /// [`collision_class_of`]): two bodies steer around, push and block each other only when
+    /// their classes touch ([`CollisionClass::touches`]). Terrain still follows [`Self::layer`].
+    pub class: CollisionClass,
 }
 
 impl MotionPolicy {
@@ -341,11 +342,18 @@ impl MotionPolicy {
                 reason: "an air body's terrain radius must equal its collision radius",
             });
         }
+        let class = collision_class_of(entity, arch, layer);
+        if class.index() >= catalog.collision_class_count() {
+            return Err(MovementInvariant::InvalidState {
+                entity: entity.id,
+                reason: "collision class lies outside the catalog's classes",
+            });
+        }
         Ok(Self {
             layer,
             radius,
             terrain,
-            burrowed: entity.is_burrowed(arch),
+            class,
         })
     }
 
@@ -355,19 +363,6 @@ impl MotionPolicy {
     /// meet each other at [`Self::radius`].
     pub const fn terrain_radius(self) -> SimScalar {
         self.terrain
-    }
-
-    /// Which bodies this one touches: two bodies steer around, push and block each other only
-    /// when their classes are equal. Ground and air bodies keep their layer's index; a burrowed
-    /// body has a class of its own, below the ground, so ground units walk over it and it
-    /// neither pushes nor is pushed by them (plan `2026-11-09-friendly-blocking` R6, B-93).
-    /// Terrain still follows [`Self::layer`].
-    pub const fn body_class(self) -> usize {
-        if self.burrowed {
-            2
-        } else {
-            self.layer.index()
-        }
     }
 
     pub fn validate_origin(self, map: &GameMap, actor: &Entity) -> Result<(), MovementInvariant> {
@@ -409,6 +404,61 @@ impl MotionPolicy {
             MovementLayer::Air => self.contains(map, start),
             MovementLayer::Ground => SimWorld::is_position_pathable(map, start, end),
         }
+    }
+}
+
+/// The collision class of `entity` (archetype `arch`, movement layer `layer`), resolved in the
+/// order of plan `2026-11-25-collision-classes` D-2:
+/// 1. its active mode's authored class, when that mode authors one (the mode it is in, as
+///    [`Entity::is_burrowed`] reads it: a unit still channelling a switch keeps its old stance's
+///    class);
+/// 2. else [`CollisionClass::BURROWED`] when it is burrowed (B-93);
+/// 3. else its archetype's authored class;
+/// 4. else [`CollisionClass::GROUND`] or [`CollisionClass::AIR`] by `layer`.
+///
+/// With no class authored anywhere this is the class the movement code always had: ground 0,
+/// air 1, burrowed 2.
+pub(crate) fn collision_class_of(
+    entity: &Entity,
+    arch: &crate::UnitArchetype,
+    layer: MovementLayer,
+) -> CollisionClass {
+    let mode_class = entity
+        .active_mode
+        .as_deref()
+        .and_then(|mode| arch.get_mode(mode))
+        .and_then(|mode| mode.collision_class);
+    if let Some(class) = mode_class {
+        return class;
+    }
+    if entity.is_burrowed(arch) {
+        return CollisionClass::BURROWED;
+    }
+    arch.collision_class.unwrap_or(match layer {
+        MovementLayer::Ground => CollisionClass::GROUND,
+        MovementLayer::Air => CollisionClass::AIR,
+    })
+}
+
+/// Fills `largest` with the largest radius of each collision class among `bodies`, indexed by
+/// [`CollisionClass::index`]: one entry per class up to the largest index met, `0` for a class
+/// with no body. The pair reach of both contact pipelines reads it.
+// PERFORMANCE RATIONALE:
+// Why: The pair search runs every tick over every body; a fresh table per call would allocate.
+// What: The caller keeps the `Vec` between ticks; it is cleared and grown only to the largest
+// class index met, so steady state reuses its capacity.
+// Trade-off: A table owned by the caller instead of a local array, for no allocation per tick.
+pub(crate) fn largest_by_class(
+    largest: &mut Vec<SimScalar>,
+    bodies: impl IntoIterator<Item = (CollisionClass, SimScalar)>,
+) {
+    largest.clear();
+    for (class, radius) in bodies {
+        let index = class.index();
+        if index >= largest.len() {
+            largest.resize(index + 1, SimScalar::ZERO);
+        }
+        largest[index] = largest[index].max(radius);
     }
 }
 
@@ -617,8 +667,9 @@ impl SimWorld {
     }
 
     /// Validates an exact teleport/unload endpoint, without mutating any actor fields.
-    /// Ground uses conservative square terrain clearance; live occupancy uses circles
-    /// within the same layer. Intervening terrain is irrelevant for teleport placement.
+    /// Ground uses conservative square terrain clearance; live occupancy uses circles of the
+    /// bodies whose collision class the unit's touches (plan `2026-11-25-collision-classes`
+    /// D-3, R-6). Intervening terrain is irrelevant for teleport placement.
     ///
     /// # Errors
     /// Returns a typed destination rejection or malformed live-state invariant.
@@ -683,7 +734,22 @@ impl SimWorld {
         Ok(())
     }
 
-    /// Validates that no other live unit of `id`'s body class overlaps `point`, each at its
+    /// The collision class unit `id` has now (plan `2026-11-25-collision-classes` D-2 and D-3,
+    /// R-8): the class the movement phase resolves for it, so diagnostics count as touching
+    /// exactly the pairs movement does. `None` when no entity has `id` or its archetype is not in
+    /// the catalog. Read-only; derived from the catalog and the active mode, never stored.
+    #[must_use]
+    pub fn collision_class(&self, id: EntityId) -> Option<CollisionClass> {
+        let entity = self.entities.get(&id)?;
+        let arch = self.catalog.get(entity.unit_type_id).ok()?;
+        Some(collision_class_of(
+            entity,
+            arch,
+            MovementLayer::from_mover(arch.mover_type),
+        ))
+    }
+
+    /// Validates that no other live unit of a collision class `id`'s touches overlaps `point`, each at its
     /// collision radius. A hidden unit (cargo, or a harvester inside its structure; plan
     /// `2026-11-24-hidden-harvesters` D-11) takes no room. A registered structure is not a body (plan
     /// `2026-11-18-structure-contact` D-2 B3, B-131): its footprint has already judged `point` at
@@ -705,7 +771,7 @@ impl SimWorld {
                 && !self.map.structures().contains_key(&e.id)
         }) {
             let other_policy = MotionPolicy::resolve(&self.catalog, &self.map, other)?;
-            if policy.body_class() == other_policy.body_class()
+            if policy.class.touches(other_policy.class)
                 && circles_overlap(point, policy.radius, other.position, other_policy.radius)
             {
                 return Err(DisplacementAdmissionError::Occupied(other.id));

@@ -357,6 +357,56 @@ impl fmt::Display for ArmorClassId {
     }
 }
 
+/// Collision class of a body (plan `2026-11-25-collision-classes` D-1): two bodies steer round,
+/// push and block each other only when their classes are equal ([`Self::touches`]).
+///
+/// The three built-in classes keep the indices the movement code has always used:
+/// [`Self::GROUND`] (0), [`Self::AIR`] (1) and [`Self::BURROWED`] (2). Every further class is a
+/// name authored in `assets/catalog/units.ron` (`collision_class: Some("…")` on an archetype or a
+/// mode); `sim_core`'s catalog sorts the distinct names it loads and gives them 3, 4, … in that
+/// order, so an index never depends on file order. An authored name never equals a built-in
+/// class, even when it is spelled `"ground"`.
+///
+/// Derived each tick from the catalog and the hashed active mode, never stored in entity state
+/// and never hashed. It is `StarCraft` II's `Collide` flag set restricted to one flag: every unit
+/// this project ships touches exactly the bodies of its own kind (plan §2.4).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[repr(transparent)]
+pub struct CollisionClass(pub u8);
+
+impl CollisionClass {
+    /// Ground bodies that author no class: every small ground unit of `StarCraft` II
+    /// (`Ground`, `Small`, `ForceField`, `Locust`).
+    pub const GROUND: Self = Self(0);
+    /// Air bodies (`Flying`).
+    pub const AIR: Self = Self(1);
+    /// Burrowed bodies (`Burrow`), below the ground layer (plan `2026-11-09-friendly-blocking`
+    /// R6, B-93).
+    pub const BURROWED: Self = Self(2);
+    /// Number of built-in classes; the first authored class has this index.
+    pub const BUILT_IN: u8 = 3;
+
+    /// Whether a body of this class and a body of `other` touch: steer round, push, block rings
+    /// and placement for each other. Equality of the class; the one place a later flag-set model
+    /// (plan §14) changes.
+    #[must_use]
+    pub const fn touches(self, other: Self) -> bool {
+        self.0 == other.0
+    }
+
+    /// The class's position in per-class tables (steering lists, grids, largest radii).
+    #[must_use]
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl fmt::Display for CollisionClass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "CollisionClass({})", self.0)
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {

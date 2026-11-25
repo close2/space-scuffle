@@ -49,7 +49,8 @@
 //!   in which a living armed unit had, at the tick's start, an enemy body in its band (slop 0,
 //!   neither hidden nor cloaked) and its weapon `Ready` at cooldown 0, and during the tick started
 //!   no swing, did not turn and did not move ([`stands_while_able`]); and of those, the ticks in
-//!   which a body of another class touched it at the tick's start
+//!   which a body of a class that does not touch its own (`CollisionClass::touches`) touched it
+//!   at the tick's start
 //!   ([`CrowdChecks::standing_able_cross`]).
 //! - **Solver extension** ([`CrowdChecks::extended_ticks`], [`CrowdChecks::extended_iterations`],
 //!   C-3′ of the same plan): ticks on which the contact solver ran more averaged iterations than
@@ -64,7 +65,8 @@
 //! the last columns of `matrix.csv`; the harness's mirror family ([`crate::harness::mirror`])
 //! writes D-SHOVE and D-R10 per scene. Ring room is the geometry of [`crate::harness::room`],
 //! read at tick-start positions (the positions of the previous observation), with the bodies of
-//! the asker's class (ground, air or burrowed). The leash is the unit's `leash_origin` (its
+//! the asker's collision class ([`SimWorld::collision_class`]: ground, air, burrowed, or a class
+//! the catalog authors; plan `2026-11-25-collision-classes` R-8). The leash is the unit's `leash_origin` (its
 //! tick-start position when unset) and the catalog's acquire leash radius; terrain is a ring
 //! point whose cell is not connected ground to the ring's centre (air bodies have none). Neither
 //! the ring walk nor vision is modelled. Everything is `f64`, for measurement only.
@@ -80,7 +82,7 @@ use super::activity::{classify, Activity, ActivityInput};
 use super::{attack_target, in_band, to_f64};
 use crate::harness::metrics::Point;
 use crate::harness::room::{classify_room, RingQuery, RoomClass};
-use sim_core::movement::MovementLayer;
+use sim_core::movement::{CollisionClass, MovementLayer};
 use sim_core::{is_threat_to, Entity, SimWorld, UnitArchetype, WeaponPhase};
 use sim_types::{AttackOrigin, EntityId, PlayerId, SimAngle, SimScalar, SimVec2, UnitOrder};
 use std::collections::BTreeMap;
@@ -256,7 +258,12 @@ struct Seen {
     position: SimVec2,
     at: Point,
     radius: f64,
-    class: (MovementLayer, bool),
+    /// The unit's collision class ([`SimWorld::collision_class`]): two bodies touch, overlap and
+    /// block rings for each other only when their classes touch (plan
+    /// `2026-11-25-collision-classes` D-3, R-8).
+    class: CollisionClass,
+    /// The unit's movement layer, for the terrain of ring points.
+    layer: MovementLayer,
     /// A body for the overlaps and for touching (module documentation).
     body: bool,
     engaged: bool,
@@ -305,7 +312,10 @@ impl ContactMeter {
             let Ok(arch) = world.catalog.get(entity.unit_type_id) else {
                 continue;
             };
-            now.insert(id, seen(world, entity, arch));
+            let Some(class) = world.collision_class(id) else {
+                continue;
+            };
+            now.insert(id, seen(world, (entity, arch), class));
         }
         for (&id, current) in &now {
             let Some(side) = side_of(current.owner) else {
@@ -389,7 +399,7 @@ impl ContactMeter {
                 other != id
                     && body.body
                     && body.owner != before.owner
-                    && body.class == before.class
+                    && body.class.touches(before.class)
                     && distance(body.at, before.at)
                         <= body.radius + before.radius + SHOVE_TOUCH_SLACK
             })
@@ -397,14 +407,14 @@ impl ContactMeter {
             .collect()
     }
 
-    /// Whether a body of another class than `before`'s touched it at the tick's start (B8's
+    /// Whether a body of a class that does not touch `before`'s touched it at the tick's start (B8's
     /// cross-class column); `false` when it is no body.
     fn touched_across(&self, id: EntityId, before: &Seen) -> bool {
         before.body
             && self.seen.iter().any(|(&other, body)| {
                 other != id
                     && body.body
-                    && body.class != before.class
+                    && !body.class.touches(before.class)
                     && distance(body.at, before.at)
                         <= body.radius + before.radius + SHOVE_TOUCH_SLACK
             })
@@ -419,7 +429,7 @@ impl ContactMeter {
         let (checks, crowd) = (&mut self.checks, &mut self.crowd);
         for (index, a) in list.iter().enumerate() {
             for b in &list[index + 1..] {
-                if a.class != b.class {
+                if !a.class.touches(b.class) {
                     continue;
                 }
                 let sum = a.radius + b.radius;
@@ -503,19 +513,19 @@ impl ContactMeter {
             leash,
         };
         classify_room(query, &others, |p| {
-            walkable(world, chaser.class, body.at, p)
+            walkable(world, chaser.layer, body.at, p)
         })
     }
 }
 
-/// Every body of `class` but `excluded`: centre and radius.
+/// Every body whose class touches `class`, but `excluded`: centre and radius.
 fn ring_bodies(
     seen: &BTreeMap<EntityId, Seen>,
-    class: (MovementLayer, bool),
+    class: CollisionClass,
     excluded: &[EntityId],
 ) -> Vec<(Point, f64)> {
     seen.iter()
-        .filter(|(id, body)| body.class == class && !excluded.contains(id))
+        .filter(|(id, body)| body.class.touches(class) && !excluded.contains(id))
         .map(|(_, body)| (body.at, body.radius))
         .collect()
 }
@@ -556,13 +566,17 @@ fn returns_with_reason(
         leash: None,
     };
     classify_room(query, &others, |p| {
-        walkable(world, chaser.class, body.at, p)
+        walkable(world, chaser.layer, body.at, p)
     })
     .is_some()
 }
 
-/// The tick-start state the meter keeps of `entity`.
-fn seen(world: &SimWorld, entity: &Entity, arch: &UnitArchetype) -> Seen {
+/// The tick-start state the meter keeps of `entity` (archetype `arch`, collision class `class`).
+fn seen(
+    world: &SimWorld,
+    (entity, arch): (&Entity, &UnitArchetype),
+    class: CollisionClass,
+) -> Seen {
     let target = attack_target(entity);
     let engaged = target
         .and_then(|id| world.entities.get(&id))
@@ -587,10 +601,8 @@ fn seen(world: &SimWorld, entity: &Entity, arch: &UnitArchetype) -> Seen {
         position: entity.position,
         at: point(entity.position),
         radius: to_f64(arch.collision_radius),
-        class: (
-            MovementLayer::from_mover(arch.mover_type),
-            entity.is_burrowed(arch),
-        ),
+        class,
+        layer: MovementLayer::from_mover(arch.mover_type),
         body: !entity.passes_through_units() && !arch.is_immobile_by_default(),
         engaged,
         proposed_none: engaged || standing_order,
@@ -651,17 +663,17 @@ fn band_against(world: &SimWorld, entity: &Entity, enemy: &Entity) -> Option<f64
     ))
 }
 
-/// Whether a chaser of `class` can stand at ring point `p` of a ring centred at `centre`: an air
+/// Whether a chaser of `layer` can stand at ring point `p` of a ring centred at `centre`: an air
 /// body anywhere on the map; a ground body where the ground from the centre to `p` is
 /// connected.
-fn walkable(world: &SimWorld, class: (MovementLayer, bool), centre: Point, p: Point) -> bool {
+fn walkable(world: &SimWorld, layer: MovementLayer, centre: Point, p: Point) -> bool {
     let (Some(from), Some(to)) = (vector(centre), vector(p)) else {
         return false;
     };
     if world.map.world_to_cell(to).is_err() {
         return false;
     }
-    class.0 == MovementLayer::Air || world.map.ground_segment_is_connected(from, to, |_, _| true)
+    layer == MovementLayer::Air || world.map.ground_segment_is_connected(from, to, |_, _| true)
 }
 
 /// The side index of `owner`: player 0 and player 1; `None` for any other.

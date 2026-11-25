@@ -390,6 +390,13 @@ pub struct UnitModeSpec {
     /// (plan `2026-11-09-effect-visualization` D-3).
     #[serde(default)]
     pub burrowed: bool,
+    /// The collision class a unit has while this mode is active, when the mode authors one
+    /// (`collision_class: Some("…")` in `units.ron`, resolved by `sim_core`'s catalog to its
+    /// index; plan `2026-11-25-collision-classes` D-2). It wins over [`Self::burrowed`] for which
+    /// bodies touch; `burrowed` still drives concealment and presentation. `None` leaves the class
+    /// to `burrowed` and the archetype. Catalog data, not hashed.
+    #[serde(default)]
+    pub collision_class: Option<crate::ids::CollisionClass>,
     /// Optional movement type override while in this mode (e.g., Air -> Ground for transforming fighters).
     #[serde(default)]
     pub mover_type_override: Option<crate::enums::MoverType>,
