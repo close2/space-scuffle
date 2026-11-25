@@ -1105,6 +1105,74 @@ fn a_scan_mover_shows_scan_move_and_attack_moves_on_ground_and_on_an_enemy() {
     assert_no_diagnostics(&harness);
 }
 
+/// Plan `2026-11-26-follow-order` P-11 (D-10, B-187): the mixed army A-clicked on an enemy air
+/// unit: the Medivac-class unit follows it with Scan Move, the marine-class unit attacks it when
+/// its weapons reach the air (else it attack-moves to the point, Q0105), and the unburrowed
+/// Lurker analogue, which cannot attack it, attack-moves to the point under it.
+#[test]
+fn a_mixed_army_a_clicked_on_an_air_unit_follows_attacks_and_walks() {
+    let mut harness = skirmish();
+    let [marine, medivac, lurker] = mixed_army(&mut harness);
+    let flyer = harness
+        .world()
+        .catalog
+        .archetypes()
+        .find(|archetype| {
+            archetype.mover_type == sim_types::MoverType::Air
+                && !archetype.is_immobile_by_default()
+                && presentable(&harness, archetype.unit_type_id)
+        })
+        .expect("a presentable air unit")
+        .unit_type_id;
+    let near = harness.simulated_position(marine);
+    let enemy = spawn_at(&mut harness, near, 10.0, flyer, ENEMY);
+    let reaches_air = {
+        let world = harness.world();
+        let (unit, target) = (&world.entities[&marine], &world.entities[&enemy]);
+        unit.can_attack(
+            world.catalog.get(unit.unit_type_id).unwrap(),
+            target,
+            world.catalog.get(target.unit_type_id).unwrap(),
+        )
+    };
+    let orders = a_click_on_unit(&mut harness, enemy);
+    let follow = UnitOrder::Follow {
+        target: enemy,
+        kind: sim_types::FollowKind::AcquireMove,
+    };
+    let find = |order: &dyn Fn(&UnitOrder) -> bool| {
+        orders
+            .iter()
+            .find(|command| order(&command.order))
+            .map(|command| command.entities.clone())
+    };
+    assert_eq!(
+        find(&|order| *order == follow),
+        Some(vec![medivac]),
+        "{orders:?}"
+    );
+    let walkers = find(&|order| attack_moves_to(&harness, order, enemy)).unwrap_or_default();
+    if reaches_air {
+        assert_eq!(
+            find(&|order| *order == UnitOrder::attack(enemy)),
+            Some(vec![marine])
+        );
+        assert_eq!(walkers, [lurker]);
+    } else {
+        let mut expected = vec![marine, lurker];
+        expected.sort_unstable();
+        let mut walkers = walkers;
+        walkers.sort_unstable();
+        assert_eq!(walkers, expected);
+    }
+    run_ticks(&mut harness, 1);
+    assert!(
+        harness.world().entities[&medivac].order_queue.front() == Some(&follow)
+            || !harness.world().entities.contains_key(&enemy),
+        "the Medivac-class unit follows"
+    );
+}
+
 /// P-7: the unburrowed Lurker analogue shows Attack and attack-moves on the ground.
 #[test]
 fn the_unburrowed_lurker_analogue_shows_attack_and_attack_moves_on_the_ground() {

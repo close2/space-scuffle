@@ -556,14 +556,18 @@ impl BattleCommandQueue {
 
     /// Sends an A-click on the unit `target` (plan `2026-11-24-attack-orders` D-5): an
     /// `AttackTarget` to the members of `selection` that can attack it ([`Entity::can_attack`],
-    /// whoever owns it), then an `AttackMove` to `point`, the ground under it, to every other
-    /// member with an A command except `target` itself. Either command is left out when it has
-    /// no recipient; both go into the same tick with disjoint recipients.
+    /// whoever owns it), a `Follow` of kind `AcquireMove` to the members whose A command is Scan
+    /// Move, and an `AttackMove` to `point`, the ground under it, to every other member with an
+    /// A command except `target` itself. A command is left out when it has no recipient; all go
+    /// into the same tick with disjoint recipients.
     ///
-    /// A member with Scan Move walks, as 5.0.14's `AcquireMove` aimed at a unit goes to it (it
-    /// would follow it, B-187); so does a member with Attack that cannot attack the target, by
-    /// Q0105's default. An own target is attacked, by Q0104's default (B-175). Both commands
-    /// are checked before either is queued, so a refusal leaves the queue as it was. Returns
+    /// A member with Scan Move follows the target and fights on the way, as 5.0.14's
+    /// `AcquireMove` aimed at a unit does (plan `2026-11-26-follow-order` D-10, B-187); when the
+    /// target is a structure, which cannot be followed, it attack-moves to the point. A member
+    /// with Attack that cannot attack the target attack-moves to the point, by the owner's answer
+    /// to Q0105 (Q0119 asks whether it should follow). An own target is attacked, by Q0104's
+    /// default (B-175). Every command is checked before any is queued, so a refusal leaves the
+    /// queue as it was. Returns
     /// the sequence of the last command queued. Allocation belongs to the user action.
     /// # Errors
     /// [`SubmissionError::EmptySelection`] if no member can take either order,
@@ -582,8 +586,14 @@ impl BattleCommandQueue {
         accepts_orders(world, player)?;
         let attack = UnitOrder::attack(target);
         let walk = UnitOrder::AttackMove { target: point };
+        let follow = UnitOrder::Follow {
+            target,
+            kind: FollowKind::AcquireMove,
+        };
         let subject = order_subject(world, player, &attack)?;
+        let followable = subject.is_some_and(|archetype| !archetype.is_immobile_by_default());
         let mut attackers = Vec::with_capacity(selection.len());
+        let mut scanners = Vec::with_capacity(selection.len());
         let mut walkers = Vec::with_capacity(selection.len());
         for id in selection {
             let Some(entity) = world
@@ -599,16 +609,23 @@ impl BattleCommandQueue {
                 .map_err(|_| SubmissionError::MissingArchetype(*id))?;
             if can_execute(world, entity, archetype, &attack, subject) {
                 attackers.push(*id);
+            } else if followable
+                && entity.settled_attack_command(archetype) == AttackCommand::ScanMove
+                && can_execute(world, entity, archetype, &follow, None)
+            {
+                scanners.push(*id);
             } else if *id != target && can_execute(world, entity, archetype, &walk, None) {
                 walkers.push(*id);
             }
         }
         let commands =
-            [(attackers, attack), (walkers, walk)].map(|(entities, order)| PlayerCommand {
-                player_id: player,
-                entities,
-                order,
-                queue: queued,
+            [(attackers, attack), (scanners, follow), (walkers, walk)].map(|(entities, order)| {
+                PlayerCommand {
+                    player_id: player,
+                    entities,
+                    order,
+                    queue: queued,
+                }
             });
         if commands.iter().all(|command| command.entities.is_empty()) {
             return Err(SubmissionError::EmptySelection);

@@ -20,7 +20,8 @@
 use bevy::math::Vec3;
 use sim_core::SimWorld;
 use sim_types::{
-    AttackOrigin, EntityId, PlayerId, RallyTarget, ResourceNodeId, SimScalar, SimVec2, UnitOrder,
+    AttackOrigin, EntityId, FollowKind, PlayerId, RallyTarget, ResourceNodeId, SimScalar, SimVec2,
+    UnitOrder,
 };
 
 use super::order_marker::OrderMarkerKind;
@@ -86,8 +87,9 @@ fn is_mobile(world: &SimWorld, id: EntityId) -> bool {
 /// | Friendly carrier | any can board it, which the carrier itself cannot | `Load` |
 /// | Friendly completed dropoff | any holds cargo | `ReturnCargo` |
 /// | Friendly completed extractor | any harvester | `Harvest` of the node under it |
+/// | Friendly mobile unit | any can follow it, which the unit itself cannot | `Follow`, `Move` |
 /// | Node | any harvester | `Harvest` |
-/// | Anything else | | `Move` to the ground under the pointer |
+/// | Anything else (a friendly structure included) | | `Move` to the ground under the pointer |
 #[must_use]
 pub fn context_order(
     world: &SimWorld,
@@ -168,7 +170,9 @@ pub fn sim_point(point: Vec3) -> SimVec2 {
     SimVec2::new(SimScalar::from_num(point.x), SimScalar::from_num(point.z))
 }
 
-/// The order `friend`, one of the player's own units, offers `selection`, if any.
+/// The order `friend`, one of the player's own units, offers `selection`, if any. The last row is
+/// the follow of a mobile friend (plan `2026-11-26-follow-order` D-10; 5.0.14's smart command on
+/// one's own unit is a `move` on it): a carrier still loads and an extractor still harvests.
 fn friendly_order(
     world: &SimWorld,
     owner: PlayerId,
@@ -190,6 +194,10 @@ fn friendly_order(
             .then(|| node_under(world, friend))
             .flatten()
             .map(|target| UnitOrder::Harvest { target }),
+        (!archetype.is_immobile_by_default()).then_some(UnitOrder::Follow {
+            target: friend,
+            kind: FollowKind::Move,
+        }),
     ]
     .into_iter()
     .flatten()
@@ -444,6 +452,24 @@ mod tests {
             follows(UnitOrder::Load { carrier }),
             "the carrier in the selection does not stop the others"
         );
+        Ok(())
+    }
+
+    /// Plan `2026-11-26-follow-order` D-10 (P-11): a mobile friend that offers nothing else is
+    /// followed; alone it cannot follow itself, and the order is a move to the ground.
+    #[test]
+    fn a_mobile_friend_is_followed_by_the_rest_of_the_selection() -> TestResult {
+        let mut world = flat_world()?;
+        let unit = soldier(&mut world, 0)?;
+        let friend = soldier(&mut world, 1)?;
+        let target = PointerTarget::Friendly(friend, POINT);
+        let follow = UnitOrder::Follow {
+            target: friend,
+            kind: FollowKind::Move,
+        };
+        assert_eq!(order_on(&world, &[unit], target), follows(follow.clone()));
+        assert_eq!(order_on(&world, &[unit, friend], target), follows(follow));
+        assert_eq!(order_on(&world, &[friend], target), moved());
         Ok(())
     }
 

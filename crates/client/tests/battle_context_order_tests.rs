@@ -41,8 +41,8 @@ use client::runtime_battle::{MapPresentation, SKIRMISH_SCENARIO};
 use client::LabState;
 use sim_core::entity::Cargo;
 use sim_types::{
-    EntityId, PlayerCommand, RallyRoute, RallyTarget, ResourceKind, ResourceNodeId, SimScalar,
-    UnitOrder, UnitTypeId,
+    EntityId, FollowKind, PlayerCommand, RallyRoute, RallyTarget, ResourceKind, ResourceNodeId,
+    SimScalar, UnitOrder, UnitTypeId,
 };
 
 #[allow(
@@ -306,23 +306,40 @@ fn a_friendly_unit_in_front_of_a_mineral_does_not_turn_harvest_into_move() {
     assert_eq!(orders[0].order, UnitOrder::Harvest { target: node });
 }
 
+/// Plan `2026-11-26-follow-order` D-10 (T17): a soldier, which cannot harvest the mineral behind a
+/// friend, right-clicking the friend follows it (it moved to the ground there before the follow
+/// order existed). With Shift the follow is queued.
 #[test]
-fn a_soldier_right_clicking_a_mineral_behind_a_friend_still_moves() {
+fn a_soldier_right_clicking_a_mineral_behind_a_friend_follows_the_friend() {
     let mut harness = skirmish();
     let (worker, node) = worker_and_mineral(&mut harness);
     let soldier = soldier_beside(&mut harness, worker);
-    let (_, billboard) = blocker_in_front_of(&mut harness, node, LOCAL_PLAYER);
+    let (friend, billboard) = blocker_in_front_of(&mut harness, node, LOCAL_PLAYER);
     harness.select(soldier);
 
     harness.click(MouseButton::Right, billboard);
 
     let orders = pending(&harness);
     assert_eq!(orders.len(), 1, "status: {}", harness.status());
+    let follow = UnitOrder::Follow {
+        target: friend,
+        kind: FollowKind::Move,
+    };
+    assert_eq!(orders[0].order, follow);
+    assert_eq!(orders[0].entities, [soldier]);
+    assert!(!orders[0].queue);
     assert!(
-        matches!(orders[0].order, UnitOrder::Move { .. }),
-        "{:?}",
-        orders[0].order
+        matches!(harness.marker(), Some((OrderMarkerKind::Move, _))),
+        "a move marker"
     );
+
+    harness.with_key_held(SHIFT_MODIFIERS[0], |harness| {
+        harness.click(MouseButton::Right, billboard);
+    });
+    let orders = pending(&harness);
+    let last = orders.last().expect("a second order");
+    assert_eq!(last.order, follow);
+    assert!(last.queue, "Shift queues the follow");
 }
 
 #[test]
