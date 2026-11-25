@@ -723,7 +723,7 @@ and 5.0.14 reverted that "due to causing unintentional retargeting".
 ## As built
 
 Built on branch `turret-tracking-plan` from `main` `91350af1` (no `main` commit landed while it was built), by the
-plan as written; Q0116's defaults (part 1 (a), part 2 (a)). Evidence:
+plan as written and its Amendment 1; Q0116's defaults (part 1 (a), part 2 (a)). Evidence:
 [`docs/evidence/2026-11-26-turret-tracking-weapon.md`](../evidence/2026-11-26-turret-tracking-weapon.md).
 
 | WP | Commit | What |
@@ -731,7 +731,9 @@ plan as written; Q0116's defaults (part 1 (a), part 2 (a)). Evidence:
 | WP0 | `7700aa31` | B-198 pointed here, B-218 registered (provisional); survey, baseline, census; probes (t) and (p) count zero in every measured world and both goldens; close-battle list 14, 26, 31, 33, 35, 38a, 38b |
 | WP1 | `48023594` | `WeaponSpec::turret_tracks_any_enemy` (tank-mode weapon only), `Entity::tracked_target`, D-7, schema 49 (provisional); L-1 held, latent proof on four builds |
 | WP2 | `9a8e2ce2` | D-3 (`decide_tracked_target`, `has_workable_target`, `ScanScope::tracked`, release of skipped units), D-4 (`step_entity_weapon_tracking`, `TrackingAim`, `tracking_aim`); no measured world moved (no class Y or P) |
-| WP3 | this commit | Held-out run identical; goldens and `DEFAULT_SANDBOX_CHECKSUM` re-recorded once at schema 49, both proofs on four builds; B-198 fixed; fire-rules pointers; throughput: stop rule 7 |
+| WP3 | `4e2cbbd2` | Held-out run identical; B-198 fixed; fire-rules pointers; throughput stop rule 7 (+2.30 %) |
+| Amendment 1 | `3666866d` | `Entity::tracked_target` moved to `SimWorld::tracked_targets` (sorted table, tracking units only, hashed in unit id order); cleared by an order-replacing command, boarding and the reap |
+| Amendment 1 records | this commit | Worlds byte-identical to WP0's; goldens and `DEFAULT_SANDBOX_CHECKSUM` re-recorded once on the final tree at schema 49 (replacing WP3's lists), latent proof at 48 and the re-record proven on four builds; instructions +0.07 %, every scenario above 50 ticks/s |
 
 **Deviations and decisions.**
 - T-5 and T-8 are guards (what tracking must not do) and pass on WP1's tree; the other ten new behaviour tests were
@@ -740,9 +742,16 @@ plan as written; Q0116's defaults (part 1 (a), part 2 (a)). Evidence:
   plan read it.
 - The acquisition unit tests cover the carrier and the release of a skipped unit; the licence is covered by T-9 (an
   air transport in reach is never tracked) and ownership by T-5.
-- **Stop rule 7 fired:** +2.30 % instructions (budget +0.5 %), every scenario at 80 ticks/s or more. The cost is the
-  eight bytes `Entity::tracked_target` adds (code generation of the scan loop), not the tracking rule; the
-  evidence holds the bisection. Left for review.
+- **Stop rule 7** fired on WP3's tree (+2.30 %, from the eight bytes `Entity::tracked_target` added to every entity);
+  Amendment 1 moved the field to a world-level table, and the amended tree measures +0.07 %.
+- **Clearing on orders (Amendment 1).** `commit_order` is an `Entity` method with no access to the world table, so the
+  table is cleared where player commands are dispatched (`SimWorld::dispatch_command`): every recipient of the
+  commanding player under an immediate command, or a queued one onto an empty queue. A command that admission then
+  refuses also clears the entry; acquisition chooses anew before the combat phase reads the table, so only the
+  hashed table sees the difference. Orders given by the simulation itself (acquisition, alerts, flight, rallies of new
+  units, scenario setup) clear nothing, as they cleared nothing on `Entity` except through `commit_order` (rallies and
+  scenario orders reach only units without an entry). The entity unit test of `commit_order` is replaced by the
+  table's own unit test.
 - Schema 49 and B-218 stay provisional, next free at merge.
 
 

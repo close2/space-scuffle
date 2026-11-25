@@ -189,3 +189,26 @@ budget. Profiled (stop rule 7):
 The package stops here for review under stop rule 7; the plan names no remedy, and D-2 fixes the field on `Entity`.
 Options for the reviewer, none taken: accept the cost (every scenario keeps a wide margin over 50 ticks/s); keep the
 tracked enemy outside `Entity` (a world-level map, hashed, a change of D-2); or tune the loop's code generation.
+
+## Amendment 1: the tracked enemy in a world-level table (`3666866d`)
+
+By Amendment 1 the enemy a turret tracks moved from `Entity::tracked_target` to `SimWorld::tracked_targets`, a table
+of `(unit, enemy)` pairs sorted by unit id with entries only for tracking units, hashed after the route groups. The
+measurements above were repeated on the amended tree; they supersede the WP3 golden figures and the throughput stop.
+
+- **Tests.** T-1 to T-16, the acquisition unit tests and the table's own unit test pass; `sim_core` and
+  `sim_fixtures` whole (108 test targets) pass on the final tree.
+- **Worlds.** The amended tree's worlds against WP0's: 483 files, none differing. The held-out comparison above was
+  made with the same simulation rule and is not repeated (the move of the field changes no rule).
+- **Goldens and sandbox, re-recorded once on the final tree** (schema 49, provisional; this replaces the WP3 lists):
+  `golden_replay` 20 checkpoints, `golden_replay_orders` 60, `DEFAULT_SANDBOX_CHECKSUM` `2_504_113_823_383_333_194`.
+  (1) The final code with the table and the weapon's flag left out of the encoding at schema 48 reproduces `main`'s
+  lists and `601_552_017_353_564_848` on native debug and release and `wasm32-wasip1` release and debug (8 of 8);
+  (2) the re-recorded tree reproduces the new lists on the same four builds (8 of 8). Each build ran from a
+  `git archive` copy in a fresh target directory.
+- **Throughput (stop rule 7, now met).** WP0's and the final binary interleaved, two rounds, `perf stat -e
+  instructions:u` over the whole benchmark: WP0 268,638,803,108 and 268,618,540,864; final 268,826,936,312 and
+  268,826,933,258, **+0.07 %** (budget +0.5 %). Ticks per second, medians of 3, final rounds: 64x64/0 3076 and 3126;
+  64x64/100 762 and 755; 64x64/400 102 and 96; 128x128/400 167 and 172; 256x256/0 189 and 192; showcase_canyon/400
+  77 and 78; 64x64 casters/400 194 and 195. Every scenario is above 50 ticks/s; the host was shared during these
+  rounds (WP0's first round read 83 ticks/s on 64x64/400), so the wall-clock figures are noisier than the count.
