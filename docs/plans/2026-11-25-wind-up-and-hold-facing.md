@@ -20,7 +20,7 @@ re-recording of the goldens on the final tree after.
 A full plan is required (charter §6): both fixes move battle outcomes and golden replays. Neither changes the hashed
 encoding (§5).
 
-**Status of this document:** a stage 1 blueprint under charter §6, written on 2026-11-24 against `main` at
+**Status of this document:** done (see As built); a stage 1 blueprint under charter §6, written on 2026-11-24 against `main` at
 `a59368a3` (checksum schema 46).
 - Line numbers drift, so search for the quoted symbol.
 - Claims not confirmed while planning are marked **verify**.
@@ -649,3 +649,24 @@ state: its claim now holds on seeds 9 and 17 and fails on 5). Review, from the e
      are acquired-and-killed-within-a-tick artifacts of the end-of-tick probe or real turns towards nothing; real
      turns towards nothing are a defect to fix within WP2's rule before WP3.
 - WP3 then runs as planned (held-out seeds confirm, throughput, single golden re-record, records).
+
+## As built
+
+- **WP0** `a4385884`: baseline on `a439e23e`, close-battle list 14, 26, 31, 33, 35, 38a, 38b, probes and the
+  attribution build ([evidence](../evidence/2026-11-25-wind-up-and-hold-facing.md)).
+- **WP1** `3d68031e` (B-207): `SimWorld::end_lost_swings` after `update_vision`, `swing_target_live` and
+  `target_snapshot` shared with the weapon phase, `steps_weapon`, D-2 in `wind_up_holds`; `idle_weapon_plane`
+  private. Stop rules 4 and 5 fired (battles 21, 32, 28); answered by Amendment 1.
+- **WP2** `3e333d6c` (B-199): `face_target_between_shots` takes the mandate; `Entity::hull_aimed_by_weapon`. Moves
+  matrix battles 38a and 38b only, no golden checkpoint. The census found no shipped immobile hull weapon, so D-4's
+  immobile case is covered by constructed tests only.
+- **Amendment 1** `0267d588`: the three items traced (no defect; W-5's 58 turns were end-of-tick artifacts, the
+  tick-exact probe found every one a weapon turn at a live target); fixture comments for battles 21, 32, 26 and 33;
+  no expectation changed, battle 28 keeps its marker.
+- **WP3**: held-out run confirms; throughput at 79 ticks/s or more, instructions +0.30 %; `golden_replay`
+  re-recorded once (`43e957b0`, schema 47), proved on four builds; B-207 and B-199 fixed in `DESIGN.md` §4.
+- **Deviations.** A-3 (a, c, d) and A-5 live in `weapon_validation_tests.rs` and A-3 (b) in
+  `hidden_harvester_tests.rs` (their benches); B-2 to B-6 are direct weapon steps in `hull_turning_tests.rs`, B-2's
+  two-tree comparison is the world measurement (pursuer worlds byte-identical); the between-shots scene of
+  `turret_tracking_tests` reads the bearing only while the enemy is the unit's target. No new bug registered.
+

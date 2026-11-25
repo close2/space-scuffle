@@ -200,3 +200,44 @@ battle 28 (11 and 22 of record, as before, and 1, 2, 3, 4, 5, 6, 8, 10, 13, 14, 
 expectation is kept and the fixture comments of battles 21, 32, 26 and 33 record the moved runs with their first
 differences (WP1 table above). Battle 28 keeps `known_bug: Some("B-192")`: its claim still fails on both seeds of
 record; it now holds on seeds 9 and 17 and fails on 5.
+
+## WP3: confirmation and records
+
+**The final tree** (`0267d588`, then the golden re-record `43e957b0`; `main` `4b3f0c7d` merged) measures
+byte-identical to WP2's worlds on every development world (`compare.sh`: 0 of 483 files differ), so the merge, a
+presentation change, moves nothing.
+
+**Held-out seeds** (§7.4, run once on WP0's tree and the final tree: matrix seeds 7001 to 7016, battles 31 and 33
+on 7001 to 7064, both showcase scenarios on seeds 9 to 16). The matrix's misses fall from 16 to 14, none of record.
+Outcome moves: battle 26 (close; winners change on 7001, 7005, 7010, 7013; 7012 now misses), battle 28 (`known_bug`;
+its claim now holds on 7013 and 7016 and fails on 7005, as on the development seeds), battle 32 (restated under
+Amendment 1; the marines' side changes on 7003 and 7009, all within its range), and 33 and 38a, where one miss each
+becomes a hold (7001, 7002). Nothing moves outside the battles the development seeds moved; no new battle changes
+outcome. W-2: stall give-ups 22 to 22, `blocked_attacker_ticks` 1,132,296 to 1,123,998, no battle above 5 %. W-3:
+battle 31 19.14 to 19.16, battle 33 40.20 to 40.23 shots per 1,000 alive unit-ticks. W-4: matrix end-tick sum
+257,177 to 255,939, battle 33 369.0 to 368.3, battle 31 638.1 to 640.9 (+0.44 %, within 1 %). The showcase moves
+on seeds 9 to 16 and the effects scenario on 9 to 13 and 15, as on the development seeds. The held-out run confirms
+the development seeds' directions; nothing was restated or tuned from it.
+
+**Throughput** (`cargo bench -p sim_core --bench throughput`, WP0's and the final binary interleaved, two rounds,
+the catalog of each tree; `perf stat -e instructions:u`). Every scenario is at 79 ticks/s or more on the final
+tree (WP0's first round ran under load, 57 on the canyon; its second 79):
+
+| Map | Units | WP0 (rounds 1, 2) | Final (rounds 1, 2) |
+|---|---:|---:|---:|
+| 64x64 | 0 | 3039, 3097 | 3061, 3126 |
+| 64x64 | 100 | 772, 813 | 788, 806 |
+| 64x64 | 400 | 76, 110 | 109, 110 |
+| 128x128 | 400 | 135, 180 | 179, 182 |
+| 256x256 | 0 | 146, 194 | 192, 193 |
+| showcase_canyon | 400 | 57, 79 | 79, 82 |
+| 64x64, 67 casters | 400 | 199, 198 | 204, 204 |
+
+User-space instructions of the whole benchmark: WP0 267,211,476,901 and 267,231,711,977; final 268,012,782,118
+and 268,033,026,859: +0.30 %, within the 1 % of §5.
+
+**Goldens** (§5). `golden_replay` is re-recorded once (`43e957b0`); WP1 first changes checkpoint 4 (tick 200),
+WP2 changes none (its list equals WP1's); `golden_replay_orders` and `DEFAULT_SANDBOX_CHECKSUM` are unchanged;
+schema 47. A `git archive` copy of `43e957b0`, built in a fresh target directory, passes `golden_replay_tests` and
+`fixture_tests` on native debug and release and `wasm32-wasip1` release and debug (`wasmtime --dir=<copy>`),
+`~/scratch/wind-up-hold/proof-43e957b0.logs/status`.
