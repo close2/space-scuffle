@@ -507,3 +507,80 @@ fn publishing_swings_changes_no_checksum_over_a_thousand_ticks() {
     assert!(swings > 0, "the sandbox battle fights");
     assert_eq!(plain, observed);
 }
+
+/// T-16 of plan `2026-11-26-turret-tracking-weapon` (D-5, §9): a unit whose turret only tracks
+/// (it walks under a Move past an idle enemy worker) publishes its turret's yaw in
+/// `aim_angle_rad` and no swing on every tick: tracking plays no attack animation.
+#[test]
+fn a_tracking_turret_publishes_its_yaw_and_no_swing() {
+    let map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0))).expect("flat map");
+    let mut world = sim_fixtures::world(map, 0x7716);
+    let tracker = world
+        .catalog
+        .archetypes()
+        .filter(|arch| {
+            arch.mover_type == MoverType::Ground
+                && arch.max_speed > SimScalar::ZERO
+                && ground_weapon(arch).is_some_and(|w| w.turret_tracks_any_enemy && w.has_turret)
+        })
+        .min_by_key(|arch| arch.unit_type_id)
+        .expect("a shipped tracking turret")
+        .clone();
+    let flags = ground_weapon(&tracker).expect("its weapon").target_flags;
+    let worker = world
+        .catalog
+        .archetypes()
+        .filter(|arch| {
+            arch.mover_type == MoverType::Ground
+                && arch.harvester.is_some()
+                && arch.acquire_level == sim_core::catalog::AcquireLevel::Defensive
+                && flags.intersects(arch.attributes)
+        })
+        .min_by_key(|arch| arch.unit_type_id)
+        .expect("a shipped worker")
+        .unit_type_id;
+    let unit = world
+        .spawn_unit(tracker.unit_type_id, PlayerId(0), SimVec2::from_i32(8, 30))
+        .expect("spawn the tracker");
+    world
+        .spawn_unit(worker, PlayerId(1), SimVec2::from_i32(30, 34))
+        .expect("spawn the worker");
+    let mut tracking = 0;
+    for tick in 0..300 {
+        let commands = if tick == 0 {
+            vec![PlayerCommand {
+                player_id: PlayerId(0),
+                entities: vec![unit],
+                order: UnitOrder::Move {
+                    target: SimVec2::from_i32(56, 30),
+                },
+                queue: false,
+            }]
+        } else {
+            Vec::new()
+        };
+        let snapshot = world.step(&TickBundle {
+            tick: Tick(tick),
+            commands,
+            state_checksum: None,
+        });
+        let entity = world.entities.get(&unit).expect("the tracker lives");
+        let bubble = published(&snapshot, unit);
+        assert!(
+            bubble.attack_swing.is_none(),
+            "tick {tick}: no swing is published"
+        );
+        assert_eq!(
+            bubble.aim_angle_rad.to_bits(),
+            entity.turret_angle.to_radians_f32().to_bits(),
+            "tick {tick}: the published aim is the turret's yaw"
+        );
+        if world.tracked_target(unit).is_some() && entity.turret_angle != entity.heading {
+            tracking += 1;
+        }
+    }
+    assert!(
+        tracking > 10,
+        "premise: the turret tracked off its hull ({tracking} ticks)"
+    );
+}

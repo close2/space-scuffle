@@ -412,7 +412,7 @@ pub enum TurretIdle {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "independent authored facts of one weapon (turret, turret lock, attack-order options, channel, suicide, melee), each read by a different rule"
+    reason = "independent authored facts of one weapon (turret, turret lock, turret tracking, attack-order options, channel, suicide, melee), each read by a different rule"
 )]
 pub struct WeaponSpec {
     /// Descriptive name of the weapon system.
@@ -471,6 +471,17 @@ pub struct WeaponSpec {
     /// `2026-11-24-fire-rules` D-1, D-2).
     #[serde(default)]
     pub locks_turret_while_firing: bool,
+    /// Whether the weapon's turret also aims, under any order, at the best enemy this weapon
+    /// reaches from where its unit stands, whenever the weapon itself leaves the turret free (no
+    /// target, or a target it cannot work this tick); nothing is fired, drawn or charged.
+    /// `StarCraft` II 5.0.14 models this as a hidden second weapon on the same turret, the
+    /// unsieged Siege Tank's `90mmCannonsFake` (`Options Hidden 1`, both attack-order options
+    /// cleared, a `CEffectDamage` without amount; `balancemulti` WeaponData:7–20,
+    /// UnitData:1473), whose range, filters and turret equal the host weapon's; `false` by
+    /// default. Meaningful only with `has_turret`, which catalog validation requires (plan
+    /// `2026-11-26-turret-tracking-weapon` D-1, D-7).
+    #[serde(default)]
+    pub turret_tracks_any_enemy: bool,
     /// Base damage applied per hit.
     pub base_damage: SimScalar,
     /// Bonus damage per strike against each attribute the target has (`AttributeBonus`).

@@ -81,6 +81,7 @@ fn custom_projectile_weapon(
         fires_outside_attack_order: false,
         fires_at_other_targets: false,
         locks_turret_while_firing: false,
+        turret_tracks_any_enemy: false,
         base_damage: SimScalar::from_num(30),
         attribute_bonuses: AttributeBonuses::NONE,
         attacks_count: 1,

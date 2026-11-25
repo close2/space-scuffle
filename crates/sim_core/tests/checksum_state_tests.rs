@@ -400,6 +400,43 @@ fn a_projectiles_fire_rules_change_the_world_checksum() {
     assert_ne!(others, lock, "checksum confused the two fire rules");
 }
 
+/// T-13 of plan `2026-11-26-turret-tracking-weapon` (D-8): whether a weapon's turret tracks any
+/// enemy is hashed with the weapon a projectile in flight carries, and the enemy a unit's turret
+/// tracks is hashed in the world's table of tracked enemies (Amendment 1): each alone changes the
+/// checksum.
+#[test]
+fn turret_tracking_changes_the_world_checksum() {
+    let mut flying = world();
+    let mut with_projectile = |tracks: bool| {
+        let mut projectile = projectile();
+        projectile.weapon_spec.turret_tracks_any_enemy = tracks;
+        flying.projectiles = vec![projectile];
+        flying.compute_checksum()
+    };
+    assert_ne!(
+        with_projectile(false),
+        with_projectile(true),
+        "checksum omitted turret_tracks_any_enemy"
+    );
+    let mut world = world();
+    let id = world.entities.keys().next().copied();
+    let mut with_tracked = |tracked: Option<EntityId>| {
+        if let Some(unit) = id {
+            match tracked {
+                Some(enemy) => world.tracked_targets.set(unit, enemy),
+                None => world.tracked_targets.release(unit),
+            }
+        }
+        world.compute_checksum()
+    };
+    let none = with_tracked(None);
+    let some = with_tracked(Some(EntityId(2)));
+    let other = with_tracked(Some(EntityId(3)));
+    assert!(id.is_some(), "premise: the fixture world has an entity");
+    assert_ne!(none, some, "checksum omitted the tracked enemies");
+    assert_ne!(some, other, "checksum omitted the tracked entity's id");
+}
+
 #[test]
 fn embedded_weapon_fields_and_splash_are_sensitive() {
     let mut world = world();
@@ -418,6 +455,7 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
     original.fires_outside_attack_order = false;
     original.fires_at_other_targets = false;
     original.locks_turret_while_firing = false;
+    original.turret_tracks_any_enemy = false;
     original.attacks_count = 1;
     original.first_strike_delay_ticks = 0;
     original.strike_interval_ticks = 0;
@@ -475,6 +513,7 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
                 turret_turn_rate => SimAngle::PI,
                 allowed_movement => sim_types::AllowedMovement::Moving, fires_outside_attack_order => true,
                 fires_at_other_targets => true, locks_turret_while_firing => true,
+                turret_tracks_any_enemy => true,
                 base_damage => SimScalar::from_i32(2),
                 attribute_bonuses => AttributeBonuses::NONE.with(Attribute::Massive, SimScalar::ONE), attacks_count => 2,
                 first_strike_delay_ticks => 1, strike_interval_ticks => 1, followup_max_distance => Some(SimScalar::ONE), channeled => true,

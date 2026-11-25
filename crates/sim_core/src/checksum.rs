@@ -123,7 +123,12 @@ use std::collections::BTreeMap;
 /// Schema 48 replaces each entity's rally by its routes, `Entity::rallies`, in the same place: the
 /// route count, then per route its slot (a `u8`), its waypoint count and each waypoint in the
 /// rally's encoding (plan `2026-11-25-rallies` D-2). The number is the next free at merge.
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 48;
+/// Schema 49 adds whether each weapon's turret tracks any enemy (a `bool`),
+/// `WeaponSpec::turret_tracks_any_enemy`, after `locks_turret_while_firing`, and the enemy each
+/// unit's turret tracks, the world's `tracked_targets` table (its length, then each unit and
+/// enemy id in unit id order), after the route groups (plan `2026-11-26-turret-tracking-weapon`
+/// D-8, Amendment 1). The number is the next free at merge.
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 49;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.
@@ -185,6 +190,12 @@ pub fn compute_simulation_checksum(world: &SimWorld) -> u64 {
     "route-groups".encode(&mut encoder);
     world.next_route_group.encode(&mut encoder);
     world.route_groups.encode(&mut encoder);
+    "turret-tracking".encode(&mut encoder);
+    encoder.length(world.tracked_targets.entries().len());
+    for (unit, enemy) in world.tracked_targets.entries() {
+        unit.encode(&mut encoder);
+        enemy.encode(&mut encoder);
+    }
 
     "map".encode(&mut encoder);
     world.map.width().encode(&mut encoder);

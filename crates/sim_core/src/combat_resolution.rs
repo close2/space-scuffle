@@ -54,7 +54,8 @@ use crate::catalog::UnitCatalog;
 use crate::catalog::{SplashSpec, UnitArchetype, WeaponSpec};
 use crate::combat::{
     charge_random_delay, fires_without_attack_order, mitigate_weapon_strike, raw_strike_damage,
-    shares_combat_plane, splash_raw_damage, step_entity_weapon, within_band, Mandate, WeaponTarget,
+    shares_combat_plane, splash_raw_damage, step_entity_weapon_tracking, within_band, Mandate,
+    TrackingAim, WeaponTarget,
 };
 use crate::entity::{
     ActiveProjectile, Entity, PendingLine, PendingLineView, PendingStrikes, WeaponPhase,
@@ -671,7 +672,14 @@ impl SimWorld {
                 })
             });
 
-            if step_entity_weapon(entity, &weapon, target_info, mandate) {
+            let tracking = Self::tracking_aim(
+                &context,
+                combat,
+                entity,
+                arch,
+                self.tracked_targets.get(*id),
+            );
+            if step_entity_weapon_tracking(entity, &weapon, target_info, mandate, tracking) {
                 charge_random_delay(entity, &weapon, rng);
                 if let Some(target) = target_info {
                     let strikes = Self::begin_strikes(entity, &weapon, target.id, target_mover);
@@ -690,6 +698,31 @@ impl SimWorld {
                 }
             }
         }
+    }
+
+    /// Where `entity`'s turret aims for the enemy acquisition chose for it to track
+    /// (`tracked`, from [`SimWorld::tracked_targets`], plan `2026-11-26-turret-tracking-weapon`
+    /// D-4, Amendment 1): that enemy's
+    /// position, while it lives and is available to the unit's weapon (the swing's test,
+    /// [`Self::swing_target_live`]) and its plane resolves to a turreted weapon whose turret
+    /// tracks any enemy, with that weapon's turret rate. `None` otherwise; the weapon step
+    /// decides whether the turret is free to follow it.
+    fn tracking_aim(
+        context: &StrikeContext<'_>,
+        combat: &CombatWorkspace,
+        entity: &Entity,
+        arch: &UnitArchetype,
+        tracked: Option<EntityId>,
+    ) -> Option<TrackingAim> {
+        let snapshot = combat.snapshot(tracked?)?;
+        let weapon = arch.weapon_against(snapshot.mover, entity.active_siege_weapon())?;
+        (weapon.turret_tracks_any_enemy
+            && weapon.has_turret
+            && Self::swing_target_live(context, entity, snapshot))
+        .then_some(TrackingAim {
+            position: snapshot.position,
+            turn_rate: weapon.turret_turn_rate,
+        })
     }
 
     /// The target `entity` (of archetype `arch`, its attack rate `attack_rate`) works against

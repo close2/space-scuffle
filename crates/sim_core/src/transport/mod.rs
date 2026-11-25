@@ -262,6 +262,8 @@ impl SimWorld {
         actor.current_target = None;
         actor.weapon_target = None;
         actor.current_funnel_waypoints.clear();
+        // A carried unit's turret tracks nothing (plan `2026-11-26-turret-tracking-weapon` D-2).
+        self.tracked_targets.release(passenger);
         Ok(TransportReceipt {
             passenger,
             carrier,

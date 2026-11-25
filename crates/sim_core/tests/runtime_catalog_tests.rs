@@ -3933,3 +3933,146 @@ fn rally_slots_are_read_at_run_time() -> TestResult {
     );
     Ok(())
 }
+
+/// The ticks, of 300, on which a unit of `walker` walking east under a Move from (8, 30) to
+/// (56, 30), hull and turret facing east, has its turret off its hull, while it passes an idle
+/// enemy worker of `worker` standing 4 north of its path, in `catalogs`.
+fn turret_off_hull_ticks(
+    catalogs: RuntimeCatalogs,
+    walker: UnitTypeId,
+    worker: UnitTypeId,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    let map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0)))?;
+    let mut world = SimWorld::with_catalogs(map, 7, catalogs.units, catalogs.upgrades)?;
+    let unit = world.spawn_unit(walker, PlayerId(0), SimVec2::from_i32(8, 30))?;
+    let entity = world.entities.get_mut(&unit).ok_or("walker")?;
+    entity.heading = sim_types::SimAngle::ZERO;
+    entity.turret_angle = sim_types::SimAngle::ZERO;
+    world.spawn_unit(worker, PlayerId(1), SimVec2::from_i32(30, 34))?;
+    let mut off = 0;
+    for tick in 0..300 {
+        let commands = if tick == 0 {
+            vec![sim_types::PlayerCommand {
+                player_id: PlayerId(0),
+                entities: vec![unit],
+                order: sim_types::UnitOrder::Move {
+                    target: SimVec2::from_i32(56, 30),
+                },
+                queue: false,
+            }]
+        } else {
+            Vec::new()
+        };
+        world.step(&sim_types::TickBundle {
+            tick: sim_types::Tick(tick),
+            commands,
+            state_checksum: None,
+        });
+        let entity = world.entities.get(&unit).ok_or("walker")?;
+        off += usize::from(entity.turret_angle != entity.heading);
+    }
+    Ok(off)
+}
+
+/// T-11 of plan `2026-11-26-turret-tracking-weapon` (charter §3.3, zero recompilation): in the
+/// same binary, removing the shipped `turret_tracks_any_enemy: true` from a copied `units.ron`
+/// leaves its unit's turret along the hull while it walks past an enemy, and adding the field to
+/// another turreted ground weapon makes that unit's turret aim at the enemy.
+#[test]
+fn turret_tracking_follows_the_data() -> TestResult {
+    let shipped = RuntimeCatalogs::load_from_directory(catalog_directory())?;
+    let ground_weapon = |archetype: &sim_core::UnitArchetype| {
+        archetype
+            .weapon_against(sim_types::MoverType::Ground, None)
+            .cloned()
+    };
+    let mobile_ground = |archetype: &sim_core::UnitArchetype| {
+        archetype.mover_type == sim_types::MoverType::Ground
+            && archetype.max_speed > SimScalar::ZERO
+    };
+    let tracker = shipped
+        .units
+        .archetypes()
+        .find(|archetype| {
+            mobile_ground(archetype)
+                && ground_weapon(archetype).is_some_and(|weapon| weapon.turret_tracks_any_enemy)
+        })
+        .ok_or("a shipped tracking turret")?;
+    let flags = ground_weapon(tracker).ok_or("its weapon")?.target_flags;
+    let tracker_type = tracker.unit_type_id;
+    let other = shipped
+        .units
+        .archetypes()
+        .filter(|archetype| {
+            mobile_ground(archetype)
+                && ground_weapon(archetype).is_some_and(|weapon| {
+                    weapon.has_turret
+                        && !weapon.turret_tracks_any_enemy
+                        && !weapon.fires_outside_attack_order
+                        && weapon.target_flags.intersects(flags)
+                })
+        })
+        .min_by_key(|archetype| archetype.unit_type_id)
+        .ok_or("another shipped turreted ground weapon")?;
+    let (other_type, other_slug) = (other.unit_type_id, other.slug.clone());
+    let worker = shipped
+        .units
+        .archetypes()
+        .filter(|archetype| {
+            mobile_ground(archetype)
+                && archetype.harvester.is_some()
+                && archetype.acquire_level == sim_core::catalog::AcquireLevel::Defensive
+                && flags.intersects(archetype.attributes)
+        })
+        .min_by_key(|archetype| archetype.unit_type_id)
+        .ok_or("a shipped worker")?
+        .unit_type_id;
+
+    let bundle = Bundle::new("turret-tracking")?;
+    let units = std::fs::read_to_string(bundle.directory.join(FILES[0]))?;
+    let flag = "turret_tracks_any_enemy: true,\n";
+    assert_eq!(
+        units.matches(flag).count(),
+        1,
+        "premise: one shipped tracking turret"
+    );
+    std::fs::write(bundle.directory.join(FILES[0]), units.replacen(flag, "", 1))?;
+    let cleared = bundle.load()?;
+    let anchor = format!("slug: \"{other_slug}\"");
+    let start = units.find(&anchor).ok_or("the other unit's row")?;
+    let turret = units[start..]
+        .find("has_turret: true,")
+        .ok_or("the other unit's turret")?
+        + start;
+    let mut added = units.clone();
+    added.insert_str(turret, "turret_tracks_any_enemy: true, ");
+    std::fs::write(bundle.directory.join(FILES[0]), added)?;
+    let set = bundle.load()?;
+    assert!(
+        ground_weapon(set.units.get(other_type)?).is_some_and(|w| w.turret_tracks_any_enemy),
+        "premise: the edited weapon tracks"
+    );
+
+    let shipped_tracker = turret_off_hull_ticks(shipped.clone(), tracker_type, worker)?;
+    let cleared_tracker = turret_off_hull_ticks(cleared, tracker_type, worker)?;
+    let shipped_other = turret_off_hull_ticks(shipped, other_type, worker)?;
+    let set_other = turret_off_hull_ticks(set, other_type, worker)?;
+    assert!(
+        shipped_tracker > 10,
+        "the shipped turret tracks ({shipped_tracker})"
+    );
+    assert_eq!(
+        cleared_tracker, 0,
+        "with the field removed the turret stays on the hull"
+    );
+    assert_eq!(
+        shipped_other, 0,
+        "the other shipped turret stays on the hull"
+    );
+    assert!(
+        set_other > 10,
+        "with the field added the other turret tracks ({set_other})"
+    );
+    bundle.finish()?;
+    Ok(())
+}

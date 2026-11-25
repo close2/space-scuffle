@@ -1919,7 +1919,8 @@ fn attack_visibility_follows_starcraft() -> TestResult {
 /// default (`core` WeaponData:21), and `LockTurretWhileFiring` appears only on the Hellion's
 /// `InfernalFlameThrower`. The Void Ray's options that would clear the target condition are
 /// commented out (`void` WeaponData:172–173), and the Siege Tank's hidden `90mmCannonsFake`, which
-/// clears it, is not modelled (B-198).
+/// clears it, is modelled as a turret capability of the tank's own weapon
+/// ([`b198_turret_tracking_follows_starcraft`], plan `2026-11-26-turret-tracking-weapon` D-1).
 const SC2_FIRE_RULES: [(&str, bool, bool, &str); 5] = [
     (
         "Phoenix",
@@ -1996,6 +1997,88 @@ fn b180_b179_fire_rules_follow_starcraft() -> TestResult {
             );
         }
     }
+    Ok(())
+}
+
+/// `StarCraft` II 5.0.14 units whose turret also aims, under any order, at an enemy its weapon
+/// reaches, through a hidden weapon on the same turret that never harms: `(analogue, source)`
+/// (plan `2026-11-26-turret-tracking-weapon` §2.2, D-6, B-198). The survey of every `Fake` and
+/// `Dummy` weapon of the eight layers finds no other tracking-only weapon on a 5.0.14
+/// multiplayer unit.
+const SC2_TURRET_TRACKING: [(&str, &str); 1] = [(
+    "Siege Tank",
+    "90mmCannonsFake (Options Hidden 1, OnlyFireAtAttackOrderTarget 0, a CEffectDamage without \
+     amount) on Turret SiegeTank beside 90mmCannons: balancemulti WeaponData:7-20, UnitData:1473, \
+     EffectData:1066-1072",
+)];
+
+/// T-10 of plan `2026-11-26-turret-tracking-weapon`: exactly one shipped weapon tracks any enemy
+/// with its turret, the tank-mode weapon of the Siege Tank analogue (S1, S4). Its siege mode's
+/// weapon, every mode's weapon and every other weapon, structures' included, omit it:
+/// `SiegeTankSieged` carries only `CrucioShockCannon` (`liberty` UnitData:5181), and 5.0.14
+/// disables the fake through each morph (`balancemulti` AbilData:772-778, :954-958).
+#[test]
+fn b198_turret_tracking_follows_starcraft() -> TestResult {
+    let world = flat_world(16)?;
+    for (unit, source) in SC2_TURRET_TRACKING {
+        assert!(
+            archetypes_with_analogue(&world, unit).next().is_some(),
+            "an archetype with the analogue {unit} ({source})"
+        );
+    }
+    let default_source = "no hidden tracking weapon on the 5.0.14 unit or mode";
+    let mut tracking = std::collections::BTreeSet::new();
+    for archetype in world.catalog.archetypes() {
+        let analogue = archetype
+            .sc2_analogue()
+            .and_then(|analogue| analogue.split(" (").next());
+        let listed = SC2_TURRET_TRACKING
+            .iter()
+            .find(|(unit, _)| Some(*unit) == analogue);
+        let (expected, source) = listed.map_or((false, default_source), |row| (true, row.1));
+        let checks = own_weapons(archetype)
+            .map(|weapon| (weapon, expected, source))
+            .chain(mode_weapons(archetype).map(|weapon| (weapon, false, default_source)));
+        for (weapon, expected, source) in checks {
+            assert_eq!(
+                weapon.turret_tracks_any_enemy, expected,
+                "{} {}: turret tracking as StarCraft II's unit ({source})",
+                archetype.slug, weapon.name,
+            );
+            if weapon.turret_tracks_any_enemy {
+                tracking.insert((archetype.slug.clone(), weapon.name.clone()));
+            }
+        }
+    }
+    assert_eq!(
+        tracking.len(),
+        1,
+        "exactly one shipped weapon tracks any enemy: {tracking:?}"
+    );
+    Ok(())
+}
+
+/// T-12 of plan `2026-11-26-turret-tracking-weapon` (D-7): a weapon whose turret tracks any enemy
+/// needs a turret, and the refusal names the field; a turreted weapon may track.
+#[test]
+fn turret_tracking_refusal_names_its_field() -> TestResult {
+    assert_rejected(
+        UNITS,
+        "has_turret: false,",
+        "has_turret: false, turret_tracks_any_enemy: true,",
+        "turret_tracks_any_enemy",
+    );
+    let untracked = UNITS.replace("turret_tracks_any_enemy: true,", "");
+    let edited = untracked.replacen(
+        "has_turret: true,",
+        "has_turret: true, turret_tracks_any_enemy: true,",
+        1,
+    );
+    assert_ne!(
+        edited, untracked,
+        "premise: the shipped catalog has a turret"
+    );
+    UnitCatalog::from_ron_str_bundle(&sim_fixtures::shipped_factions(), &edited, STRUCTURES)?;
     Ok(())
 }
 
