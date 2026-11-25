@@ -745,3 +745,23 @@ plan as written; Q0116's defaults (part 1 (a), part 2 (a)). Evidence:
   evidence holds the bisection. Left for review.
 - Schema 49 and B-218 stay provisional, next free at merge.
 
+
+## Amendment 1 (2026-11-26, orchestrator review of the stop-rule-7 stop)
+
+WP3 stopped on stop rule 7: whole-benchmark instructions +2.30 % against the +0.5 % budget, with every world byte-identical
+and every other check passed. The profile in the evidence file traces the whole increase to `scan_candidates`, with
+the same number of scans: WP1 alone (fields present, no rule reading them) is +2.26 %, and WP1 without
+`Entity::tracked_target` is +0.01 %. The 8-byte field changes the scan loop's code generation, not its work.
+
+**Decision: D-2 changes.** The tracked enemy is not stored on `Entity`. It lives in one world-level side table in
+`SimWorld` (a sorted, deterministic structure keyed by entity id, e.g. a `Vec` of `(EntityId, EntityId)` kept sorted, or
+an index-aligned column allocated only when the catalog flags a weapon), holding entries only for units whose weapon
+carries `turret_tracks_any_enemy`. It is written by acquisition, read by the combat phase for the turret alone,
+cleared on the same events as before (`commit_order`, boarding, death, the skipped-unit release), and hashed into the
+checksum in id order (schema stays one bump, 49 provisional). Accepting the cost and tuning the scan loop's code
+generation were rejected: the first pays 2.3 % on every unit for a turret-only presentation rule, the second is
+fragile against compiler changes.
+
+**Acceptance unchanged.** T-1 to T-16, the world classification (all byte-identical so far), the latent proof at 48,
+the single re-record on the final tree, and stop rule 7 (≤ +0.5 % instructions per the plan's reading, ≥ 50 ticks/s)
+all apply to the amended tree. If the side table still exceeds the budget, the package stops again for review.
