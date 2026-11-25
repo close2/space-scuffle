@@ -27,3 +27,6 @@ never pushed, enemies never push), there is often no way to undo it at all, so c
 
 ## Answer
 
+- **Option (a): Restructure movement as "aim well, never step into what won't move, then separate."** Build side-by-side with today's movement and switch over only once pre-registered acceptance tests pass (including resolving the prototype's extra direction changes and slight residual enemy overlap).
+
+**Reasoning:** Directly addresses the root architectural cause (stepping into immovable bodies and relying on a Jacobi post-pass to undo impossible overlaps) and aligns closely with StarCraft II's movement architecture.
