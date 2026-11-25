@@ -606,8 +606,10 @@ mod tests {
         Ok(())
     }
 
+    /// Open ground means a move; an idle mobile friend, which offers nothing else, is followed
+    /// (plan `2026-11-26-follow-order` D-10; it meant a move to the ground before).
     #[test]
-    fn open_ground_and_an_idle_friend_mean_move() -> TestResult {
+    fn open_ground_means_move_and_an_idle_friend_is_followed() -> TestResult {
         let mut world = flat_world()?;
         let unit = worker(&mut world, 0)?;
         let other = soldier(&mut world, 1)?;
@@ -617,7 +619,10 @@ mod tests {
         );
         assert_eq!(
             order_on(&world, &[unit], PointerTarget::Friendly(other, POINT)),
-            moved()
+            follows(UnitOrder::Follow {
+                target: other,
+                kind: FollowKind::Move
+            })
         );
         Ok(())
     }

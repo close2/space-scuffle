@@ -1269,8 +1269,10 @@ fn a_mixed_army_attack_moves_together_and_splits_on_an_enemy() {
 }
 
 /// P-7 (B-175, Q0104's default): A-clicked on one's own unit, the armed member attacks it (an
-/// explicit target after the tick), the others attack-move to it, and the clicked unit, though
-/// selected, gets neither order. A right click on one's own unit is no attack.
+/// explicit target after the tick), the Medivac-class member follows it with Scan Move (plan
+/// `2026-11-26-follow-order` D-10, B-187), the unburrowed Lurker analogue attack-moves to it, and
+/// the clicked unit, though selected, gets no order. A right click on one's own unit is no
+/// attack.
 #[test]
 fn an_a_click_on_ones_own_unit_attacks_it() {
     let mut harness = skirmish();
@@ -1280,19 +1282,27 @@ fn an_a_click_on_ones_own_unit_attacks_it() {
     let own = spawn_at(&mut harness, near, 11.0, kind, LOCAL_PLAYER);
     select_all(&mut harness, &[marine, medivac, lurker, own]);
     let orders = a_click_on_unit(&mut harness, own);
-    assert_eq!(orders.len(), 2, "status: {}", harness.status());
+    assert_eq!(orders.len(), 3, "status: {}", harness.status());
     assert_eq!(orders[0].order, UnitOrder::attack(own));
     assert_eq!(orders[0].entities, [marine]);
-    assert!(
-        attack_moves_to(&harness, &orders[1].order, own),
-        "{:?}",
-        orders[1].order
+    assert_eq!(
+        orders[1].order,
+        UnitOrder::Follow {
+            target: own,
+            kind: sim_types::FollowKind::AcquireMove
+        }
     );
-    let mut walkers = orders[1].entities.clone();
-    walkers.sort_unstable();
-    let mut expected = vec![medivac, lurker];
-    expected.sort_unstable();
-    assert_eq!(walkers, expected, "the clicked unit gets neither order");
+    assert_eq!(orders[1].entities, [medivac]);
+    assert!(
+        attack_moves_to(&harness, &orders[2].order, own),
+        "{:?}",
+        orders[2].order
+    );
+    assert_eq!(
+        orders[2].entities,
+        [lurker],
+        "the clicked unit gets no order"
+    );
     run_ticks(&mut harness, 1);
     assert!(
         attacks(&harness, marine, own),
