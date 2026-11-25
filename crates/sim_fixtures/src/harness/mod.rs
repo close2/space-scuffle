@@ -8,6 +8,13 @@
 //! `corner` (B-152's rounded obstacles) and `mirror`; each scene family also runs relabelled, its
 //! spawn order permuted, which permutes the entity ids and nothing else.
 //!
+//! Plan `2026-11-27-gated-movement` (§5.2, `WP0a`) adds eight families whose scenes carry known
+//! answers ([`answers`]): `hold-line`, `enemy-press`, `deep-queue`, `wedge`, `hallway`,
+//! `stutter`, `surround-moving` and `lanes`; and the permutation mode ([`permutation`]), which
+//! plays every scene twice, the second time with the processing order inside each tick rotated
+//! through the world's determinism probe ([`SimWorld::set_movement_order_rotation`]), and reports
+//! where the two plays part.
+//!
 //! # How it fits
 //! The binary is `crates/sim_core/examples/movement_harness.rs`, a thin `main` over [`cli`]. The
 //! harness is test support: it builds worlds from the shipped catalogs embedded in this crate, or
@@ -15,18 +22,25 @@
 //! movement rules a run plays under, so one binary measures every pipeline the rules select.
 //!
 //! # Invariants
-//! - A scene's row is a function of `(family, seed, relabel, rules)`: rows do not depend on the
-//!   number of jobs or the order they finish in, and are written in seed order.
+//! - A scene's row is a function of `(family, seed, relabel, rules, rotation)`: rows do not depend
+//!   on the number of jobs or the order they finish in, and are written in seed order.
+//! - The older families' rows keep exactly their columns ([`ScenarioRow::HEADER`]); only the new
+//!   families' rows carry the known-answer columns.
 //! - Seeds are given by the caller; the ranges of §6.1 (development 1 to 1,000, acceptance
 //!   100,001 to 101,000, held-out 9,000,001 to 9,001,000) are the caller's discipline.
 
+pub mod answers;
 pub mod corpus;
 pub mod metrics;
 pub mod mirror;
+pub mod permutation;
 pub mod report;
 pub mod room;
 
-use corpus::{Lattice, Role, Scenario};
+pub use permutation::{permutation_csv, permutation_range, PermutationRow};
+
+use corpus::{Cue, CueOrder, Lattice, Role, Scenario};
+use metrics::known::KnownMeter;
 use metrics::{ScenarioMeter, ScenarioRow};
 use sim_core::catalog::{MovementPipeline, MovementRules};
 use sim_core::{SimWorld, UnitCatalog};
@@ -35,11 +49,13 @@ use sim_types::{
     AttackOrigin, EntityId, PlayerCommand, PlayerId, ResourceKind, SimScalar, SimVec2, Tick,
     TickBundle, UnitOrder,
 };
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
-/// A scenario family of §6.2 (and the `corner` family of §7 WP1).
+/// A scenario family of §6.2 (and the `corner` family of §7 WP1), or one of the eight families
+/// of plan `2026-11-27-gated-movement` §5.2 ([`Family::NEW`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Family {
     /// A wall with a gap; passable iff the gap is wider than a unit.
@@ -54,10 +70,26 @@ pub enum Family {
     Corner,
     /// Point-symmetric battles of shipped armies.
     Mirror,
+    /// Walkers given one `Move` through a line of friends on Hold Position.
+    HoldLine,
+    /// Attackers attack-moving into a line of standing enemies (idle, attacking or holding).
+    EnemyPress,
+    /// Melee attackers many ranks deep in a corridor plugged by an enemy pillar.
+    DeepQueue,
+    /// A walker whose straight route runs between two unpushable bodies too close to pass.
+    Wedge,
+    /// Two single files meeting head-on in a corridor two diameters wide.
+    Hallway,
+    /// Ranged attackers with friends behind them, ordered back and forth (stutter-step).
+    Stutter,
+    /// Melee attackers chasing a target that walks a circle.
+    SurroundMoving,
+    /// A group `Move` through a wall with two parallel gaps.
+    Lanes,
 }
 
 impl Family {
-    /// Every family, in report order.
+    /// The families of plan `2026-11-20-contact-solver`, in report order.
     pub const ALL: [Self; 6] = [
         Self::Gap,
         Self::Arc,
@@ -65,6 +97,19 @@ impl Family {
         Self::Corridor,
         Self::Corner,
         Self::Mirror,
+    ];
+
+    /// The families of plan `2026-11-27-gated-movement` §5.2, in report order; each scene of
+    /// one carries its known answer ([`corpus::Scenario::known`]).
+    pub const NEW: [Self; 8] = [
+        Self::HoldLine,
+        Self::EnemyPress,
+        Self::DeepQueue,
+        Self::Wedge,
+        Self::Hallway,
+        Self::Stutter,
+        Self::SurroundMoving,
+        Self::Lanes,
     ];
 
     /// The family's name in arguments, files and CSV rows.
@@ -77,6 +122,14 @@ impl Family {
             Self::Corridor => "corridor",
             Self::Corner => "corner",
             Self::Mirror => "mirror",
+            Self::HoldLine => "hold-line",
+            Self::EnemyPress => "enemy-press",
+            Self::DeepQueue => "deep-queue",
+            Self::Wedge => "wedge",
+            Self::Hallway => "hallway",
+            Self::Stutter => "stutter",
+            Self::SurroundMoving => "surround-moving",
+            Self::Lanes => "lanes",
         }
     }
 
@@ -90,13 +143,30 @@ impl Family {
             Self::Corridor => 3,
             Self::Corner => 4,
             Self::Mirror => 5,
+            Self::HoldLine => 6,
+            Self::EnemyPress => 7,
+            Self::DeepQueue => 8,
+            Self::Wedge => 9,
+            Self::Hallway => 10,
+            Self::Stutter => 11,
+            Self::SurroundMoving => 12,
+            Self::Lanes => 13,
         }
+    }
+
+    /// Whether the family is one of [`Self::NEW`], whose rows carry the known-answer columns.
+    #[must_use]
+    pub fn is_new(self) -> bool {
+        Self::NEW.contains(&self)
     }
 
     /// The family named `name`.
     #[must_use]
     pub fn parse(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|family| family.name() == name)
+        Self::ALL
+            .into_iter()
+            .chain(Self::NEW)
+            .find(|family| family.name() == name)
     }
 }
 
@@ -122,13 +192,18 @@ pub enum HarnessError {
 pub struct RunOptions {
     /// The movement rules of every world of the run.
     pub rules: MovementRules,
+    /// The offset every world of the run rotates its processing order by
+    /// ([`SimWorld::set_movement_order_rotation`]); 0, the shipped order, but in the permutation
+    /// mode's second play.
+    pub order_rotation: u32,
 }
 
 impl Default for RunOptions {
-    /// The shipped `movement_rules.ron`.
+    /// The shipped `movement_rules.ron`, in the shipped processing order.
     fn default() -> Self {
         Self {
             rules: shipped_rules(),
+            order_rotation: 0,
         }
     }
 }
@@ -147,7 +222,10 @@ impl RunOptions {
         let rules = shipped
             .with_contact(contact)
             .map_err(|e| HarnessError::Usage(e.to_string()))?;
-        Ok(Self { rules })
+        Ok(Self {
+            rules,
+            order_rotation: 0,
+        })
     }
 }
 
@@ -242,12 +320,7 @@ pub fn build_world(
 /// The commands that start `scenario`, whose spawns have the world's `ids`.
 #[must_use]
 pub fn opening_commands(scenario: &Scenario, ids: &[EntityId]) -> Vec<PlayerCommand> {
-    let pillar = scenario
-        .spawns
-        .iter()
-        .zip(ids)
-        .find(|(spawn, _)| spawn.role == Role::Pillar)
-        .map(|(_, &id)| id);
+    let pillar = scene_target(scenario, ids);
     let mut group: Option<(SimVec2, Vec<EntityId>)> = None;
     let mut attackers = Vec::new();
     let mut commands = Vec::new();
@@ -264,7 +337,12 @@ pub fn opening_commands(scenario: &Scenario, ids: &[EntityId]) -> Vec<PlayerComm
                 queue: false,
             }),
             Role::Attack => attackers.push(id),
-            Role::Pillar => {}
+            Role::Pillar
+            | Role::Hold
+            | Role::Stand
+            | Role::AttackMove { .. }
+            | Role::AttackAt { .. }
+            | Role::Circle { .. } => {}
         }
     }
     if let Some((target, entities)) = group {
@@ -286,7 +364,201 @@ pub fn opening_commands(scenario: &Scenario, ids: &[EntityId]) -> Vec<PlayerComm
             queue: false,
         });
     }
+    commands.extend(role_commands(scenario, ids));
     commands
+}
+
+/// The unit the scene's attackers ([`Role::Attack`]) attack: its pillar, or the unit that walks a
+/// circle.
+fn scene_target(scenario: &Scenario, ids: &[EntityId]) -> Option<EntityId> {
+    scenario
+        .spawns
+        .iter()
+        .zip(ids)
+        .find(|(spawn, _)| matches!(spawn.role, Role::Pillar | Role::Circle { .. }))
+        .map(|(_, &id)| id)
+}
+
+/// The opening commands of the roles of plan `2026-11-27-gated-movement`'s families, after the
+/// older roles' (so an older scene's commands are what they were): Hold Position and attack-move
+/// one command per owner (and goal), an attack on a named unit and a walk round a circle one per
+/// unit.
+fn role_commands(scenario: &Scenario, ids: &[EntityId]) -> Vec<PlayerCommand> {
+    let mut holders: BTreeMap<u8, Vec<EntityId>> = BTreeMap::new();
+    let mut attack_moves: BTreeMap<(u8, (Lattice, Lattice)), Vec<EntityId>> = BTreeMap::new();
+    let mut commands = Vec::new();
+    let id_at = |point: (Lattice, Lattice)| {
+        scenario
+            .spawns
+            .iter()
+            .zip(ids)
+            .find(|(spawn, _)| spawn.at == point)
+            .map(|(_, &id)| id)
+    };
+    for (spawn, &id) in scenario.spawns.iter().zip(ids) {
+        let player_id = PlayerId(spawn.owner);
+        match spawn.role {
+            Role::Hold => holders.entry(spawn.owner).or_default().push(id),
+            Role::AttackMove { goal } => attack_moves
+                .entry((spawn.owner, goal))
+                .or_default()
+                .push(id),
+            Role::AttackAt { target } => {
+                commands.extend(id_at(target).map(|target| PlayerCommand {
+                    player_id,
+                    entities: vec![id],
+                    order: UnitOrder::AttackTarget {
+                        target,
+                        origin: AttackOrigin::Explicit,
+                    },
+                    queue: false,
+                }));
+            }
+            Role::Circle { centre, radius } => {
+                for (index, corner) in corpus::circle_corners(centre, radius)
+                    .into_iter()
+                    .enumerate()
+                {
+                    commands.push(PlayerCommand {
+                        player_id,
+                        entities: vec![id],
+                        order: UnitOrder::Move { target: at(corner) },
+                        queue: index > 0,
+                    });
+                }
+            }
+            Role::GroupMove { .. }
+            | Role::OwnMove { .. }
+            | Role::Attack
+            | Role::Pillar
+            | Role::Stand => {}
+        }
+    }
+    for (owner, entities) in holders {
+        commands.push(PlayerCommand {
+            player_id: PlayerId(owner),
+            entities,
+            order: UnitOrder::HoldPosition,
+            queue: false,
+        });
+    }
+    for ((owner, goal), entities) in attack_moves {
+        commands.push(PlayerCommand {
+            player_id: PlayerId(owner),
+            entities,
+            order: UnitOrder::AttackMove { target: at(goal) },
+            queue: false,
+        });
+    }
+    commands
+}
+
+/// The commands of `cue` in `world`, whose scene `scenario` has the units `ids`: to every living
+/// attacker ([`Role::Attack`]), a `Move` by the cue's offset from where it stands, or the attack
+/// on the scene's target again.
+#[must_use]
+pub fn cue_commands(
+    scenario: &Scenario,
+    ids: &[EntityId],
+    world: &SimWorld,
+    cue: Cue,
+) -> Vec<PlayerCommand> {
+    let attackers: Vec<(u8, EntityId, SimVec2)> = scenario
+        .spawns
+        .iter()
+        .zip(ids)
+        .filter(|(spawn, _)| spawn.role == Role::Attack)
+        .filter_map(|(spawn, id)| {
+            let entity = world.entities.get(id).filter(|e| e.is_alive())?;
+            Some((spawn.owner, *id, entity.position))
+        })
+        .collect();
+    match cue.order {
+        CueOrder::MoveBy { offset } => {
+            let offset = at(offset);
+            attackers
+                .into_iter()
+                .map(|(owner, id, position)| PlayerCommand {
+                    player_id: PlayerId(owner),
+                    entities: vec![id],
+                    order: UnitOrder::Move {
+                        target: SimVec2::new(position.x + offset.x, position.y + offset.y),
+                    },
+                    queue: false,
+                })
+                .collect()
+        }
+        CueOrder::Attack => {
+            let Some(target) = scene_target(scenario, ids) else {
+                return Vec::new();
+            };
+            let entities: Vec<EntityId> = attackers.iter().map(|&(_, id, _)| id).collect();
+            if entities.is_empty() {
+                return Vec::new();
+            }
+            vec![PlayerCommand {
+                player_id: PlayerId(0),
+                entities,
+                order: UnitOrder::AttackTarget {
+                    target,
+                    origin: AttackOrigin::Explicit,
+                },
+                queue: false,
+            }]
+        }
+    }
+}
+
+/// One scene being played: its world, its units' ids in spawn order, and the orders still to be
+/// given (the opening on the first tick, then the scene's script).
+pub struct ScenePlay<'a> {
+    scenario: &'a Scenario,
+    /// The scene's world; read it between steps.
+    pub world: SimWorld,
+    /// The units' ids in spawn order.
+    pub ids: Vec<EntityId>,
+    opening: Vec<PlayerCommand>,
+    played: u32,
+    next_cue: usize,
+}
+
+impl<'a> ScenePlay<'a> {
+    /// The world of `scenario` under `options`, its processing order rotated by
+    /// [`RunOptions::order_rotation`], ready to play its first tick.
+    ///
+    /// # Errors
+    /// [`HarnessError::World`] when its world cannot be built.
+    pub fn new(scenario: &'a Scenario, options: &RunOptions) -> Result<Self, HarnessError> {
+        let (mut world, ids) = build_world(scenario, options)?;
+        world.set_movement_order_rotation(options.order_rotation);
+        let opening = opening_commands(scenario, &ids);
+        Ok(Self {
+            scenario,
+            world,
+            ids,
+            opening,
+            played: 0,
+            next_cue: 0,
+        })
+    }
+
+    /// Plays one tick: the opening's commands on the first, and every cue of this tick.
+    pub fn step(&mut self) {
+        let mut commands = std::mem::take(&mut self.opening);
+        while let Some(&cue) = self.scenario.script.get(self.next_cue) {
+            if cue.tick != self.played {
+                break;
+            }
+            commands.extend(cue_commands(self.scenario, &self.ids, &self.world, cue));
+            self.next_cue += 1;
+        }
+        self.world.step(&TickBundle {
+            tick: Tick(self.world.current_tick),
+            commands,
+            state_checksum: None,
+        });
+        self.played += 1;
+    }
 }
 
 /// Plays `scenario` under `options` for its bound and measures it.
@@ -297,20 +569,21 @@ pub fn run_scenario(
     scenario: &Scenario,
     options: &RunOptions,
 ) -> Result<ScenarioRow, HarnessError> {
-    let (mut world, ids) = build_world(scenario, options)?;
-    let mut meter = ScenarioMeter::new(&world, scenario, &ids);
-    let mut commands = opening_commands(scenario, &ids);
+    let mut play = ScenePlay::new(scenario, options)?;
+    let mut meter = ScenarioMeter::new(&play.world, scenario, &play.ids);
+    let mut known = KnownMeter::new(&play.world, scenario, &play.ids);
     for _ in 0..scenario.ticks {
-        world.step(&TickBundle {
-            tick: Tick(world.current_tick),
-            commands: std::mem::take(&mut commands),
-            state_checksum: None,
-        });
-        meter.add_diagnostics(world.drain_diagnostics().count());
-        meter.add_iterations(world.contact_iterations());
-        meter.observe(&world);
+        play.step();
+        meter.add_diagnostics(play.world.drain_diagnostics().count());
+        meter.add_iterations(play.world.contact_iterations());
+        meter.observe(&play.world);
+        if let Some(known) = known.as_mut() {
+            known.observe(&play.world);
+        }
     }
-    Ok(meter.finish())
+    let mut row = meter.finish();
+    row.known = scenario.known.zip(known.map(KnownMeter::finish));
+    Ok(row)
 }
 
 /// One family's CSV over `count` seeds from `from`, played on `jobs` threads, in seed order.
@@ -351,9 +624,9 @@ pub fn run_range(
         .map_err(|_| HarnessError::Io("a worker thread panicked".to_owned()))?;
     results.sort_by_key(|(index, _)| *index);
     let header = if family == Family::Mirror {
-        mirror::MirrorRow::HEADER
+        mirror::MirrorRow::HEADER.to_owned()
     } else {
-        ScenarioRow::HEADER
+        ScenarioRow::header_for(family)
     };
     let mut text = format!("{header}\n");
     for (_, line) in results {
@@ -368,12 +641,16 @@ pub mod cli {
     //!
     //! ```text
     //! movement_harness --family gap --from 1 --count 1000 [--relabel] [--jobs 4] --out gap.csv
+    //! movement_harness --family gap --from 1 --count 1000 --permute 7 --out gap-permute.csv
     //! movement_harness --aggregate today=<dir> [label=<dir> ...]
     //! ```
-    //! The first form plays one family's range and writes its CSV; the second prints §5's tables
-    //! of the runs in the directories and the verdicts of every run after the first against it.
+    //! The first form plays one family's range and writes its CSV; the second plays each scene
+    //! twice, the second time with the processing order rotated by the offset (plan
+    //! `2026-11-27-gated-movement`'s permutation mode), and writes where the plays part; the
+    //! third prints §5's tables of the runs in the directories and the verdicts of every run after
+    //! the first against it.
 
-    use super::{report, run_range, Family, HarnessError, RunOptions};
+    use super::{permutation, report, run_range, Family, HarnessError, RunOptions};
     use sim_core::catalog::MovementPipeline;
     use std::path::PathBuf;
 
@@ -394,6 +671,8 @@ pub mod cli {
             out: PathBuf,
             /// The contact pipeline to play under; the shipped one when `None`.
             pipeline: Option<MovementPipeline>,
+            /// The permutation mode's rotation offset; `None` plays the scenes once.
+            permute: Option<u32>,
         },
         /// Aggregate run directories, each `label=dir`.
         Aggregate(Vec<(String, PathBuf)>),
@@ -421,7 +700,7 @@ pub mod cli {
         }
         let (mut family, mut from, mut count, mut relabel, mut jobs, mut out) =
             (None, 1_u64, 1_u64, false, 1_usize, None);
-        let mut pipeline = None;
+        let (mut pipeline, mut permute) = (None, None);
         let mut iter = args.iter();
         while let Some(flag) = iter.next() {
             let mut value = || {
@@ -444,6 +723,13 @@ pub mod cli {
                 }
                 "--out" => out = Some(PathBuf::from(value()?)),
                 "--relabel" => relabel = true,
+                "--permute" => {
+                    permute = Some(
+                        value()?
+                            .parse()
+                            .map_err(|_| usage("--permute takes an offset"))?,
+                    );
+                }
                 "--pipeline" => {
                     pipeline = Some(match value()?.as_str() {
                         "legacy" => MovementPipeline::Legacy,
@@ -455,12 +741,18 @@ pub mod cli {
             }
         }
         Ok(Command::Play {
-            family: family.ok_or_else(|| usage("--family gap|arc|cross|corridor|corner|mirror"))?,
+            family: family.ok_or_else(|| {
+                usage(
+                    "--family gap|arc|cross|corridor|corner|mirror|hold-line|enemy-press|\
+                     deep-queue|wedge|hallway|stutter|surround-moving|lanes",
+                )
+            })?,
             range: (from, count),
             relabel,
             jobs,
             out: out.ok_or_else(|| usage("--out <file.csv>"))?,
             pipeline,
+            permute,
         })
     }
 
@@ -477,12 +769,18 @@ pub mod cli {
                 jobs,
                 out,
                 pipeline,
+                permute,
             } => {
                 let chosen = match pipeline {
                     Some(pipeline) => RunOptions::with_pipeline(*pipeline)?,
                     None => *options,
                 };
-                let text = run_range(*family, *range, *relabel, *jobs, &chosen)?;
+                let text = match permute {
+                    Some(offset) => permutation::permutation_csv(&permutation::permutation_range(
+                        *family, *range, *offset, *jobs, &chosen,
+                    )?),
+                    None => run_range(*family, *range, *relabel, *jobs, &chosen)?,
+                };
                 std::fs::write(out, &text)
                     .map_err(|e| HarnessError::Io(format!("{}: {e}", out.display())))?;
                 Ok(format!(

@@ -15,6 +15,9 @@
 //!   an opening; **M8** friend overlap per near pair-tick, enemy overlap with the pillar and the
 //!   depth of any disc in blocked cells or past the map edge.
 //!
+//! The scenes of plan `2026-11-27-gated-movement`'s eight families are watched in addition by
+//! [`known::KnownMeter`], whose columns ([`known::KnownRow`]) their rows carry last.
+//!
 //! # How it fits
 //! [`super::run_scenario`] feeds the meter; [`ScenarioMeter::finish`] gives the scene's
 //! [`ScenarioRow`], a line of the harness's CSV, which [`super::report`] aggregates. Positions and
@@ -25,6 +28,9 @@
 //! - A unit's first observed tick has no previous step, so it never counts a reversal.
 //! - Every count only grows; maxima only rise.
 
+pub mod known;
+
+use super::answers::KnownAnswer;
 use super::corpus::{Answer, Lattice, Role, Scenario, LATTICE};
 use sim_core::movement::RouteOutcomeKind;
 use sim_core::SimWorld;
@@ -138,6 +144,10 @@ pub struct ScenarioRow {
     /// gained [`STUCK_PROGRESS`] of potential for [`STUCK_TICKS`] while an admissible free angle
     /// exists on their ring ("stuck with room").
     pub stuck_with_room: u32,
+    /// The known answer of a scene of plan `2026-11-27-gated-movement`'s families and its
+    /// columns, written after the others ([`known::KnownRow::HEADER`]); `None` for the older
+    /// families, whose rows keep exactly the columns of [`Self::HEADER`].
+    pub known: Option<(KnownAnswer, known::KnownRow)>,
 }
 
 impl ScenarioRow {
@@ -149,9 +159,33 @@ impl ScenarioRow {
         standing_wasted,diagnostics,contact_ticks,contact_iterations,iteration_ticks,rev_amp_idle,\
         moving_ticks_idle,stuck_with_room";
 
-    /// The row as one CSV line, without a line end.
+    /// The header of `family`'s CSV: [`Self::HEADER`], then for a family of plan
+    /// `2026-11-27-gated-movement` the known-answer columns.
+    #[must_use]
+    pub fn header_for(family: super::Family) -> String {
+        if family.is_new() {
+            format!("{},{}", Self::HEADER, known::KnownRow::HEADER)
+        } else {
+            Self::HEADER.to_owned()
+        }
+    }
+
+    /// The row as one CSV line, without a line end: the columns of [`Self::HEADER`], then, for a
+    /// scene with a known answer, its columns and verdict ([`known::KnownRow::cells`]).
     #[must_use]
     pub fn to_csv(&self) -> String {
+        let base = self.base_csv();
+        match &self.known {
+            Some((answer, row)) => {
+                let verdict = super::answers::judge(*answer, self, row);
+                format!("{base},{}", row.cells(&verdict))
+            }
+            None => base,
+        }
+    }
+
+    /// The columns of [`Self::HEADER`] as one CSV line.
+    fn base_csv(&self) -> String {
         format!(
             "{},{},{},{},{},{},{},{},{},{},{},{},{:.4},{:.4},{},{},{},{},{},{},{:.4},{:.5},{:.5},\
              {},{},{},{},{:.5},{:.5},{:.1},{:.4},{},{},{},{},{},{},{}",
@@ -334,10 +368,15 @@ impl ScenarioMeter {
                 band = to_f64(weapon.max_range) + radius + pillar_radius;
             }
             let goal = match spawn.role {
-                Role::GroupMove { goal } | Role::OwnMove { goal } => {
+                Role::GroupMove { goal } | Role::OwnMove { goal } | Role::AttackMove { goal } => {
                     Some((lattice(goal.0), lattice(goal.1)))
                 }
-                Role::Attack | Role::Pillar => None,
+                Role::Attack
+                | Role::Pillar
+                | Role::Hold
+                | Role::Stand
+                | Role::AttackAt { .. }
+                | Role::Circle { .. } => None,
             };
             let position = point(entity.position);
             tracks.push(Track {
@@ -512,11 +551,15 @@ impl ScenarioMeter {
             }
         }
         let complete = match track.role {
-            Role::GroupMove { .. } | Role::OwnMove { .. } => {
+            Role::GroupMove { .. } | Role::OwnMove { .. } | Role::AttackMove { .. } => {
                 idle && !track.gave_up && wall.is_none_or(|wall| now.0 > wall + 1.0)
             }
             Role::Attack => in_band,
-            Role::Pillar => false,
+            Role::Pillar
+            | Role::Hold
+            | Role::Stand
+            | Role::AttackAt { .. }
+            | Role::Circle { .. } => false,
         };
         if complete && track.done_tick.is_none() {
             track.done_tick = Some(tick);
@@ -715,7 +758,9 @@ impl ScenarioMeter {
             if complete {
                 self.row.done += 1;
                 done_ticks.extend(track.done_tick);
-            } else if passable && track.still_ticks >= DEADLOCK_TICKS {
+            } else if passable && track.goal.is_some() && track.still_ticks >= DEADLOCK_TICKS {
+                // Only a unit with a destination can deadlock: a holder or a standing body of
+                // the newer families never had one (the older families' units all do).
                 self.row.deadlocked += 1;
             }
         }

@@ -190,6 +190,19 @@ fn at(position: (Lattice, Lattice)) -> SimVec2 {
 /// # Errors
 /// [`HarnessError`] when the world cannot be built or a unit cannot be spawned.
 pub fn run(seed: u64, options: &RunOptions) -> Result<MirrorRow, HarnessError> {
+    let (mut world, sides) = build(seed, options)?;
+    Ok(play(&mut world, &sides, seed))
+}
+
+/// The world of the mirror battle of `seed` under `options` (its processing order rotated by
+/// [`RunOptions::order_rotation`]), and each side's units in spawn order.
+///
+/// # Errors
+/// [`HarnessError`] when the world cannot be built or a unit cannot be spawned.
+pub fn build(
+    seed: u64,
+    options: &RunOptions,
+) -> Result<(SimWorld, [Vec<EntityId>; 2]), HarnessError> {
     let mut catalogs = crate::shipped_catalogs();
     crate::without_random_delays(&mut catalogs.units);
     catalogs.units.set_movement_rules(options.rules);
@@ -214,7 +227,48 @@ pub fn run(seed: u64, options: &RunOptions) -> Result<MirrorRow, HarnessError> {
             side.push(id);
         }
     }
-    Ok(play(&mut world, &sides, seed))
+    world.set_movement_order_rotation(options.order_rotation);
+    Ok((world, sides))
+}
+
+/// The commands of the mirror battle's tick `tick` in `world`: every [`REISSUE_TICKS`] ticks
+/// each side attack-moves to the other's centroid. `None` once a side has no living unit: the
+/// battle is over.
+#[must_use]
+pub fn commands_for(
+    world: &SimWorld,
+    sides: &[Vec<EntityId>; 2],
+    tick: u32,
+) -> Option<Vec<PlayerCommand>> {
+    let living = |side: &[EntityId]| -> Vec<EntityId> {
+        side.iter()
+            .copied()
+            .filter(|id| {
+                world
+                    .entities
+                    .get(id)
+                    .is_some_and(sim_core::Entity::is_alive)
+            })
+            .collect()
+    };
+    let (blue, red) = (living(&sides[0]), living(&sides[1]));
+    if blue.is_empty() || red.is_empty() {
+        return None;
+    }
+    let mut commands = Vec::new();
+    if tick.is_multiple_of(REISSUE_TICKS) {
+        for (player, own, other) in [(0_u8, &blue, &red), (1, &red, &blue)] {
+            commands.push(PlayerCommand {
+                player_id: PlayerId(player),
+                entities: own.clone(),
+                order: UnitOrder::AttackMove {
+                    target: centroid(world, other),
+                },
+                queue: false,
+            });
+        }
+    }
+    Some(commands)
 }
 
 /// Plays the battle between `sides` to its end and measures it.
@@ -235,34 +289,9 @@ fn play(world: &mut SimWorld, sides: &[Vec<EntityId>; 2], seed: u64) -> MirrorRo
     let mut contact = ContactMeter::new();
     contact.observe(world);
     for tick in 0..LIMIT_TICKS {
-        let living = |side: &[EntityId], world: &SimWorld| -> Vec<EntityId> {
-            side.iter()
-                .copied()
-                .filter(|id| {
-                    world
-                        .entities
-                        .get(id)
-                        .is_some_and(sim_core::Entity::is_alive)
-                })
-                .collect()
-        };
-        let (blue, red) = (living(&sides[0], world), living(&sides[1], world));
-        if blue.is_empty() || red.is_empty() {
+        let Some(commands) = commands_for(world, sides, tick) else {
             break;
-        }
-        let mut commands = Vec::new();
-        if tick.is_multiple_of(REISSUE_TICKS) {
-            for (player, own, other) in [(0_u8, &blue, &red), (1, &red, &blue)] {
-                commands.push(PlayerCommand {
-                    player_id: PlayerId(player),
-                    entities: own.clone(),
-                    order: UnitOrder::AttackMove {
-                        target: centroid(world, other),
-                    },
-                    queue: false,
-                });
-            }
-        }
+        };
         world.step(&TickBundle {
             tick: Tick(world.current_tick),
             commands,

@@ -37,6 +37,7 @@
 
 pub mod activity;
 pub mod blocking;
+pub mod clash;
 pub mod cli;
 pub mod contact_checks;
 pub mod focus;

@@ -292,6 +292,32 @@ pub(crate) struct MovementWorkspace {
     /// Per player: knowledge of the map changed, so every route is looked at this tick.
     pub recheck_routes: PerPlayer<bool>,
     seen_nav_version: u32,
+    /// The determinism probe of plan `2026-11-27-gated-movement` (R-13, H-3): the offset by which
+    /// the movement phase rotates the order it visits its actors in, and the collision phase the
+    /// order it fills the contact solver in ([`SimWorld::set_movement_order_rotation`]). 0, the
+    /// shipped order, in every world no probe touched. Never hashed, snapshotted or replayed.
+    order_rotation: u32,
+    /// The cost probes of the latest movement and collision phases ([`MovementProbes`]).
+    probes: MovementProbes,
+}
+
+/// Cost probes of plan `2026-11-27-gated-movement` (§5.2, `WP0a`), counted over the latest
+/// movement and collision phases and cleared when the next movement phase starts. Derived
+/// output for the measurement tools: never read by the simulation, never hashed, snapshotted or
+/// replayed.
+///
+/// Each counts a rule of the `Gated` pipeline that the plan's later packages add (the gate's
+/// rays in WP2, the orbit's terrain refusals in `WP3a`, the terrain transfer in WP1). No pipeline
+/// of this tree has those rules, so every count reads 0 on it, which is what the measurement
+/// tools record for the base arms.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MovementProbes {
+    /// Ray-disc roots the gated intent took (I'-2: one per non-yielding body a ray meets).
+    pub gate_rays: u32,
+    /// Orbit points refused for terrain, falling back to the straight chase (G'-2).
+    pub orbit_refusals: u32,
+    /// Friend pairs in which a body held by terrain counted as fixed (C'-3).
+    pub terrain_transfers: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -462,6 +488,23 @@ pub(crate) fn largest_by_class(
     }
 }
 
+/// The index at which a visit of `len` items rotated by `offset` places starts: `offset mod
+/// len`, 0 for an empty list ([`SimWorld::set_movement_order_rotation`]).
+pub(crate) fn rotation_start(offset: u32, len: usize) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    usize::try_from(offset).map_or(0, |offset| offset % len)
+}
+
+/// `items` visited from [`rotation_start`] to the end and then from the start, each once: the
+/// order of the determinism probe ([`SimWorld::set_movement_order_rotation`]). Offset 0 visits
+/// `items` in order.
+pub(crate) fn rotated<T>(items: &[T], offset: u32) -> impl Iterator<Item = &T> {
+    let (wrapped, first) = items.split_at(rotation_start(offset, items.len()));
+    first.iter().chain(wrapped)
+}
+
 /// Exact circle overlap without overflow even for extreme signed setup coordinates.
 pub(crate) fn circles_overlap(a: SimVec2, ar: SimScalar, b: SimVec2, br: SimScalar) -> bool {
     let dx = (i128::from(a.x.raw()) - i128::from(b.x.raw())).unsigned_abs();
@@ -476,6 +519,32 @@ impl SimWorld {
     /// changes no result, and it exists for the test that proves that.
     pub fn set_ring_interval_cache(&mut self, enabled: bool) {
         self.movement.ring_cache_disabled = !enabled;
+    }
+
+    /// Rotates the order in which the movement phase visits its actors, and the collision phase
+    /// fills the contact solver, by `offset` places, every tick from now on: the determinism
+    /// probe of plan `2026-11-27-gated-movement` (R-13, the harness's permutation mode, H-3).
+    ///
+    /// The entity ids, and so every id-based tie-break, stay as they are; only the processing
+    /// order inside a tick changes, so a world that plays differently under two offsets depends
+    /// on that order. Offset 0 is the shipped order, and a world on which this was never called
+    /// plays exactly as one set to 0. The offset is not part of the world's state: it is never
+    /// hashed, snapshotted or replayed, and nothing resets it. No production path calls this.
+    pub fn set_movement_order_rotation(&mut self, offset: u32) {
+        self.movement.order_rotation = offset;
+    }
+
+    /// The offset of [`Self::set_movement_order_rotation`]; 0 unless a probe set it.
+    #[must_use]
+    pub fn movement_order_rotation(&self) -> u32 {
+        self.movement.order_rotation
+    }
+
+    /// The cost probes of the latest movement and collision phases ([`MovementProbes`]).
+    /// Derived output, excluded from checksums and never consulted by the simulation.
+    #[must_use]
+    pub fn movement_probes(&self) -> MovementProbes {
+        self.movement.probes
     }
 
     /// Returns command-level movement results since the latest tick clear/drain.
@@ -863,6 +932,28 @@ fn low_bits_by_squares(value: u128, high: u128, shift: u32) -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The determinism probe's rotation (plan `2026-11-27-gated-movement` `WP0a`): offset 0 starts
+    /// at the first item, an offset wraps round the list, and an empty list starts at 0.
+    #[test]
+    fn rotation_start_is_the_offset_modulo_the_length() {
+        assert_eq!(rotation_start(0, 5), 0);
+        assert_eq!(rotation_start(3, 5), 3);
+        assert_eq!(rotation_start(7, 5), 2);
+        assert_eq!(rotation_start(u32::MAX, 1), 0);
+        assert_eq!(rotation_start(9, 0), 0);
+    }
+
+    /// A rotated visit sees every item once, in order from the offset, wrapping round.
+    #[test]
+    fn a_rotated_visit_sees_every_item_once_from_the_offset() {
+        let items = [10, 11, 12, 13];
+        let visit = |offset| rotated(&items, offset).copied().collect::<Vec<_>>();
+        assert_eq!(visit(0), vec![10, 11, 12, 13]);
+        assert_eq!(visit(1), vec![11, 12, 13, 10]);
+        assert_eq!(visit(6), vec![12, 13, 10, 11]);
+        assert_eq!(rotated::<u8>(&[], 3).count(), 0);
+    }
 
     /// Review F-1 (plan `2026-11-18-inner-radius` D-2): an air archetype built past the loader
     /// with a terrain radius other than its collision radius is a movement invariant; its domain

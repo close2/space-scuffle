@@ -8,6 +8,9 @@
 //!   radius in the catalog fails this test until the data follows;
 //! - `contact_shares` answers C-2's table for the public cases;
 //! - the shipped file runs the legacy pipeline until the plan's switch-over (WP6);
+//! - the determinism probe of plan `2026-11-27-gated-movement` (`WP0a`, W0-T9 and W0-T10):
+//!   rotating the processing order by offset 0 is the shipped world, and the offset never
+//!   enters the checksum;
 //! - the crowd extension C-3′ of plan `2026-11-26-friend-crowd-overlap` ships switched off
 //!   (`crowd_iterations` equal to `iterations`, owner question Q0118), and a catalog that switches
 //!   it on reaches the solver of a running world: a dense battle then runs ticks past K, and with
@@ -18,8 +21,95 @@
 
 use sim_core::catalog::{ContactRules, MovementPipeline, RuntimeCatalogs};
 use sim_core::movement::solver::{contact_shares, ContactParty, PairShares};
+use sim_core::SimWorld;
 use sim_fixtures::matchup::{BattleRun, Matrix, MATRIX_RON};
-use sim_types::{MoverType, PlayerId, SimScalar};
+use sim_types::{EntityId, MoverType, PlayerId, SimScalar, SimVec2};
+use std::error::Error;
+
+/// The battle the probe tests play: battle 28, a 110-unit melee crowd round a ring.
+const PROBE_BATTLE: &str = "28_100_lings_vs_10_immortals";
+
+/// Ticks of battle 28 the probe tests play.
+const PROBE_TICKS: u32 = 150;
+
+/// Battle 28 on its first seed of record, with the processing order rotated by `offset` when
+/// one is given and the probe left untouched otherwise.
+fn probe_run(offset: Option<u32>) -> Result<BattleRun, Box<dyn Error>> {
+    let matrix = Matrix::from_ron_str(MATRIX_RON)?;
+    let battle = matrix.battle(PROBE_BATTLE)?;
+    let seed = *matrix
+        .seeds
+        .first()
+        .ok_or("the matrix has seeds of record")?;
+    let mut run = BattleRun::new(
+        battle,
+        sim_fixtures::shipped_catalogs(),
+        seed,
+        matrix.jitter_for(seed),
+    )?;
+    if let Some(offset) = offset {
+        run.world.set_movement_order_rotation(offset);
+    }
+    Ok(run)
+}
+
+/// Every living body's id and position, in id order.
+fn positions(world: &SimWorld) -> Vec<(EntityId, SimVec2)> {
+    world
+        .entities
+        .iter()
+        .filter(|(_, entity)| entity.is_alive())
+        .map(|(&id, entity)| (id, entity.position))
+        .collect()
+}
+
+/// W0-T9: battle 28's first 150 ticks with the rotation set to 0 give, tick by tick, the
+/// checksums of the world no probe touched.
+#[test]
+fn order_rotation_zero_is_the_identity() -> Result<(), Box<dyn Error>> {
+    let mut shipped = probe_run(None)?;
+    let mut probed = probe_run(Some(0))?;
+    assert_eq!(probed.world.movement_order_rotation(), 0);
+    for tick in 0..PROBE_TICKS {
+        assert!(shipped.step().is_empty() && probed.step().is_empty());
+        assert_eq!(
+            shipped.world.compute_checksum(),
+            probed.world.compute_checksum(),
+            "tick {tick}"
+        );
+    }
+    Ok(())
+}
+
+/// W0-T10: the same world under two offsets gives equal checksums on every tick on which its
+/// bodies stand at the same positions (the offset is unhashed); and the probe is live: the
+/// rotated world is played with its offset.
+#[test]
+fn order_rotation_never_enters_the_checksum() -> Result<(), Box<dyn Error>> {
+    let mut plain = probe_run(Some(0))?;
+    let mut rotated = probe_run(Some(37))?;
+    assert_eq!(rotated.world.movement_order_rotation(), 37);
+    assert_eq!(
+        plain.world.compute_checksum(),
+        rotated.world.compute_checksum(),
+        "before the first tick"
+    );
+    let mut equal_ticks = 0;
+    for _ in 0..PROBE_TICKS {
+        assert!(plain.step().is_empty() && rotated.step().is_empty());
+        if positions(&plain.world) == positions(&rotated.world) {
+            equal_ticks += 1;
+            assert_eq!(
+                plain.world.compute_checksum(),
+                rotated.world.compute_checksum(),
+                "tick {}",
+                plain.ticks_played()
+            );
+        }
+    }
+    assert!(equal_ticks > 0, "no tick had equal positions to compare");
+    Ok(())
+}
 
 #[test]
 fn the_shipped_iteration_count_meets_the_catalogs_bound() {
@@ -134,9 +224,7 @@ fn the_crowd_extension_ships_switched_off() {
 }
 
 /// The shipped catalogs with C-3′'s cap set to `crowd_iterations`.
-fn with_crowd_iterations(
-    crowd_iterations: u16,
-) -> Result<RuntimeCatalogs, Box<dyn std::error::Error>> {
+fn with_crowd_iterations(crowd_iterations: u16) -> Result<RuntimeCatalogs, Box<dyn Error>> {
     let mut catalogs = sim_fixtures::shipped_catalogs();
     let rules = catalogs.units.movement_rules();
     let contact = ContactRules {
@@ -151,10 +239,7 @@ fn with_crowd_iterations(
 
 /// Plays the first `ticks` ticks of battle 26 (100 zergling analogues against 6 colossus
 /// analogues, seed 15) with `catalogs`; returns each tick's solver iterations and checksum.
-fn battle_26(
-    catalogs: RuntimeCatalogs,
-    ticks: u32,
-) -> Result<Vec<(u16, u64)>, Box<dyn std::error::Error>> {
+fn battle_26(catalogs: RuntimeCatalogs, ticks: u32) -> Result<Vec<(u16, u64)>, Box<dyn Error>> {
     let matrix = Matrix::from_ron_str(MATRIX_RON)?;
     let battle = matrix.battle("26_100_lings_vs_6_colossi")?;
     let mut run = BattleRun::new(battle, catalogs, 15, matrix.jitter_for(15))?;
@@ -172,7 +257,7 @@ fn battle_26(
 /// on this catalog), its crowd runs ticks past K, and only ticks that did so or followed one
 /// differ.
 #[test]
-fn the_catalogs_crowd_cap_reaches_the_solver() -> Result<(), Box<dyn std::error::Error>> {
+fn the_catalogs_crowd_cap_reaches_the_solver() -> Result<(), Box<dyn Error>> {
     let k = sim_fixtures::shipped_catalogs()
         .units
         .movement_rules()
