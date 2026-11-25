@@ -506,8 +506,9 @@ fn handle_targeting_pointer(
         }
         // In the A mode a click on any unit the viewer may pick, with the same fog rules as
         // selection and one's own units included, attacks it with the members that can attack
-        // it and sends the others to the ground under it (plan `2026-11-24-attack-orders` D-5,
-        // B-175, Q0104's and Q0105's defaults).
+        // it and has the others follow it with Scan Move, or walk to the ground under a structure
+        // (plans `2026-11-24-attack-orders` D-5 and `2026-11-26-follow-order` D-10; B-175,
+        // Q0104's default, Q0119 (b)).
         if *mode == CommandMode::AttackMove {
             if let Some(unit) = ray.and_then(|ray| view.pick_unit(world, frame.owner, ray)) {
                 queue.submit_attack_on_unit(
