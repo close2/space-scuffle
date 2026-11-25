@@ -260,6 +260,8 @@ pub fn write_game_reason(output: &mut String, error: &GameCommandError) {
         GameCommandError::DeadRecipient(_) => "a selected unit was destroyed",
         GameCommandError::LoadedRecipient(_) => "a selected unit is being transported",
         GameCommandError::HousedRecipient(_) => "a selected unit is inside an extractor",
+        GameCommandError::UnselectableRecipient(_) => "that unit cannot be selected",
+        GameCommandError::UntargetableTarget(_) => "that unit cannot be targeted by an order",
         GameCommandError::Build(rejection) => {
             write_build_rejection(output, rejection);
             return;

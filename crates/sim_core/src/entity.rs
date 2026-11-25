@@ -700,6 +700,11 @@ pub struct Entity {
     /// It is reset before its first read in every tick and so carries no state from one tick
     /// to the next; for that reason it is left out of the state checksum.
     pub hull_turn_budget: u16,
+    /// The unit's hangar, exactly on entities whose archetype has one (plan
+    /// `2026-11-28-carrier-interceptors` D-3); hashed.
+    pub(crate) hangar: Option<crate::hangar::HangarState>,
+    /// On a launched hangar member, its hangar unit and whether it is returning (D-3); hashed.
+    pub(crate) hangar_link: Option<crate::hangar::HangarLink>,
 }
 
 impl Entity {
@@ -823,6 +828,13 @@ impl Entity {
             teleport_count: 0,
             status_modifiers: crate::effects::StatusModifiers::NEUTRAL,
             hull_turn_budget: archetype.turn_rate.raw(),
+            // The spawn stocks the free start members (`SimWorld::prepare_spawn`), which needs
+            // the member's archetype (plan `2026-11-28-carrier-interceptors` D-3).
+            hangar: archetype
+                .capabilities
+                .hangar
+                .map(|spec| crate::hangar::HangarState::with_capacity(spec.max_count)),
+            hangar_link: None,
         }
     }
 
@@ -886,6 +898,19 @@ impl Entity {
     #[must_use]
     pub fn takes_part_in_movement(&self) -> bool {
         self.is_alive() && !self.is_loaded_in_transport() && self.displacement.is_none()
+    }
+
+    /// The unit's hangar, if its archetype has one (plan `2026-11-28-carrier-interceptors` D-3).
+    #[must_use]
+    pub const fn hangar(&self) -> Option<&crate::hangar::HangarState> {
+        self.hangar.as_ref()
+    }
+
+    /// The link of a launched hangar member to its hangar unit (D-3); `None` for every other
+    /// unit.
+    #[must_use]
+    pub const fn hangar_link(&self) -> Option<crate::hangar::HangarLink> {
+        self.hangar_link
     }
 
     /// Whether this actor is carried; derived solely from its authoritative carrier link.

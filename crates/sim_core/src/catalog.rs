@@ -27,16 +27,18 @@ use sim_types::{
     default_projectile_lifetime_ticks, AbilitySpec, AllowedMovement, AnimState,
     ArchetypeCapabilities, ArmorClassId, AttackCommand, AttackDashSpec, AttackVisibility,
     Attribute, AttributeBonuses, AttributeFlags, AutoRallySpec, BarrierSpec, CollisionClass,
-    FactionId, FootprintShape, HarvesterSpec, MissileMover, MissilePhase, MissileValidation,
-    MoverType, OverclockSpec, PlacementFlag, PlacementFlags, ProjectileTargetLossBehavior,
-    ResourceKind, ResourceKindSet, ShapeKind, SilhouetteClass, SimAngle, SimScalar, SplashCliff,
-    SplashImpact, SplashLine, SplashLineAxis, SplashLineOrigin, SplashShape, StanceOrders,
-    StructureStrike, TurretIdle, UnitModeSpec, UnitTypeId, UpgradeEffect, WeaponVisualKind,
+    FactionId, FootprintShape, HangarDeath, HangarSpec, HarvesterSpec, MagazineLaunch,
+    MissileMover, MissilePhase, MissileValidation, MoverType, OverclockSpec, PlacementFlag,
+    PlacementFlags, ProjectileTargetLossBehavior, ResourceKind, ResourceKindSet, ShapeKind,
+    SilhouetteClass, SimAngle, SimScalar, SplashCliff, SplashImpact, SplashLine, SplashLineAxis,
+    SplashLineOrigin, SplashShape, StanceOrders, StructureStrike, TurretIdle, UnitModeSpec,
+    UnitTypeId, UpgradeEffect, WeaponVisualKind,
 };
 pub use sim_types::{SplashSpec, SplashZone, WeaponSpec};
 mod collision_classes;
 mod effects;
 mod factions;
+mod hangar_validation;
 mod movement_rules;
 mod placement_rules;
 mod runtime;
@@ -67,6 +69,13 @@ use std::sync::{Arc, OnceLock};
 
 /// The default of `surround_walk`: blocked attackers walk round their crowd (Q0074).
 const fn surround_walk_default() -> bool {
+    true
+}
+
+/// The default of `selectable` and `order_targetable` (plan `2026-11-28-carrier-interceptors`
+/// D-8): a unit is selectable and may be the target of a player's order unless authored
+/// otherwise (`StarCraft` II's `Unselectable` and `Untargetable` flags are off by default).
+const fn player_facing_default() -> bool {
     true
 }
 
@@ -308,9 +317,30 @@ pub struct UnitArchetype {
     /// `crate::movement`'s. Always `None` for a structure. Catalog data, not hashed.
     #[serde(default)]
     pub collision_class: Option<CollisionClass>,
+    /// Whether a player can select this unit (`StarCraft` II's `Unselectable` flag off; plan
+    /// `2026-11-28-carrier-interceptors` D-8). Command admission drops an unselectable unit from
+    /// a command; the client never selects one. Catalog data, not hashed.
+    #[serde(default = "player_facing_default")]
+    pub selectable: bool,
+    /// Whether this unit can be the target of a player's order or targeted spell (`StarCraft`
+    /// II's `Untargetable` flag off; D-8). Automatic targeting, splash and effect searches do not
+    /// read it. Catalog data, not hashed.
+    #[serde(default = "player_facing_default")]
+    pub order_targetable: bool,
 }
 
 impl UnitArchetype {
+    /// The launch of this unit's launch weapon (plan `2026-11-28-carrier-interceptors` D-4):
+    /// the first of its weapon, ground weapon and air weapon that carries a
+    /// `magazine_launch`; `None` for a unit whose weapons strike.
+    #[must_use]
+    pub fn launch_weapon(&self) -> Option<MagazineLaunch> {
+        [&self.weapon, &self.ground_weapon, &self.air_weapon]
+            .into_iter()
+            .flatten()
+            .find_map(|weapon| weapon.magazine_launch)
+    }
+
     /// Whether this unit can raise `structure`. The one rule admission and the card share.
     #[must_use]
     pub fn can_raise(&self, structure: &Self) -> bool {
@@ -554,6 +584,13 @@ impl UnitCatalog {
             .map_err(|e| SimCoreError::RonDeserializationError(e.to_string()))?;
         let attack_snapshot_cap = attack_snapshot_cap(catalog_file.attack_snapshot_cap_ticks)?;
         let classes = CollisionClassTable::from_units(&catalog_file.units)?;
+        // A hangar names its member by slug (plan `2026-11-28-carrier-interceptors` D-2); every
+        // unit of the file is known before any is converted.
+        let unit_ids: BTreeMap<String, UnitTypeId> = catalog_file
+            .units
+            .iter()
+            .map(|def| (def.slug.clone(), UnitTypeId(def.unit_type_id)))
+            .collect();
 
         let mut catalog = Self {
             archetypes: vec![None; 128],
@@ -567,7 +604,7 @@ impl UnitCatalog {
         };
         catalog.register_authored_batch(catalog_file.units.into_iter().map(|def| {
             def.validate()?;
-            def.into_archetype(factions, &classes)
+            def.into_archetype(factions, &classes, &unit_ids)
         }))?;
         catalog.collision_classes = classes.into_names();
         catalog.slug_index();
@@ -911,7 +948,7 @@ impl UnitCatalog {
             }
             self.validate_rally_exclusions(archetype)?;
         }
-        Ok(())
+        self.validate_hangar_members()
     }
 
     /// Checks that every unit a rally slot of `archetype` excludes (plan `2026-11-25-rallies`
@@ -1131,6 +1168,19 @@ impl UnitCatalog {
     pub fn archetypes(&self) -> impl Iterator<Item = &UnitArchetype> {
         self.archetypes.iter().flatten()
     }
+
+    /// Whether any archetype has a hangar (plan `2026-11-28-carrier-interceptors` D-5): the
+    /// hangar phase and its death hook are skipped when none has. Catalog data, not world state.
+    // PERFORMANCE RATIONALE:
+    // Why: The hangar phase asks this every tick, and tests edit archetypes after loading.
+    // What: A scan of the fixed archetype table, no allocation, instead of a cached flag that
+    //       an edited archetype could leave stale.
+    // Trade-off: A few hundred instructions per tick, against one stale-cache bug class.
+    #[must_use]
+    pub fn has_hangars(&self) -> bool {
+        self.archetypes()
+            .any(|archetype| archetype.capabilities.hangar.is_some())
+    }
 }
 
 fn compare_slugs(left: &str, right: &str) -> std::cmp::Ordering {
@@ -1284,6 +1334,63 @@ struct CapabilitiesDef {
     abilities: Vec<AbilitySpec>,
     #[serde(default)]
     modes: Vec<UnitModeSpecDef>,
+    #[serde(default)]
+    hangar: Option<HangarSpecDef>,
+}
+
+/// An authored hangar (plan `2026-11-28-carrier-interceptors` D-2): the member as a slug and
+/// the leash in world units, resolved to [`HangarSpec`] once every unit of the file is known.
+#[derive(Debug, Clone, Deserialize)]
+struct HangarSpecDef {
+    /// The member archetype's slug.
+    member: String,
+    /// Members docked, launched and building together, at most.
+    max_count: u8,
+    /// Members docked, free, at creation.
+    start_count: u8,
+    /// Ticks to build one member.
+    build_ticks: u16,
+    /// Builds queued at most.
+    queue_size: u8,
+    /// Whether builds queue by themselves.
+    auto_build: bool,
+    /// Centre-to-centre leash, world units.
+    leash: f32,
+    /// What happens to launched members when the hangar unit dies.
+    on_death: HangarDeath,
+}
+
+impl HangarSpecDef {
+    /// The hangar with its member resolved against the file's units and the leash in fixed
+    /// point (`SimScalar::from_f32_lossy`, as every authored distance).
+    ///
+    /// # Errors
+    /// [`SimCoreError::CatalogInvalidValue`] at `capabilities.hangar.member` when the slug names
+    /// no unit of the file.
+    fn resolve(
+        &self,
+        definition: &str,
+        unit_ids: &BTreeMap<String, UnitTypeId>,
+    ) -> SimResult<HangarSpec> {
+        let member =
+            *unit_ids
+                .get(&self.member)
+                .ok_or_else(|| SimCoreError::CatalogInvalidValue {
+                    definition: definition.to_owned(),
+                    field: "capabilities.hangar.member".to_owned(),
+                    reason: "the member names no unit of the catalog",
+                })?;
+        Ok(HangarSpec {
+            member,
+            max_count: self.max_count,
+            start_count: self.start_count,
+            build_ticks: self.build_ticks,
+            queue_size: self.queue_size,
+            auto_build: self.auto_build,
+            leash: SimScalar::from_f32_lossy(self.leash),
+            on_death: self.on_death,
+        })
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1628,6 +1735,10 @@ struct WeaponSpecDef {
     /// on an instant weapon.
     #[serde(default)]
     pub(crate) missile_movers: Vec<MissileMoverDef>,
+    /// The launch channel the weapon starts instead of striking (plan
+    /// `2026-11-28-carrier-interceptors` D-4); omitted, none: the weapon strikes.
+    #[serde(default)]
+    pub(crate) magazine_launch: Option<MagazineLaunch>,
 }
 
 /// An authored missile mover (`StarCraft` II `CEffectLaunchMissile` `Movers` entry, plan
@@ -1796,6 +1907,13 @@ struct UnitArchetypeDef {
     /// omitted leaves the class to the movement layer.
     #[serde(default)]
     collision_class: Option<String>,
+    /// Whether a player can select the unit (plan `2026-11-28-carrier-interceptors` D-8);
+    /// omitted, `true`.
+    #[serde(default = "player_facing_default")]
+    selectable: bool,
+    /// Whether the unit can be the target of a player's order (D-8); omitted, `true`.
+    #[serde(default = "player_facing_default")]
+    order_targetable: bool,
 }
 
 /// Converts authored degrees in `0..=180` to binary angle units (65 536 per turn).
@@ -1915,6 +2033,7 @@ impl UnitArchetypeDef {
                 .iter()
                 .map(MissileMoverDef::to_spec)
                 .collect(),
+            magazine_launch: w.magazine_launch,
         })
     }
 
@@ -1937,8 +2056,14 @@ impl UnitArchetypeDef {
         &mut self,
         factions: &FactionCatalog,
         classes: &CollisionClassTable,
+        unit_ids: &BTreeMap<String, UnitTypeId>,
     ) -> SimResult<(ArchetypeCapabilities, Vec<AbilitySpec>, Vec<UnitModeSpec>)> {
         let authored = std::mem::take(&mut self.capabilities);
+        let hangar = authored
+            .hangar
+            .as_ref()
+            .map(|hangar| hangar.resolve(&self.slug, unit_ids))
+            .transpose()?;
         let overclock = authored.overclock.map(|o| OverclockSpec {
             hp_cost: SimScalar::from_f32_lossy(o.hp_cost),
             duration_ticks: o.duration_ticks,
@@ -1988,6 +2113,7 @@ impl UnitArchetypeDef {
             transport_capacity: authored.transport_capacity,
             abilities: abilities.clone(),
             modes: modes.clone(),
+            hangar,
         };
         Ok((capabilities, abilities, modes))
     }
@@ -1998,6 +2124,7 @@ impl UnitArchetypeDef {
         mut self,
         factions: &FactionCatalog,
         classes: &CollisionClassTable,
+        unit_ids: &BTreeMap<String, UnitTypeId>,
     ) -> SimResult<UnitArchetype> {
         let faction = factions.resolve_faction(&self.slug, &self.faction)?;
         let armor_class = self
@@ -2005,7 +2132,7 @@ impl UnitArchetypeDef {
             .as_deref()
             .map(|slug| factions.resolve_armor_class(&self.slug, slug))
             .transpose()?;
-        let (capabilities, abilities, modes) = self.capabilities(factions, classes)?;
+        let (capabilities, abilities, modes) = self.capabilities(factions, classes, unit_ids)?;
         let collision_class = classes.resolve_authored(
             &self.slug,
             "collision_class",
@@ -2097,6 +2224,8 @@ impl UnitArchetypeDef {
             placement_excludes: PlacementFlags::empty(),
             default_stance_orders: self.default_stance_orders,
             collision_class,
+            selectable: self.selectable,
+            order_targetable: self.order_targetable,
         })
     }
 }
@@ -2307,6 +2436,7 @@ impl StructureArchetypeDef {
             transport_capacity: 0,
             abilities: self.abilities.clone(),
             modes: Vec::new(),
+            hangar: None,
         }
     }
 
@@ -2415,6 +2545,8 @@ impl StructureArchetypeDef {
             // D-1): every shipped one follows the rule.
             default_stance_orders: None,
             collision_class: None,
+            selectable: true,
+            order_targetable: true,
         })
     }
 }

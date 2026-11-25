@@ -320,6 +320,7 @@ fn test_siege_mode_toggle_immobility_and_long_range_splash() {
         missile_validation: sim_types::MissileValidation::default(),
         launch_visibility: sim_types::AttackVisibility::Snapshot,
         missile_movers: Vec::new(),
+        magazine_launch: None,
     };
 
     let ability = AbilitySpec {

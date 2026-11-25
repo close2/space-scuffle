@@ -39,9 +39,9 @@ pub mod weapon;
 // Flat convenient re-exports
 pub use commands::{
     AbilityEffectSpec, AbilitySpec, AbilityTargetKind, ArchetypeCapabilities, AttackCommand,
-    AttackDashSpec, AttackOrigin, AutoRallySpec, BarrierSpec, FollowKind, HarvesterSpec,
-    OverclockSpec, PlayerCommand, StanceOrders, TickBundle, TickInputBundle, UnitModeSpec,
-    UnitOrder,
+    AttackDashSpec, AttackOrigin, AutoRallySpec, BarrierSpec, FollowKind, HangarDeath, HangarSpec,
+    HarvesterSpec, OverclockSpec, PlayerCommand, StanceOrders, TickBundle, TickInputBundle,
+    UnitModeSpec, UnitOrder,
 };
 pub use effects::{
     CancelOrdersDef, DamageDef, DamageResponses, DisplaceDef, DisplaceDestination, EffectAnchor,
@@ -85,9 +85,9 @@ pub use upgrades::{
 };
 pub use weapon::{
     default_projectile_lifetime_ticks, AllowedMovement, AttackVisibility, Attribute,
-    AttributeBonuses, MissileMover, MissilePhase, MissileValidation, ProjectileTargetLossBehavior,
-    SplashCliff, SplashImpact, SplashLine, SplashLineAxis, SplashLineOrigin, SplashShape,
-    SplashSpec, SplashZone, StructureStrike, TurretIdle, WeaponSpec,
+    AttributeBonuses, MagazineLaunch, MissileMover, MissilePhase, MissileValidation,
+    ProjectileTargetLossBehavior, SplashCliff, SplashImpact, SplashLine, SplashLineAxis,
+    SplashLineOrigin, SplashShape, SplashSpec, SplashZone, StructureStrike, TurretIdle, WeaponSpec,
     DEFAULT_PROJECTILE_LIFETIME_TICKS,
 };
 
