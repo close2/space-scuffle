@@ -123,7 +123,11 @@ use std::collections::BTreeMap;
 /// Schema 48 replaces each entity's rally by its routes, `Entity::rallies`, in the same place: the
 /// route count, then per route its slot (a `u8`), its waypoint count and each waypoint in the
 /// rally's encoding (plan `2026-11-25-rallies` D-2). The number is the next free at merge.
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 48;
+/// Schema 49 adds whether each weapon's turret tracks any enemy (a `bool`),
+/// `WeaponSpec::turret_tracks_any_enemy`, after `locks_turret_while_firing`, and the enemy each
+/// entity's turret tracks, `Entity::tracked_target`, after `weapon_target` (plan
+/// `2026-11-26-turret-tracking-weapon` D-8). The number is the next free at merge.
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 49;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.

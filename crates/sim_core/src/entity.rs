@@ -608,6 +608,13 @@ pub struct Entity {
     /// it, so the unit keeps chasing its order's target. Cleared by every order that replaces
     /// the unit's orders, by boarding a transport, and when acquisition releases it.
     pub weapon_target: Option<EntityId>,
+    /// The enemy this unit's turret aims at this tick for a weapon whose turret tracks any enemy
+    /// ([`WeaponSpec::turret_tracks_any_enemy`], plan `2026-11-26-turret-tracking-weapon` D-2):
+    /// written only by target acquisition, every tick, and read only by the combat phase, for
+    /// the turret only, on a tick the weapon leaves the turret free. Orders, pursuit,
+    /// `current_target` and every weapon rule ignore it. Cleared by every order that replaces
+    /// the unit's orders, by boarding a transport, and when acquisition releases it.
+    pub tracked_target: Option<EntityId>,
     /// Where this unit's automatic target last stood, world units, recorded by target
     /// acquisition for an archetype whose tie-break is `AcquireTieBreak::ClosestToPrevious`, so
     /// that once the target is lost (dead, gone, out of reach) the unit takes the candidate
@@ -773,6 +780,7 @@ impl Entity {
             hull_hit_flash_ticks: 0,
             current_target: None,
             weapon_target: None,
+            tracked_target: None,
             previous_target_position: None,
             engaged_target: None,
             is_immobile: is_immobile_archetype,
@@ -1074,6 +1082,8 @@ impl Entity {
         // The weapon's own target belongs to the attack order being replaced (plan
         // `2026-11-24-fire-rules` D-1); acquisition chooses anew under the new order.
         self.weapon_target = None;
+        // So does the enemy the turret tracks (plan `2026-11-26-turret-tracking-weapon` D-2).
+        self.tracked_target = None;
         self.movement.restart();
         self.abandon_task_leg();
         self.end_channeled_burst_for(&order);
@@ -1947,6 +1957,43 @@ mod weapon_target_tests {
                 entity.weapon_target,
                 Some(EntityId(77)),
                 "{order:?} queued leaves the front order and its weapon target"
+            );
+        }
+        Ok(())
+    }
+
+    /// Plan `2026-11-26-turret-tracking-weapon` D-2: the enemy a turret tracks is cleared as the
+    /// weapon's own target is, by every order that replaces the unit's orders; acquisition
+    /// chooses anew on the next tick.
+    #[test]
+    fn commit_order_clears_the_tracked_target_for_every_order(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let map = GameMap::new(16, 16, MapCell::default_ground(CliffLevel(0)))?;
+        let mut world = world(map, 3);
+        let kind = world
+            .catalog
+            .archetypes()
+            .find(|arch| arch.mover_type == MoverType::Ground && arch.max_speed > SimScalar::ZERO)
+            .map(|arch| arch.unit_type_id)
+            .ok_or("the shipped catalog has a mobile ground unit")?;
+        let unit = world.spawn_unit(kind, PlayerId(0), SimVec2::from_i32(8, 8))?;
+        let entity = world.entities.get_mut(&unit).ok_or("unit")?;
+        assert_eq!(entity.tracked_target, None, "a new unit tracks nothing");
+        for order in every_order(SimVec2::from_i32(4, 4)) {
+            entity.tracked_target = Some(EntityId(77));
+            entity.commit_order(order.clone(), false);
+            assert_eq!(entity.tracked_target, None, "{order:?} replaces the orders");
+            entity.order_queue = [UnitOrder::Move {
+                target: SimVec2::from_i32(2, 2),
+            }]
+            .into_iter()
+            .collect();
+            entity.tracked_target = Some(EntityId(77));
+            entity.commit_order(order.clone(), true);
+            assert_eq!(
+                entity.tracked_target,
+                Some(EntityId(77)),
+                "{order:?} queued leaves the front order and the tracked enemy"
             );
         }
         Ok(())

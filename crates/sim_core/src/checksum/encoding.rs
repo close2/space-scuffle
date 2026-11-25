@@ -361,6 +361,8 @@ fields!(Entity {
     current_target,
     // Plan `2026-11-24-fire-rules` D-8: the target the weapon chose inside an attack order.
     weapon_target,
+    // Plan `2026-11-26-turret-tracking-weapon` D-8: the enemy the turret tracks.
+    tracked_target,
     previous_target_position,
     engaged_target,
     is_immobile,
@@ -533,6 +535,8 @@ fields!(WeaponSpec {
     // Plan `2026-11-24-fire-rules` D-8: the two fire rules, one byte each.
     fires_at_other_targets,
     locks_turret_while_firing,
+    // Plan `2026-11-26-turret-tracking-weapon` D-8: whether the turret tracks any enemy.
+    turret_tracks_any_enemy,
     base_damage,
     attribute_bonuses,
     attacks_count,
@@ -1034,7 +1038,7 @@ mod tests {
         // Domain length, UTF-8 domain, schema u32, u16, i32, option tags/payload,
         // then UTF-8 string byte length and its two encoded bytes.
         let bytes = [
-            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 48, 0, 0, 0, 0x34, 0x12, 0xfe, 0xff,
+            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 49, 0, 0, 0, 0x34, 0x12, 0xfe, 0xff,
             0xff, 0xff, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0xc3, 0xa9,
         ];
         assert_eq!(encoder.finish(), xxh64(&bytes, 0));
@@ -1110,7 +1114,7 @@ mod tests {
             let mut encoder = Encoder::new("test");
             7_u32.encode(&mut encoder);
             text.as_str().encode(&mut encoder);
-            let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 48, 0, 0, 0];
+            let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 49, 0, 0, 0];
             bytes.extend([7, 0, 0, 0]);
             bytes.extend((length as u64).to_le_bytes());
             bytes.extend(text.as_bytes());
@@ -1135,7 +1139,7 @@ mod tests {
         // then the full remaining duration u32 (0x0001_0001), total, supply, the started flag
         // and payments.
         let bytes = [
-            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 48, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 49, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
             0x34, 0x12, 1, 0, 1, 0, 2, 0, 0, 0, 0x78, 0x56, 0x34, 0x12, 1, 3, 0, 0, 0, 4, 0, 0, 0,
         ];
         assert_eq!(digest(&queue), xxh64(&bytes, 0));
@@ -1146,7 +1150,7 @@ mod tests {
     #[test]
     fn rally_targets_encode_their_tag_and_payload() {
         use sim_types::{EntityId, RallyTarget, ResourceNodeId, SimScalar, SimVec2};
-        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 48, 0, 0, 0];
+        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 49, 0, 0, 0];
         let point = SimVec2::new(SimScalar::from_raw(0x0102), SimScalar::from_raw(-1));
         let mut bytes = header.to_vec();
         bytes.push(0);
@@ -1169,11 +1173,11 @@ mod tests {
 
     /// Plan `2026-11-25-rallies` D-2: a structure's routes encode the route count, then per
     /// route its slot byte, its waypoint count and each waypoint's tag and payload, after the
-    /// domain and the schema (48).
+    /// domain and the schema (49 since plan `2026-11-26-turret-tracking-weapon` D-8).
     #[test]
     fn rally_routes_encode_their_count_slot_and_waypoints() {
         use sim_types::{EntityId, RallyRoute, RallyTarget, ResourceNodeId};
-        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 48, 0, 0, 0];
+        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 49, 0, 0, 0];
         let count = |n: u64| n.to_le_bytes();
         // No route.
         let mut bytes = header.to_vec();
@@ -1208,15 +1212,16 @@ mod tests {
         assert_eq!(digest(&vec![first, route]), xxh64(&bytes, 0));
     }
 
-    /// Plan `2026-11-25-rallies` D-2: the schema the routes are hashed under.
+    /// Plan `2026-11-26-turret-tracking-weapon` D-8: the schema the turret tracking fields are
+    /// hashed under, after the rallies' routes (48, plan `2026-11-25-rallies` D-2).
     #[test]
-    fn the_schema_is_48() {
-        assert_eq!(super::super::CHECKSUM_SCHEMA_VERSION, 48);
+    fn the_schema_is_49() {
+        assert_eq!(super::super::CHECKSUM_SCHEMA_VERSION, 49);
     }
 
     #[test]
     fn carrier_identity_has_explicit_option_tag_and_all_id_bytes() {
-        let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 48, 0, 0, 0];
+        let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 49, 0, 0, 0];
         bytes.push(0);
         assert_eq!(digest(&None::<sim_types::EntityId>), xxh64(&bytes, 0));
         bytes.pop();

@@ -462,6 +462,13 @@
                 has_turret: true,
                 turret_turn_rate_deg_per_tick: 40.32,
                 turret_idle: ResetIfMoving(40.32),
+                // B-198 (plan 2026-11-26-turret-tracking-weapon D-6): the unsieged SiegeTank carries the
+                // hidden 90mmCannonsFake beside 90mmCannons on the same Turret SiegeTank (balancemulti
+                // WeaponData:7-20, UnitData:1473): both attack-order options cleared, a CEffectDamage
+                // without amount, the cannon's range and filters. Its only effect is the turret aiming
+                // at an enemy in reach under any order. The sieged unit carries no fake (liberty
+                // UnitData:5181), and each morph disables it (balancemulti AbilData:772-778, :954-958).
+                turret_tracks_any_enemy: true,
                 base_damage: 15.0,
                 attribute_bonuses: [(Armored, 10.0)],
                 attacks_count: 1,

@@ -1452,7 +1452,7 @@ impl TurretIdleDef {
 #[derive(Debug, Deserialize)]
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "independent authored facts of one weapon (turret, turret lock, attack-order options, channel, suicide, melee)"
+    reason = "independent authored facts of one weapon (turret, turret lock, turret tracking, attack-order options, channel, suicide, melee)"
 )]
 struct WeaponSpecDef {
     name: String,
@@ -1492,6 +1492,11 @@ struct WeaponSpecDef {
     /// engine default, `false`; refused without `has_turret`.
     #[serde(default)]
     pub(crate) locks_turret_while_firing: bool,
+    /// Whether the weapon's turret also aims at any enemy it reaches when the weapon leaves it
+    /// free, 5.0.14's hidden `90mmCannonsFake` (see [`WeaponSpec::turret_tracks_any_enemy`]).
+    /// Omitted reads `false`; refused without `has_turret`.
+    #[serde(default)]
+    pub(crate) turret_tracks_any_enemy: bool,
     base_damage: f32,
     /// Bonus damage per strike against attributes: `(attribute, bonus)` pairs, at most one per
     /// attribute; required, `[]` for none, so a catalog written before the field fails to load.
@@ -1735,6 +1740,7 @@ impl UnitArchetypeDef {
             fires_outside_attack_order: w.fires_outside_attack_order,
             fires_at_other_targets: w.fires_at_other_targets,
             locks_turret_while_firing: w.locks_turret_while_firing,
+            turret_tracks_any_enemy: w.turret_tracks_any_enemy,
             base_damage: SimScalar::from_f32_lossy(w.base_damage),
             attribute_bonuses: w.attribute_bonuses.iter().fold(
                 AttributeBonuses::NONE,
