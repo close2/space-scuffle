@@ -27,3 +27,11 @@ and 5.0.14 reverted that "due to causing unintentional retargeting".
 
 - **1(a):** Always follow the **nearest enemy in range**, switching as soon as another enemy becomes nearer (matching StarCraft II 5.0.14's revert of 5.0.13).
 - **2(b):** **Do Immortals and Colossi next**, accepting that battles with Immortals or Colossi may shift slightly because their turrets start pre-aimed when they stop.
+
+## Resolution
+
+- 1(a) is what plan `2026-11-26-turret-tracking-weapon` built (merged `7189c6d9`): nearest enemy in range, re-ranked
+  every tick.
+- 2(b): the Immortal and Colossus analogues get the same tracking next (B-218), as an amendment to that plan (§14
+  F-1), accepting small shifts in their battles under `AGENTS.md` §8.
+- 3 (an in-game check) was not answered; the rule stands on the patch notes as cited.

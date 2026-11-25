@@ -26,3 +26,8 @@ Recommendation: (a).
 - **Option (a): Keep positional keys.**
 
 **Reasoning:** Keeps Space Scuffle's Grid-style positional command card consistent across all structures, and right-clicking sets most rallies anyway.
+
+## Resolution
+
+Answered (a), the default already built by plan `2026-11-25-rallies` (merged `91350af1`): rally card entries keep the
+card's positional keys. B-214 stays a recorded minor difference.
