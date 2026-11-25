@@ -154,3 +154,28 @@ list or not, is stop rule 4 (§6.5).
 The matrix plays 1,220 runs: 2 expectation misses on the seeds of record (battle 28, `known_bug` B-192) and 26 over
 all seeds, as on `main`. The trace binaries and the throughput binary of this tree are kept under
 `~/scratch/launch-spell-visibility/bin-wp0/` and `bench-bin-wp0/` for the comparisons of WP1, WP2 and WP4.
+
+## WP1: the data, latent (`d52957e3`)
+
+Red first: on WP0's tree with only WP1's tests applied, `sim_types` fails to compile (7 errors: no field
+`launch_visibility` on `WeaponSpec`, no field `visibility` on `DamageDef` or `LaunchMissileDef`) and so does every
+`sim_core` target that names the fields (`lib test`, `catalog_reference_values_tests`, `checksum_state_tests`,
+`weapon_catalog_rules_tests` and the eight test files whose `WeaponSpec` literals list every field;
+`~/scratch/launch-spell-visibility/red/wp1-red-sim_types.log`, `wp1-red-sim_core.log`). Green after the change:
+V-17 (`spell_visibility_resolves_and_a_zero_reveal_is_refused`,
+`a_launch_visibility_needs_a_missile_and_a_visible_one_a_tick`,
+`an_instant_weapon_or_a_zero_reveal_authoring_launch_visibility_is_refused`), V-18
+(`a_projectiles_launch_visibility_is_hashed_and_a_spell_nodes_is_not`, and `launch_visibility` in
+`embedded_weapon_fields_and_splash_are_sensitive`), V-19 (`launch_visibility_follows_starcraft`,
+`shipped_spell_visibility_follows_starcraft` and the six shipped nodes' citations in the storm, Abduct and Fungal
+reference tests), and the `sim_types` RON forms.
+
+**Worlds.** WP1's worlds (binaries built from the commit, assets from its `git archive`) against WP0's: `compare.sh`
+finds 483 files and none differing; `matrixdiff.py` lists nothing.
+
+**Latent proof (§5, stop rule 1).** A `git archive` copy of `d52957e3` whose encoding lists `launch_visibility`
+under `unhashed` and whose schema is 49 (`~/scratch/launch-spell-visibility/scripts/unhash.py`), each build in a
+fresh target directory (`proofcopy.sh wp1-latent d52957e3 unhash.py`), reproduces every recorded checkpoint of both
+goldens and `DEFAULT_SANDBOX_CHECKSUM` on native debug and release and on `wasm32-wasip1` release and debug: 8 of 8
+runs green. Stop rule 1 holds. The committed tree hashes the field at schema 53, so its golden and sandbox tests fail
+by design until WP4 re-records them.

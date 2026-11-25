@@ -96,8 +96,11 @@ pub struct PlayerView {
     pub attack_revealed: Vec<EntityId>,
     /// Attackers of other players that struck the viewer's units from where the viewer did not
     /// see them, each as it stood at its last such strike, sorted by entity ID (plan
-    /// `2026-11-24-attacker-snapshot` D-4): `StarCraft` II's damage `Visibility Snapshot`. An
-    /// entry stays until the viewer sees its spot or the attacker itself, and at most the catalog's
+    /// `2026-11-24-attacker-snapshot` D-4): `StarCraft` II's `Visibility Snapshot`. The strike may
+    /// be a weapon's damage, a weapon missile's release at one of the viewer's units, or a spell's
+    /// damage or unit-aimed missile, whose attacker is the caster (plan
+    /// `2026-11-27-launch-and-spell-visibility` D-3); the entry does not say which. An entry
+    /// stays until the viewer sees its spot or the attacker itself, and at most the catalog's
     /// `attack_snapshot_cap_ticks` after `struck` (plan Amendment 1). It is an image, never a
     /// target: an attacker listed here is in neither `revealed` nor `attack_revealed` for being
     /// listed. Skipped when empty, so a record without snapshots keeps its serialized bytes.
@@ -154,13 +157,14 @@ impl PlayerView {
 }
 
 /// An attacker that struck the viewer's units from where the viewer did not see it, shown as it
-/// stood at its last such strike: a still image, never a target (`StarCraft` II's damage
-/// `Visibility Snapshot`; plan `2026-11-24-attacker-snapshot` D-4).
+/// stood at its last such strike: a still image, never a target (`StarCraft` II's `Visibility
+/// Snapshot` of a damage or a missile launch; plans `2026-11-24-attacker-snapshot` D-4 and
+/// `2026-11-27-launch-and-spell-visibility` D-3). A spell's caster is its attacker.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AttackSnapshotView {
     /// The attacker. It may since have moved or died; the record says only what the viewer saw.
     pub entity: EntityId,
-    /// The tick of the strike the image is from.
+    /// The tick of the strike, launch or spell damage the image is from.
     pub struck: Tick,
     /// The image: the attacker's render record at that strike, still (zero velocity, idle,
     /// unselected, unconcealed, not housed, no hit flashes). Positions are world units, angles

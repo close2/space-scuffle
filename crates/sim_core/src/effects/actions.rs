@@ -2,12 +2,16 @@
 //! changes and order cancellation (D-1).
 //!
 //! Spell damage is absorbed by a raised barrier first (B-41), then by shields, then by life;
-//! armour never applies. A `Damage` of 0 changes nothing but raises its responses.
+//! armour never applies. A `Damage` of 0 changes nothing but raises its responses. Every spell
+//! damage, of 0 too, then shows its caster to the struck unit's owner as its `visibility` says,
+//! through the hook a weapon's strike uses, before the responses run, as a weapon's strike
+//! records before its retaliation (plan `2026-11-27-launch-and-spell-visibility` D-2).
 
+use crate::combat_resolution::AttackCause;
 use crate::SimWorld;
 use sim_types::{
-    AttributeBonuses, DamageResponses, EffectContext, EntityId, SimAngle, SimScalar, SimVec2,
-    VitalChange,
+    AttackVisibility, AttributeBonuses, DamageResponses, EffectContext, EntityId, SimAngle,
+    SimScalar, SimVec2, VitalChange,
 };
 
 /// `change + change_fraction × current`, clamped to `0..=max`.
@@ -19,14 +23,17 @@ fn changed_vital(current: SimScalar, max: SimScalar, change: VitalChange) -> Sim
 }
 
 impl SimWorld {
-    /// Deals spell damage of `amount` plus the bonus for each of the target's attributes, then
-    /// raises `responses` against the context's caster and from its source point (D-9).
+    /// Deals spell damage of `amount` plus the bonus for each of the target's attributes,
+    /// records what `visibility` shows of the context's caster to the unit's owner (plan
+    /// `2026-11-27-launch-and-spell-visibility` D-2), then raises `responses` against the caster
+    /// and from the context's source point (D-9).
     pub(crate) fn apply_spell_damage(
         &mut self,
         unit: EntityId,
         amount: SimScalar,
         bonus: &AttributeBonuses,
         responses: DamageResponses,
+        visibility: AttackVisibility,
         context: &EffectContext,
     ) {
         let Some(entity) = self.entities.get_mut(&unit) else {
@@ -50,6 +57,7 @@ impl SimWorld {
                 entity.apply_damage(shield, dealt - shield, SimAngle::ZERO);
             }
         }
+        self.record_attack_presentation(AttackCause::spell(visibility, context), unit);
         if responses.acquire || responses.flee {
             self.apply_spell_responses(unit, context.caster, context.source_point, responses);
         }
