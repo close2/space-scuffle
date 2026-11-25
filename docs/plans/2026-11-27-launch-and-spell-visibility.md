@@ -669,7 +669,7 @@ and B-206 fixed. Commit `docs: close B-205 and B-206 (plan 2026-11-27-launch-and
 
 ---
 
-## 15. Owner question (filed as [Q0128](../questions/open/0128-launch-and-spell-images.md))
+## 15. Owner question (filed as [Q0128](../questions/closed/0128-launch-and-spell-images.md))
 
 ````markdown
 # Q0128: Images of spell casters and missile launches: three details
