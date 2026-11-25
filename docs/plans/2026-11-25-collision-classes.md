@@ -596,7 +596,7 @@ only with `invariant:`; no catalog identity in production Rust; every new file s
 
 ---
 
-## 15. Owner question (filed as [Q0114](../questions/open/0114-colossus-and-air-units.md))
+## 15. Owner question (filed as [Q0114](../questions/closed/0114-colossus-and-air-units.md))
 
 ```markdown
 # Q0114: Should a colossus touch air units?
