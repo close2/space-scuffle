@@ -7,14 +7,21 @@
 //! native stack; catalog validation guarantees no walk is deeper. A `Search` gathers its
 //! candidates into the world's one reused search buffer, which suffices because no search
 //! runs inside another search's walk (D-17).
+//!
+//! A `LaunchMissile` aimed at a unit shows its caster to that unit's owner as its `visibility`
+//! says, when it is launched; one aimed at a point is aimed at no unit and shows nothing (plan
+//! `2026-11-27-launch-and-spell-visibility` D-2, Q0128 2(a)). A `Damage` node's own visibility
+//! is applied by [`SimWorld::apply_spell_damage`].
 
 use super::filter::{passes_filter, unit_target};
 use super::state::{ActiveMissile, ActivePersistent, ActiveStatus, Displacement, PersistentAnchor};
 use crate::catalog::{EffectNode, SpellCatalog, MAX_EFFECT_DEPTH};
+use crate::combat_resolution::AttackCause;
 use crate::weapon_timing::SimulationDiagnostic;
 use crate::SimWorld;
 use sim_types::{
-    EffectAnchor, EffectContext, EffectId, EffectTarget, EntityId, SimScalar, SimVec2, Tick,
+    AttackVisibility, EffectAnchor, EffectContext, EffectId, EffectTarget, EntityId, SimScalar,
+    SimVec2, Tick,
 };
 
 /// One level of the walk stack.
@@ -157,16 +164,24 @@ impl SimWorld {
                 Some(Frame::new(id, context, centre))
             }
             EffectNode::Persistent { anchor, .. } => self.create_persistent(id, anchor, context),
-            EffectNode::LaunchMissile { to, .. } => {
-                self.launch_missile(id, to, context);
+            EffectNode::LaunchMissile { to, visibility, .. } => {
+                self.launch_missile(id, to, visibility, context);
                 None
             }
             EffectNode::Damage {
                 amount,
                 attribute_bonus,
                 responses,
+                visibility,
             } => {
-                self.apply_spell_damage(unit?, amount, &attribute_bonus, responses, &context);
+                self.apply_spell_damage(
+                    unit?,
+                    amount,
+                    &attribute_bonus,
+                    responses,
+                    visibility,
+                    &context,
+                );
                 None
             }
             EffectNode::ApplyStatus { status } => {
@@ -285,8 +300,16 @@ impl SimWorld {
         Some(Frame::new(id, child_context, child_context.source_point))
     }
 
-    /// Launches a missile from the caster (or the source point, if the caster is gone).
-    fn launch_missile(&mut self, id: EffectId, to: EffectAnchor, context: EffectContext) {
+    /// Launches a missile from the caster (or the source point, if the caster is gone). A missile
+    /// aimed at a unit then shows the caster to that unit's owner as `visibility` says (plan
+    /// `2026-11-27-launch-and-spell-visibility` D-2).
+    fn launch_missile(
+        &mut self,
+        id: EffectId,
+        to: EffectAnchor,
+        visibility: AttackVisibility,
+        context: EffectContext,
+    ) {
         let target = match (to, context.target) {
             (EffectAnchor::TargetUnit, EffectTarget::Unit(unit)) => EffectTarget::Unit(unit),
             (EffectAnchor::TargetPoint, _) => match self.effect_point(&context) {
@@ -308,6 +331,9 @@ impl SimWorld {
             position,
             target,
         });
+        if let EffectTarget::Unit(unit) = target {
+            self.record_attack_presentation(AttackCause::spell(visibility, &context), unit);
+        }
     }
 
     /// Applies `status` to `unit` (D-5): inserts it, or refreshes its duration keeping its

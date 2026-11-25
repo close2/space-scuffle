@@ -42,7 +42,12 @@
 //!     is concealed, detects its cell) leaves that owner a snapshot of the attacker in its pose
 //!     at the strike, in the unhashed presentation workspace, which no tick decision reads (plan
 //!     `2026-11-24-attacker-snapshot` D-2, D-3). The reveal and the snapshot are recorded by one
-//!     call, [`SimWorld::record_attack_presentation`], from the same two places.
+//!     call, [`SimWorld::record_attack_presentation`], for an [`AttackCause`]: a weapon's strike
+//!     (from both strike paths), a weapon missile's release (from [`SimWorld::launch_projectile`],
+//!     with the weapon's launch visibility, toward the owner of the unit it is aimed at), and a
+//!     spell's damage or unit-aimed missile (from the effect engine, with the node's visibility
+//!     and the cast's caster). The rule does not ask the cause (plan
+//!     `2026-11-27-launch-and-spell-visibility` D-2).
 //! 11. A swing whose bound target fails the weapon's availability test has ended: it deals
 //!     nothing, charges no cooldown and holds nothing. [`SimWorld::end_lost_swings`] applies the
 //!     test after the vision update and before acquisition and movement, so no later phase of
@@ -123,6 +128,50 @@ struct HitSource<'a> {
     strikes: u8,
     /// The attacker's type and weapon, for the hit's renderer events.
     effect: EffectSource,
+}
+
+/// What an effect that lands on, or is aimed at, a unit shows of its caster (plan
+/// `2026-11-27-launch-and-spell-visibility` D-2): the effect's visibility (`StarCraft` II's
+/// `Visibility` of `CEffectDamage` or `CEffectLaunchMissile`), the caster, and the caster's
+/// owner. [`SimWorld::record_attack_presentation`] turns it into a reveal or a snapshot for the
+/// owner of the unit struck or aimed at; it reads nothing else.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct AttackCause {
+    /// What the effect shows of its caster.
+    visibility: AttackVisibility,
+    /// The casting unit: the attacker of a weapon, the caster of a spell.
+    attacker: Option<EntityId>,
+    /// The caster's owner: the shot's owner, or the cast's.
+    owner: PlayerId,
+}
+
+impl AttackCause {
+    /// The damage of a weapon hit: `source.weapon.attack_visibility`.
+    fn strike(source: HitSource<'_>) -> Self {
+        Self {
+            visibility: source.weapon.attack_visibility,
+            attacker: source.attacker,
+            owner: source.owner,
+        }
+    }
+
+    /// A weapon missile's release: `shot.weapon.launch_visibility`.
+    fn launch(shot: &PreparedShot) -> Self {
+        Self {
+            visibility: shot.weapon.launch_visibility,
+            attacker: Some(shot.attacker),
+            owner: shot.owner,
+        }
+    }
+
+    /// A spell node's `visibility`, with the context's caster and its owner at the cast.
+    pub(crate) const fn spell(visibility: AttackVisibility, context: &EffectContext) -> Self {
+        Self {
+            visibility,
+            attacker: context.caster,
+            owner: context.owner,
+        }
+    }
 }
 
 /// Where a direct hit landed, for the area damage and visuals that follow it.
@@ -1034,7 +1083,9 @@ impl SimWorld {
         (attacker, target)
     }
 
-    /// Spawns the projectile for `shot` and emits its renderer event.
+    /// Spawns the projectile for `shot` and emits its renderer event, then records what the
+    /// release shows of the attacker to the owner of the unit it is aimed at (`StarCraft` II's
+    /// `CEffectLaunchMissile` `Visibility`, plan `2026-11-27-launch-and-spell-visibility` D-2).
     fn launch_projectile(&mut self, shot: PreparedShot, speed: SimScalar) {
         let target_pos = self
             .entities
@@ -1112,6 +1163,7 @@ impl SimWorld {
             .entities
             .get(&shot.target)
             .map_or(0, |target| target.teleport_count);
+        let (cause, aimed_at) = (AttackCause::launch(&shot), shot.target);
         self.projectiles.push(ActiveProjectile {
             id,
             owner: shot.owner,
@@ -1128,6 +1180,7 @@ impl SimWorld {
             strikes: shot.strikes,
             target_teleport_count,
         });
+        self.record_attack_presentation(cause, aimed_at);
     }
 
     /// Resolves a hitscan, beam or melee shot: direct strikes, then splash, then visuals.
@@ -1257,7 +1310,7 @@ impl SimWorld {
                 &mut self.presentation,
             );
         }
-        self.record_attack_presentation(source, target_id);
+        self.record_attack_presentation(AttackCause::strike(source), target_id);
         if let Some(attacker) = source.attacker {
             self.apply_combat_retaliation_prevalidated(target_id, attacker);
         }
@@ -1265,37 +1318,40 @@ impl SimWorld {
         Some(hit)
     }
 
-    /// Records what a strike of `source` on `victim_id` shows of its attacker to the victim's
-    /// owner: the reveal of a `Visible` weapon ([`Self::record_attack_reveal`]) and the snapshot
-    /// of a `Snapshot` weapon ([`Self::record_attack_snapshot`]). The one call both strike paths
-    /// make, so the two cannot drift apart (plan `2026-11-24-attacker-snapshot` D-2).
-    fn record_attack_presentation(&mut self, source: HitSource<'_>, victim_id: EntityId) {
-        self.record_attack_reveal(source, victim_id);
-        self.record_attack_snapshot(source, victim_id);
+    /// Records what `cause`, landing on or aimed at `victim_id`, shows of its caster to the
+    /// victim's owner: the reveal of a `Visible` cause ([`Self::record_attack_reveal`]) and the
+    /// snapshot of a `Snapshot` cause ([`Self::record_attack_snapshot`]). The one call every
+    /// cause makes (a weapon's strike from both strike paths, a weapon missile's release, a
+    /// spell's damage and its unit-aimed missile), so they cannot drift apart (plans
+    /// `2026-11-24-attacker-snapshot` D-2, `2026-11-27-launch-and-spell-visibility` D-2). A
+    /// victim that no longer exists records nothing.
+    pub(crate) fn record_attack_presentation(&mut self, cause: AttackCause, victim_id: EntityId) {
+        self.record_attack_reveal(cause, victim_id);
+        self.record_attack_snapshot(cause, victim_id);
     }
 
-    /// Records, for the owner p of `victim_id`, a snapshot of the attacker of `source` in its pose
-    /// now, replacing any earlier one of the same attacker (plan `2026-11-24-attacker-snapshot`
-    /// D-2, D-3). It is recorded only when all of these hold: the weapon's attack visibility is
-    /// `Snapshot`; p is not the attacker's player; the attacker exists, lives and is not hidden;
+    /// Records, for the owner p of `victim_id`, a snapshot of the caster of `cause` in its pose
+    /// now, replacing any earlier one of the same caster (plan `2026-11-24-attacker-snapshot`
+    /// D-2, D-3). It is recorded only when all of these hold: the cause's visibility is
+    /// `Snapshot`; p is not the caster's player; the caster exists, lives and is not hidden;
     /// p's interface does not show it ([`Self::shown_to`]); and, if it is concealed, p detects
     /// its cell, so the image never shows a unit p could not see in plain sight. As for the
     /// reveal, a strike reduced to nothing still counts. The record goes to p and p's allies; the
     /// simulation has no teams, so that is p alone (owner answer Q0101 4(b)). The record is
     /// presentation: no tick decision reads it.
-    fn record_attack_snapshot(&mut self, source: HitSource<'_>, victim_id: EntityId) {
-        if source.weapon.attack_visibility != AttackVisibility::Snapshot {
+    fn record_attack_snapshot(&mut self, cause: AttackCause, victim_id: EntityId) {
+        if cause.visibility != AttackVisibility::Snapshot {
             return;
         }
         let Some(viewer) = self
             .entities
             .get(&victim_id)
             .map(|victim| victim.owner)
-            .filter(|&owner| owner != source.owner)
+            .filter(|&owner| owner != cause.owner)
         else {
             return;
         };
-        let Some(attacker) = source
+        let Some(attacker) = cause
             .attacker
             .and_then(|id| self.entities.get(&id))
             .filter(|attacker| attacker.is_alive() && !attacker.is_hidden())
@@ -1327,28 +1383,28 @@ impl SimWorld {
         self.presentation.record_attack_snapshot(record);
     }
 
-    /// Records that a strike of `source` landed on `victim_id`: a weapon whose attack visibility
-    /// is `Visible` reveals its attacker to the victim's owner for its reveal ticks, raising the
-    /// attacker's counter for that player to them and never lowering it (`StarCraft` II's
+    /// Records that `cause` landed on, or was aimed at, `victim_id`: a cause whose visibility is
+    /// `Visible` reveals its caster to the victim's owner for its reveal ticks, raising the
+    /// caster's counter for that player to them and never lowering it (`StarCraft` II's
     /// `AttackReveal`, plan `2026-11-23-vision-and-detection` D-5). A strike reduced to nothing
     /// by a barrier, shields or armour still counts, as the damage effect ran. Nothing happens
-    /// for another weapon, a victim of the attacker's own player, or an attacker that is gone
+    /// for another visibility, a victim of the caster's own player, or a caster that is gone
     /// or dead. The reveal goes to the struck unit's owner and that player's allies (owner
     /// answer Q0101 4(b)); the simulation has no teams (`match_state.rs`), so a player's only
     /// ally is itself (plan `2026-11-24-owner-answers-cliff-and-vision` D-6).
-    fn record_attack_reveal(&mut self, source: HitSource<'_>, victim_id: EntityId) {
-        let AttackVisibility::Visible { reveal_ticks } = source.weapon.attack_visibility else {
+    fn record_attack_reveal(&mut self, cause: AttackCause, victim_id: EntityId) {
+        let AttackVisibility::Visible { reveal_ticks } = cause.visibility else {
             return;
         };
         let Some(viewer) = self
             .entities
             .get(&victim_id)
             .map(|victim| victim.owner)
-            .filter(|&owner| owner != source.owner)
+            .filter(|&owner| owner != cause.owner)
         else {
             return;
         };
-        let Some(attacker) = source
+        let Some(attacker) = cause
             .attacker
             .and_then(|id| self.entities.get_mut(&id))
             .filter(|attacker| attacker.is_alive())
@@ -1683,7 +1739,7 @@ impl SimWorld {
             if let Some(struck) = struck.as_deref_mut() {
                 struck.push(id);
             }
-            self.record_attack_presentation(source, id);
+            self.record_attack_presentation(AttackCause::strike(source), id);
             if let Some(attacker) = source.attacker {
                 self.apply_combat_retaliation_prevalidated(id, attacker);
             }
@@ -2451,7 +2507,7 @@ mod tests {
             strikes: 1,
             effect: sim_types::EffectSource::default(),
         };
-        world.record_attack_presentation(source, victim);
+        world.record_attack_presentation(super::AttackCause::strike(source), victim);
         world.presentation.attack_snapshots_of(PlayerId(1)).count()
     }
 
@@ -2569,6 +2625,207 @@ mod tests {
         );
         assert!(world.entities.contains_key(&structure));
         assert_eq!(strike(&mut world, attacker, victim, &weapon), 1);
+    }
+
+    /// The conditions of the record rule (plan `2026-11-24-attacker-snapshot` D-2, D-3; plan
+    /// `2026-11-23-vision-and-detection` D-5), each set alone on [`snapshot_bench`].
+    #[derive(Clone, Copy, Debug)]
+    enum Condition {
+        AllMet,
+        OwnPlayer,
+        DeadAttacker,
+        HiddenAttacker,
+        SeenAttacker,
+        UndetectedConcealed,
+        DetectedConcealed,
+    }
+
+    impl Condition {
+        const ALL: [Self; 7] = [
+            Self::AllMet,
+            Self::OwnPlayer,
+            Self::DeadAttacker,
+            Self::HiddenAttacker,
+            Self::SeenAttacker,
+            Self::UndetectedConcealed,
+            Self::DetectedConcealed,
+        ];
+
+        /// [`snapshot_bench`] with this condition set.
+        fn bench(
+            self,
+        ) -> (
+            crate::SimWorld,
+            sim_types::EntityId,
+            sim_types::EntityId,
+            crate::catalog::WeaponSpec,
+        ) {
+            use sim_types::ShapeKind;
+            let (mut world, attacker, victim, weapon) = snapshot_bench();
+            match self {
+                Self::AllMet => {}
+                Self::OwnPlayer => {
+                    world.entities.get_mut(&victim).expect("spawned").owner = PlayerId(0);
+                }
+                Self::DeadAttacker => {
+                    world.entities.get_mut(&attacker).expect("spawned").hp = SimScalar::ZERO;
+                }
+                Self::HiddenAttacker => {
+                    world
+                        .entities
+                        .get_mut(&attacker)
+                        .expect("spawned")
+                        .transport_carrier = Some(victim);
+                }
+                Self::SeenAttacker => {
+                    let kind = world.entities[&victim].unit_type_id;
+                    world
+                        .spawn_unit(
+                            kind,
+                            PlayerId(1),
+                            SimVec2::new(SimScalar::from_num(19.5), SimScalar::from_num(16.5)),
+                        )
+                        .expect("invariant: a free spot");
+                    world.update_vision();
+                }
+                Self::UndetectedConcealed | Self::DetectedConcealed => {
+                    world
+                        .entities
+                        .get_mut(&attacker)
+                        .expect("spawned")
+                        .is_cloaked = true;
+                    if matches!(self, Self::DetectedConcealed) {
+                        let detector = world
+                            .catalog
+                            .archetypes()
+                            .find(|arch| {
+                                arch.is_detector()
+                                    && matches!(arch.shape, ShapeKind::BuildingDome { .. })
+                            })
+                            .map(|arch| arch.unit_type_id)
+                            .expect("the shipped catalog has a detector structure");
+                        world
+                            .spawn_structure(detector, PlayerId(1), 12, 19)
+                            .expect("invariant: a free site below the plateau");
+                        world.update_vision();
+                    }
+                }
+            }
+            (world, attacker, victim, weapon)
+        }
+    }
+
+    /// What one record call left: the images each of players 0 and 1 keeps, and the attacker's
+    /// reveal counter for each.
+    type Recorded = ([usize; 2], [u16; 2]);
+
+    fn recorded(world: &crate::SimWorld, attacker: sim_types::EntityId) -> Recorded {
+        let players = [PlayerId(0), PlayerId(1)];
+        let images = players.map(|p| world.presentation.attack_snapshots_of(p).count());
+        let reveals = players.map(|p| {
+            world.entities[&attacker]
+                .attack_reveal_ticks
+                .get(p)
+                .copied()
+                .unwrap_or(0)
+        });
+        (images, reveals)
+    }
+
+    /// What the record rule leaves for `visibility` under `condition`, written from the rule:
+    /// a snapshot where every condition of the image holds (a concealed attacker only where
+    /// detected), a reveal where the victim is another player's and the attacker lives.
+    fn expected(visibility: sim_types::AttackVisibility, condition: Condition) -> Recorded {
+        use sim_types::AttackVisibility;
+        match (visibility, condition) {
+            (AttackVisibility::Snapshot, Condition::AllMet | Condition::DetectedConcealed) => {
+                ([0, 1], [0, 0])
+            }
+            (
+                AttackVisibility::Visible { reveal_ticks },
+                Condition::AllMet
+                | Condition::HiddenAttacker
+                | Condition::SeenAttacker
+                | Condition::UndetectedConcealed
+                | Condition::DetectedConcealed,
+            ) => ([0, 0], [0, reveal_ticks]),
+            _ => ([0, 0], [0, 0]),
+        }
+    }
+
+    /// The three causes of plan `2026-11-27-launch-and-spell-visibility` D-2.
+    #[derive(Clone, Copy, Debug)]
+    enum Cause {
+        Strike,
+        Launch,
+        Spell,
+    }
+
+    /// V-21 (plan `2026-11-27-launch-and-spell-visibility` D-2): for each visibility and each
+    /// condition of the record rule, a weapon strike records exactly what the rule says, as the
+    /// weapon-hit path recorded before the cause replaced it (the table passed on that path,
+    /// WP1's tree); a missile's release with that launch visibility, and a spell with that
+    /// node visibility cast by the same unit at the same victim, record the same.
+    #[test]
+    fn every_cause_records_by_the_rule_for_each_visibility_and_condition() {
+        use sim_types::{AbilitySource, AttackVisibility, EffectContext, EffectTarget};
+        for visibility in [
+            AttackVisibility::Snapshot,
+            AttackVisibility::Visible { reveal_ticks: 54 },
+            AttackVisibility::Hidden,
+        ] {
+            for condition in Condition::ALL {
+                for cause in [Cause::Strike, Cause::Launch, Cause::Spell] {
+                    let (mut world, attacker, victim, mut weapon) = condition.bench();
+                    let owner = world.entities[&attacker].owner;
+                    let origin = world.entities[&attacker].position;
+                    let recorded_cause = match cause {
+                        Cause::Strike => {
+                            weapon.attack_visibility = visibility;
+                            super::AttackCause::strike(super::HitSource {
+                                weapon: &weapon,
+                                slug: None,
+                                owner,
+                                attacker: Some(attacker),
+                                origin,
+                                strikes: 1,
+                                effect: sim_types::EffectSource::default(),
+                            })
+                        }
+                        Cause::Launch => {
+                            weapon.launch_visibility = visibility;
+                            super::AttackCause::launch(&super::PreparedShot {
+                                attacker,
+                                target: victim,
+                                weapon: weapon.clone(),
+                                source_slug: String::new(),
+                                origin,
+                                owner,
+                                strikes: 1,
+                                source: sim_types::EffectSource::default(),
+                            })
+                        }
+                        Cause::Spell => super::AttackCause::spell(
+                            visibility,
+                            &EffectContext {
+                                owner,
+                                caster: Some(attacker),
+                                ability: AbilitySource::default(),
+                                origin,
+                                source_point: origin,
+                                target: EffectTarget::Unit(victim),
+                            },
+                        ),
+                    };
+                    world.record_attack_presentation(recorded_cause, victim);
+                    assert_eq!(
+                        recorded(&world, attacker),
+                        expected(visibility, condition),
+                        "{visibility:?} {condition:?} {cause:?}"
+                    );
+                }
+            }
+        }
     }
 
     /// A flat 32 × 32 world with an armed ground unit of player 0 at (10, 10), one of player 1

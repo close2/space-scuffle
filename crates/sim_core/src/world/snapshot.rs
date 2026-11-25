@@ -1023,4 +1023,134 @@ mod tests {
         }
         assert!(kept > 0, "premise: the keeping world recorded snapshots");
     }
+
+    /// The world of V-22: a plateau 32 × 32 (x >= 16 one level up, no ramp); a ground missile
+    /// attacker of player 0 on the plateau's edge ordered to attack a unit of player 1 below it;
+    /// a storm caster and a Fungal caster of player 0 on the edge, each with a unit of player 1
+    /// below it; and the casts to start: each spell's root, its caster and its target point.
+    fn launch_and_spell_world() -> (SimWorld, Vec<(sim_types::EffectId, EntityId, SimVec2)>) {
+        use sim_types::{AbilityEffectSpec, AttackVisibility, UnitOrder};
+        let mut map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))
+            .expect("invariant: a flat map");
+        for y in 0..32 {
+            for x in 16..32 {
+                map.cell_mut(x, y)
+                    .expect("invariant: on the map")
+                    .cliff_level = CliffLevel(1);
+            }
+        }
+        let mut world = crate::test_support::world(map, 0x1a7);
+        let missile = world
+            .catalog
+            .archetypes()
+            .filter(|arch| {
+                matches!(arch.shape, ShapeKind::UnitSphere) && arch.mover_type == MoverType::Ground
+            })
+            .find(|arch| {
+                arch.weapon_against(MoverType::Ground, None)
+                    .is_some_and(|w| {
+                        w.projectile_speed.is_some()
+                            && w.attack_visibility == AttackVisibility::Snapshot
+                            && w.max_range >= SimScalar::from_i32(4)
+                    })
+            })
+            .map(|arch| arch.unit_type_id)
+            .expect("the shipped catalog has a ranged ground missile");
+        let caster_of = |world: &SimWorld, key: &str| {
+            world
+                .catalog
+                .archetypes()
+                .find(|arch| {
+                    arch.abilities.iter().any(|ability| {
+                        matches!(&ability.effect, AbilityEffectSpec::Effect(k) if k == key)
+                    })
+                })
+                .map(|arch| arch.unit_type_id)
+                .expect("the shipped catalog has the spell's caster")
+        };
+        let at = |x: f64, y: f64| SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(y));
+        let attacker = world
+            .spawn_unit(missile, PlayerId(0), at(16.5, 16.5))
+            .expect("invariant: a free spot");
+        let victim = world
+            .spawn_unit(missile, PlayerId(1), at(13.5, 16.5))
+            .expect("invariant: a free spot");
+        world
+            .entities
+            .get_mut(&attacker)
+            .expect("spawned")
+            .issue_order(UnitOrder::attack(victim), false)
+            .expect("invariant: an attack order is admitted");
+        let mut casts = Vec::new();
+        for (key, row) in [("psionic_storm", 6.5), ("fungal_growth", 26.5)] {
+            let kind = caster_of(&world, key);
+            let caster = world
+                .spawn_unit(kind, PlayerId(0), at(16.5, row))
+                .expect("invariant: a free spot");
+            world
+                .spawn_unit(missile, PlayerId(1), at(13.5, row))
+                .expect("invariant: a free spot");
+            let root = world
+                .catalog
+                .spells()
+                .effect_id(key)
+                .expect("the shipped spell");
+            casts.push((root, caster, at(13.5, row)));
+        }
+        (world, casts)
+    }
+
+    /// V-22 (plan `2026-11-27-launch-and-spell-visibility` §5): P-9 with the new causes. Two
+    /// worlds run a missile duel, a storm and a Fungal Growth cast from a plateau at units below
+    /// it, unseen; one forgets every image after each tick. Their checksums agree on every tick,
+    /// and the keeping world did keep images of the duel's launches and of both casters.
+    #[test]
+    fn forgetting_launch_and_spell_images_changes_no_checksum() {
+        use sim_types::{AbilitySource, EffectContext, EffectTarget, TickBundle};
+        let ((mut keeping, casts), (mut forgetting, _)) =
+            (launch_and_spell_world(), launch_and_spell_world());
+        let mut kept = std::collections::BTreeSet::new();
+        for tick in 0..200 {
+            if tick % 100 == 1 {
+                for world in [&mut keeping, &mut forgetting] {
+                    for &(root, caster, point) in &casts {
+                        let position = world.entities[&caster].position;
+                        world.run_effect(
+                            root,
+                            EffectContext {
+                                owner: PlayerId(0),
+                                caster: Some(caster),
+                                ability: AbilitySource::default(),
+                                origin: position,
+                                source_point: position,
+                                target: EffectTarget::Point(point),
+                            },
+                        );
+                    }
+                }
+            }
+            let bundle = TickBundle {
+                tick: Tick(tick),
+                commands: Vec::new(),
+                state_checksum: None,
+            };
+            keeping.step(&bundle);
+            forgetting.step(&bundle);
+            forgetting.presentation.forget_attack_snapshots();
+            kept.extend(
+                keeping
+                    .presentation
+                    .attack_snapshots_of(PlayerId(1))
+                    .map(|record| record.attacker),
+            );
+            assert_eq!(
+                keeping.last_checksum, forgetting.last_checksum,
+                "tick {tick}"
+            );
+        }
+        assert!(
+            casts.iter().all(|(_, caster, _)| kept.contains(caster)),
+            "premise: the keeping world kept images of both casters, got {kept:?}"
+        );
+    }
 }

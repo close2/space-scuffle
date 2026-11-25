@@ -4,6 +4,15 @@
 // to reference a named node. Times are 25 Hz ticks; speeds world units per tick
 // (Normal × 1.4 ÷ 25). Values cite SC2GameData 5.0.14 (5444e12f13); a line without a layer is
 // in the layer of its block's heading.
+//
+// `visibility` (Damage and LaunchMissile nodes): what the node shows of its caster to the player
+// whose unit it strikes (Damage) or is aimed at (LaunchMissile), StarCraft II's `Visibility` of
+// CEffectDamage and CEffectLaunchMissile (plan 2026-11-27-launch-and-spell-visibility D-1).
+// Omitted, the engine default `Snapshot` (core EffectData:62, :102): the player keeps a still
+// image of a caster it does not see, never a target, until it sees that spot or the caster and
+// at most `attack_snapshot_cap_ticks` (units.ron) after the last effect that made it.
+// `Visible(reveal_ticks: N)` reveals the caster to that player for N ticks, so its units may
+// target it; `Hidden` shows nothing. A missile aimed at a point shows nothing at its launch.
 (
     effects: [
         // ---- Psionic Storm: liberty EffectData:2069-2101 (no later layer overrides it) ----
@@ -40,9 +49,13 @@
             )),
         ),
         (
-            // PsiStormDamage, :2097-2101: the periodic pulse, without responses.
+            // PsiStormDamage, :2097-2101: the periodic pulse, without responses, which shows
+            // nothing of the caster (the storm's first hit, above, keeps the default snapshot).
             name: "psionic_storm_damage",
-            node: Damage((amount: 10.0)),                       // :2100
+            node: Damage((
+                amount: 10.0,                                   // :2100
+                visibility: Hidden,                             // Visibility Hidden, :2099
+            )),
         ),
 
         // ---- Abduct: swarm EffectData:1447-1611 (voidmulti :1035-1045) ----

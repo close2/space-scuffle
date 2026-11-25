@@ -572,6 +572,14 @@ pub struct WeaponSpec {
     /// an instant weapon.
     #[serde(default)]
     pub missile_validation: MissileValidation,
+    /// What the weapon's missile release shows of its attacker to the player whose unit it is
+    /// aimed at: `StarCraft` II's `CEffectLaunchMissile` `Visibility` (plan
+    /// `2026-11-27-launch-and-spell-visibility` D-1). Omitted, the engine default: a snapshot
+    /// (`core` EffectData:102), which no 5.0.14 weapon launch overrides. Read only for a weapon
+    /// with a `projectile_speed`; catalog validation refuses a non-default value on an instant
+    /// weapon.
+    #[serde(default)]
+    pub launch_visibility: AttackVisibility,
 }
 
 /// What a weapon's missile re-checks about its target in flight: `StarCraft` II's
@@ -597,21 +605,26 @@ impl Default for MissileValidation {
     }
 }
 
-/// What a weapon's damage shows of its attacker to the player it strikes: `StarCraft` II's
-/// `CEffectDamage` `Visibility` (`core` EffectData:62).
+/// What an effect shows of its caster to the player it is aimed at or strikes: `StarCraft` II's
+/// `Visibility` of `CEffectDamage` (`core` EffectData:62) and of `CEffectLaunchMissile` (`core`
+/// EffectData:102), both `Snapshot` by default. A weapon carries one for its damage
+/// ([`WeaponSpec::attack_visibility`]) and one for its missile's release
+/// ([`WeaponSpec::launch_visibility`]); a spell's damage and missile nodes carry their own (plan
+/// `2026-11-27-launch-and-spell-visibility` D-1). The caster is the attacker or the spell's
+/// casting unit.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AttackVisibility {
-    /// A snapshot in fog and on the minimap, never a target (the engine default). The struck
-    /// player keeps a still image of the attacker where it struck from, never a target, until it
-    /// sees that spot or the attacker (plan `2026-11-24-attacker-snapshot` D-2), and at most
-    /// `units.ron`'s `attack_snapshot_cap_ticks` after the strike (plan Amendment 1). The minimap
-    /// half waits for a minimap (B-204).
+    /// A snapshot in fog and on the minimap, never a target (the engine default). The player
+    /// struck or aimed at keeps a still image of the caster where it acted from, never a target,
+    /// until it sees that spot or the caster (plan `2026-11-24-attacker-snapshot` D-2), and at
+    /// most `units.ron`'s `attack_snapshot_cap_ticks` after the strike, launch or spell damage
+    /// that made it (plan Amendment 1). The minimap half waits for a minimap (B-204).
     #[default]
     Snapshot,
-    /// The attacker becomes visible, and so targetable, to each struck unit's owner for
-    /// `reveal_ticks` (`AttackReveal`, `core` BehaviorData:237–240, 3 Normal s).
+    /// The caster becomes visible, and so targetable, to the owner of each unit struck or aimed
+    /// at for `reveal_ticks` (`AttackReveal`, `core` BehaviorData:237–240, 3 Normal s).
     Visible {
-        /// How long one hit reveals the attacker, in whole ticks.
+        /// How long one effect reveals the caster, in whole ticks.
         reveal_ticks: u16,
     },
     /// Nothing is shown.
@@ -852,6 +865,82 @@ mod tests {
                 teleport: false,
             }
         );
+        Ok(())
+    }
+
+    /// A missile weapon with every field set, for the RON round trips below.
+    fn missile_weapon() -> super::WeaponSpec {
+        use super::{
+            AllowedMovement, AttackVisibility, MissileValidation, ProjectileTargetLossBehavior,
+            TurretIdle, WeaponSpec,
+        };
+        use super::{SimAngle, WeaponVisualKind};
+        WeaponSpec {
+            name: "scratch missile".to_owned(),
+            visual_kind: WeaponVisualKind::Projectile,
+            target_flags: AttributeFlags::all(),
+            min_range: SimScalar::ZERO,
+            max_range: SimScalar::from_i32(6),
+            firing_arc: SimAngle::PI,
+            acquire_arc: SimAngle::ZERO,
+            has_turret: false,
+            turret_turn_rate: SimAngle::ZERO,
+            turret_idle: TurretIdle::Hold,
+            allowed_movement: AllowedMovement::default(),
+            fires_outside_attack_order: false,
+            fires_at_other_targets: false,
+            locks_turret_while_firing: false,
+            turret_tracks_any_enemy: false,
+            base_damage: SimScalar::from_i32(10),
+            attribute_bonuses: AttributeBonuses::NONE,
+            attacks_count: 1,
+            first_strike_delay_ticks: 0,
+            strike_interval_ticks: 0,
+            followup_max_distance: None,
+            channeled: false,
+            period_ticks: 25,
+            damage_point_ticks: 3,
+            backswing_ticks: 9,
+            random_delay_min: SimScalar::ZERO,
+            random_delay_max: SimScalar::ZERO,
+            splash: None,
+            projectile_speed: Some(SimScalar::ONE),
+            weapon_class: None,
+            upgrade_bonus_per_level: SimScalar::ZERO,
+            bonus_upgrade_per_level: SimScalar::ZERO,
+            target_loss_behavior: ProjectileTargetLossBehavior::Fizzle,
+            max_projectile_lifetime_ticks: 125,
+            suicide_on_attack: false,
+            structure_strike: None,
+            melee: false,
+            attack_visibility: AttackVisibility::Snapshot,
+            missile_validation: MissileValidation::default(),
+            launch_visibility: AttackVisibility::Snapshot,
+        }
+    }
+
+    /// Plan `2026-11-27-launch-and-spell-visibility` D-1: a weapon that leaves its launch
+    /// visibility out reads the engine default of `CEffectLaunchMissile`, a snapshot (`core`
+    /// EffectData:102); an authored value reads as written.
+    #[test]
+    fn launch_visibility_defaults_to_a_snapshot_and_reads_its_cases(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use super::{AttackVisibility, WeaponSpec};
+        let text = ron::to_string(&missile_weapon())?;
+        let field = "launch_visibility:Snapshot";
+        assert!(text.contains(field), "premise: the field is written");
+        let omitted: WeaponSpec = ron::from_str(&text.replace(&format!(",{field}"), ""))?;
+        assert_eq!(omitted.launch_visibility, AttackVisibility::Snapshot);
+        for (written, expected) in [
+            ("launch_visibility:Hidden", AttackVisibility::Hidden),
+            (
+                "launch_visibility:Visible(reveal_ticks:54)",
+                AttackVisibility::Visible { reveal_ticks: 54 },
+            ),
+        ] {
+            let read: WeaponSpec = ron::from_str(&text.replace(field, written))?;
+            assert_eq!(read.launch_visibility, expected, "{written}");
+        }
         Ok(())
     }
 }

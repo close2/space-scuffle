@@ -400,6 +400,52 @@ fn a_projectiles_fire_rules_change_the_world_checksum() {
     assert_ne!(others, lock, "checksum confused the two fire rules");
 }
 
+/// V-18 (plan `2026-11-27-launch-and-spell-visibility` D-5): a weapon's launch visibility is
+/// hashed with the weapon a projectile in flight carries, each case and the reveal ticks apart;
+/// the visibility of a spell node is catalog data and is not: two worlds whose spell tables differ
+/// only there, each with the scratch storm open, hash alike.
+#[test]
+fn a_projectiles_launch_visibility_is_hashed_and_a_spell_nodes_is_not() {
+    use sim_types::AttackVisibility;
+    let mut flying = world();
+    let mut checksum_with = |visibility: AttackVisibility| {
+        let mut projectile = projectile();
+        projectile.weapon_spec.launch_visibility = visibility;
+        flying.projectiles = vec![projectile];
+        flying.compute_checksum()
+    };
+    let checksums = [
+        checksum_with(AttackVisibility::Snapshot),
+        checksum_with(AttackVisibility::Hidden),
+        checksum_with(AttackVisibility::Visible { reveal_ticks: 54 }),
+        checksum_with(AttackVisibility::Visible { reveal_ticks: 55 }),
+    ];
+    let distinct: BTreeSet<u64> = checksums.iter().copied().collect();
+    assert_eq!(distinct.len(), checksums.len(), "{checksums:x?}");
+
+    let storm_with = |visibility: &str| {
+        let mut world = world();
+        let (statuses, effects) = ScratchStorm::GAME.tables();
+        let pulse = "node: Damage((amount: 10.0))";
+        assert!(effects.contains(pulse), "premise: the pulse is authored so");
+        let effects = effects.replace(pulse, &format!("node: Damage((amount: 10.0{visibility}))"));
+        let spells = sim_fixtures::spells_with(&statuses, &effects)
+            .expect("invariant: the edited scratch tables are valid");
+        world
+            .catalog
+            .set_spell_catalog(spells)
+            .expect("invariant: the shipped abilities resolve in the merged tables");
+        open_storm(&mut world, PlayerId(1), point(3, 3));
+        world.compute_checksum()
+    };
+    let snapshot = storm_with("");
+    assert_eq!(snapshot, storm_with(", visibility: Hidden"));
+    assert_eq!(
+        snapshot,
+        storm_with(", visibility: Visible(reveal_ticks: 54)")
+    );
+}
+
 /// T-13 of plan `2026-11-26-turret-tracking-weapon` (D-8): whether a weapon's turret tracks any
 /// enemy is hashed with the weapon a projectile in flight carries, and the enemy a unit's turret
 /// tracks is hashed in the world's table of tracked enemies (Amendment 1): each alone changes the
@@ -475,6 +521,7 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
     original.structure_strike = None;
     original.attack_visibility = sim_types::AttackVisibility::Snapshot;
     original.missile_validation = sim_types::MissileValidation::default();
+    original.launch_visibility = sim_types::AttackVisibility::Snapshot;
     let splash = SplashSpec {
         zones: vec![
             sim_types::SplashZone {
@@ -545,6 +592,9 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
                 // Plan `2026-11-24-weapon-validation` D-7: each flag alone.
                 missile_validation => sim_types::MissileValidation { weapon: false, teleport: true },
                 missile_validation => sim_types::MissileValidation { weapon: true, teleport: false },
+                // Plan `2026-11-27-launch-and-spell-visibility` D-5: each case, and the reveal ticks.
+                launch_visibility => sim_types::AttackVisibility::Visible { reveal_ticks: 54 },
+                launch_visibility => sim_types::AttackVisibility::Hidden,
             },
         |weapon| {
             world
