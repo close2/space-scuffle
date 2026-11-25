@@ -20,3 +20,7 @@ and our movement keeps ground and air bodies apart by design.
 Recommendation: (a).
 
 ## Answer
+
+- **Option (a): No contact with air units.** Keep ground and air collision planes separate; Colossi block only Colossi while ground units walk beneath them, and air units fly over Colossi without physical push/collision.
+
+**Reasoning:** Matches actual StarCraft II gameplay and Blizzard's developer statement (air units such as Vikings, Phoenixes, and Medivacs fly freely over Colossi without colliding; the `Flying` plane flag is for anti-air weapon targeting, not physical air-body contact).
