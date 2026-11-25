@@ -19,7 +19,11 @@
 //!    lets it fire under that order. An own weapon target (`Entity::weapon_target`) changes
 //!    neither the order nor `current_target`, so pursuit keeps chasing the order's target; it
 //!    exists only while that target cannot be worked, and for a chasing unit only with a weapon
-//!    that fires while moving.
+//!    that fires while moving. The enemy a turret tracks (`Entity::tracked_target`, plan
+//!    `2026-11-26-turret-tracking-weapon` D-3) is chosen the same way, from where the unit
+//!    stands, only for a weapon whose turret tracks any enemy and only while the unit's own
+//!    weapon has no workable target; it is chosen anew every tick, released for every unit this
+//!    phase skips, and changes no order, `current_target` or own weapon target.
 //! 3. Candidates are ranked by [`TargetPriorityKey`], so the choice is deterministic. As in
 //!    `StarCraft` II (Liquipedia "Automatic Targeting"), a unit keeps a target while it is valid
 //!    and inside weapon reach, unless a candidate of higher rank (threat, then attack target
@@ -98,6 +102,11 @@ pub(crate) enum Acquisition {
     SetWeaponTarget(EntityId),
     /// Forget the unit's own weapon target.
     ReleaseWeaponTarget,
+    /// Let the unit's turret track this enemy while its weapon leaves the turret free
+    /// ([`Entity::tracked_target`], plan `2026-11-26-turret-tracking-weapon` D-3).
+    SetTrackedTarget(EntityId),
+    /// Forget the enemy the unit's turret tracks.
+    ReleaseTrackedTarget,
     /// Record what the unit's player sees of the target of its player's attack order: where it
     /// stands when seen, `None` when not ([`crate::entity::MovementMemory::sight`], plan
     /// `2026-11-24-weapon-validation` Amendment 2, B-195).
@@ -127,6 +136,10 @@ struct ScanScope {
     /// plane the unit meets with a weapon that may fire at other targets (and, while the unit
     /// chases, fires while moving) qualify, ranked from the order's target. `None` otherwise.
     own_target: Option<OwnTargetScan>,
+    /// For a scan for the enemy a turret tracks: only enemies whose plane the unit meets with a
+    /// weapon whose turret tracks any enemy qualify (plan `2026-11-26-turret-tracking-weapon`
+    /// D-3).
+    tracked: bool,
     /// The catalog's largest collision radius in world units ([`CatalogBounds::largest_radius`]).
     largest_radius: SimScalar,
 }
@@ -595,14 +608,13 @@ impl SimWorld {
             },
         );
         for (&id, entity) in &self.entities {
-            if entity.channeling_remaining_ticks > 0
-                || entity.is_action_locked()
-                || entity.is_hidden()
-                || !entity.is_completed
-            {
-                continue;
-            }
-            let Ok(arch) = self.catalog.get(entity.unit_type_id) else {
+            let arch = self.catalog.get(entity.unit_type_id);
+            let (Ok(arch), true) = (arch, Self::acquires_for(entity)) else {
+                // The tracked enemy never outlives the tick it was chosen in (plan
+                // `2026-11-26-turret-tracking-weapon` D-2).
+                if entity.tracked_target.is_some() {
+                    acquisitions.push((id, Acquisition::ReleaseTrackedTarget));
+                }
                 continue;
             };
             if let Some(sighting) = self.sighting(entity, arch) {
@@ -611,6 +623,7 @@ impl SimWorld {
             let decision =
                 self.decide_acquisition(entity, arch, bounds, &mut neighbors, &mut candidates);
             let order_kept = decision.is_none();
+            let engages = matches!(decision, Some(Acquisition::Engage(_)));
             if let Some(decision) = decision.or_else(|| self.target_to_remember(entity, arch)) {
                 acquisitions.push((id, decision));
             }
@@ -624,6 +637,17 @@ impl SimWorld {
             );
             if let Some(own) = own {
                 acquisitions.push((id, own));
+            }
+            let tracked = self.decide_tracked_target(
+                entity,
+                arch,
+                engages,
+                bounds.largest_radius,
+                &mut neighbors,
+                &mut candidates,
+            );
+            if let Some(tracked) = tracked {
+                acquisitions.push((id, tracked));
             }
         }
         self.scratch_neighbors = neighbors;
@@ -644,6 +668,8 @@ impl SimWorld {
                     }
                     Acquisition::SetWeaponTarget(target) => unit.weapon_target = Some(target),
                     Acquisition::ReleaseWeaponTarget => unit.weapon_target = None,
+                    Acquisition::SetTrackedTarget(target) => unit.tracked_target = Some(target),
+                    Acquisition::ReleaseTrackedTarget => unit.tracked_target = None,
                     Acquisition::Sight(target, seen_at) => unit.movement.sight(target, seen_at),
                 }
             }
@@ -852,6 +878,7 @@ impl SimWorld {
                 stationary,
                 tracking,
                 own_target: None,
+                tracked: false,
                 largest_radius: bounds.largest_radius,
             },
             neighbors,
@@ -966,6 +993,7 @@ impl SimWorld {
                     stationary: true,
                     tracking: None,
                     own_target: Some(scan),
+                    tracked: false,
                     largest_radius,
                 },
                 neighbors,
@@ -977,6 +1005,93 @@ impl SimWorld {
             Some(best) => Some(Acquisition::SetWeaponTarget(best.entity_id)),
             None => release,
         }
+    }
+
+    /// Whether acquisition decides for `entity` this tick: it is not channelling, locked after a
+    /// cast, hidden or under construction.
+    fn acquires_for(entity: &Entity) -> bool {
+        entity.channeling_remaining_ticks == 0
+            && !entity.is_action_locked()
+            && !entity.is_hidden()
+            && entity.is_completed
+    }
+
+    /// What changes for the enemy `entity`'s turret tracks ([`Entity::tracked_target`], plan
+    /// `2026-11-26-turret-tracking-weapon` D-3), given whether this tick's decision for its order
+    /// engages a target (`engages`).
+    ///
+    /// Only a unit carrying a weapon whose turret tracks any enemy (5.0.14's hidden
+    /// `90mmCannonsFake`) has one, and none while its own weapon owns the turret: this tick's
+    /// decision engages a target, or the target of its attack order, or the `current_target` of
+    /// a holding or tracking unit, passes the weapon filter and lies in reach (the combat phase
+    /// re-checks ownership exactly; this only saves the scan). Otherwise the best enemy a
+    /// tracking weapon reaches from where the unit stands, ranked as acquisition ranks, taken
+    /// anew every tick: the turret turns to the nearest enemy as the nearest changes (5.0.14
+    /// reverted 5.0.13's "tracks previously attacked unit").
+    fn decide_tracked_target(
+        &self,
+        entity: &Entity,
+        arch: &UnitArchetype,
+        engages: bool,
+        largest_radius: SimScalar,
+        neighbors: &mut Vec<EntityId>,
+        candidates: &mut Vec<(TargetPriorityKey, EntityId)>,
+    ) -> Option<Acquisition> {
+        let release = entity
+            .tracked_target
+            .is_some()
+            .then_some(Acquisition::ReleaseTrackedTarget);
+        let carries = [
+            arch.ground_weapon.as_ref(),
+            arch.air_weapon.as_ref(),
+            arch.weapon.as_ref(),
+            entity.active_siege_weapon(),
+        ]
+        .into_iter()
+        .flatten()
+        .any(|weapon| weapon.turret_tracks_any_enemy);
+        if !carries || engages || self.has_workable_target(entity, arch) {
+            return release;
+        }
+        let best = self
+            .scan_candidates(
+                entity,
+                arch,
+                None,
+                ScanScope {
+                    stationary: true,
+                    tracking: None,
+                    own_target: None,
+                    tracked: true,
+                    largest_radius,
+                },
+                neighbors,
+                candidates,
+            )
+            .best;
+        match best {
+            Some(best) if entity.tracked_target == Some(best.entity_id) => None,
+            Some(best) => Some(Acquisition::SetTrackedTarget(best.entity_id)),
+            None => release,
+        }
+    }
+
+    /// Whether `entity`'s own weapon has a workable target on acquisition's reading (plan
+    /// `2026-11-26-turret-tracking-weapon` D-3 step 2): the target of its attack order, or the
+    /// `current_target` of a holding or tracking unit, passes the weapon filter and lies in reach
+    /// from where it stands.
+    fn has_workable_target(&self, entity: &Entity, arch: &UnitArchetype) -> bool {
+        let target = match Self::engagement_of(entity, arch) {
+            Engagement::Acquired(target) | Engagement::Explicit(target) => Some(target),
+            Engagement::Hold | Engagement::Track { .. } => entity.current_target,
+            Engagement::Seek | Engagement::Busy => None,
+        };
+        target
+            .and_then(|id| self.entities.get(&id))
+            .is_some_and(|target| {
+                Self::passes_weapon_filters(target, &self.map, &self.vision_maps, entity.owner)
+                    && self.reaches_from_here(entity, arch, target)
+            })
     }
 
     /// The farthest `entity` scans beyond both edges against any candidate, in world units: its
@@ -1061,6 +1176,7 @@ impl SimWorld {
                 .tracking
                 .is_some_and(|walking| !fires_without_attack_order(weapon, walking))
                 || scope.own_target.is_some_and(|own| !own.licenses(weapon))
+                || (scope.tracked && !weapon.turret_tracks_any_enemy)
             {
                 continue;
             }
@@ -1321,6 +1437,103 @@ mod chase_reading_tests {
             case(0.05, -1, solver)?,
             (false, false),
             "walking in: both chase"
+        );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tracked_target_tests {
+    //! Plan `2026-11-26-turret-tracking-weapon` D-3: the carrier test and the release of a unit
+    //! this phase skips, through whole ticks on a flat world with the shipped
+    //! catalog. The licence (an enemy on a plane no tracking weapon meets) is T-9's transport in
+    //! `turret_tracking_tests.rs`; ownership is T-5's.
+    use crate::test_support::world;
+    use crate::world::SimWorld;
+    use sim_map::{CliffLevel, GameMap, MapCell};
+    use sim_types::{EntityId, MoverType, PlayerId, SimScalar, SimVec2, UnitOrder, UnitTypeId};
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    /// One whole tick (vision, then acquisition), without commands.
+    fn step(world: &mut SimWorld) {
+        world.step(&sim_types::TickBundle {
+            tick: sim_types::Tick(world.current_tick),
+            commands: Vec::new(),
+            state_checksum: None,
+        });
+    }
+
+    /// The shipped mobile ground archetype of lowest id whose ground weapon passes `pick`.
+    fn ground_unit(
+        world: &SimWorld,
+        pick: impl Fn(&crate::catalog::WeaponSpec) -> bool,
+    ) -> Result<UnitTypeId, String> {
+        world
+            .catalog
+            .archetypes()
+            .filter(|arch| arch.mover_type == MoverType::Ground && arch.max_speed > SimScalar::ZERO)
+            .filter(|arch| {
+                arch.weapon_against(MoverType::Ground, None)
+                    .is_some_and(&pick)
+            })
+            .map(|arch| arch.unit_type_id)
+            .min()
+            .ok_or_else(|| "a shipped ground unit with the picked weapon".to_owned())
+    }
+
+    /// A unit of `kind` for player 0 at (10, 10) under a Move, and an enemy of `enemy` holding
+    /// 3 north of it; acquisition runs once.
+    fn scene(
+        kind: UnitTypeId,
+        enemy: UnitTypeId,
+    ) -> Result<(SimWorld, EntityId, EntityId), Box<dyn std::error::Error>> {
+        let map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?;
+        let mut world = world(map, 5);
+        let unit = world.spawn_unit(kind, PlayerId(0), SimVec2::from_i32(10, 10))?;
+        let other = world.spawn_unit(enemy, PlayerId(1), SimVec2::from_i32(10, 13))?;
+        let entity = world.entities.get_mut(&unit).ok_or("unit")?;
+        entity.order_queue = [UnitOrder::Move {
+            target: SimVec2::from_i32(30, 10),
+        }]
+        .into_iter()
+        .collect();
+        world.entities.get_mut(&other).ok_or("enemy")?.order_queue =
+            [UnitOrder::HoldPosition].into_iter().collect();
+        Ok((world, unit, other))
+    }
+
+    #[test]
+    fn only_a_carrier_tracks_and_a_skipped_unit_is_released() -> TestResult {
+        let map = GameMap::new(8, 8, MapCell::default_ground(CliffLevel(0)))?;
+        let probe = world(map, 5);
+        let tracker = ground_unit(&probe, |w| w.turret_tracks_any_enemy)?;
+        let other = ground_unit(&probe, |w| {
+            !w.turret_tracks_any_enemy && w.max_range >= SimScalar::from_i32(4)
+        })?;
+        let (mut world, unit, enemy) = scene(tracker, other)?;
+        step(&mut world);
+        assert_eq!(
+            world.entities[&unit].tracked_target,
+            Some(enemy),
+            "the carrier tracks"
+        );
+        world
+            .entities
+            .get_mut(&unit)
+            .ok_or("unit")?
+            .channeling_remaining_ticks = 5;
+        step(&mut world);
+        assert_eq!(
+            world.entities[&unit].tracked_target, None,
+            "a channelling unit is released"
+        );
+
+        let (mut world, unit, _) = scene(other, tracker)?;
+        step(&mut world);
+        assert_eq!(
+            world.entities[&unit].tracked_target, None,
+            "a weapon without the flag tracks nothing"
         );
         Ok(())
     }
