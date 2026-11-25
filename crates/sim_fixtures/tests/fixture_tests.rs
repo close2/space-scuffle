@@ -142,7 +142,11 @@ use std::path::PathBuf;
 /// Re-recorded for checksum schema 50, provisional (plan `2026-11-26-follow-order` WP1), which
 /// encodes each unit's follow rest and the follow order; a copy of the WP1 tree that leaves the
 /// rest unhashed and keeps schema 49 reproduces `2_504_113_823_383_333_194` on all four builds.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 13_849_945_286_125_516_044;
+/// Re-recorded for plan 2026-11-27-launch-and-spell-visibility (checksum schema 50 -> 53): each
+/// weapon encodes its launch visibility; with the field left out at schema 50 a copy of the final
+/// tree reproduces `13_849_945_286_125_516_044` on all four builds. Behaviour: none. (53 is
+/// provisional, the next free at merge: 51 and 52 are reserved for the Gated movement plan.)
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 1_324_710_836_022_737_298;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")
