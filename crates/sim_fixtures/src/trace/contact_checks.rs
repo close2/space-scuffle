@@ -37,7 +37,23 @@
 //!   their radius sum, and the pair-ticks above T7's enemy bound ([`ENEMY_OVERLAP_BOUND`]).
 //! - **B6** ([`ContactChecks::friend_overlap`], [`ContactChecks::friend_overlap_ticks`]): the same
 //!   for two friendly bodies, the pair-ticks counted above D-α's moving bound (the catalog's
-//!   `moving_overlap_permille`).
+//!   `moving_overlap_permille`), **from the first stepped tick on** (plan
+//!   `2026-11-26-friend-crowd-overlap` §2.2, WP0): the bodies as a battle spawned them are not a
+//!   tick's result, and the matrix's spawn jitter alone overlaps them by up to 37 %. The
+//!   spawn-inclusive maximum is kept as [`CrowdChecks::friend_overlap_with_spawn`], reported only.
+//! - **B6 over corrected pairs** ([`CrowdChecks::corrected_overlap`],
+//!   [`CrowdChecks::corrected_overlap_ticks`], WP0): the same over the friend pairs the contact
+//!   solver corrects, those not both holding (`Entity::cannot_be_pushed` on both is C-2's "none"
+//!   row, which no solver iteration touches).
+//! - **B8** ([`CrowdChecks::standing_able`], collision-classes plan §7.2 and §10.1 (a)): unit-ticks
+//!   in which a living armed unit had, at the tick's start, an enemy body in its band (slop 0,
+//!   neither hidden nor cloaked) and its weapon `Ready` at cooldown 0, and during the tick started
+//!   no swing, did not turn and did not move ([`stands_while_able`]); and of those, the ticks in
+//!   which a body of another class touched it at the tick's start
+//!   ([`CrowdChecks::standing_able_cross`]).
+//! - **Solver extension** ([`CrowdChecks::extended_ticks`], [`CrowdChecks::extended_iterations`],
+//!   C-3′ of the same plan): ticks on which the contact solver ran more averaged iterations than
+//!   the catalog's `contact.iterations`, and the iterations beyond it, summed.
 //!
 //! A body, for the overlaps and for "touching", is a living unit that does not pass through
 //! units (`Entity::passes_through_units`: hidden, mineral walking or collision suppressed) and
@@ -56,6 +72,8 @@
 //! # Invariants
 //! - The meter only reads the world; observing a battle does not change it.
 //! - A unit's first observed tick counts nothing but its unit-tick: it has no tick-start state.
+//! - The first observation (the starting state) adds to no friend overlap but
+//!   [`CrowdChecks::friend_overlap_with_spawn`].
 //! - Counts are per side and never decrease; the enemy overlap is a running maximum.
 
 use super::activity::{classify, Activity, ActivityInput};
@@ -63,8 +81,8 @@ use super::{attack_target, in_band, to_f64};
 use crate::harness::metrics::Point;
 use crate::harness::room::{classify_room, RingQuery, RoomClass};
 use sim_core::movement::MovementLayer;
-use sim_core::{is_threat_to, Entity, SimWorld, UnitArchetype};
-use sim_types::{AttackOrigin, EntityId, PlayerId, SimScalar, SimVec2, UnitOrder};
+use sim_core::{is_threat_to, Entity, SimWorld, UnitArchetype, WeaponPhase};
+use sim_types::{AttackOrigin, EntityId, PlayerId, SimAngle, SimScalar, SimVec2, UnitOrder};
 use std::collections::BTreeMap;
 
 /// Ticks within which a return to the previous target counts as churn (1 s).
@@ -101,6 +119,30 @@ pub struct SideChecks {
     pub unit_ticks: u32,
 }
 
+/// The columns of plan `2026-11-26-friend-crowd-overlap` (WP0's measurement repair, B8's probe and
+/// C-3′'s counters) over a run.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct CrowdChecks {
+    /// The largest overlap of two friendly bodies of one class over every observation, the
+    /// starting state included, as a fraction of their radius sum (B6 before the repair).
+    pub friend_overlap_with_spawn: f64,
+    /// The largest overlap of two friendly bodies of one class, not both holding, at the end of
+    /// any stepped tick, as a fraction of their radius sum.
+    pub corrected_overlap: f64,
+    /// Those pairs' pair-ticks above D-α's moving bound at the end of a stepped tick.
+    pub corrected_overlap_ticks: u32,
+    /// B8 per side, indexed by owner: unit-ticks standing while able to fight
+    /// ([`stands_while_able`]).
+    pub standing_able: [u32; 2],
+    /// The unit-ticks of [`Self::standing_able`] in which a body of another class touched the
+    /// unit at the tick's start.
+    pub standing_able_cross: [u32; 2],
+    /// Ticks on which the contact solver ran more averaged iterations than `contact.iterations`.
+    pub extended_ticks: u32,
+    /// The averaged iterations beyond `contact.iterations`, summed over the run's ticks.
+    pub extended_iterations: u32,
+}
+
 /// Both sides' checks and the enemy overlap of a run.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct ContactChecks {
@@ -116,6 +158,18 @@ pub struct ContactChecks {
     pub friend_overlap: f64,
     /// Friendly pair-ticks above D-α's moving bound at the end of a tick.
     pub friend_overlap_ticks: u32,
+    /// The columns of plan `2026-11-26-friend-crowd-overlap`; `None` for a row read from a table
+    /// written before them, whose [`Self::friend_overlap`] and [`Self::friend_overlap_ticks`]
+    /// then include the starting state.
+    pub crowd: Option<CrowdChecks>,
+}
+
+/// B8 for one unit and one tick: the unit was `able` at the tick's start (living, armed, an
+/// enemy body in its band, its weapon `Ready` at cooldown 0), it stayed `still` (neither moved nor
+/// turned), and its weapon is still `Ready` at cooldown 0 after the tick (it started no swing).
+#[must_use]
+pub const fn stands_while_able(able: bool, still: bool, ready_after: bool) -> bool {
+    able && still && ready_after
 }
 
 /// D-SHOVE-E for one unit and one tick (evidence `2026-11-25-solver-pair-cache` §2):
@@ -210,6 +264,9 @@ struct Seen {
     holding: bool,
     target: Option<EntityId>,
     cooldown: u16,
+    heading: SimAngle,
+    /// B8's premise: its weapon `Ready` at cooldown 0 and an enemy body in its band.
+    able: bool,
 }
 
 /// The meter of the module documentation.
@@ -219,6 +276,7 @@ pub struct ContactMeter {
     seen: BTreeMap<EntityId, Seen>,
     churn: ChurnTracker,
     checks: ContactChecks,
+    crowd: CrowdChecks,
 }
 
 impl ContactMeter {
@@ -231,7 +289,9 @@ impl ContactMeter {
     /// The checks so far.
     #[must_use]
     pub const fn total(&self) -> ContactChecks {
-        self.checks
+        let mut checks = self.checks;
+        checks.crowd = Some(self.crowd);
+        checks
     }
 
     /// Records the state `world` has reached after one more tick (the first call records the
@@ -259,14 +319,13 @@ impl ContactMeter {
             };
             self.count_unit(world, (id, entity), &before, side);
         }
-        let moving = f64::from(
-            world
-                .catalog
-                .movement_rules()
-                .contact()
-                .moving_overlap_permille,
-        ) / 1000.0;
+        let contact = world.catalog.movement_rules().contact();
+        let moving = f64::from(contact.moving_overlap_permille) / 1000.0;
         self.count_overlaps(&now, moving);
+        let beyond =
+            u32::from(world.contact_iterations()).saturating_sub(u32::from(contact.iterations));
+        self.crowd.extended_ticks += u32::from(beyond > 0);
+        self.crowd.extended_iterations = self.crowd.extended_iterations.saturating_add(beyond);
         self.seen = now;
         self.tick += 1;
     }
@@ -296,6 +355,12 @@ impl ContactMeter {
         checks.shove_e += shove_e_of(before.proposed_none, before.holding, delta, away);
         checks.shots += u32::from(entity.weapon_cooldown_remaining > before.cooldown);
         checks.blocked += u32::from(is_blocked(world, entity, arch));
+        let still = entity.position == before.position && entity.heading == before.heading;
+        let ready_after = is_ready(entity);
+        if stands_while_able(before.able, still, ready_after) {
+            self.crowd.standing_able[side] += 1;
+            self.crowd.standing_able_cross[side] += u32::from(self.touched_across(id, before));
+        }
         if let Some(class) = self.stands_with_room(world, (id, entity, arch), before) {
             self.checks.sides[side].r10[class.index()] += 1;
         }
@@ -332,11 +397,26 @@ impl ContactMeter {
             .collect()
     }
 
+    /// Whether a body of another class than `before`'s touched it at the tick's start (B8's
+    /// cross-class column); `false` when it is no body.
+    fn touched_across(&self, id: EntityId, before: &Seen) -> bool {
+        before.body
+            && self.seen.iter().any(|(&other, body)| {
+                other != id
+                    && body.body
+                    && body.class != before.class
+                    && distance(body.at, before.at)
+                        <= body.radius + before.radius + SHOVE_TOUCH_SLACK
+            })
+    }
+
     /// Adds the end-of-tick overlaps of `bodies` to B3's and B6's counters; `moving` is D-α's
-    /// moving bound as a fraction of the radius sum.
+    /// moving bound as a fraction of the radius sum. On the first observation (the starting
+    /// state) only the spawn-inclusive friend maximum is kept.
     fn count_overlaps(&mut self, bodies: &BTreeMap<EntityId, Seen>, moving: f64) {
         let list: Vec<&Seen> = bodies.values().filter(|b| b.body).collect();
-        let checks = &mut self.checks;
+        let stepped = self.tick > 0;
+        let (checks, crowd) = (&mut self.checks, &mut self.crowd);
         for (index, a) in list.iter().enumerate() {
             for b in &list[index + 1..] {
                 if a.class != b.class {
@@ -345,8 +425,16 @@ impl ContactMeter {
                 let sum = a.radius + b.radius;
                 let overlap = (sum - distance(a.at, b.at)) / sum;
                 if a.owner == b.owner {
+                    crowd.friend_overlap_with_spawn = crowd.friend_overlap_with_spawn.max(overlap);
+                    if !stepped {
+                        continue;
+                    }
                     checks.friend_overlap = checks.friend_overlap.max(overlap);
                     checks.friend_overlap_ticks += u32::from(overlap > moving);
+                    if !(a.holding && b.holding) {
+                        crowd.corrected_overlap = crowd.corrected_overlap.max(overlap);
+                        crowd.corrected_overlap_ticks += u32::from(overlap > moving);
+                    }
                 } else {
                     checks.enemy_overlap = checks.enemy_overlap.max(overlap);
                     checks.enemy_overlap_ticks += u32::from(overlap > ENEMY_OVERLAP_BOUND);
@@ -484,6 +572,16 @@ fn seen(world: &SimWorld, entity: &Entity, arch: &UnitArchetype) -> Seen {
         entity.order_queue.front(),
         None | Some(UnitOrder::Idle | UnitOrder::Stop)
     );
+    let able = is_ready(entity)
+        && side_of(entity.owner).is_some()
+        && world.entities.values().any(|enemy| {
+            enemy.is_alive()
+                && enemy.owner != entity.owner
+                && side_of(enemy.owner).is_some()
+                && !enemy.is_hidden()
+                && !enemy.is_cloaked
+                && in_band(world, entity, arch, enemy, SimScalar::ZERO)
+        });
     Seen {
         owner: entity.owner,
         position: entity.position,
@@ -499,7 +597,14 @@ fn seen(world: &SimWorld, entity: &Entity, arch: &UnitArchetype) -> Seen {
         holding: entity.is_on_hold() || entity.cannot_be_pushed(),
         target,
         cooldown: entity.weapon_cooldown_remaining,
+        heading: entity.heading,
+        able,
     }
+}
+
+/// Whether `entity`'s weapon is `Ready` at cooldown 0 (B8).
+fn is_ready(entity: &Entity) -> bool {
+    matches!(entity.weapon_phase, WeaponPhase::Ready) && entity.weapon_cooldown_remaining == 0
 }
 
 /// Whether `entity` is [`Activity::Blocked`] after the tick, as the battle trace classifies it.
@@ -617,6 +722,17 @@ mod tests {
         let two = [(1.0, 0.0), (0.0, 1.0)];
         assert!((shove_e_of(true, false, (0.1, 0.05), two) - 0.1).abs() < 1e-12);
         assert!((shove_e_of(true, false, (0.03, 0.04), [(0.0, 0.0)]) - 0.05).abs() < 1e-12);
+    }
+
+    /// B8 (plan `2026-11-26-friend-crowd-overlap` WP0): a unit able at the tick's start that
+    /// stays still and ready counts; one that moved, turned or swung does not; nor does one that
+    /// was not able.
+    #[test]
+    fn standing_while_able_needs_all_three() {
+        assert!(stands_while_able(true, true, true));
+        assert!(!stands_while_able(true, false, true));
+        assert!(!stands_while_able(true, true, false));
+        assert!(!stands_while_able(false, true, true));
     }
 
     /// W0-T3: a return to the previous target within the window is reported with its reason; a
