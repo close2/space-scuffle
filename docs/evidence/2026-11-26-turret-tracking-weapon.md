@@ -113,3 +113,79 @@ comment and claim, and battle 35's claim and its restatement under charter §8; 
 **The list: 14, 26, 31, 33, 35, 38a, 38b.** Battle 28 carries `known_bug` (B-192) and is reviewed under stop rule 5,
 not restated. The list is not edited after WP1 starts. No battle on it contains a tank, so by the census no close
 battle can move through this plan.
+
+## WP1: the fields, latent (`48023594`)
+
+Red first: on WP0's tree with only the new tests of `weapon_catalog_rules_tests.rs` and `checksum_state_tests.rs`
+applied, both targets fail to compile (`no field turret_tracks_any_enemy`, `no field tracked_target`;
+`~/scratch/turret-tracking/red/wp1-red.log`).
+
+**L-1.** WP1's worlds (binaries built from the commit, assets from its `git archive`) against WP0's: `compare.sh`
+finds 483 files and none differing. **Latent proof (§5):** a `git archive` copy of `48023594` whose encoding lists
+`tracked_target` and `turret_tracks_any_enemy` under `unhashed` and whose schema is 48, each build in a fresh target
+directory (`~/scratch/turret-tracking/scripts/proof.sh`, `CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime --dir=<copy>"`),
+reproduces every checkpoint of both goldens and `DEFAULT_SANDBOX_CHECKSUM` on native debug and release and on
+`wasm32-wasip1` release and debug (8 of 8 runs green). `crates/gate/suites.ron` needed no change: every test is in
+an existing target.
+
+## WP2: the turret tracks (`9a8e2ce2`)
+
+Red first on WP1's tree (`~/scratch/turret-tracking/red/wp2-red.log`): T-1, T-2/T-3, T-4, T-6, T-7, T-9, T-14 (the
+threat), T-15 in `turret_tracking_tests.rs`, T-11 in `runtime_catalog_tests.rs` and T-16 in
+`attack_swing_snapshot_tests.rs` fail (10 tests). T-5 (the real weapon owns the turret) and T-8 (channels and the
+sieged stance track nothing) pass before and after: they guard what tracking must not do.
+
+**World check (§6.3).** WP2's worlds against WP1's: 483 files, none differing (the matrix on the seeds of record and
+1 to 16, battles 31 and 33, the showcase and the showcase effects on the default seed and 1 to 8). No first
+difference exists, so no world is classed Y or P; no outcome moved, no close battle is restated, and battle 28's
+state is unchanged. This is what WP0's probes predicted: no tank-mode turret in these worlds is ever free with an
+enemy in reach. The constructed tests carry the behaviour (each against a flag-off twin whose entities, generator
+and projectiles equal it on every tick but for the turret's angle and the tracked enemy).
+
+## WP3: confirmation and records
+
+**Held-out seeds (§7.4)**, run once on WP0's tree and on the final tree (`heldout.sh`: matrix seeds 7001 to 7016,
+battles 31 and 33 on 7001 to 7064, the showcase and the showcase effects on seeds 9 to 16): 381 files, none
+differing. They confirm the development seeds; nothing was tuned or restated from them.
+
+**Goldens and sandbox (§5).** Re-recorded once, on the final tree (no `main` commit landed since `91350af1`):
+`golden_replay.ron` (20 checkpoints) and `golden_replay_orders.ron` (60) at schema 49, `DEFAULT_SANDBOX_CHECKSUM`
+`10_709_269_369_881_941_416` (was `601_552_017_353_564_848`). Proofs, each a `git archive` copy in fresh target
+directories, all green on native debug and release and `wasm32-wasip1` release and debug: (1) the final code with
+both fields unhashed at schema 48 reproduces `main`'s lists and sandbox checksum, so no checkpoint moved by
+behaviour (no class Y, no class P); (2) the re-recorded tree reproduces the new lists.
+
+**Throughput (§5), stop rule 7 fired.** `cargo bench -p sim_core --bench throughput`, WP0's binary (`37ba5ed8`) and
+the final binary (`9a8e2ce2`; the WP3 commit changes no code) interleaved, two rounds, each with its tree's catalog,
+`perf stat -e instructions:u` over the whole binary (the benchmark has no per-scenario selector, so the budget is
+read on the whole run, as the hold-facing plan did). Ticks per second, medians of 3 (round 1 / round 2):
+
+| Scenario | WP0 | Final |
+|---|---:|---:|
+| 64x64, 0 units | 3091 / 3126 | 3119 / 3132 |
+| 64x64, 100 | 789 / 801 | 808 / 804 |
+| 64x64, 400 | 109 / 110 | 108 / 106 |
+| 128x128, 400 | 175 / 177 | 178 / 178 |
+| 256x256, 0 | 194 / 196 | 196 / 197 |
+| showcase_canyon, 400 | 81 / 81 | 80 / 81 |
+| 64x64, 67 casters, 400 | 201 / 202 | 202 / 201 |
+
+Every scenario runs at 80 ticks per second or more: the 50 ticks/s floor holds. **Instructions do not:** WP0
+268,618,534,581 and 268,618,533,467; final 274,805,621,132 and 274,785,444,032, **+2.30 %** against the +0.5 %
+budget. Profiled (stop rule 7):
+
+- `perf record -e instructions:u` puts the whole difference in `SimWorld::scan_candidates` (13.34 % of WP0's
+  instructions, 15.24 % of the final's: +6.05 G).
+- The number of scans is unchanged: a scratch counter in `scan_candidates` counts 1,530,396 calls on both trees (the
+  benchmark's units carry no tracking weapon, so `decide_tracked_target` never scans).
+- The cost is WP1's, not the rule's: WP1's binary (`48023594`, latent) measures 274,687,313,105 (+2.26 %). WP1 without
+  `Entity::tracked_target` (the weapon's flag kept) measures 268,651,304,076 (+0.01 %); WP1 without the weapon's flag
+  (the entity field kept) 274,655,800,871. The eight bytes `Entity` gains change the code generated for the scan's
+  candidate loop (register allocation and stack spills in `scan_candidates`, 45 more instructions in the function),
+  not what it does.
+- Folding the scan's three licences into one enum (tried on scratch) leaves the count at 274,779,465,686, so the
+  added licence test is not the cause; it was not kept.
+
+The package stops here for review under stop rule 7; the plan names no remedy, and D-2 fixes the field on `Entity`.
+Options for the reviewer, none taken: accept the cost (every scenario keeps a wide margin over 50 ticks/s); keep the
+tracked enemy outside `Entity` (a world-level map, hashed, a change of D-2); or tune the loop's code generation.

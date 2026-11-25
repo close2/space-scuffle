@@ -167,7 +167,7 @@ refused.
 | B-179, B-180 | S4, S6 | **In** (D-2, D-4, D-5) |
 | `FaceTargetWhileInCooldown` for turrets — **B-197, registered here** | S3 | **In** (D-3). Without it a lock is indistinguishable from today's frozen turret except in the wind-up |
 | `FaceTargetWhileInCooldown` for hull weapons | S3 | **Unchanged:** pursuit turns the hull to its goal in the band (`aim_if_in_range`); **verify** in WP4 that a standing hull unit with a target and no pursuit (hold) does too |
-| The Siege Tank's hidden `90mmCannonsFake` — **B-198, registered here** | S12 | **Out, deferred.** It deals nothing; it lets the turret aim (and perhaps play its attack) at enemies under any order. A presentation rule with its own question of what the game shows (**verify**) |
+| The Siege Tank's hidden `90mmCannonsFake` — **B-198, registered here** | S12 | **Out, deferred.** It deals nothing; it lets the turret aim (and perhaps play its attack) at enemies under any order. A presentation rule with its own question of what the game shows (**verify**). Since planned and built by plan [`2026-11-26-turret-tracking-weapon`](2026-11-26-turret-tracking-weapon.md) as a turret capability of the host weapon (no second weapon slot) |
 | Walking read from pursuit rather than from reach (D-4) | rule 5 | **Split:** WP6, after the contact solver merges, only if probe (b) finds the two differ |
 | `Slowing` against `Stopped` (B-178) | turret wind-up plan | **Unchanged:** both stand to fire at another target |
 | The Phoenix's wind-up hold (turret wind-up WP3, its Amendment 1) | — | **Unchanged:** a Phoenix firing at another target while it chases still stands for each 3-tick wind-up until that WP lands |
@@ -669,6 +669,8 @@ tree), each named in the commit. Guards that pass unchanged: `target_selection_t
 - **F-1: WP6, the chase read from pursuit** (after the contact solver, conditional on a disagreement).
 - **F-2: B-198, the Siege Tank's hidden `90mmCannonsFake`** (S12): presentation of the tank's turret under any
   order; needs Q0109-like confirmation of what the game shows and a second weapon slot per archetype. Deferred.
+  Done by plan [`2026-11-26-turret-tracking-weapon`](2026-11-26-turret-tracking-weapon.md), which models it as a
+  turret capability of the host weapon instead of a second slot (its D-1); Q0116 asks what the game shows.
 - **F-3: a `FaceTargetWhileInCooldown` field.** Added only when a modelled weapon clears the option (none does).
 - **F-4: a matrix battle for B-180** (a Phoenix analogue under an explicit attack) waits for the fixture's explicit
   orders (the turret wind-up plan's F-3).

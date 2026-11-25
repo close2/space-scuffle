@@ -717,3 +717,31 @@ and 5.0.14 reverted that "due to causing unintentional retargeting".
   `sim_types/src/weapon.rs` (`WeaponSpec`), `units.ron` (`railgun_crawler`), the golden fixtures' squads and orders,
   and the matrix battles with `railgun_crawler`.
 - No prototype: WP1 is latent by construction, WP2's reach is predicted by probes (t) and (p) and classed by §6.3.
+
+---
+
+## As built
+
+Built on branch `turret-tracking-plan` from `main` `91350af1` (no `main` commit landed while it was built), by the
+plan as written; Q0116's defaults (part 1 (a), part 2 (a)). Evidence:
+[`docs/evidence/2026-11-26-turret-tracking-weapon.md`](../evidence/2026-11-26-turret-tracking-weapon.md).
+
+| WP | Commit | What |
+|---|---|---|
+| WP0 | `7700aa31` | B-198 pointed here, B-218 registered (provisional); survey, baseline, census; probes (t) and (p) count zero in every measured world and both goldens; close-battle list 14, 26, 31, 33, 35, 38a, 38b |
+| WP1 | `48023594` | `WeaponSpec::turret_tracks_any_enemy` (tank-mode weapon only), `Entity::tracked_target`, D-7, schema 49 (provisional); L-1 held, latent proof on four builds |
+| WP2 | `9a8e2ce2` | D-3 (`decide_tracked_target`, `has_workable_target`, `ScanScope::tracked`, release of skipped units), D-4 (`step_entity_weapon_tracking`, `TrackingAim`, `tracking_aim`); no measured world moved (no class Y or P) |
+| WP3 | this commit | Held-out run identical; goldens and `DEFAULT_SANDBOX_CHECKSUM` re-recorded once at schema 49, both proofs on four builds; B-198 fixed; fire-rules pointers; throughput: stop rule 7 |
+
+**Deviations and decisions.**
+- T-5 and T-8 are guards (what tracking must not do) and pass on WP1's tree; the other ten new behaviour tests were
+  red there.
+- The instruction budget is read on the whole benchmark run (no per-scenario selector exists), as the hold-facing
+  plan read it.
+- The acquisition unit tests cover the carrier and the release of a skipped unit; the licence is covered by T-9 (an
+  air transport in reach is never tracked) and ownership by T-5.
+- **Stop rule 7 fired:** +2.30 % instructions (budget +0.5 %), every scenario at 80 ticks/s or more. The cost is the
+  eight bytes `Entity::tracked_target` adds (code generation of the scan loop), not the tracking rule; the
+  evidence holds the bisection. Left for review.
+- Schema 49 and B-218 stay provisional, next free at merge.
+
