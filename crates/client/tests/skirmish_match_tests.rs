@@ -11,6 +11,12 @@
 //!
 //! Neither alone meets the criterion, and neither claims to.
 //!
+//! It also owns the windowed proof of B-210,
+//! `an_unhurt_foundation_under_construction_shows_no_damage_look_on_a_real_window`: the same
+//! pilot and staging hold an unhurt foundation at a tenth of its build, whose health share is
+//! far below the dome's critical 0.35, and two shots half a second of shader time apart show its
+//! built band without the brown-out or crack flicker of the damage look.
+//!
 //! It also owns the end-to-end check of mode commands and their looks (plan
 //! `2026-11-09-effect-visualization` WP12): a burrow and a siege ordered by key publish their
 //! stance in the `RenderSnapshot` and the owner's `PlayerView` over the channel, the effect
@@ -455,12 +461,38 @@ enum StagePhase {
     Ready,
 }
 
+/// The health a staged foundation is given with its construction share.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StagedHealth {
+    /// Its maximum, so that no damage look shows whatever the share (the fill shots).
+    Full,
+    /// The health its construction has built so far at the staged share, as an unhurt
+    /// foundation has (the construction-look shots, B-210).
+    Built,
+}
+
 /// Where the staging of the windowed child's shots stands.
-#[derive(Resource, Debug, Default)]
+#[derive(Resource, Debug)]
 struct Staging {
     phase: StagePhase,
-    /// Index into [`SHARES`] of the shot being staged.
+    /// Index into `shares` of the shot being staged.
     shot: usize,
+    /// The construction share staged for each shot.
+    shares: &'static [f32],
+    /// The health staged with each share.
+    health: StagedHealth,
+}
+
+impl Default for Staging {
+    /// The fill shots: [`SHARES`] at full health.
+    fn default() -> Self {
+        Self {
+            phase: StagePhase::default(),
+            shot: 0,
+            shares: &SHARES,
+            health: StagedHealth::Full,
+        }
+    }
 }
 
 impl Staging {
@@ -477,8 +509,8 @@ fn published_tick(session: &BattleSession) -> u32 {
 }
 
 /// Stages the child through the world: funds the bank at boot, then, once the pilot has raised a
-/// foundation, sets its share for each shot, at full health so that no damage look varies
-/// between the shots. Shared by the windowed child and
+/// foundation, sets its share for each shot, with the health [`Staging::health`] names (full
+/// health for the fill shots, so that no damage look varies between them). Shared by the windowed child and
 /// `a_staged_share_is_published_however_short_the_frame`, so the headless test runs this code.
 #[allow(
     clippy::needless_pass_by_value,
@@ -515,7 +547,7 @@ fn stage_construction(
             StagePhase::AwaitFoundation
         }
         StagePhase::AwaitFoundation => {
-            let Some(&share) = SHARES.get(staging.shot) else {
+            let Some(&share) = staging.shares.get(staging.shot) else {
                 return;
             };
             if pilot.stage() != Stage::Done {
@@ -527,15 +559,18 @@ fn stage_construction(
                 .values_mut()
                 .find(|unit| unit.owner == LOCAL_PLAYER && unit.construction.is_some())
                 .expect("the pilot raised a foundation");
-            // Full health keeps the dome's damage look, whose flicker runs on shader time while
-            // the battle is paused, out of both shots (see CROSSED_RATIO).
-            foundation.hp = foundation.max_hp;
             let construction = foundation
                 .construction
                 .as_mut()
                 .expect("invariant: the foundation was found by its construction");
             construction.remaining_ticks =
                 ((1.0 - share) * construction.total_ticks as f32).round() as u32;
+            foundation.hp = match staging.health {
+                // Full health keeps the dome's damage look, whose flicker runs on shader time
+                // while the battle is paused, out of both shots (see CROSSED_RATIO).
+                StagedHealth::Full => foundation.max_hp,
+                StagedHealth::Built => construction.built_hp(foundation.max_hp),
+            };
             lab.battle_paused = false;
             StagePhase::SharePublishing { since: tick }
         }
@@ -650,15 +685,28 @@ fn capture_shots(
     );
 }
 
-/// Projects rings of a dome's upper half to physical window pixels through the live camera.
+/// Projects the rings of [`RING_SHARES`] of a dome's upper half to physical window pixels
+/// through the live camera.
 fn rings(camera: &Camera, transform: &GlobalTransform, centre: Vec3, radius: f32) -> Vec<Ring> {
+    rings_at(camera, transform, centre, radius, &RING_SHARES)
+}
+
+/// Projects rings of a dome's upper half at `shares` of its height to physical window pixels
+/// through the live camera.
+fn rings_at(
+    camera: &Camera,
+    transform: &GlobalTransform,
+    centre: Vec3,
+    radius: f32,
+    shares: &[f32],
+) -> Vec<Ring> {
     let rectangle = camera
         .physical_viewport_rect()
         .expect("the camera renders through a viewport");
     let size = rectangle.size().as_vec2();
     let clip_from_world = camera.clip_from_view() * transform.compute_matrix().inverse();
     let eye = transform.translation();
-    RING_SHARES
+    shares
         .iter()
         .map(|&share| {
             let ring = (1.0 - share * share).sqrt();
@@ -796,6 +844,244 @@ fn windowed_skirmish_child() {
     .add_systems(
         Update,
         (stage_construction, capture_shots)
+            .chain()
+            .in_set(BattleSet::Present),
+    );
+    assert!(client::render_compatibility::run_render_app(&mut app).is_success());
+}
+
+// ---------------------------------------------------------------------------------------------
+// The construction look (B-210)
+// ---------------------------------------------------------------------------------------------
+
+/// Name of the libtest entry the construction-look test launches.
+const LOOK_CHILD_TEST: &str = "windowed_construction_look_child";
+/// The construction share of the construction-look shots: early in the build, where the
+/// foundation's health share is far below the dome's critical 0.35.
+const LOOK_SHARES: [f32; 1] = [0.1];
+/// Bevy shader time between the two construction-look shots, in seconds: several beats of the
+/// brown-out and dozens of periods of the crack flicker (`assets/shaders/bubble_dome.wgsl`).
+const LOOK_GAP_SECONDS: f32 = 0.5;
+/// File the construction-look child writes its report to.
+const LOOK_FILE: &str = "look.ron";
+/// Shares of the dome's height whose rings the construction-look test compares: the band the
+/// staged share has built, below its fill line. The dome draws its media, and so the brown-out
+/// and the crack flicker, only where it is built; on 2026-11-25 (before the fix, radv) a ring at
+/// 0.05 changed by 11.5 between the shots and the unbuilt rings above the line by under 0.3.
+const LOOK_RING_SHARES: [f32; 4] = [0.02, 0.04, 0.06, 0.08];
+/// Largest mean difference, in levels of 255, between the two construction-look shots over the
+/// compared rings. The paused battle holds the dome's media and its fill, so only a time-driven
+/// look can move them. On 2026-11-25 (radv) the rings changed by 7.5 on average (5.6 to 8.9 per
+/// ring) while the damage look read the health share, and by 0.0 once it read the health built.
+const LOOK_STEADY_CEILING: f32 = 2.0;
+
+/// What the construction-look child saw.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct LookReport {
+    /// The construction share each shot presented.
+    presented: Vec<f32>,
+    /// The health share each shot presented (`hp_ratio`, what the health bar reads).
+    health: Vec<f32>,
+    /// The ratio the dome's damage look received in each shot.
+    damage_look: Vec<f32>,
+    /// Bevy's shader time at each shot request, in seconds.
+    shader_seconds: Vec<f32>,
+    rings: Vec<Ring>,
+}
+
+/// What the construction-look child has captured so far.
+#[derive(Resource, Default)]
+struct LookCapture {
+    directory: PathBuf,
+    /// Whether a screenshot has been requested and not yet written.
+    pending: bool,
+    report: LookReport,
+}
+
+/// B-210: a foundation early in its build and unhurt draws its construction look, not the
+/// dome's low-health look. Its health share is far below the critical 0.35 (the health bar
+/// still reads it), but the dome's damage look reads health over the health built so far, so
+/// two shots half a second of shader time apart show no brown-out or crack flicker between them.
+#[test]
+fn an_unhurt_foundation_under_construction_shows_no_damage_look_on_a_real_window() -> TestResult {
+    if gpu_run::gpu_tests_opted_out() {
+        return Ok(());
+    }
+    let started = Instant::now();
+    let directory = tempfile::tempdir()?;
+    let mut command = gpu_run::virtual_gpu_command(&std::env::current_exe()?);
+    command.args(["--ignored", "--exact", "--nocapture", LOOK_CHILD_TEST]);
+    command.env(CHILD_OUT_VAR, directory.path());
+    command.allow_for_hex_tiling_driver_defect();
+    command.assert_passes_validation("windowed construction look");
+    eprintln!(
+        "windowed construction-look child took {:.1} s",
+        started.elapsed().as_secs_f64()
+    );
+
+    let report: LookReport =
+        ron::from_str(&std::fs::read_to_string(directory.path().join(LOOK_FILE))?)?;
+    let first = image::open(directory.path().join("look_0.png"))?.to_rgb8();
+    let second = image::open(directory.path().join("look_1.png"))?.to_rgb8();
+    let shots = format!(
+        "shares {:?}, health {:?}, damage look {:?}, shader time {:?}",
+        report.presented, report.health, report.damage_look, report.shader_seconds
+    );
+    assert_eq!(report.presented.len(), 2, "two shots: {shots}");
+    let mut differences = Vec::new();
+    for ring in &report.rings {
+        assert!(!ring.pixels.is_empty(), "ring {} is on screen", ring.share);
+        differences.push((ring.share, mean_difference(&first, &second, &ring.pixels)));
+    }
+    let pixels: Vec<(u32, u32)> = report
+        .rings
+        .iter()
+        .flat_map(|ring| ring.pixels.iter().copied())
+        .collect();
+    let overall = mean_difference(&first, &second, &pixels);
+    eprintln!("construction look: {shots}; ring differences {differences:?}, compared {overall}");
+    for (&share, &health) in report.presented.iter().zip(&report.health) {
+        assert!(
+            (share - LOOK_SHARES[0]).abs() < SHARE_TOLERANCE,
+            "the staged share is presented: {shots}"
+        );
+        assert!(
+            health < 0.35,
+            "the health bar reads the foundation's real, critical-looking share: {shots}"
+        );
+    }
+    let gap = report.shader_seconds[1] - report.shader_seconds[0];
+    assert!(
+        gap >= LOOK_GAP_SECONDS,
+        "the shots are {gap} s of shader time apart"
+    );
+    assert!(
+        overall < LOOK_STEADY_CEILING,
+        "the dome changed by {overall} between shots {gap} s apart: a damage look flickers \
+         ({differences:?})"
+    );
+    assert!(
+        report.damage_look.iter().all(|&ratio| ratio >= 1.0),
+        "an unhurt foundation hands the dome no damage: {shots}"
+    );
+    Ok(())
+}
+
+/// The viewer's foundation's Bevy world centre and radius and its presented record.
+fn foundation_record(
+    bubbles: &Query<'_, '_, (&BubbleInstance, &GlobalTransform), With<LiveBattleBubble>>,
+) -> Option<(Vec3, f32, sim_types::BubbleRenderInstance)> {
+    bubbles
+        .iter()
+        .find(|(bubble, _)| {
+            bubble.0.owner == LOCAL_PLAYER && bubble.0.anim_state == AnimState::Constructing
+        })
+        .map(|(bubble, transform)| {
+            (
+                transform.translation(),
+                transform.scale().x,
+                bubble.0.clone(),
+            )
+        })
+}
+
+/// Captures the staged foundation twice, [`LOOK_GAP_SECONDS`] of shader time apart, with the
+/// battle held paused between, then exits.
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "a Bevy system with one declared parameter per dependency"
+)]
+fn capture_look_shots(
+    mut commands: Commands<'_, '_>,
+    staging: Res<'_, Staging>,
+    mut capture: ResMut<'_, LookCapture>,
+    time: Res<'_, Time>,
+    bubbles: Query<'_, '_, (&BubbleInstance, &GlobalTransform), With<LiveBattleBubble>>,
+    cameras: Query<'_, '_, (&Camera, &GlobalTransform), With<RtsCamera>>,
+    mut windows: Query<'_, '_, &mut Window, With<PrimaryWindow>>,
+) {
+    if let Ok(mut window) = windows.get_single_mut() {
+        if !window.focused {
+            window.focused = true;
+        }
+    }
+    if staging.phase != StagePhase::Ready || capture.pending {
+        return;
+    }
+    let now = time.elapsed_secs_wrapped();
+    if let Some(&first) = capture.report.shader_seconds.first() {
+        if now - first < LOOK_GAP_SECONDS {
+            return;
+        }
+    }
+    let (Some((centre, radius, record)), Ok((camera, transform))) =
+        (foundation_record(&bubbles), cameras.get_single())
+    else {
+        panic!("the foundation is on screen");
+    };
+    let shot = capture.report.presented.len();
+    capture
+        .report
+        .presented
+        .push(record.build_or_queue_progress.unwrap_or(0.0));
+    capture.report.health.push(record.hp_ratio);
+    capture.report.damage_look.push(record.damage_look_ratio());
+    capture.report.shader_seconds.push(now);
+    if shot == 0 {
+        capture.report.rings = rings_at(camera, transform, centre, radius, &LOOK_RING_SHARES);
+    }
+    capture.pending = true;
+    let path = capture.directory.join(format!("look_{shot}.png"));
+    commands.spawn(Screenshot::primary_window()).observe(
+        move |trigger: Trigger<'_, ScreenshotCaptured>,
+              mut capture: ResMut<'_, LookCapture>,
+              mut exit: EventWriter<'_, AppExit>| {
+            trigger
+                .event()
+                .0
+                .clone()
+                .try_into_dynamic()
+                .expect("a screenshot converts to an image")
+                .to_rgb8()
+                .save(&path)
+                .expect("a screenshot must be written");
+            capture.pending = false;
+            if capture.report.presented.len() == 2 {
+                let text = ron::to_string(&capture.report).expect("plain data");
+                std::fs::write(capture.directory.join(LOOK_FILE), text)
+                    .expect("the parent's directory is writable");
+                exit.send(AppExit::Success);
+            }
+        },
+    );
+}
+
+/// The child of [`an_unhurt_foundation_under_construction_shows_no_damage_look_on_a_real_window`].
+#[test]
+#[ignore = "launched by the test above on a virtual display"]
+fn windowed_construction_look_child() {
+    let directory = std::env::var_os(CHILD_OUT_VAR).expect("the parent names a directory");
+    let mut app = client::build_graphical_app_off_main_thread(
+        ClientMode::Skirmish,
+        Some(CHILD_FRAME_LIMIT),
+        SKIRMISH_SCENARIO.as_ref(),
+    )
+    .expect("the shipped assets must start the client");
+    app.add_plugins(SkirmishPilotPlugin {
+        goal: PilotGoal::FoundationRaised,
+    })
+    .insert_resource(Staging {
+        shares: &LOOK_SHARES,
+        health: StagedHealth::Built,
+        ..Staging::default()
+    })
+    .insert_resource(LookCapture {
+        directory: Path::new(&directory).to_path_buf(),
+        ..LookCapture::default()
+    })
+    .add_systems(
+        Update,
+        (stage_construction, capture_look_shots)
             .chain()
             .in_set(BattleSet::Present),
     );

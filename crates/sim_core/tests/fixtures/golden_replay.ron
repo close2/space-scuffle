@@ -480,6 +480,12 @@
 // DEFAULT_SANDBOX_CHECKSUM are unchanged. Native debug and release and wasm32-wasip1 release and
 // debug, each from a git-archive copy built in its own fresh target directory, agree on the list
 // below.
+// Checked, not re-recorded, for K-1 (B-208, the contact solver's pair cache keyed by each body's move
+// count; evidence 2026-11-25-solver-pair-cache; schema 47 unchanged), on its final tree merged with
+// main 9ae5a023: K-1 changes no checkpoint of this fixture or of golden_replay_orders, and
+// DEFAULT_SANDBOX_CHECKSUM is unchanged. Native debug and release and wasm32-wasip1 release and
+// debug, each from a git-archive copy of 7ebabd70 built in its own fresh target directory, agree on
+// the list below.
 (
     checksum_schema: 47,
     seed: 0x5EED_0F_5CAFF1E,

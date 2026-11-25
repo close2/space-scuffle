@@ -51,8 +51,9 @@ const FLOAT_ALLOWLIST: &[FloatAllowance] = &[
     },
     FloatAllowance {
         path: "crates/sim_types/src/snapshot.rs",
-        count: 31,
-        reason: "presentation: `RenderSnapshot` is the documented fixed-point to GPU boundary",
+        count: 33,
+        reason: "presentation: `RenderSnapshot` is the documented fixed-point to GPU boundary, \
+                 including a foundation's damage-look ratio (B-210)",
     },
     FloatAllowance {
         path: "crates/sim_types/src/player_view.rs",
@@ -109,10 +110,11 @@ const FLOAT_ALLOWLIST: &[FloatAllowance] = &[
     },
     FloatAllowance {
         path: "crates/sim_core/src/world/snapshot.rs",
-        count: 7,
-        reason: "presentation: progress and hit-flash ratios written into `RenderSnapshot`, and \
-                 the placement and share conversions a live record and an attack snapshot share \
-                 (plan 2026-11-24-attacker-snapshot D-4)",
+        count: 8,
+        reason: "presentation: progress and hit-flash ratios written into `RenderSnapshot`, a \
+                 foundation's damage-look ratio (B-210), and the placement and share conversions \
+                 a live record and an attack snapshot share (plan 2026-11-24-attacker-snapshot \
+                 D-4)",
     },
 ];
 

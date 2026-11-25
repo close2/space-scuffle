@@ -30,11 +30,18 @@
 //!   still read, with no blocking figures. The last two columns split the reversals into
 //!   proposal-caused and contact-caused ones (plan `2026-11-19-crowd-edge-steering` D-5); a table
 //!   written before them ([`UNSPLIT_CSV_HEADER`]) is read with its reversals unsplit.
+//! - The contact checks ([`super::contact_checks`], plan `2026-11-24-solver-retarget-and-shoving`
+//!   §5.1: D-SHOVE, D-R10, D-CHURN and the counters of its behaviour checks; then
+//!   evidence `2026-11-25-solver-pair-cache` §2: D-SHOVE-E, B7′'s engaged unit-ticks, the
+//!   enemy-overlap ticks and the friend overlap, appended last) are the last [`CHECK_COLUMNS`]
+//!   columns, a measurement like the blocking columns; a table written before them
+//!   ([`SPLIT_CSV_HEADER`]) is read without them.
 
 use super::blocking::{BlockingMeter, BlockingMetrics};
 use super::cli::{
     create_dir, load_catalogs, load_matrix, read, source_line, write, RunError, TraceArgs,
 };
+use super::contact_checks::{ContactChecks, ContactMeter, SideChecks};
 use crate::matchup::{Battle, BattleRun, Expected, Matrix, Outcome};
 use sim_core::catalog::RuntimeCatalogs;
 use sim_types::SimScalar;
@@ -42,10 +49,21 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// The header line of `matrix.csv`.
+/// The header line of `matrix.csv`: [`SPLIT_CSV_HEADER`], then the contact checks of plan
+/// `2026-11-24-solver-retarget-and-shoving` ([`ContactChecks`]).
 pub const CSV_HEADER: &str = "battle,seed,of_record,end_tick,blue_survivors,red_survivors,\
 blue_lead_hull,red_lead_hull,expectation_met,blocked_attacker_ticks,reversals,stall_giveups,\
-proposal_reversals,contact_reversals";
+proposal_reversals,contact_reversals,blue_shove,red_shove,blue_r10_leash,blue_r10_terrain,\
+blue_r10_unruled,blue_r10_free,red_r10_leash,red_r10_terrain,red_r10_unruled,red_r10_free,\
+blue_churn_explained,blue_churn_unexplained,red_churn_explained,red_churn_unexplained,\
+blue_blocked,red_blocked,blue_shots,red_shots,blue_unit_ticks,red_unit_ticks,enemy_overlap,\
+blue_shove_e,red_shove_e,blue_engaged_ticks,red_engaged_ticks,enemy_overlap_ticks,friend_overlap,\
+friend_overlap_ticks";
+
+/// The header of a `matrix.csv` written before the contact checks, still read by `--compare`.
+pub const SPLIT_CSV_HEADER: &str = "battle,seed,of_record,end_tick,blue_survivors,\
+red_survivors,blue_lead_hull,red_lead_hull,expectation_met,blocked_attacker_ticks,reversals,\
+stall_giveups,proposal_reversals,contact_reversals";
 
 /// The header of a `matrix.csv` written before the reversal split, still read by `--compare`.
 pub const UNSPLIT_CSV_HEADER: &str = "battle,seed,of_record,end_tick,blue_survivors,\
@@ -63,11 +81,18 @@ const OUTCOME_COLUMNS: usize = 9;
 /// blocking counters.
 const UNSPLIT_COLUMNS: usize = 12;
 
-/// Columns of `matrix.csv`: the outcome, the three blocking counters, then the reversal split.
-const CSV_COLUMNS: usize = 14;
+/// Columns of a `matrix.csv` written before the contact checks: the outcome, the three blocking
+/// counters, then the reversal split.
+const SPLIT_COLUMNS: usize = 14;
+
+/// Contact-check columns at the end of a current row ([`ContactChecks`]).
+const CHECK_COLUMNS: usize = 28;
+
+/// Columns of `matrix.csv`: [`SPLIT_COLUMNS`], then the contact checks.
+const CSV_COLUMNS: usize = SPLIT_COLUMNS + CHECK_COLUMNS;
 
 /// One battle played on one seed.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MatrixRow {
     /// The battle's name.
     pub battle: String,
@@ -86,6 +111,9 @@ pub struct MatrixRow {
     /// Whether `blocking` splits its reversals into proposal- and contact-caused ones; `false`
     /// for a row read from a table written before the split, whose split counters read zero.
     pub reversal_split: bool,
+    /// The contact checks of the run (plan `2026-11-24-solver-retarget-and-shoving` §5.1);
+    /// `None` for a row read from a table written before them.
+    pub checks: Option<ContactChecks>,
 }
 
 impl MatrixRow {
@@ -108,7 +136,10 @@ impl MatrixRow {
             }
             _ => ",".to_owned(),
         };
-        format!("{},{blocking},{split}", self.outcome_line())
+        let checks = self
+            .checks
+            .map_or_else(|| ",".repeat(CHECK_COLUMNS - 1), |c| checks_cells(&c));
+        format!("{},{blocking},{split},{checks}", self.outcome_line())
     }
 
     /// The outcome columns of the row, the part two tables are compared on.
@@ -137,9 +168,16 @@ impl MatrixRow {
     /// A description of the first malformed cell.
     pub fn from_csv_line(line: &str) -> Result<Self, String> {
         let cells: Vec<&str> = line.split(',').collect();
-        if ![CSV_COLUMNS, UNSPLIT_COLUMNS, OUTCOME_COLUMNS].contains(&cells.len()) {
+        if ![CSV_COLUMNS, SPLIT_COLUMNS, UNSPLIT_COLUMNS, OUTCOME_COLUMNS].contains(&cells.len()) {
             return Err(format!("{} cells, expected {CSV_COLUMNS}", cells.len()));
         }
+        let checks = match cells.get(SPLIT_COLUMNS..) {
+            Some(rest) if rest.len() == CHECK_COLUMNS && rest.iter().any(|c| !c.is_empty()) => {
+                Some(parse_checks(rest)?)
+            }
+            _ => None,
+        };
+        let cells = &cells[..cells.len().min(SPLIT_COLUMNS)];
         let (blocking, split) = match cells.get(OUTCOME_COLUMNS..) {
             Some([] | ["", "", ""] | ["", "", "", "", ""]) => (None, false),
             Some([ticks, reversals, giveups, rest @ ..]) if !ticks.is_empty() => {
@@ -181,8 +219,67 @@ impl MatrixRow {
             expectation_met: cell(cells[8], "expectation_met")?,
             blocking,
             reversal_split: split,
+            checks,
         })
     }
+}
+
+/// The contact-check cells of a row, in [`CSV_HEADER`] order: distances to four decimals, the
+/// overlap to six, counts as integers.
+fn checks_cells(checks: &ContactChecks) -> String {
+    let [blue, red] = &checks.sides;
+    let mut cells = vec![format!("{:.4}", blue.shove), format!("{:.4}", red.shove)];
+    for side in [blue, red] {
+        cells.extend(side.r10.iter().map(u32::to_string));
+    }
+    for side in [blue, red] {
+        cells.extend(side.churn.iter().map(u32::to_string));
+    }
+    for pick in [
+        |s: &SideChecks| s.blocked,
+        |s: &SideChecks| s.shots,
+        |s: &SideChecks| s.unit_ticks,
+    ] {
+        cells.push(pick(blue).to_string());
+        cells.push(pick(red).to_string());
+    }
+    cells.push(format!("{:.6}", checks.enemy_overlap));
+    cells.push(format!("{:.4}", blue.shove_e));
+    cells.push(format!("{:.4}", red.shove_e));
+    cells.push(blue.engaged_ticks.to_string());
+    cells.push(red.engaged_ticks.to_string());
+    cells.push(checks.enemy_overlap_ticks.to_string());
+    cells.push(format!("{:.6}", checks.friend_overlap));
+    cells.push(checks.friend_overlap_ticks.to_string());
+    cells.join(",")
+}
+
+/// Parses the [`CHECK_COLUMNS`] contact-check cells of a row.
+fn parse_checks(cells: &[&str]) -> Result<ContactChecks, String> {
+    let int = |index: usize| cell::<u32>(cells[index], "contact checks");
+    let real = |index: usize| cell::<f64>(cells[index], "contact checks");
+    let mut sides = [SideChecks::default(); 2];
+    for (side, checks) in sides.iter_mut().enumerate() {
+        checks.shove = real(side)?;
+        for (column, count) in checks.r10.iter_mut().enumerate() {
+            *count = int(2 + 4 * side + column)?;
+        }
+        for (column, count) in checks.churn.iter_mut().enumerate() {
+            *count = int(10 + 2 * side + column)?;
+        }
+        checks.blocked = int(14 + side)?;
+        checks.shots = int(16 + side)?;
+        checks.unit_ticks = int(18 + side)?;
+        checks.shove_e = real(21 + side)?;
+        checks.engaged_ticks = int(23 + side)?;
+    }
+    Ok(ContactChecks {
+        sides,
+        enemy_overlap: real(20)?,
+        enemy_overlap_ticks: int(25)?,
+        friend_overlap: real(26)?,
+        friend_overlap_ticks: int(27)?,
+    })
 }
 
 /// Parses the cell `text` of column `column`.
@@ -228,7 +325,7 @@ pub fn parse_matrix_csv(path: &Path, text: &str) -> Result<Vec<MatrixRow>, RunEr
     let mut lines = text.lines();
     if !matches!(
         lines.next(),
-        Some(CSV_HEADER | UNSPLIT_CSV_HEADER | LEGACY_CSV_HEADER)
+        Some(CSV_HEADER | SPLIT_CSV_HEADER | UNSPLIT_CSV_HEADER | LEGACY_CSV_HEADER)
     ) {
         return Err(error(1, format!("the header is not `{CSV_HEADER}`")));
     }
@@ -242,7 +339,7 @@ pub fn parse_matrix_csv(path: &Path, text: &str) -> Result<Vec<MatrixRow>, RunEr
 }
 
 /// The comparison of a whole-matrix run with an earlier `matrix.csv`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Comparison {
     /// The earlier `matrix.csv`.
     pub file: PathBuf,
@@ -443,9 +540,12 @@ fn play_one(
     let mut run = BattleRun::new(battle, catalogs.clone(), seed, matrix.jitter_for(seed))
         .map_err(|source| failed(source.into()))?;
     let mut meter = BlockingMeter::new();
+    let mut contact = ContactMeter::new();
+    contact.observe(&run.world);
     while !run.is_finished() {
         let diagnostics = run.step();
         meter.observe(&run.world);
+        contact.observe(&run.world);
         if !diagnostics.is_empty() {
             return Err(failed(RunError::Diagnostics {
                 seed,
@@ -464,6 +564,7 @@ fn play_one(
         expectation_met: battle.expect.holds(&outcome),
         blocking: Some(meter.total()),
         reversal_split: true,
+        checks: Some(contact.total()),
     })
 }
 
@@ -803,6 +904,34 @@ mod tests {
                 stall_giveups: 1,
             }),
             reversal_split: true,
+            checks: Some(ContactChecks {
+                sides: [
+                    SideChecks {
+                        shove: 1.25,
+                        shove_e: 0.5,
+                        r10: [1, 2, 3, 4],
+                        churn: [5, 6],
+                        blocked: 7,
+                        shots: 8,
+                        unit_ticks: 9,
+                        engaged_ticks: 4,
+                    },
+                    SideChecks {
+                        shove: 0.0,
+                        shove_e: 0.0,
+                        r10: [0, 0, 0, 11],
+                        churn: [0, 12],
+                        blocked: 13,
+                        shots: 14,
+                        unit_ticks: 15,
+                        engaged_ticks: 10,
+                    },
+                ],
+                enemy_overlap: 0.031_25,
+                enemy_overlap_ticks: 3,
+                friend_overlap: 0.062_5,
+                friend_overlap_ticks: 2,
+            }),
         }
     }
 
@@ -831,7 +960,7 @@ mod tests {
         let legacy = MatrixRow::from_csv_line(&current.outcome_line())?;
         assert_eq!(legacy.blocking, None);
         assert_eq!(legacy.outcome_line(), current.outcome_line());
-        assert!(legacy.csv_line().ends_with(",,,"));
+        assert!(legacy.csv_line().ends_with(",,,,,"));
         assert_eq!(MatrixRow::from_csv_line(&legacy.csv_line())?, legacy);
         let comparison = Comparison::new(PathBuf::from("m.csv"), vec![legacy], &[current]);
         assert_eq!(comparison.moved, Vec::<String>::new());
@@ -850,7 +979,9 @@ mod tests {
         let unsplit = MatrixRow::from_csv_line(&unsplit_line)?;
         assert!(!unsplit.reversal_split);
         assert_eq!(unsplit.blocking.map(|b| b.reversals), Some(3));
-        assert!(unsplit.csv_line().ends_with(",7,3,1,,"));
+        assert!(unsplit
+            .csv_line()
+            .ends_with(&format!(",7,3,1,,{}", ",".repeat(CHECK_COLUMNS))));
         assert_eq!(MatrixRow::from_csv_line(&unsplit.csv_line())?, unsplit);
         let comparison = Comparison::new(PathBuf::from("m.csv"), vec![unsplit], &[current]);
         assert_eq!(comparison.moved, Vec::<String>::new());
@@ -864,6 +995,32 @@ mod tests {
         );
         assert!(MatrixRow::from_csv_line("a,1,true,5,1,0,,,true,1,3,0,2,0").is_err());
         assert!(MatrixRow::from_csv_line("a,1,true,5,1,0,,,true,1,3,0,2,").is_err());
+        Ok(())
+    }
+
+    /// W0-T4 (plan `2026-11-24-solver-retarget-and-shoving`): a table written before the
+    /// contact checks still parses, without them, and compares on its outcome; the new columns
+    /// come last.
+    #[test]
+    fn a_row_written_before_the_contact_checks_reads_without_them() -> Result<(), String> {
+        let current = row("a_b", 5, 2, Some(SimScalar::from_i32(45)));
+        assert!(CSV_HEADER.starts_with(SPLIT_CSV_HEADER));
+        let line = current.csv_line();
+        let old_line = line
+            .split(',')
+            .take(SPLIT_COLUMNS)
+            .collect::<Vec<_>>()
+            .join(",");
+        let old = MatrixRow::from_csv_line(&old_line)?;
+        assert_eq!(old.checks, None);
+        assert_eq!(old.blocking, current.blocking);
+        assert_eq!(MatrixRow::from_csv_line(&old.csv_line())?, old);
+        let path = Path::new("m.csv");
+        let table = format!("{SPLIT_CSV_HEADER}\n{old_line}\n");
+        let rows = parse_matrix_csv(path, &table).map_err(|e| e.to_string())?;
+        let comparison = Comparison::new(PathBuf::from("m.csv"), rows, &[current]);
+        assert_eq!(comparison.moved, Vec::<String>::new());
+        assert!(MatrixRow::from_csv_line(&format!("{old_line},1.5,x")).is_err());
         Ok(())
     }
 
