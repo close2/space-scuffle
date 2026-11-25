@@ -584,6 +584,23 @@ impl UnitCatalog {
         usize::from(CollisionClass::BUILT_IN) + self.collision_classes.len()
     }
 
+    /// Adds the authored class `name` to the table as loading would (sorted by name) and returns
+    /// its class, for unit tests that author a class on an archetype they edit. Classes already
+    /// resolved on archetypes keep their indices only while `name` sorts after every held name.
+    #[cfg(test)]
+    pub(crate) fn author_collision_class_for_test(&mut self, name: &str) -> CollisionClass {
+        let position = match self
+            .collision_classes
+            .binary_search_by(|held| held.as_str().cmp(name))
+        {
+            Ok(position) | Err(position) => position,
+        };
+        if self.collision_classes.get(position).map(String::as_str) != Some(name) {
+            self.collision_classes.insert(position, name.to_owned());
+        }
+        CollisionClass(CollisionClass::BUILT_IN + u8::try_from(position).unwrap_or(u8::MAX))
+    }
+
     /// The faction, weapon-class and armor-class identities this catalog was resolved against.
     #[must_use]
     pub fn factions(&self) -> &FactionCatalog {
