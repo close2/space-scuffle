@@ -637,7 +637,7 @@ collision classes (124.1 against 54.8 per 1,000 zergling-ticks). WP3, after WP2 
 
 ---
 
-## 11. Owner question (filed as [Q0118](../questions/open/0118-crowd-overlap-solver-cost.md) on main)
+## 11. Owner question (filed as [Q0118](../questions/closed/0118-crowd-overlap-solver-cost.md) on main)
 
 ```markdown
 # Q0118: Crowds overlap far more than the 5 % you allowed. Pay for the solver to finish its work, keep it as it is, or change how crowds push?

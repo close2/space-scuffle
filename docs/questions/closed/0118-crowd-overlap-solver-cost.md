@@ -90,3 +90,14 @@ were hit: battle 27's worst overlap stays at 11 % (above the 10 % target), zergl
 more often, and battles not on the close list (29, 30, 34) change results within their noise. So the change is
 built but switched off, and is waiting for review; no answer is needed from you unless you want to waive those
 checks. Your blank-sheet guidance above is noted for the next movement round.
+
+## Resolution
+
+Answered (a). Plan `2026-11-26-friend-crowd-overlap` built it: WP0 (the measurement repair) and WP1 (C-3′, with its
+cap `crowd_iterations` 151 derived by P-1) are merged, but **latent**: the shipped `movement_rules.ron` keeps the
+extension off, so no world changes. The switch-over (WP2) stopped on its pre-registered checks (update above, evidence
+§5): it removes 99 % of the friendly overlap, but battle 27 stays at 11 % against the 10 % target, a few behaviour
+checks miss narrowly, and three non-close battles move within their noise. The orchestrator did not waive the checks.
+Following the owner's strategic guidance and Q0120 (a), the switch is decided inside the movement redesign (plan
+`2026-11-27-gated-movement`, being written), which takes C-3′ switched on as its cost baseline (Q0124 (a)) and judges
+it together with the new contact rules. B-219 stays open until then.
