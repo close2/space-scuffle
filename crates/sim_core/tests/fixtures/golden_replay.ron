@@ -504,8 +504,15 @@
 // target directories, reproduces main's lists of both fixtures and DEFAULT_SANDBOX_CHECKSUM on
 // native debug and release and wasm32-wasip1 release and debug; native debug and release and
 // wasm32-wasip1 release and debug agree on the list below.
+// Re-recorded for plan 2026-11-26-follow-order WP1 (checksum schema 49 -> 50, provisional: the next
+// free number at merge): each unit's movement memory gains follow_rest (None in these worlds), and
+// the order encoding gains the Follow tag 19, which neither fixture issues. No behaviour change:
+// with follow_rest left unhashed at schema 49, a git-archive copy of the WP1 tree, built in fresh
+// target directories, reproduces main's lists of both fixtures and DEFAULT_SANDBOX_CHECKSUM on
+// native debug and release and wasm32-wasip1 release and debug. Native debug and release and
+// wasm32-wasip1 release and debug agree on the list below.
 (
-    checksum_schema: 49,
+    checksum_schema: 50,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -531,25 +538,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0xc1d57afa0b95d7c0,
-        0x7441c550bdce20c1,
-        0x3956a9901fa218d1,
-        0x2fbd4ffc918fad89,
-        0xb4d338729a8ca5e8,
-        0x839ccfd0073b5dec,
-        0xe3203061c2f31fc1,
-        0x2fd225570aa591d3,
-        0x17f5a0c47303b409,
-        0x3a63eb6ee83c49eb,
-        0xe95d8ccb706f95f6,
-        0xa1c00e3b0a398397,
-        0xd49e08e4864afb08,
-        0x82260ab99d30a0c1,
-        0xee57626b63ce80a4,
-        0x0b7173443b92d8a1,
-        0x15a40bbc78735ff3,
-        0x3ebf30c09beb0295,
-        0x94d128d2582c2a78,
-        0x540d0d968138877e,
+        0x24c32da493e020e5,
+        0xbbbe0cc646461109,
+        0xaa2ede3fe3e885da,
+        0xdaa763a0079784ba,
+        0x69c4cd8cf3aeb628,
+        0x41cdc4c4c740e6f9,
+        0xff60161597178e39,
+        0x271e623ebea91f76,
+        0xc6913e3d8cd600de,
+        0x9a2f894473f7a7cf,
+        0xdcae1327f3ca61f9,
+        0xa909ea4d04c0d68f,
+        0x93e1d08fd8845b52,
+        0xd1196d46927ee9dc,
+        0xb42b3faef988adb7,
+        0x394aa32dbfd45491,
+        0x4338408608608c20,
+        0x4f6c8a9dafcf83cf,
+        0x7100014bc8f06205,
+        0x7192a150b381c070,
     ],
 )
