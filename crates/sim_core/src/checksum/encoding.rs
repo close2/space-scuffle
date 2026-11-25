@@ -361,8 +361,6 @@ fields!(Entity {
     current_target,
     // Plan `2026-11-24-fire-rules` D-8: the target the weapon chose inside an attack order.
     weapon_target,
-    // Plan `2026-11-26-turret-tracking-weapon` D-8: the enemy the turret tracks.
-    tracked_target,
     previous_target_position,
     engaged_target,
     is_immobile,

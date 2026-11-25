@@ -672,7 +672,6 @@ fn assert_twins(a: &SimWorld, b: &SimWorld, tick: u32) {
         };
         let mut same = entity.clone();
         same.turret_angle = twin.turret_angle;
-        same.tracked_target = twin.tracked_target;
         assert_eq!(
             &same, twin,
             "tick {tick}: entity {id:?} differs beyond its turret"
@@ -792,7 +791,8 @@ fn a_tracking_turret_follows_the_nearest_enemy_in_reach_under_a_move() -> TestRe
         let tick = scene.tick - 1;
         let unit = scene.world.entities.get(&scene.unit).ok_or("unit")?;
         assert_eq!(
-            unit.tracked_target, expected,
+            scene.world.tracked_target(scene.unit),
+            expected,
             "tick {tick}: the nearest enemy in reach is tracked"
         );
         assert_eq!(
@@ -870,7 +870,8 @@ fn tracking_changes_nothing_but_the_turret() -> TestResult {
         let twin = off.world.entities.get(&off.unit).ok_or("twin")?;
         differ += usize::from(unit.turret_angle != twin.turret_angle);
         assert_eq!(
-            twin.tracked_target, None,
+            off.world.tracked_target(off.unit),
+            None,
             "tick {tick}: the twin tracks nothing"
         );
         assert!(
@@ -960,7 +961,7 @@ fn a_tracked_threat_outranks_a_nearer_worker() -> TestResult {
             in_reach(&world, &weapon, unit, threat)?,
         );
         step(&mut world, tick, Vec::new());
-        let tracked = world.entities.get(&unit).ok_or("unit")?.tracked_target;
+        let tracked = world.tracked_target(unit);
         if reach == (true, true) {
             assert_eq!(
                 tracked,
@@ -1030,7 +1031,8 @@ fn a_chasing_tracker_aims_at_another_enemy_until_its_target_is_in_reach() -> Tes
             );
             let expected = other_in_reach.then_some(other);
             assert_eq!(
-                entity.tracked_target, expected,
+                on.tracked_target(unit),
+                expected,
                 "tick {tick}: the other worker is tracked"
             );
             tracked += usize::from(expected.is_some());
@@ -1098,7 +1100,8 @@ fn the_real_weapon_owns_the_turret_while_it_has_a_workable_target() -> TestResul
             let entity = on.entities.get(&unit).ok_or("unit")?;
             if !hold {
                 assert_eq!(
-                    entity.tracked_target, None,
+                    on.tracked_target(unit),
+                    None,
                     "tick {tick}: the order's target owns the turret"
                 );
                 assert_eq!(
@@ -1166,7 +1169,7 @@ fn between_shots_without_a_target_the_turret_tracks() -> TestResult {
         step(&mut off, tick, Vec::new());
         assert_twins(&on, &off, tick);
         let entity = on.entities.get(&unit).ok_or("unit")?;
-        if entity.tracked_target == Some(other) && entity.weapon_cooldown_remaining > 0 {
+        if on.tracked_target(unit) == Some(other) && entity.weapon_cooldown_remaining > 0 {
             cooling_tracked += 1;
             turned += usize::from(entity.turret_angle != before);
         }
@@ -1219,13 +1222,14 @@ fn a_locked_turret_does_not_track_during_its_swing() -> TestResult {
         }
         let swinging = matches!(before.weapon_phase, WeaponPhase::Backswing { .. })
             && matches!(entity.weapon_phase, WeaponPhase::Backswing { .. });
-        if swinging && entity.tracked_target == Some(other) {
+        if swinging && world.tracked_target(unit) == Some(other) {
             assert_eq!(
                 entity.turret_angle, before.turret_angle,
                 "tick {tick}: the lock holds"
             );
             held += 1;
-        } else if entity.tracked_target == Some(other) && entity.turret_angle != before.turret_angle
+        } else if world.tracked_target(unit) == Some(other)
+            && entity.turret_angle != before.turret_angle
         {
             turned_after += 1;
         }
@@ -1303,7 +1307,8 @@ fn a_mode_channel_and_a_stance_without_tracking_track_nothing() -> TestResult {
         step(&mut world, tick, Vec::new());
         let entity = world.entities.get(&unit).ok_or("unit")?;
         assert_eq!(
-            entity.tracked_target, None,
+            world.tracked_target(unit),
+            None,
             "tick {tick}: nothing is tracked"
         );
         if entity.channeling_remaining_ticks > 0 {
@@ -1382,7 +1387,7 @@ fn only_seen_strikeable_enemies_are_tracked() -> TestResult {
     let (mut tracked_seen, mut lifted) = (0, None);
     for tick in 1..300 {
         step(&mut world, tick, Vec::new());
-        let tracked = world.entities.get(&unit).ok_or("unit")?.tracked_target;
+        let tracked = world.tracked_target(unit);
         assert!(
             tracked.is_none_or(|id| !never.contains(&id)),
             "tick {tick}: an unseen or unstrikeable enemy is never tracked ({tracked:?})"
@@ -1483,7 +1488,7 @@ fn tracking_reaches_the_real_weapon_only_through_the_turret_angle() -> TestResul
         step(&mut equalized, tick, Vec::new());
         let entity = on.entities.get(&unit).ok_or("unit")?;
         let twin = off.entities.get(&unit).ok_or("twin")?;
-        if entity.tracked_target == Some(enemy)
+        if on.tracked_target(unit) == Some(enemy)
             && entity.turret_angle.diff(twin.turret_angle).unsigned_abs() > narrow.raw()
         {
             order_tick = Some(tick + 1);

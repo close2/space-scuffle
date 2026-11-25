@@ -251,8 +251,6 @@ fn every_public_entity_field_changes_the_world_checksum() {
             current_target => Some(EntityId(2)),
             // Plan `2026-11-24-fire-rules` D-8: the target the weapon chose inside an attack order.
             weapon_target => Some(EntityId(2)),
-            // Plan `2026-11-26-turret-tracking-weapon` D-8 (T-13): the enemy the turret tracks.
-            tracked_target => Some(EntityId(2)),
             is_immobile => true,
             unpushable => true,
             is_sieged => true,
@@ -404,7 +402,8 @@ fn a_projectiles_fire_rules_change_the_world_checksum() {
 
 /// T-13 of plan `2026-11-26-turret-tracking-weapon` (D-8): whether a weapon's turret tracks any
 /// enemy is hashed with the weapon a projectile in flight carries, and the enemy a unit's turret
-/// tracks is hashed with the unit: each field alone changes the checksum.
+/// tracks is hashed in the world's table of tracked enemies (Amendment 1): each alone changes the
+/// checksum.
 #[test]
 fn turret_tracking_changes_the_world_checksum() {
     let mut flying = world();
@@ -422,8 +421,11 @@ fn turret_tracking_changes_the_world_checksum() {
     let mut world = world();
     let id = world.entities.keys().next().copied();
     let mut with_tracked = |tracked: Option<EntityId>| {
-        if let Some(entity) = id.and_then(|id| world.entities.get_mut(&id)) {
-            entity.tracked_target = tracked;
+        if let Some(unit) = id {
+            match tracked {
+                Some(enemy) => world.tracked_targets.set(unit, enemy),
+                None => world.tracked_targets.release(unit),
+            }
         }
         world.compute_checksum()
     };
@@ -431,7 +433,7 @@ fn turret_tracking_changes_the_world_checksum() {
     let some = with_tracked(Some(EntityId(2)));
     let other = with_tracked(Some(EntityId(3)));
     assert!(id.is_some(), "premise: the fixture world has an entity");
-    assert_ne!(none, some, "checksum omitted tracked_target");
+    assert_ne!(none, some, "checksum omitted the tracked enemies");
     assert_ne!(some, other, "checksum omitted the tracked entity's id");
 }
 

@@ -672,7 +672,13 @@ impl SimWorld {
                 })
             });
 
-            let tracking = Self::tracking_aim(&context, combat, entity, arch);
+            let tracking = Self::tracking_aim(
+                &context,
+                combat,
+                entity,
+                arch,
+                self.tracked_targets.get(*id),
+            );
             if step_entity_weapon_tracking(entity, &weapon, target_info, mandate, tracking) {
                 charge_random_delay(entity, &weapon, rng);
                 if let Some(target) = target_info {
@@ -695,7 +701,8 @@ impl SimWorld {
     }
 
     /// Where `entity`'s turret aims for the enemy acquisition chose for it to track
-    /// ([`Entity::tracked_target`], plan `2026-11-26-turret-tracking-weapon` D-4): that enemy's
+    /// (`tracked`, from [`SimWorld::tracked_targets`], plan `2026-11-26-turret-tracking-weapon`
+    /// D-4, Amendment 1): that enemy's
     /// position, while it lives and is available to the unit's weapon (the swing's test,
     /// [`Self::swing_target_live`]) and its plane resolves to a turreted weapon whose turret
     /// tracks any enemy, with that weapon's turret rate. `None` otherwise; the weapon step
@@ -705,8 +712,9 @@ impl SimWorld {
         combat: &CombatWorkspace,
         entity: &Entity,
         arch: &UnitArchetype,
+        tracked: Option<EntityId>,
     ) -> Option<TrackingAim> {
-        let snapshot = combat.snapshot(entity.tracked_target?)?;
+        let snapshot = combat.snapshot(tracked?)?;
         let weapon = arch.weapon_against(snapshot.mover, entity.active_siege_weapon())?;
         (weapon.turret_tracks_any_enemy
             && weapon.has_turret

@@ -518,7 +518,7 @@ pub enum Mandate {
 }
 
 /// Where a turret that tracks any enemy aims this tick, resolved by the combat phase from the
-/// enemy acquisition chose for it (`Entity::tracked_target`, plan
+/// enemy acquisition chose for it (`SimWorld::tracked_targets`, plan
 /// `2026-11-26-turret-tracking-weapon` D-4): 5.0.14's hidden `90mmCannonsFake`, which shares the
 /// Siege Tank's turret and never fires.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

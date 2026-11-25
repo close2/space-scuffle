@@ -125,8 +125,9 @@ use std::collections::BTreeMap;
 /// rally's encoding (plan `2026-11-25-rallies` D-2). The number is the next free at merge.
 /// Schema 49 adds whether each weapon's turret tracks any enemy (a `bool`),
 /// `WeaponSpec::turret_tracks_any_enemy`, after `locks_turret_while_firing`, and the enemy each
-/// entity's turret tracks, `Entity::tracked_target`, after `weapon_target` (plan
-/// `2026-11-26-turret-tracking-weapon` D-8). The number is the next free at merge.
+/// unit's turret tracks, the world's `tracked_targets` table (its length, then each unit and
+/// enemy id in unit id order), after the route groups (plan `2026-11-26-turret-tracking-weapon`
+/// D-8, Amendment 1). The number is the next free at merge.
 pub const CHECKSUM_SCHEMA_VERSION: u32 = 49;
 
 // PERFORMANCE RATIONALE:
@@ -189,6 +190,12 @@ pub fn compute_simulation_checksum(world: &SimWorld) -> u64 {
     "route-groups".encode(&mut encoder);
     world.next_route_group.encode(&mut encoder);
     world.route_groups.encode(&mut encoder);
+    "turret-tracking".encode(&mut encoder);
+    encoder.length(world.tracked_targets.entries().len());
+    for (unit, enemy) in world.tracked_targets.entries() {
+        unit.encode(&mut encoder);
+        enemy.encode(&mut encoder);
+    }
 
     "map".encode(&mut encoder);
     world.map.width().encode(&mut encoder);

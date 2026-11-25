@@ -575,7 +575,7 @@ fn a_tracking_turret_publishes_its_yaw_and_no_swing() {
             entity.turret_angle.to_radians_f32().to_bits(),
             "tick {tick}: the published aim is the turret's yaw"
         );
-        if entity.tracked_target.is_some() && entity.turret_angle != entity.heading {
+        if world.tracked_target(unit).is_some() && entity.turret_angle != entity.heading {
             tracking += 1;
         }
     }

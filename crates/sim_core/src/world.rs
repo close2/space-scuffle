@@ -27,6 +27,7 @@ mod casts;
 mod commands;
 pub(crate) mod presentation;
 pub(crate) mod snapshot;
+pub mod tracked_targets;
 mod upgrade_stats;
 mod upkeep;
 mod vision;
@@ -160,6 +161,9 @@ pub struct SimWorld {
     pub(crate) effect_scratch: crate::effects::EffectScratch,
     /// Live route groups sorted by id (plan `2026-11-10-group-routing`, D-1); hashed.
     pub(crate) route_groups: Vec<crate::movement::groups::RouteGroup>,
+    /// The enemy each tracking turret follows this tick, by unit id (plan
+    /// `2026-11-26-turret-tracking-weapon` D-2, Amendment 1); hashed.
+    pub tracked_targets: tracked_targets::TrackedTargets,
     /// The id the next route group gets; hashed.
     pub(crate) next_route_group: u32,
     /// Unhashed provenance for the render snapshot: projectile sources and this
@@ -240,6 +244,7 @@ impl SimWorld {
             effects: crate::effects::EffectWorld::default(),
             effect_scratch: crate::effects::EffectScratch::default(),
             route_groups: Vec::new(),
+            tracked_targets: tracked_targets::TrackedTargets::default(),
             next_route_group: 1,
             presentation: presentation::PresentationWorkspace::default(),
         };
@@ -492,7 +497,22 @@ impl SimWorld {
     pub fn reap_dead_and_emit_shatter(&mut self) {
         self.release_housed_harvesters();
         self.reap_transport_groups();
+        // A reaped unit's turret tracks nothing (plan `2026-11-26-turret-tracking-weapon`
+        // Amendment 1).
+        if !self.tracked_targets.is_empty() {
+            let entities = &self.entities;
+            self.tracked_targets
+                .retain_units(|unit| entities.contains_key(&unit));
+        }
         self.update_match_state();
+    }
+
+    /// The enemy `unit`'s turret tracks this tick ([`Self::tracked_targets`], plan
+    /// `2026-11-26-turret-tracking-weapon` D-2): chosen by acquisition for a weapon whose turret
+    /// tracks any enemy, read by the combat phase only to aim a free turret.
+    #[must_use]
+    pub fn tracked_target(&self, unit: EntityId) -> Option<EntityId> {
+        self.tracked_targets.get(unit)
     }
 
     /// Phase 9: Compute the versioned 64-bit dynamic-state checksum.

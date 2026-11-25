@@ -19,7 +19,7 @@
 //!    lets it fire under that order. An own weapon target (`Entity::weapon_target`) changes
 //!    neither the order nor `current_target`, so pursuit keeps chasing the order's target; it
 //!    exists only while that target cannot be worked, and for a chasing unit only with a weapon
-//!    that fires while moving. The enemy a turret tracks (`Entity::tracked_target`, plan
+//!    that fires while moving. The enemy a turret tracks (`SimWorld::tracked_targets`, plan
 //!    `2026-11-26-turret-tracking-weapon` D-3) is chosen the same way, from where the unit
 //!    stands, only for a weapon whose turret tracks any enemy and only while the unit's own
 //!    weapon has no workable target; it is chosen anew every tick, released for every unit this
@@ -103,7 +103,7 @@ pub(crate) enum Acquisition {
     /// Forget the unit's own weapon target.
     ReleaseWeaponTarget,
     /// Let the unit's turret track this enemy while its weapon leaves the turret free
-    /// ([`Entity::tracked_target`], plan `2026-11-26-turret-tracking-weapon` D-3).
+    /// ([`SimWorld::tracked_targets`], plan `2026-11-26-turret-tracking-weapon` D-3).
     SetTrackedTarget(EntityId),
     /// Forget the enemy the unit's turret tracks.
     ReleaseTrackedTarget,
@@ -612,7 +612,7 @@ impl SimWorld {
             let (Ok(arch), true) = (arch, Self::acquires_for(entity)) else {
                 // The tracked enemy never outlives the tick it was chosen in (plan
                 // `2026-11-26-turret-tracking-weapon` D-2).
-                if entity.tracked_target.is_some() {
+                if self.tracked_targets.get(id).is_some() {
                     acquisitions.push((id, Acquisition::ReleaseTrackedTarget));
                 }
                 continue;
@@ -668,8 +668,10 @@ impl SimWorld {
                     }
                     Acquisition::SetWeaponTarget(target) => unit.weapon_target = Some(target),
                     Acquisition::ReleaseWeaponTarget => unit.weapon_target = None,
-                    Acquisition::SetTrackedTarget(target) => unit.tracked_target = Some(target),
-                    Acquisition::ReleaseTrackedTarget => unit.tracked_target = None,
+                    Acquisition::SetTrackedTarget(target) => {
+                        self.tracked_targets.set(unit_id, target);
+                    }
+                    Acquisition::ReleaseTrackedTarget => self.tracked_targets.release(unit_id),
                     Acquisition::Sight(target, seen_at) => unit.movement.sight(target, seen_at),
                 }
             }
@@ -1016,7 +1018,7 @@ impl SimWorld {
             && entity.is_completed
     }
 
-    /// What changes for the enemy `entity`'s turret tracks ([`Entity::tracked_target`], plan
+    /// What changes for the enemy `entity`'s turret tracks ([`SimWorld::tracked_targets`], plan
     /// `2026-11-26-turret-tracking-weapon` D-3), given whether this tick's decision for its order
     /// engages a target (`engages`).
     ///
@@ -1037,10 +1039,8 @@ impl SimWorld {
         neighbors: &mut Vec<EntityId>,
         candidates: &mut Vec<(TargetPriorityKey, EntityId)>,
     ) -> Option<Acquisition> {
-        let release = entity
-            .tracked_target
-            .is_some()
-            .then_some(Acquisition::ReleaseTrackedTarget);
+        let held = self.tracked_targets.get(entity.id);
+        let release = held.is_some().then_some(Acquisition::ReleaseTrackedTarget);
         let carries = [
             arch.ground_weapon.as_ref(),
             arch.air_weapon.as_ref(),
@@ -1070,7 +1070,7 @@ impl SimWorld {
             )
             .best;
         match best {
-            Some(best) if entity.tracked_target == Some(best.entity_id) => None,
+            Some(best) if held == Some(best.entity_id) => None,
             Some(best) => Some(Acquisition::SetTrackedTarget(best.entity_id)),
             None => release,
         }
@@ -1514,7 +1514,7 @@ mod tracked_target_tests {
         let (mut world, unit, enemy) = scene(tracker, other)?;
         step(&mut world);
         assert_eq!(
-            world.entities[&unit].tracked_target,
+            world.tracked_target(unit),
             Some(enemy),
             "the carrier tracks"
         );
@@ -1525,14 +1525,16 @@ mod tracked_target_tests {
             .channeling_remaining_ticks = 5;
         step(&mut world);
         assert_eq!(
-            world.entities[&unit].tracked_target, None,
+            world.tracked_target(unit),
+            None,
             "a channelling unit is released"
         );
 
         let (mut world, unit, _) = scene(other, tracker)?;
         step(&mut world);
         assert_eq!(
-            world.entities[&unit].tracked_target, None,
+            world.tracked_target(unit),
+            None,
             "a weapon without the flag tracks nothing"
         );
         Ok(())
