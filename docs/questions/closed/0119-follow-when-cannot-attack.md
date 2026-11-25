@@ -23,3 +23,14 @@ client.
 ## Answer
 
 - **Option (b): Let them follow too.** Units that have a weapon but cannot hit the A-clicked target (e.g. a Marauder A-clicked onto a Viking, or an unburrowed Lurker) follow the target and fight valid enemies on the way, matching Scan Move units so mixed armies stay and move together (updating `Q0105` for unit-targeted A-clicks).
+
+## Resolution
+
+Built on branch `follow-order-plan` (plan [`2026-11-26-follow-order`](../../plans/2026-11-26-follow-order.md), As
+built, item 8; commit `94445b39`): an A-click on a mobile unit gives every member that cannot attack it and has an A
+command, Attack or Scan Move, `Follow { target, AcquireMove }`. It follows the target and acquires and fights valid
+enemies on the way, as the Scan Move members do. A structure target, which cannot be followed, still sends those
+members to the point under it (Q0105's rule, which this answer replaces for unit targets). B-187 is fully fixed in
+`DESIGN.md` §4. The simulation needed no change: admission already gives `AcquireMove` to any member with an A
+command, so the client's A-click split was the one place that decided this group. No measured world gives an A-click
+on a unit, so none moved.

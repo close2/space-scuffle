@@ -722,7 +722,7 @@ Every package is implemented on branch `follow-order`:
 
 ---
 
-## 16. Owner question (filed as [Q0119](../questions/open/0119-follow-when-cannot-attack.md))
+## 16. Owner question (filed as [Q0119](../questions/closed/0119-follow-when-cannot-attack.md); answered (b), see As built item 8)
 
 ```markdown
 # Q0119: When you A-click a unit, should the units that cannot attack it follow it, as Scan Move units do?
@@ -799,6 +799,10 @@ Differences from the text above, each needed to meet the plan's own acceptance:
    last two were found by the release client run and updated in `75253b34`. Each asserted the behaviour this plan
    fixes; none failed for another reason (stop rule 4).
 7. **`gate/suites.ron`.** Unchanged: unlisted targets are `fast`, which is where `follow_order_tests` belongs.
-8. **Q0119** was filed before WP0 (`cc1d0ecc`); its default (a) is what WP4 builds.
+8. **Q0119** was filed before WP0 (`cc1d0ecc`), and WP4 built its default (a). The owner answered (b) (`705d350d`):
+   in `94445b39` the A-click's split gives `Follow { AcquireMove }` to every member that cannot attack a mobile target,
+   Attack or Scan Move alike, and the attack-move to the point stays only for a structure target. Q0105's default is
+   superseded for unit targets; B-187 is fully fixed. D-10's "Q0105 members keep `AttackMove`" and §14's matching
+   entry no longer hold.
 
 Measured results (P-0, §7's worlds per package, §5's proof, P-13) are in the evidence.

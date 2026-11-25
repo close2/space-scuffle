@@ -756,7 +756,9 @@ by name, WP2 adds its row.
 
 - **A follow order** for Scan Move (and B-163's rally) on a unit: B-187, a movement change. **Built by plan
   [`2026-11-26-follow-order`](2026-11-26-follow-order.md)** (WP4, `27604c11`): the Scan Move members of an A-click on a
-  mobile unit get `Follow { AcquireMove }`; the Q0105 members keep the attack-move to the point (Q0119).
+  mobile unit get `Follow { AcquireMove }`. By the owner's answer to Q0119 (b), which supersedes Q0105's default for a
+  unit target, the members with Attack that cannot attack it follow it the same way (`94445b39`); only a structure target
+  is still attack-moved to.
 - **Autocast acquisition during an attack-move** (the Medivac's heal): no autocast exists here.
 - **The Adept's shade** carries `attack` without a weapon (S8). No shade is modelled.
 - **The burrowed Roach's Scan Move** (S9): no burrowed Roach analogue is shipped. If one is added, its mode authors
