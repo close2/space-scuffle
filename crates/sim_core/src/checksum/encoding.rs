@@ -25,12 +25,12 @@ use sim_map::{
 use sim_types::{AbilitySource, EffectContext, EffectId, EffectTarget, StatusId};
 use sim_types::{
     AllowedMovement, AnimState, ArmorClassId, AttackOrigin, AttackVisibility, AttributeBonuses,
-    AttributeFlags, EntityId, FootprintShape, MatchResult, MissileValidation, MoverType, PerPlayer,
-    PlayerId, PlayerUpgradeState, ProjectileTargetLossBehavior, RallyRoute, RallyTarget,
-    ResourceNodeId, SimAngle, SimScalar, SimVec2, SplashCliff, SplashImpact, SplashLine,
-    SplashLineAxis, SplashLineOrigin, SplashShape, SplashSpec, SplashZone, StructureStrike, Tick,
-    TurretIdle, UnitOrder, UnitStatDeltas, UnitTypeId, VisibilityState, WeaponClassId, WeaponSpec,
-    WeaponVisualKind,
+    AttributeFlags, EntityId, FollowKind, FootprintShape, MatchResult, MissileValidation,
+    MoverType, PerPlayer, PlayerId, PlayerUpgradeState, ProjectileTargetLossBehavior, RallyRoute,
+    RallyTarget, ResourceNodeId, SimAngle, SimScalar, SimVec2, SplashCliff, SplashImpact,
+    SplashLine, SplashLineAxis, SplashLineOrigin, SplashShape, SplashSpec, SplashZone,
+    StructureStrike, Tick, TurretIdle, UnitOrder, UnitStatDeltas, UnitTypeId, VisibilityState,
+    WeaponClassId, WeaponSpec, WeaponVisualKind,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use xxhash_rust::xxh64::Xxh64;
@@ -293,7 +293,8 @@ fields!(MovementMemory {
     side_partner,
     side_left,
     slot,
-    last_seen
+    last_seen,
+    follow_rest
 });
 fields!(SlotClaim { target, point });
 fields!(LastSeen {
@@ -786,6 +787,7 @@ tags!(RampDir { North = 0, South = 1, East = 2, West = 3, NorthEast = 4, NorthWe
 tags!(TerrainKind { Grass = 0, MetalPlate = 1, Dirt = 2, Abyss = 3 });
 tags!(ResourceKind { Mineral = 0, Gas = 1 });
 tags!(AttackOrigin { Explicit = 0, Acquired = 1 });
+tags!(FollowKind { Move = 0, AcquireMove = 1 });
 fields!(Cargo { kind, amount });
 fields!(UnitTask {
     goal,
@@ -1019,6 +1021,11 @@ impl Canonical for UnitOrder {
                 target.encode(encoder);
                 slot.encode(encoder);
             }
+            Self::Follow { target, kind } => {
+                19_u8.encode(encoder);
+                target.encode(encoder);
+                kind.encode(encoder);
+            }
         }
     }
 }
@@ -1214,11 +1221,98 @@ mod tests {
     }
 
     /// Plan `2026-11-27-launch-and-spell-visibility` D-5: the schema a weapon's launch visibility
-    /// is hashed under, after the turret tracking fields (49, plan
-    /// `2026-11-26-turret-tracking-weapon` D-8); 50 to 52 are reserved for other plans.
+    /// is hashed under, after the follow order (50, plan `2026-11-26-follow-order` D-1, D-4);
+    /// 51 and 52 are reserved for the Gated movement plan.
     #[test]
     fn the_schema_is_53() {
         assert_eq!(super::super::CHECKSUM_SCHEMA_VERSION, 53);
+    }
+
+    /// Plan `2026-11-26-follow-order` D-1: a follow is tag 19, then its target's id bytes, then
+    /// its kind, 0 for `Move` and 1 for `AcquireMove`.
+    #[test]
+    fn a_follow_encodes_its_tag_target_and_kind() {
+        use sim_types::{EntityId, FollowKind, UnitOrder};
+        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 53, 0, 0, 0];
+        for (kind, byte) in [(FollowKind::Move, 0), (FollowKind::AcquireMove, 1)] {
+            let order = UnitOrder::Follow {
+                target: EntityId(0x1234_5678),
+                kind,
+            };
+            let mut bytes = header.to_vec();
+            bytes.extend([19, 0x78, 0x56, 0x34, 0x12, byte]);
+            assert_eq!(digest(&order), xxh64(&bytes, 0), "{kind:?}");
+        }
+    }
+
+    /// Plan `2026-11-26-follow-order` D-4: each unit's follow rest is hashed after its last seen
+    /// point, as an option tag and, when present, the point.
+    #[test]
+    fn the_follow_rest_is_hashed_last_in_the_movement_memory() {
+        use crate::entity::MovementMemory;
+        use sim_types::{SimScalar, SimVec2};
+        let point = SimVec2::new(SimScalar::from_num(3), SimScalar::from_num(-2));
+        for rest in [None, Some(point)] {
+            let memory = MovementMemory {
+                follow_rest: rest,
+                ..MovementMemory::default()
+            };
+            let MovementMemory {
+                arrived_at,
+                progress_best,
+                progress_legs,
+                progress_tail,
+                stalled_ticks,
+                repath_cooldown,
+                abandoned_target,
+                abandoned_ticks,
+                flank_left,
+                corner_round,
+                flank_active,
+                flank_reversed,
+                flank_spent,
+                flank_blocked_ticks,
+                flank_walked,
+                flank_retreat,
+                flank_target,
+                leash_origin,
+                side_partner,
+                side_left,
+                slot,
+                last_seen,
+                follow_rest,
+            } = memory;
+            let mut encoder = Encoder::new("test");
+            arrived_at.encode(&mut encoder);
+            progress_best.encode(&mut encoder);
+            progress_legs.encode(&mut encoder);
+            progress_tail.encode(&mut encoder);
+            stalled_ticks.encode(&mut encoder);
+            repath_cooldown.encode(&mut encoder);
+            abandoned_target.encode(&mut encoder);
+            abandoned_ticks.encode(&mut encoder);
+            flank_left.encode(&mut encoder);
+            corner_round.encode(&mut encoder);
+            flank_active.encode(&mut encoder);
+            flank_reversed.encode(&mut encoder);
+            flank_spent.encode(&mut encoder);
+            flank_blocked_ticks.encode(&mut encoder);
+            flank_walked.encode(&mut encoder);
+            flank_retreat.encode(&mut encoder);
+            flank_target.encode(&mut encoder);
+            leash_origin.encode(&mut encoder);
+            side_partner.encode(&mut encoder);
+            side_left.encode(&mut encoder);
+            slot.encode(&mut encoder);
+            last_seen.encode(&mut encoder);
+            follow_rest.encode(&mut encoder);
+            assert_eq!(digest(&memory), encoder.finish(), "{rest:?}");
+        }
+        let resting = MovementMemory {
+            follow_rest: Some(point),
+            ..MovementMemory::default()
+        };
+        assert_ne!(digest(&resting), digest(&MovementMemory::default()));
     }
 
     #[test]

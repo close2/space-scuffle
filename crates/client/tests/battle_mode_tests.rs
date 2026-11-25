@@ -1105,6 +1105,76 @@ fn a_scan_mover_shows_scan_move_and_attack_moves_on_ground_and_on_an_enemy() {
     assert_no_diagnostics(&harness);
 }
 
+/// Plan `2026-11-26-follow-order` P-11 (D-10, B-187; Q0119 (b)): the mixed army A-clicked on an
+/// enemy air unit: the marine-class unit attacks it when its weapons reach the air, and every
+/// other member follows it with Scan Move: the Medivac-class unit, the unburrowed Lurker analogue,
+/// which cannot attack it, and the marine-class unit too when it cannot.
+#[test]
+fn a_mixed_army_a_clicked_on_an_air_unit_follows_attacks_and_walks() {
+    let mut harness = skirmish();
+    let [marine, medivac, lurker] = mixed_army(&mut harness);
+    let flyer = harness
+        .world()
+        .catalog
+        .archetypes()
+        .find(|archetype| {
+            archetype.mover_type == sim_types::MoverType::Air
+                && !archetype.is_immobile_by_default()
+                && presentable(&harness, archetype.unit_type_id)
+        })
+        .expect("a presentable air unit")
+        .unit_type_id;
+    let near = harness.simulated_position(marine);
+    let enemy = spawn_at(&mut harness, near, 10.0, flyer, ENEMY);
+    let reaches_air = {
+        let world = harness.world();
+        let (unit, target) = (&world.entities[&marine], &world.entities[&enemy]);
+        unit.can_attack(
+            world.catalog.get(unit.unit_type_id).unwrap(),
+            target,
+            world.catalog.get(target.unit_type_id).unwrap(),
+        )
+    };
+    let orders = a_click_on_unit(&mut harness, enemy);
+    let follow = UnitOrder::Follow {
+        target: enemy,
+        kind: sim_types::FollowKind::AcquireMove,
+    };
+    let find = |order: &dyn Fn(&UnitOrder) -> bool| {
+        orders
+            .iter()
+            .find(|command| order(&command.order))
+            .map(|command| command.entities.clone())
+    };
+    let mut followers = find(&|order| *order == follow).unwrap_or_default();
+    followers.sort_unstable();
+    let mut expected = vec![medivac, lurker];
+    if reaches_air {
+        assert_eq!(
+            find(&|order| *order == UnitOrder::attack(enemy)),
+            Some(vec![marine])
+        );
+    } else {
+        expected.push(marine);
+    }
+    expected.sort_unstable();
+    assert_eq!(followers, expected, "{orders:?}");
+    assert!(
+        orders
+            .iter()
+            .all(|command| !matches!(command.order, UnitOrder::AttackMove { .. })),
+        "no member attack-moves to the point: {orders:?}"
+    );
+    run_ticks(&mut harness, 1);
+    assert!(
+        [medivac, lurker]
+            .iter()
+            .all(|id| { harness.world().entities[id].order_queue.front() == Some(&follow) })
+            || !harness.world().entities.contains_key(&enemy),
+        "the Medivac-class unit and the Lurker analogue follow"
+    );
+}
+
 /// P-7: the unburrowed Lurker analogue shows Attack and attack-moves on the ground.
 #[test]
 fn the_unburrowed_lurker_analogue_shows_attack_and_attack_moves_on_the_ground() {
@@ -1201,8 +1271,10 @@ fn a_mixed_army_attack_moves_together_and_splits_on_an_enemy() {
 }
 
 /// P-7 (B-175, Q0104's default): A-clicked on one's own unit, the armed member attacks it (an
-/// explicit target after the tick), the others attack-move to it, and the clicked unit, though
-/// selected, gets neither order. A right click on one's own unit is no attack.
+/// explicit target after the tick), the Medivac-class member and the unburrowed Lurker analogue
+/// follow it with Scan Move (plan `2026-11-26-follow-order` D-10, B-187; Q0119 (b)), and the
+/// clicked unit, though selected, gets no order. A right click on one's own unit is no
+/// attack.
 #[test]
 fn an_a_click_on_ones_own_unit_attacks_it() {
     let mut harness = skirmish();
@@ -1215,16 +1287,18 @@ fn an_a_click_on_ones_own_unit_attacks_it() {
     assert_eq!(orders.len(), 2, "status: {}", harness.status());
     assert_eq!(orders[0].order, UnitOrder::attack(own));
     assert_eq!(orders[0].entities, [marine]);
-    assert!(
-        attack_moves_to(&harness, &orders[1].order, own),
-        "{:?}",
-        orders[1].order
+    assert_eq!(
+        orders[1].order,
+        UnitOrder::Follow {
+            target: own,
+            kind: sim_types::FollowKind::AcquireMove
+        }
     );
-    let mut walkers = orders[1].entities.clone();
-    walkers.sort_unstable();
-    let mut expected = vec![medivac, lurker];
-    expected.sort_unstable();
-    assert_eq!(walkers, expected, "the clicked unit gets neither order");
+    assert_eq!(
+        orders[1].entities,
+        [medivac, lurker],
+        "the clicked unit gets no order"
+    );
     run_ticks(&mut harness, 1);
     assert!(
         attacks(&harness, marine, own),

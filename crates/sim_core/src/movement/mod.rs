@@ -26,8 +26,8 @@ pub use math::MovementMathError;
 use crate::{Entity, SimWorld, SimulationDiagnostic, SteeringObstacle, UnitCatalog};
 use sim_map::GameMap;
 use sim_types::{
-    AttackCommand, AttackOrigin, EntityId, MoverType, PerPlayer, PlayerId, SimScalar, SimVec2,
-    Tick, UnitOrder,
+    AttackCommand, AttackOrigin, EntityId, FollowKind, MoverType, PerPlayer, PlayerId, SimScalar,
+    SimVec2, Tick, UnitOrder,
 };
 use thiserror::Error;
 
@@ -123,9 +123,22 @@ pub enum MovementAdmissionError {
     /// ([`crate::catalog::UnitArchetype::terrain_radius`]) inside the map.
     #[error("movement destination lies outside the terrain-radius map domain of {0:?}")]
     OutsideDomain(EntityId),
-    /// This API only admits `Move` and `AttackMove` orders.
-    #[error("movement admission requires Move or AttackMove")]
+    /// This API only admits `Move`, `AttackMove` and `Follow` orders.
+    #[error("movement admission requires Move, AttackMove or Follow")]
     UnsupportedOrder,
+    /// The unit a follow names does not exist (plan `2026-11-26-follow-order` D-2).
+    #[error("follow target {0:?} does not exist")]
+    FollowTargetMissing(EntityId),
+    /// The unit a follow names is destroyed.
+    #[error("follow target {0:?} is destroyed")]
+    FollowTargetDead(EntityId),
+    /// The unit a follow names is carried in a transport or housed in a structure.
+    #[error("follow target {0:?} is carried or housed")]
+    FollowTargetAway(EntityId),
+    /// The unit a follow names is a structure, immobile by its archetype: a structure is no body
+    /// (B-131), so a move on one stays a point move.
+    #[error("follow target {0:?} is a structure")]
+    FollowTargetImmobile(EntityId),
     /// Authoritative state is malformed; also emitted through diagnostics.
     #[error(transparent)]
     Invariant(#[from] MovementInvariant),
@@ -612,7 +625,10 @@ impl SimWorld {
             });
     }
 
-    /// Atomically admits one Move/AttackMove order for all unique selected actors.
+    /// Atomically admits one `Move`, `AttackMove` or `Follow` order for all unique selected actors; a
+    /// `Follow` is admitted by its own rule (plan `2026-11-26-follow-order` D-2): a live,
+    /// uncarried, unhoused target that is no structure, taken by the mobile members other than the
+    /// target, and for `AcquireMove` by those with an A command.
     /// An `AttackMove` reaches only the actors that are mobile in their settled stance and
     /// whose settled stance has an A command; the others are filtered out of the selection
     /// rather than refusing it, and a command left with no recipient is admitted and changes
@@ -635,7 +651,126 @@ impl SimWorld {
             self.report_movement_invariant(error.clone());
             return Err(error.into());
         }
-        self.issue_movement_prevalidated(player, recipients, order, queue)
+        self.admit_movement_order(player, recipients, order, queue)
+    }
+
+    /// Admits a move, an attack-move or a follow after the transport links were validated: a
+    /// `Follow` by [`Self::issue_follow_prevalidated`], every other order by
+    /// [`Self::issue_movement_prevalidated`].
+    pub(crate) fn admit_movement_order(
+        &mut self,
+        player: PlayerId,
+        recipients: &[EntityId],
+        order: &UnitOrder,
+        queue: bool,
+    ) -> Result<MovementReceipt, MovementAdmissionError> {
+        match *order {
+            UnitOrder::Follow { target, kind } => {
+                self.issue_follow_prevalidated(player, recipients, target, kind, queue)
+            }
+            _ => self.issue_movement_prevalidated(player, recipients, order, queue),
+        }
+    }
+
+    /// Atomically admits one `Follow` order on `target` for all unique selected actors (plan
+    /// `2026-11-26-follow-order` D-2). The selection is checked as for a move; the target must
+    /// be a live, uncarried, unhoused unit of any owner that is not a structure. The takers are
+    /// the recipients that are mobile in their settled stance, other than the target itself,
+    /// and, for [`FollowKind::AcquireMove`], whose settled stance has an A command; the others are
+    /// filtered out, as an `AttackMove` filters its takers, and a command with no taker is
+    /// admitted and changes nothing. A follow is no route order: it forms no route group.
+    ///
+    /// # Errors
+    /// Rejects the entire selection before mutation on an invalid player, recipient or target.
+    pub(crate) fn issue_follow_prevalidated(
+        &mut self,
+        player: PlayerId,
+        recipients: &[EntityId],
+        target: EntityId,
+        kind: FollowKind,
+        queue: bool,
+    ) -> Result<MovementReceipt, MovementAdmissionError> {
+        let prepared = self.validate_follow_order(player, recipients, target);
+        if let Err(MovementAdmissionError::Invariant(ref error)) = prepared {
+            self.report_movement_invariant(error.clone());
+        }
+        prepared?;
+        // PERFORMANCE RATIONALE:
+        // Why: Repeated prefix searches make large selections quadratic.
+        // What: Reuse the movement admission's sorted, deduplicated ID buffer.
+        // Trade-off: Capacity grows at selection high-water marks, as for a move.
+        self.movement.recipients.clear();
+        self.movement.recipients.extend_from_slice(recipients);
+        self.movement.recipients.sort_unstable();
+        self.movement.recipients.dedup();
+        let (catalog, entities) = (&self.catalog, &self.entities);
+        // Validation resolved every recipient's archetype; a lookup that fails here would have
+        // refused the command before any mutation.
+        self.movement.recipients.retain(|id| {
+            *id != target
+                && entities
+                    .get(id)
+                    .is_some_and(|entity| takes_follow(catalog, entity, kind).unwrap_or(false))
+        });
+        let receipt = MovementReceipt {
+            recipient_count: self.movement.recipients.len(),
+        };
+        for id in &self.movement.recipients {
+            // Exclusive preparation verified every identity; no intervening world mutation.
+            if let Some(entity) = self.entities.get_mut(id) {
+                entity.commit_follow_order(target, kind, queue);
+            }
+        }
+        Ok(receipt)
+    }
+
+    /// Checks a follow's player, selection and target (D-2), without mutating anything.
+    fn validate_follow_order(
+        &self,
+        player: PlayerId,
+        recipients: &[EntityId],
+        target: EntityId,
+    ) -> Result<(), MovementAdmissionError> {
+        if player.slot().is_none() {
+            return Err(MovementAdmissionError::InvalidPlayer(player));
+        }
+        if recipients.is_empty() {
+            return Err(MovementAdmissionError::EmptySelection);
+        }
+        for id in recipients {
+            let entity = self
+                .entities
+                .get(id)
+                .ok_or(MovementAdmissionError::MissingRecipient(*id))?;
+            if entity.owner != player {
+                return Err(MovementAdmissionError::ForeignRecipient(*id));
+            }
+            if !entity.is_alive() {
+                return Err(MovementAdmissionError::DeadRecipient(*id));
+            }
+            if entity.is_loaded_in_transport() {
+                return Err(MovementAdmissionError::LoadedRecipient(*id));
+            }
+            takes_follow(&self.catalog, entity, FollowKind::Move)?;
+        }
+        let followed = self
+            .entities
+            .get(&target)
+            .ok_or(MovementAdmissionError::FollowTargetMissing(target))?;
+        if !followed.is_alive() {
+            return Err(MovementAdmissionError::FollowTargetDead(target));
+        }
+        if followed.is_hidden() {
+            return Err(MovementAdmissionError::FollowTargetAway(target));
+        }
+        let archetype = self
+            .catalog
+            .get(followed.unit_type_id)
+            .map_err(|_| MovementInvariant::MissingArchetype(target))?;
+        if archetype.is_immobile_by_default() {
+            return Err(MovementAdmissionError::FollowTargetImmobile(target));
+        }
+        Ok(())
     }
 
     // Called after a public wrapper/tick validates the graph. Movement changes no links.
@@ -865,6 +1000,23 @@ fn takes_attack_move(catalog: &UnitCatalog, entity: &Entity) -> Result<bool, Mov
         .map_err(|_| MovementInvariant::MissingArchetype(entity.id))?;
     Ok(!entity.immobile_after_channel(archetype)
         && entity.settled_attack_command(archetype) != AttackCommand::None)
+}
+
+/// Whether `entity` takes a follow of `kind` (plan `2026-11-26-follow-order` D-2): it is mobile in
+/// its settled stance, and for [`FollowKind::AcquireMove`] that stance has an A command, as an
+/// `AttackMove` requires ([`takes_attack_move`]).
+fn takes_follow(
+    catalog: &UnitCatalog,
+    entity: &Entity,
+    kind: FollowKind,
+) -> Result<bool, MovementInvariant> {
+    let archetype = catalog
+        .get(entity.unit_type_id)
+        .map_err(|_| MovementInvariant::MissingArchetype(entity.id))?;
+    Ok(match kind {
+        FollowKind::Move => !entity.immobile_after_channel(archetype),
+        FollowKind::AcquireMove => takes_attack_move(catalog, entity)?,
+    })
 }
 
 /// Euclidean distance in raw Q32.32, widening before squaring. The squared

@@ -336,7 +336,8 @@ fn g11_movement_rules_fail_loudly_with_the_path() -> TestResult {
     let path = bundle.rules_path();
     std::fs::write(
         &path,
-        "(group_routing: (lane_tolerance_permille: 1001), pursuit: (acquire_leash_radius: 21), \
+        "(group_routing: (lane_tolerance_permille: 1001), pursuit: (acquire_leash_radius: 21, \
+         follow_range_slop: 1), \
          contact: (pipeline: Legacy, iterations: 21, dead_band_permille: 10, \
          moving_overlap_permille: 50, side_horizon_factor: 2, moving_friends_push: true))",
     )?;
@@ -347,7 +348,8 @@ fn g11_movement_rules_fail_loudly_with_the_path() -> TestResult {
     ));
     std::fs::write(
         &path,
-        "(group_routing: (lane_tolerance_permille: 1000), pursuit: (acquire_leash_radius: 21), \
+        "(group_routing: (lane_tolerance_permille: 1000), pursuit: (acquire_leash_radius: 21, \
+         follow_range_slop: 1), \
          contact: (pipeline: Legacy, iterations: 21, dead_band_permille: 10, \
          moving_overlap_permille: 50, side_horizon_factor: 2, moving_friends_push: true))",
     )?;

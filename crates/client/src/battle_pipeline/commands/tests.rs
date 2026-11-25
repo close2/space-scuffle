@@ -1922,9 +1922,12 @@ fn client_admission_of_an_attack_on_a_unit_equals_the_simulations_delivery() -> 
     Ok(())
 }
 
-/// D-5: an A-click on a unit sends `AttackTarget` to the members that can attack it and
-/// `AttackMove` to the point under it to every other member with an A command, never to the
-/// target itself; with no member of either kind it is refused and nothing is queued.
+/// D-5: an A-click on a unit sends `AttackTarget` to the members that can attack it and a Scan
+/// Move on the unit (`Follow`, `AcquireMove`) to every other member with an A command, never to
+/// the target itself: the Medivac-class members (plan `2026-11-26-follow-order` D-10, B-187) and,
+/// by the owner's answer to Q0119 (b), the members with Attack that cannot attack it. A structure,
+/// which cannot be followed, is attack-moved to instead (the point under it). With no member of
+/// any kind the click is refused and nothing is queued.
 #[test]
 fn an_attack_on_a_unit_splits_the_selection_into_attackers_and_walkers() -> TestResult {
     let (mut world, mut queue) = role_fixture()?;
@@ -1941,6 +1944,10 @@ fn an_attack_on_a_unit_splits_the_selection_into_attackers_and_walkers() -> Test
     let [ground, air] = enemies(&mut world)?;
     let point = reachable_point();
     let walk = UnitOrder::AttackMove { target: point };
+    let follow = |target| UnitOrder::Follow {
+        target,
+        kind: FollowKind::AcquireMove,
+    };
     let sent = |queue: &BattleCommandQueue| -> Vec<(Vec<EntityId>, UnitOrder)> {
         queue
             .pending_commands()
@@ -1953,7 +1960,7 @@ fn an_attack_on_a_unit_splits_the_selection_into_attackers_and_walkers() -> Test
         sent(&queue),
         [
             (vec![marine], UnitOrder::attack(ground)),
-            (vec![medivac, lurker], walk.clone()),
+            (vec![medivac, lurker], follow(ground)),
         ],
         "an enemy ground unit"
     );
@@ -1968,11 +1975,11 @@ fn an_attack_on_a_unit_splits_the_selection_into_attackers_and_walkers() -> Test
     let expected = if marine_reaches_air {
         vec![
             (vec![marine], UnitOrder::attack(air)),
-            (vec![medivac, lurker], walk.clone()),
+            (vec![medivac, lurker], follow(air)),
         ]
     } else {
-        // Q0105's default: a member with Attack that cannot attack the target walks.
-        vec![(vec![marine, medivac, lurker], walk.clone())]
+        // Q0119 (b): a member with Attack that cannot attack the target follows it too.
+        vec![(vec![marine, medivac, lurker], follow(air))]
     };
     assert_eq!(sent(&queue), expected, "an enemy air unit");
 
@@ -1990,11 +1997,21 @@ fn an_attack_on_a_unit_splits_the_selection_into_attackers_and_walkers() -> Test
         sent(&queue),
         [
             (vec![marine], UnitOrder::attack(partner)),
-            (vec![medivac], walk.clone()),
+            (vec![medivac], follow(partner)),
         ],
-        "an own unit (Q0104's default); the clicked unit gets neither order"
+        "an own unit (Q0104's default); the clicked unit gets no order"
     );
     assert!(queue.pending_commands().all(|(_, command)| command.queue));
+
+    // A structure cannot be followed: the members that cannot attack it attack-move to the point.
+    let mut queue = BattleCommandQueue::default();
+    queue.activate(SessionGeneration::FIRST)?;
+    queue.submit_attack_on_unit(&world, ME, &[medivac, lurker], structure, point, false)?;
+    assert_eq!(
+        sent(&queue),
+        [(vec![medivac, lurker], walk.clone())],
+        "a structure target"
+    );
 
     let mut queue = BattleCommandQueue::default();
     queue.activate(SessionGeneration::FIRST)?;

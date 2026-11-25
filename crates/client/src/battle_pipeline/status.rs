@@ -99,6 +99,10 @@ fn movement_reason(error: &MovementAdmissionError) -> &'static str {
         MovementAdmissionError::LoadedRecipient(_) => "a selected unit is being transported",
         MovementAdmissionError::OutsideDomain(_) => "the destination is outside the map",
         MovementAdmissionError::UnsupportedOrder => "this movement order is unavailable",
+        MovementAdmissionError::FollowTargetMissing(_) => "the unit to follow no longer exists",
+        MovementAdmissionError::FollowTargetDead(_) => "the unit to follow was destroyed",
+        MovementAdmissionError::FollowTargetAway(_) => "the unit to follow is inside another",
+        MovementAdmissionError::FollowTargetImmobile(_) => "a structure cannot be followed",
         MovementAdmissionError::Invariant(_) => "the battle cannot process this order",
     }
 }

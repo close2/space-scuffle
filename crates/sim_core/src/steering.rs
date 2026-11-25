@@ -195,6 +195,21 @@ pub struct SteeringObstacle {
     pub idle: bool,
     /// Destination this body has finished moving to, while it stays there.
     pub settled_on: Option<SimVec2>,
+    /// The follow this body rests under, while that rest lasts this tick: its target has not
+    /// moved more than the movement rules' `follow_range_slop` from the rest's anchor (plan
+    /// `2026-11-26-follow-order` D-4). A follower of the same target that touches this body
+    /// comes to rest too, on the same anchor. `None` for every other body.
+    pub resting_on: Option<FollowRest>,
+}
+
+/// A follower's rest as its steering obstacle shows it (plan `2026-11-26-follow-order` D-4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FollowRest {
+    /// The unit followed.
+    pub target: EntityId,
+    /// Where the target stood when the rest began, world units: the follower walks again once
+    /// the target stands more than the slop from here.
+    pub anchor: SimVec2,
 }
 
 impl SteeringObstacle {
@@ -211,6 +226,7 @@ impl SteeringObstacle {
             anchored: false,
             idle: true,
             settled_on: None,
+            resting_on: None,
         }
     }
 

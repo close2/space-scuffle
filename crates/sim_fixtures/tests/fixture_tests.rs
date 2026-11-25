@@ -139,7 +139,10 @@ use std::path::PathBuf;
 /// and Amendment 1), which encodes whether each weapon's turret tracks any enemy and the world's
 /// table of the enemies tracking turrets follow; a copy of the final tree that leaves both
 /// unhashed and keeps schema 48 reproduces `601_552_017_353_564_848` on all four builds.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 2_504_113_823_383_333_194;
+/// Re-recorded for checksum schema 50, provisional (plan `2026-11-26-follow-order` WP1), which
+/// encodes each unit's follow rest and the follow order; a copy of the WP1 tree that leaves the
+/// rest unhashed and keeps schema 49 reproduces `2_504_113_823_383_333_194` on all four builds.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 13_849_945_286_125_516_044;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

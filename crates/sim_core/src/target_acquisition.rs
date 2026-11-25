@@ -51,8 +51,8 @@ use crate::weapon_timing::SimulationDiagnostic;
 use crate::world::SimWorld;
 use sim_map::{PlayerVisionMap, SimMap};
 use sim_types::{
-    AllowedMovement, AttackOrigin, EntityId, PerPlayer, PlayerId, SimAngle, SimScalar, SimVec2,
-    Tick, UnitOrder, VisibilityState,
+    AllowedMovement, AttackOrigin, EntityId, FollowKind, PerPlayer, PlayerId, SimAngle, SimScalar,
+    SimVec2, Tick, UnitOrder, VisibilityState,
 };
 use std::collections::BTreeMap;
 
@@ -684,7 +684,22 @@ impl SimWorld {
     /// player sees it ([`Self::sees_enemy`]: the cell at its centre, Q0106 part 4 (a)), `None` when
     /// it is targetable but unseen, lost to fog. A target that is gone or unavailable for another
     /// reason (concealed, loaded) is pursuit's to end, so nothing is recorded for it.
+    ///
+    /// A follow of another player's unit records its sighting the same way (plan
+    /// `2026-11-26-follow-order` D-5, D-6): "seen" is then what the player's interface shows
+    /// ([`Self::shown_to`]), so a concealed, undetected target counts as lost.
     fn sighting(&self, entity: &Entity, arch: &UnitArchetype) -> Option<Acquisition> {
+        if let Some(&UnitOrder::Follow { target, .. }) = entity.order_queue.front() {
+            let followed = self.entities.get(&target)?;
+            if followed.owner == entity.owner || !followed.is_alive() || followed.is_hidden() {
+                return None;
+            }
+            let shown = Self::shown_to(&self.map, &self.vision_maps, entity.owner, followed);
+            return Some(Acquisition::Sight(
+                target,
+                shown.then_some(followed.position),
+            ));
+        }
         let Engagement::Explicit(target_id) = Self::engagement_of(entity, arch) else {
             return None;
         };
@@ -736,20 +751,37 @@ impl SimWorld {
     /// Whether `entity` acquires no target on its own: an archetype with the defensive acquire
     /// level (`StarCraft` II's workers) acquires automatically only while it attack-moves
     /// (Liquipedia "Automatic Targeting", Notes). Idle or holding, it leaves enemies alone; an
-    /// attack it already carries out goes on.
+    /// attack it already carries out goes on. A Scan Move on a unit is an attack-move here too
+    /// (plan `2026-11-26-follow-order` D-6).
     fn holds_fire(entity: &Entity, arch: &UnitArchetype, engagement: Engagement) -> bool {
         arch.acquire_level == AcquireLevel::Defensive
             && matches!(engagement, Engagement::Seek | Engagement::Hold)
             && !matches!(
                 entity.order_queue.front(),
-                Some(UnitOrder::AttackMove { .. })
+                Some(
+                    UnitOrder::AttackMove { .. }
+                        | UnitOrder::Follow {
+                            kind: FollowKind::AcquireMove,
+                            ..
+                        }
+                )
             )
     }
 
-    /// Classifies what acquisition may do for `entity` (of archetype `arch`).
+    /// Classifies what acquisition may do for `entity` (of archetype `arch`). A Scan Move on a
+    /// unit (`Follow` of kind `AcquireMove`) seeks like an attack-move; a plain follow is a move
+    /// (plan `2026-11-26-follow-order` D-6).
     fn engagement_of(entity: &Entity, arch: &UnitArchetype) -> Engagement {
         match entity.order_queue.front() {
-            None | Some(UnitOrder::Idle | UnitOrder::AttackMove { .. }) => Engagement::Seek,
+            None
+            | Some(
+                UnitOrder::Idle
+                | UnitOrder::AttackMove { .. }
+                | UnitOrder::Follow {
+                    kind: FollowKind::AcquireMove,
+                    ..
+                },
+            ) => Engagement::Seek,
             Some(UnitOrder::HoldPosition) => Engagement::Hold,
             Some(UnitOrder::AttackTarget { target, origin }) => match origin {
                 AttackOrigin::Acquired => Engagement::Acquired(*target),
@@ -1221,7 +1253,15 @@ impl SimWorld {
             origin: AttackOrigin::Acquired,
         };
         match unit.order_queue.front_mut() {
-            Some(UnitOrder::AttackMove { .. }) => unit.order_queue.push_front(acquired),
+            // The attack goes in front of an attack-move or a Scan Move on a unit, which resume
+            // when it ends (plan `2026-11-26-follow-order` D-6).
+            Some(
+                UnitOrder::AttackMove { .. }
+                | UnitOrder::Follow {
+                    kind: FollowKind::AcquireMove,
+                    ..
+                },
+            ) => unit.order_queue.push_front(acquired),
             Some(order @ UnitOrder::AttackTarget { .. }) => *order = acquired,
             None | Some(UnitOrder::Idle) => {
                 unit.order_queue.clear();

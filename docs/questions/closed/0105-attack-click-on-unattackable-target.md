@@ -28,3 +28,7 @@ unburrowed Lurker.
 
 Already in place: the default (a) was built by plan `2026-11-24-attack-orders` (D-5) and merged as `e313268f`.
 Nothing further changes.
+
+Superseded for unit targets by [Q0119](0119-follow-when-cannot-attack.md) (b): a member with Attack that cannot
+attack an A-clicked mobile unit follows it with Scan Move (`Follow { AcquireMove }`, plan `2026-11-26-follow-order`)
+instead of attack-moving to the point. An A-clicked structure is still attack-moved to.
