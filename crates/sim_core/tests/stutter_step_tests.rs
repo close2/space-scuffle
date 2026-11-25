@@ -7,21 +7,26 @@
 //! The wind-up before the release is the other half of the swing: it holds its unit unless the
 //! weapon fires while moving (`AllowedMovement::Moving`, `StarCraft` II's `AllowedMovement`), whatever
 //! the mount (plan `2026-11-23-turret-wind-up` D-6, P-10), under both movement pipelines.
+//!
+//! A wind-up whose target is lost holds nothing (plan `2026-11-25-wind-up-and-hold-facing`
+//! D-1, D-2, B-207): on the tick after its target was killed the unit moves as if it had never
+//! started the swing (A-1), and starts its next swing at once when its cooldown allows (A-2).
 
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::uninlined_format_args,
     clippy::doc_markdown,
-    clippy::too_many_lines
+    clippy::too_many_lines,
+    clippy::panic
 )]
 
 use sim_core::catalog::{ContactRules, MovementPipeline, UnitArchetype};
 use sim_core::{SimWorld, WeaponPhase, WeaponSpec};
-use sim_map::{CliffLevel, GameMap, MapCell};
+use sim_map::{CliffLevel, GameMap, MapCell, ResourceNode};
 use sim_types::{
-    AllowedMovement, EntityId, MoverType, PlayerCommand, PlayerId, SimAngle, SimScalar, SimVec2,
-    Tick, TickBundle, UnitOrder, UnitTypeId,
+    AllowedMovement, EntityId, MoverType, PlayerCommand, PlayerId, ResourceKind, ResourceNodeId,
+    SimAngle, SimScalar, SimVec2, Tick, TickBundle, UnitOrder, UnitTypeId,
 };
 
 #[test]
@@ -462,25 +467,353 @@ fn a_wind_up_holds_its_unit_unless_its_weapon_fires_while_moving() {
     }
 }
 
-/// Plan `2026-11-23-turret-wind-up` Amendment 2 (pins B-207): a wind-up whose target is gone
-/// (killed and reaped on the tick before) is read with the weapon the combat phase steps an idle
-/// unit's cycle with, the ground weapon here, so it holds the unit unless that weapon is `Moving`,
-/// for one tick, until the combat phase ends the swing. `StarCraft` II cancels the attack at once;
-/// the fix is registered as B-207 and changes this test.
+/// D-2 of plan `2026-11-25-wind-up-and-hold-facing` (B-207; restates the pin of plan
+/// `2026-11-23-turret-wind-up` Amendment 2): a wind-up whose target is gone (killed and reaped on
+/// the tick before) holds nothing, whatever its weapon's `AllowedMovement` and mount, under both
+/// movement pipelines. `StarCraft` II cancels an attack whose target dies before the damage
+/// point. In a full tick the combat-side pass `SimWorld::end_lost_swings` has already ended such
+/// a swing before movement; this is the movement phase called alone.
 #[test]
-fn a_wind_up_whose_target_is_gone_holds_as_its_idle_weapon_says() {
+fn a_wind_up_whose_target_is_gone_holds_nothing() {
     for pipeline in [MovementPipeline::Solver, MovementPipeline::Legacy] {
         for has_turret in [false, true] {
-            assert_eq!(
-                displacement_in_wind_up(pipeline, has_turret, AllowedMovement::Stopped, true),
-                SimScalar::ZERO,
-                "{pipeline:?}, turret {has_turret}: a stale `Stopped` swing holds for its tick"
-            );
-            assert!(
-                displacement_in_wind_up(pipeline, has_turret, AllowedMovement::Moving, true)
-                    > SimScalar::ZERO,
-                "{pipeline:?}, turret {has_turret}: a stale `Moving` swing does not hold"
-            );
+            for allowed in [
+                AllowedMovement::Stopped,
+                AllowedMovement::Slowing,
+                AllowedMovement::Moving,
+            ] {
+                assert!(
+                    displacement_in_wind_up(pipeline, has_turret, allowed, true) > SimScalar::ZERO,
+                    "{pipeline:?}, turret {has_turret}, {allowed:?}: a swing whose target is gone holds nothing"
+                );
+            }
         }
+    }
+}
+
+/// The walking order of the unit of [`walk_after_a_kill`].
+#[derive(Clone, Copy, Debug)]
+enum Walking {
+    /// An attack-move to a point far east.
+    AttackMove,
+    /// An attack on the victim, with a move far east queued behind it.
+    MoveQueuedBehindAttack,
+    /// A harvester's walk to a mineral field far east: its task goal.
+    TaskGoal,
+}
+
+/// The mineral field of [`walk_after_a_kill`]'s map, a cell.
+const FIELD: (u32, u32) = (50, 20);
+
+/// A flat 64 × 64 map with one mineral field at [`FIELD`].
+fn map_with_a_field() -> GameMap {
+    let centre = SimVec2::new(
+        SimScalar::from_num(FIELD.0) + SimScalar::HALF,
+        SimScalar::from_num(FIELD.1) + SimScalar::HALF,
+    );
+    GameMap::from_cells(
+        64,
+        64,
+        vec![MapCell::default_ground(CliffLevel(0)); 64 * 64],
+        vec![ResourceNode {
+            pos: centre,
+            kind: ResourceKind::Mineral,
+            remaining: 20_000,
+            cell: FIELD,
+            placed: None,
+        }],
+        Vec::new(),
+    )
+    .expect("invariant: a flat map with one field is valid")
+}
+
+/// A-1 of plan `2026-11-25-wind-up-and-hold-facing`: the position, after tick T + 1, of a unit
+/// whose wind-up target was killed and reaped on tick T, under the movement `pipeline`.
+///
+/// The unit (the scratch carrier of [`ranged_ground_unit`], or a harvester for
+/// [`Walking::TaskGoal`], with its weapons rewritten as in [`displacement_in_wind_up`]) walks
+/// two ticks under `walking`; then an enemy, the victim, is killed and reaped (life 0, then the
+/// reap phase), and the unit is put into a wind-up against it when `in_wind_up`, or left as it
+/// is otherwise. Returns the unit's position after one more full tick and before it.
+fn walk_after_a_kill(
+    pipeline: MovementPipeline,
+    has_turret: bool,
+    allowed_movement: AllowedMovement,
+    walking: Walking,
+    in_wind_up: bool,
+) -> (SimVec2, SimVec2) {
+    let mut world = sim_fixtures::world(map_with_a_field(), 0x1234_5678);
+    let rules = world.catalog.movement_rules();
+    world.catalog.set_movement_rules(
+        rules
+            .with_contact(ContactRules {
+                pipeline,
+                ..rules.contact()
+            })
+            .expect("invariant: the shipped contact rules are valid"),
+    );
+    let enemy_type = ranged_ground_unit(&world);
+    let unit_type = match walking {
+        Walking::TaskGoal => {
+            world
+                .catalog
+                .archetypes()
+                .filter(|archetype| archetype.capabilities.harvester.is_some())
+                .min_by_key(|archetype| archetype.unit_type_id)
+                .expect("the shipped catalog has a harvester")
+                .unit_type_id
+        }
+        Walking::AttackMove | Walking::MoveQueuedBehindAttack => enemy_type,
+    };
+    for weapon in weapons_mut(
+        world
+            .catalog
+            .get_mut(unit_type)
+            .expect("the unit's archetype"),
+    ) {
+        weapon.has_turret = has_turret;
+        weapon.turret_turn_rate = SimAngle::DEG_90;
+        weapon.allowed_movement = allowed_movement;
+        weapon.damage_point_ticks = 6;
+        weapon.period_ticks = weapon.period_ticks.max(12);
+    }
+    let at = |x: i32, y: i32| SimVec2::new(SimScalar::from_i32(x), SimScalar::from_i32(y));
+    let unit = world
+        .spawn_unit(unit_type, PlayerId(0), at(10, 20))
+        .expect("invariant: spawn the unit");
+    // An enemy far out of every reach keeps the match running once the victim is reaped.
+    let anchor = world
+        .spawn_unit(enemy_type, PlayerId(1), at(60, 60))
+        .expect("invariant: spawn the anchor");
+    let victim = world
+        .spawn_unit(enemy_type, PlayerId(1), at(30, 45))
+        .expect("invariant: spawn the victim");
+    let command = |player: u8, entity: EntityId, order: UnitOrder, queue: bool| PlayerCommand {
+        player_id: PlayerId(player),
+        entities: vec![entity],
+        order,
+        queue,
+    };
+    let far_east = at(56, 20);
+    let mut orders = vec![
+        command(1, anchor, UnitOrder::HoldPosition, false),
+        command(1, victim, UnitOrder::HoldPosition, false),
+    ];
+    match walking {
+        Walking::AttackMove => {
+            orders.push(command(
+                0,
+                unit,
+                UnitOrder::AttackMove { target: far_east },
+                false,
+            ));
+        }
+        Walking::MoveQueuedBehindAttack => {
+            orders.push(command(0, unit, UnitOrder::attack(victim), false));
+            orders.push(command(0, unit, UnitOrder::Move { target: far_east }, true));
+        }
+        Walking::TaskGoal => orders.push(command(
+            0,
+            unit,
+            UnitOrder::Harvest {
+                target: ResourceNodeId(0),
+            },
+            false,
+        )),
+    }
+    let bundle = |tick: u32, commands: Vec<PlayerCommand>| TickBundle {
+        tick: Tick(tick),
+        commands,
+        state_checksum: None,
+    };
+    world.step(&bundle(0, orders));
+    world.step(&bundle(1, Vec::new()));
+    assert!(
+        world.drain_diagnostics().next().is_none(),
+        "the walk is healthy"
+    );
+    // Tick T's combat kills the victim and its reap phase removes it.
+    world
+        .entities
+        .get_mut(&victim)
+        .expect("the victim lives until now")
+        .hp = SimScalar::ZERO;
+    world.reap_dead_and_emit_shatter();
+    assert!(
+        !world.entities.contains_key(&victim),
+        "the victim is reaped"
+    );
+    let before = {
+        let entity = world.entities.get_mut(&unit).expect("the unit");
+        assert_ne!(
+            entity.position,
+            at(10, 20),
+            "premise: the order walks the unit"
+        );
+        if in_wind_up {
+            entity.weapon_phase = WeaponPhase::Windup {
+                target_id: victim,
+                remaining_ticks: 6,
+            };
+        }
+        entity.position
+    };
+    world.step(&bundle(2, Vec::new()));
+    assert!(
+        world.drain_diagnostics().next().is_none(),
+        "tick T + 1 is healthy"
+    );
+    (world.entities[&unit].position, before)
+}
+
+/// A-1 of plan `2026-11-25-wind-up-and-hold-facing` (D-1, B-207): on the tick after its target
+/// was killed and reaped, a unit that was winding up moves exactly as the same unit would if it
+/// had never started the swing: the lost swing holds nothing. For an attack-move and a task's
+/// walk that is a walk; for an attack order with a move queued behind it, whatever its pursuit
+/// of the gone target does that tick. Every `AllowedMovement`, both mounts, both pipelines.
+#[test]
+fn a_wind_up_whose_target_was_killed_holds_nothing_on_the_next_tick() {
+    for pipeline in [MovementPipeline::Solver, MovementPipeline::Legacy] {
+        for has_turret in [false, true] {
+            for allowed in [
+                AllowedMovement::Stopped,
+                AllowedMovement::Slowing,
+                AllowedMovement::Moving,
+            ] {
+                for walking in [
+                    Walking::AttackMove,
+                    Walking::MoveQueuedBehindAttack,
+                    Walking::TaskGoal,
+                ] {
+                    let case =
+                        format!("{pipeline:?}, turret {has_turret}, {allowed:?}, {walking:?}");
+                    let (after, before) =
+                        walk_after_a_kill(pipeline, has_turret, allowed, walking, true);
+                    let (control, _) =
+                        walk_after_a_kill(pipeline, has_turret, allowed, walking, false);
+                    assert_eq!(
+                        after, control,
+                        "{case}: the lost swing moves the unit as no swing would"
+                    );
+                    if !matches!(walking, Walking::MoveQueuedBehindAttack) {
+                        assert_ne!(after, before, "{case}: the unit walks on");
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The scene of A-2 (plan `2026-11-25-wind-up-and-hold-facing`): a holding unit with the
+/// scratch weapon of [`displacement_in_wind_up`] (hull, `Stopped`, damage point 6, period 12,
+/// reach 6, no random delay) and two enemies east of it on its row, 3 and 4 world units away,
+/// both in its band and its arc. Steps until the unit winds up, kills and reaps the enemy it
+/// winds up against on that tick T, then sets the unit's cooldown to `cooldown` ticks. Returns
+/// the world, the unit, the other enemy and T.
+fn second_enemy_scene(cooldown: u16) -> (SimWorld, EntityId, EntityId, u32) {
+    let map =
+        GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0))).expect("invariant: valid map");
+    let mut world = sim_fixtures::world(map, 0x0A2A_2A2A);
+    sim_fixtures::without_random_delays(&mut world.catalog);
+    let unit_type = ranged_ground_unit(&world);
+    for weapon in weapons_mut(world.catalog.get_mut(unit_type).expect("the carrier")) {
+        weapon.has_turret = false;
+        weapon.allowed_movement = AllowedMovement::Stopped;
+        weapon.damage_point_ticks = 6;
+        weapon.period_ticks = weapon.period_ticks.max(12);
+        weapon.min_range = SimScalar::ZERO;
+        weapon.max_range = SimScalar::from_i32(6);
+    }
+    let at = |x: i32| SimVec2::new(SimScalar::from_i32(x), SimScalar::from_i32(30));
+    let unit = world
+        .spawn_unit(unit_type, PlayerId(0), at(20))
+        .expect("invariant: spawn the unit");
+    let near = world
+        .spawn_unit(unit_type, PlayerId(1), at(23))
+        .expect("invariant: spawn the near enemy");
+    let far = world
+        .spawn_unit(unit_type, PlayerId(1), at(24))
+        .expect("invariant: spawn the far enemy");
+    for id in [unit, near, far] {
+        let entity = world.entities.get_mut(&id).expect("invariant: spawned");
+        entity.max_hp = SimScalar::from_i32(100_000);
+        entity.hp = SimScalar::from_i32(100_000);
+    }
+    let hold = |player: u8, entity: EntityId| PlayerCommand {
+        player_id: PlayerId(player),
+        entities: vec![entity],
+        order: UnitOrder::HoldPosition,
+        queue: false,
+    };
+    let mut commands = vec![hold(0, unit), hold(1, near), hold(1, far)];
+    for tick in 0..40_u32 {
+        world.step(&TickBundle {
+            tick: Tick(tick),
+            commands: std::mem::take(&mut commands),
+            state_checksum: None,
+        });
+        if let WeaponPhase::Windup { target_id, .. } = world.entities[&unit].weapon_phase {
+            assert_eq!(
+                world.entities[&unit].weapon_cooldown_remaining, 0,
+                "premise: the first swing"
+            );
+            let other = if target_id == near { far } else { near };
+            world
+                .entities
+                .get_mut(&target_id)
+                .expect("the swing's target")
+                .hp = SimScalar::ZERO;
+            world.reap_dead_and_emit_shatter();
+            world
+                .entities
+                .get_mut(&unit)
+                .expect("the unit")
+                .weapon_cooldown_remaining = cooldown;
+            let killed_on = world.current_tick;
+            return (world, unit, other, killed_on);
+        }
+    }
+    panic!("the holding unit never wound up against an enemy in its band");
+}
+
+/// The tick, after `t`, on which `unit` first winds up against `target`, within 30 ticks.
+fn next_swing_at(world: &mut SimWorld, unit: EntityId, target: EntityId, t: u32) -> u32 {
+    for tick in t + 1..t + 30 {
+        world.step(&TickBundle {
+            tick: Tick(tick),
+            commands: Vec::new(),
+            state_checksum: None,
+        });
+        if matches!(
+            world.entities[&unit].weapon_phase,
+            WeaponPhase::Windup { target_id, .. } if target_id == target
+        ) {
+            return world.current_tick;
+        }
+    }
+    panic!("no swing against the second enemy within 30 ticks");
+}
+
+/// A-2 of plan `2026-11-25-wind-up-and-hold-facing` (D-1, B-207): with its cooldown at 0 and a
+/// second enemy in its band and arc, a unit whose wind-up target was killed on tick T starts its
+/// next swing on T + 1; the lost swing costs it no tick.
+#[test]
+fn the_next_swing_starts_on_the_tick_after_a_kill() {
+    let (mut world, unit, other, t) = second_enemy_scene(0);
+    assert_eq!(next_swing_at(&mut world, unit, other, t), t + 1);
+}
+
+/// A-2 of plan `2026-11-25-wind-up-and-hold-facing`: a unit whose cooldown has `k` ticks left
+/// when its wind-up target is killed on tick T starts its next swing on the tick its cooldown
+/// ends, T + k, no later than before the plan.
+#[test]
+fn a_cooling_weapon_starts_its_next_swing_when_the_cooldown_ends() {
+    for cooldown in [2_u16, 5] {
+        let (mut world, unit, other, t) = second_enemy_scene(cooldown);
+        assert_eq!(
+            next_swing_at(&mut world, unit, other, t),
+            t + u32::from(cooldown),
+            "cooldown {cooldown}"
+        );
     }
 }

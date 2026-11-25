@@ -16,6 +16,8 @@
 //! # Invariants
 //! - Archetypes are chosen by capability and weapon shape, never by name (charter §3.3).
 //! - Publishing the record changes no checksum: the snapshot is not part of the world state.
+//! - A wind-up whose target was killed publishes nothing on the next tick (plan
+//!   `2026-11-25-wind-up-and-hold-facing` A-6).
 
 #![allow(clippy::expect_used, clippy::panic)]
 
@@ -321,6 +323,41 @@ fn swing_counts_from_the_windup_through_the_release_to_the_next_swing() {
             .filter(|o| o.tick >= ready.tick)
             .all(|o| o.swing.is_none()),
         "nothing is published after the cycle ends"
+    );
+}
+
+/// A-6 of plan `2026-11-25-wind-up-and-hold-facing` (D-1, B-207): when the target of a wind-up
+/// is killed and reaped on tick T, the snapshot of T + 1 publishes no swing for the attacker and
+/// no attack action: the swing ended before that tick's movement.
+#[test]
+fn a_swing_whose_target_was_killed_is_not_published_on_the_next_tick() {
+    let mut duel = Duel::new(false);
+    let order = duel.attack_order();
+    let mut observation = duel.step(vec![order]);
+    let mut ticks = 0;
+    while !matches!(observation.phase, WeaponPhase::Windup { .. }) {
+        assert!(ticks < 50, "the attacker winds up within 50 ticks");
+        observation = duel.step(Vec::new());
+        ticks += 1;
+    }
+    assert!(
+        observation.swing.is_some(),
+        "premise: the wind-up is published"
+    );
+    duel.world
+        .entities
+        .get_mut(&duel.target)
+        .expect("the durable target is alive")
+        .hp = SimScalar::ZERO;
+    duel.world.reap_dead_and_emit_shatter();
+    let next = duel.step(Vec::new());
+    assert_eq!(next.target_life, None, "premise: the target was reaped");
+    assert_eq!(next.phase, WeaponPhase::Ready);
+    assert_eq!(next.swing, None, "no swing is published for a lost wind-up");
+    assert_ne!(
+        next.anim,
+        AnimState::Attack,
+        "the attacker no longer attacks"
     );
 }
 

@@ -59,8 +59,8 @@ use crate::steering::{
 use crate::{SimWorld, WeaponPhase};
 use sim_map::{MapError, PathRequestWithVision, PathResult, Pathfinder, PlayerVisionMap, SimMap};
 use sim_types::{
-    AllowedMovement, AnimState, AttackOrigin, EntityId, PerPlayer, PlayerSlot, SimAngle, SimScalar,
-    SimVec2, Tick, UnitOrder, MAX_PLAYERS,
+    AllowedMovement, AnimState, AttackOrigin, EntityId, MoverType, PerPlayer, PlayerSlot, SimAngle,
+    SimScalar, SimVec2, Tick, UnitOrder, MAX_PLAYERS,
 };
 use std::ops::ControlFlow;
 
@@ -1228,26 +1228,28 @@ impl SimWorld {
     /// no part. `Slowing` holds like `Stopped` (B-178).
     ///
     /// The weapon of the swing is the one the combat phase resolves for it (Amendment 2): against
-    /// the plane of the swing's bound target, or, when that target is gone, the plane the combat
-    /// phase steps an idle weapon on ([`SimWorld::idle_weapon_plane`]); a sieged unit's siege
-    /// weapon first. A swing with no weapon to resolve holds, the engine default. Both movement
-    /// pipelines call this through [`Self::walking_goal`], before pursuit.
+    /// the plane of the swing's bound target; a sieged unit's siege weapon first. A swing with no
+    /// weapon to resolve holds, the engine default. A swing whose target is gone holds nothing
+    /// (plan `2026-11-25-wind-up-and-hold-facing` D-2, B-207): in a full tick
+    /// [`SimWorld::end_lost_swings`] has already ended it, and any other lost swing, before the
+    /// movement phase; only a direct call of the movement phase can still find one. Both
+    /// movement pipelines call this through [`Self::walking_goal`], before pursuit.
     fn wind_up_holds(&self, actor: &Entity) -> Result<bool, MovementInvariant> {
         let WeaponPhase::Windup { target_id, .. } = actor.weapon_phase else {
+            return Ok(false);
+        };
+        let Some(target) = self.entities.get(&target_id) else {
             return Ok(false);
         };
         let arch = self
             .catalog
             .get(actor.unit_type_id)
             .map_err(|_| MovementInvariant::MissingArchetype(actor.id))?;
+        // The plane the weapon phase's target snapshot gives a target of unknown type.
         let plane = self
-            .entities
-            .get(&target_id)
-            .and_then(|target| self.catalog.get(target.unit_type_id).ok())
-            .map_or_else(
-                || Self::idle_weapon_plane(actor, arch),
-                |target| target.mover_type,
-            );
+            .catalog
+            .get(target.unit_type_id)
+            .map_or(MoverType::Ground, |target| target.mover_type);
         Ok(arch
             .weapon_against(plane, actor.active_siege_weapon())
             .is_none_or(|weapon| weapon.allowed_movement != AllowedMovement::Moving))

@@ -8,6 +8,9 @@
 //!    `2026-11-05-turn-before-move`) is pushed like a standing unit, and the push neither waits
 //!    for its facing nor changes its heading.
 //! 5. A push is not gated by facing: an idle `turn_before_move` unit is displaced sideways.
+//! 6. A wind-up whose target was killed does not anchor its unit on the next tick under the
+//!    legacy pipeline (plan `2026-11-25-wind-up-and-hold-facing` A-6, B-207): the swing has
+//!    ended before the movement phase, so a moving friend pushes the unit like an idle one.
 //!
 //! Tests 4 and 5 use scratch archetypes written in this file, so a rebalance of the shipped
 //! catalog cannot break them; the others read the shipped catalog.
@@ -524,4 +527,79 @@ mod push_table {
         assert!(!enemy.yields_to(PlayerId(0), u8::MAX));
         Ok(())
     }
+}
+
+/// The lateral position, after one tick, of an idle friend beside a unit walking east, under the
+/// legacy pipeline; with `stale_swing` the friend is in a wind-up against an enemy killed and
+/// reaped on the tick before (plan `2026-11-25-wind-up-and-hold-facing` A-6).
+fn pushed_friend_y(stale_swing: bool) -> SimScalar {
+    let map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0))).expect("valid map");
+    let mut world = sim_fixtures::world(map, 0x1111_2222);
+    let rules = world.catalog.movement_rules();
+    world.catalog.set_movement_rules(
+        rules
+            .with_contact(sim_core::catalog::ContactRules {
+                pipeline: sim_core::catalog::MovementPipeline::Legacy,
+                ..rules.contact()
+            })
+            .expect("invariant: the shipped contact rules are valid"),
+    );
+    let kind = world
+        .catalog
+        .archetypes()
+        .filter(|archetype| {
+            archetype.max_speed > SimScalar::ZERO
+                && archetype.mover_type == sim_types::MoverType::Ground
+                && archetype
+                    .weapon_against(sim_types::MoverType::Ground, None)
+                    .is_some()
+        })
+        .min_by_key(|archetype| archetype.unit_type_id)
+        .expect("the shipped catalog has a mobile armed ground unit")
+        .unit_type_id;
+    let at = |x: f32, y: f32| SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(y));
+    let walker = world
+        .spawn_unit(kind, PlayerId(0), at(10.0, 10.0))
+        .expect("walker");
+    let friend = world
+        .spawn_unit(kind, PlayerId(0), at(10.5, 10.0))
+        .expect("friend");
+    world
+        .spawn_unit(kind, PlayerId(1), at(60.0, 60.0))
+        .expect("anchor");
+    let victim = world
+        .spawn_unit(kind, PlayerId(1), at(40.0, 50.0))
+        .expect("victim");
+    world.entities.get_mut(&victim).expect("victim").hp = SimScalar::ZERO;
+    world.reap_dead_and_emit_shatter();
+    if stale_swing {
+        world
+            .entities
+            .get_mut(&friend)
+            .expect("friend")
+            .weapon_phase = sim_core::WeaponPhase::Windup {
+            target_id: victim,
+            remaining_ticks: 6,
+        };
+    }
+    world.step(&TickBundle {
+        tick: Tick(0),
+        commands: vec![move_command(walker, 20, 10)],
+        state_checksum: None,
+    });
+    world.entities[&friend].position.y
+}
+
+/// A-6 of plan `2026-11-25-wind-up-and-hold-facing` (D-1, B-207): under the legacy pipeline a
+/// unit whose wind-up target was killed on the tick before is not anchored by its swing: a
+/// moving friend displaces it exactly as it displaces a unit that never started the swing.
+#[test]
+fn a_lost_swing_does_not_anchor_its_unit_under_the_legacy_pipeline() {
+    let control = pushed_friend_y(false);
+    assert_ne!(
+        control,
+        SimScalar::from_num(10),
+        "premise: an idle friend is pushed aside"
+    );
+    assert_eq!(pushed_friend_y(true), control);
 }

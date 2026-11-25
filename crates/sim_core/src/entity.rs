@@ -1513,6 +1513,19 @@ impl Entity {
             || matches!(self.order_queue.front(), Some(UnitOrder::HoldPosition))
     }
 
+    /// Whether this unit's hull belongs to its weapon between shots: it holds position
+    /// ([`Self::is_on_hold`]) or is immobile, so no pursuit aims it. The movement phase settles
+    /// such a unit before it classifies the order (`walking_goal`), so `Pursuit::aim_if_in_range`,
+    /// which aims every other unit under an attack order in its weapon's band, never reaches it.
+    /// Between shots a hull weapon working for an attack order then turns the hull towards its
+    /// target itself (plan `2026-11-25-wind-up-and-hold-facing` D-4, B-199; 5.0.14
+    /// `FaceTargetWhileInCooldown`).
+    #[must_use]
+    #[inline]
+    pub fn hull_aimed_by_weapon(&self) -> bool {
+        self.is_on_hold() || self.is_immobile
+    }
+
     /// Clears the order queue, hold, current target, route and weapon swing, as an effect's
     /// `CancelOrders` node does (plan `2026-11-10-spellcaster-mechanics` D-8): a swing in
     /// wind-up returns to ready, a backswing goes to cooldown. A mode channel in progress and a
@@ -1762,6 +1775,58 @@ mod order_walks_tests {
         }
         entity.order_queue.clear();
         assert!(!entity.order_walks(), "no order does not walk");
+        Ok(())
+    }
+
+    /// Plan `2026-11-25-wind-up-and-hold-facing` D-4: the hull belongs to the weapon exactly when
+    /// the movement phase settles the unit before pursuit: it holds (a front `HoldPosition`, or
+    /// the hold flag under any front order) or it is immobile. Every other order shape, attack
+    /// orders included, leaves the hull to the movement phase.
+    #[test]
+    fn the_hull_is_the_weapons_exactly_for_a_holding_or_immobile_unit(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let map = GameMap::new(16, 16, MapCell::default_ground(CliffLevel(0)))?;
+        let mut world = world(map, 3);
+        let kind = world
+            .catalog
+            .archetypes()
+            .find(|arch| arch.mover_type == MoverType::Ground && arch.max_speed > SimScalar::ZERO)
+            .map(|arch| arch.unit_type_id)
+            .ok_or("the shipped catalog has a mobile ground unit")?;
+        let unit = world.spawn_unit(kind, PlayerId(0), SimVec2::from_i32(8, 8))?;
+        let point = SimVec2::from_i32(4, 4);
+        let entity = world.entities.get_mut(&unit).ok_or("unit")?;
+        let orders = [
+            None,
+            Some(UnitOrder::Idle),
+            Some(UnitOrder::Stop),
+            Some(UnitOrder::Move { target: point }),
+            Some(UnitOrder::AttackMove { target: point }),
+            Some(UnitOrder::AttackTarget {
+                target: EntityId(99),
+                origin: AttackOrigin::Explicit,
+            }),
+            Some(UnitOrder::AttackTarget {
+                target: EntityId(99),
+                origin: AttackOrigin::Acquired,
+            }),
+            Some(UnitOrder::HoldPosition),
+        ];
+        for order in orders {
+            for holding_flag in [false, true] {
+                for immobile in [false, true] {
+                    entity.order_queue = order.clone().into_iter().collect();
+                    entity.is_holding_position = holding_flag;
+                    entity.is_immobile = immobile;
+                    let holds = holding_flag || matches!(order, Some(UnitOrder::HoldPosition));
+                    assert_eq!(
+                        entity.hull_aimed_by_weapon(),
+                        holds || immobile,
+                        "{order:?}, hold flag {holding_flag}, immobile {immobile}"
+                    );
+                }
+            }
+        }
         Ok(())
     }
 }

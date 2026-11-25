@@ -776,6 +776,9 @@ of record (battle 26 seed 13, battle 36a seed 2). That is a second cause with it
 its own package and trace (stop rule 2's reasoning). `stutter_step_tests::a_wind_up_whose_target_is_gone_holds_as_its_idle_weapon_says`
 pins today's rule, so the fix changes it deliberately.
 
+**Fixed later:** B-207 by plan [`2026-11-25-wind-up-and-hold-facing`](2026-11-25-wind-up-and-hold-facing.md) WP1
+(`SimWorld::end_lost_swings`; the pin is restated as `a_wind_up_whose_target_is_gone_holds_nothing`).
+
 ---
 
 ## As built

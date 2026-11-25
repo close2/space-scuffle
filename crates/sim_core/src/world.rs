@@ -417,6 +417,9 @@ impl SimWorld {
         self.update_production_and_buffs();
         self.update_unit_tasks();
         self.update_vision();
+        // A wind-up whose target was lost before this tick has ended before anything reads it
+        // (plan `2026-11-25-wind-up-and-hold-facing` D-1).
+        self.end_lost_swings();
         self.acquire_targets();
         self.trigger_attack_dashes();
         self.step_movement_and_steering();

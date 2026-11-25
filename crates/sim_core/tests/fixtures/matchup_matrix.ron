@@ -660,6 +660,12 @@
         // Lurker, unharmed after burrowing, kills four to six of the six marines on every seed:
         // all six on 3 of 20 seeds, all but one on 9 and all but two on 8; the survivors are
         // marines that fled beyond its range of 8 when struck and stood there.
+        // Moved by plan 2026-11-25-wind-up-and-hold-facing WP1 (B-207; AGENTS.md §8, plan
+        // Amendment 1): a marine's wind-up on the Lurker ends when it burrows out of the marines'
+        // sight (5.0.14 TargetFilters Visible), so the marines walk on instead of standing a tick.
+        // The seeds of record are unchanged; on seed 8 all six marines now fall (was one left at
+        // tick 500) and on seed 13 one is left (all fell). First difference: tick 34, the marines'
+        // positions (evidence docs/evidence/2026-11-25-wind-up-and-hold-facing.md, WP1).
         name: "21_lurker_vs_6_marines",
         claim: "Spines kill light infantry that cannot detect the lurker, and it survives",
         map_cells: 64,
@@ -848,6 +854,10 @@
         expect: (blue: (0, 0), red: (1, 1), red_lead_hp: Some((5.0, 45.0))),
     ),
     (
+        // Plan 2026-11-25-wind-up-and-hold-facing WP1 (B-207; AGENTS.md §8, Amendment 1): a
+        // unit whose target died starts its next swing a tick earlier; every seed moves, the
+        // seeds of record still hold, the winner changes on seeds 4, 6 and 8 and seed 13 leaves
+        // 33 zerglings, above the range (not a seed of record; the range is kept).
         name: "26_100_lings_vs_6_colossi",
         claim: "A hundred zerglings that pack round each colossus mostly overwhelm six colossi; when the colossi win, they win narrowly",
         map_cells: 96,
@@ -1004,6 +1014,11 @@
         expect: (blue: (0, 15), red: (0, 15)),
     ),
     (
+        // Moved by plan 2026-11-25-wind-up-and-hold-facing WP1 (B-207; AGENTS.md §8, plan
+        // Amendment 1): a marine whose Baneling target died is no longer held for a tick. On the
+        // first seed of record the last marine now falls too (0 left, was 1); the claim and the
+        // range hold. First difference: tick 6, marine 1's position and swing (evidence
+        // docs/evidence/2026-11-25-wind-up-and-hold-facing.md, WP1).
         name: "32_30_marines_vs_15_banelings",
         claim: "Banelings trade far above their cost against clumped marines",
         map_cells: 96,
@@ -1061,6 +1076,10 @@
     // 14). Blue's upper bound 13 -> 16; reported as a finding, since the claim's "narrowly" no
     // longer describes the fight (evidence §14).
     (
+        // Plan 2026-11-25-wind-up-and-hold-facing WP1 (B-207; AGENTS.md §8, Amendment 1): a
+        // marine whose target died starts its next swing a tick earlier; 19 of 20 seeds move,
+        // the seeds of record still hold, and seed 10 leaves 18 marines, above the range (not a
+        // seed of record; the range is kept).
         name: "33_24_marines_vs_12_zealots",
         claim: "A close fight: unkited zealots and marines trade evenly, either side may win narrowly",
         map_cells: 96,
