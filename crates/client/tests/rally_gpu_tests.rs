@@ -394,7 +394,7 @@ fn patch(camera: (&Camera, &GlobalTransform), world: &SimWorld, at: Vec2, half: 
 fn record(staging: &mut Staging, session: &BattleSession, camera: (&Camera, &GlobalTransform)) {
     let world = session.world().expect("a ready session has a world");
     let base = staging.base.expect("staged");
-    let point = world.rally_point(base);
+    let point = world.rally_point(base, 0);
     staging.report.published = point.is_some_and(|point| {
         Vec2::new(point.x.to_f32(), point.y.to_f32()).distance(staging.to) < 1e-3
     });

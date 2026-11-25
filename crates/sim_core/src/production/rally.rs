@@ -32,8 +32,9 @@
 //!   below its rally ability's slot count and every route within its waypoint cap
 //!   ([`validate_routes`]). Admission and the spawn check them before reading, and report a
 //!   violation as a [`ProductionInvariant`].
-//! - The rally ability of every archetype is one slot of one waypoint, used by every unit it
-//!   makes (`RallySpec` data follows in plan `2026-11-25-rallies` WP2).
+//! - Every slot decision (which slot a command sets, which slot a new unit uses, how many
+//!   slots and waypoints a structure has) is read from the archetype's rally ability through
+//!   `rally_slots`, never from an identity.
 //! - The auto-rally's chosen node is standing, has resources left, is of a kind in the spec's
 //!   set, and its footprint's cells come within the spec's radius of the structure's centre.
 //! - Among those, the node whose centre is farthest from the structure's centre wins
@@ -42,15 +43,13 @@
 //! - No node qualifies: the rally is left as it was (no route on a new structure).
 
 use crate::economy::{GameCommandError, GameCommandReceipt};
+use crate::production::rally_slots::RallyAbility;
 use crate::production::ProductionInvariant;
 use crate::{Entity, SimWorld};
 use sim_types::{
     AutoRallySpec, EntityId, PlayerId, RallyRoute, RallyTarget, ResourceNodeId, SimScalar, SimVec2,
-    UnitOrder,
+    UnitOrder, UnitTypeId,
 };
-
-/// The slot every rally of the default rally ability uses: its only one.
-const DEFAULT_SLOT: u8 = 0;
 
 /// The route of `slot` in `rallies`, sorted by slot, if it holds one.
 fn route_of(rallies: &[RallyRoute], slot: u8) -> Option<&RallyRoute> {
@@ -188,7 +187,7 @@ impl SimWorld {
         if let Some(entity) = self.entities.get_mut(&id) {
             set_route(
                 &mut entity.rallies,
-                DEFAULT_SLOT,
+                spec.slot,
                 vec![RallyTarget::Node(node)],
             );
         }
@@ -223,13 +222,13 @@ impl SimWorld {
         self.validate_rally_target(player, target)?;
         let (mut capable, mut taking) = (0, 0);
         for &id in recipients {
-            if !self.can_rally(id) {
+            let Some(ability) = self.rally_ability_of(id) else {
                 continue;
-            }
+            };
             capable += 1;
-            if Self::rally_slot_taking(slot).is_some() {
+            if ability.slot_taking(slot, target).is_some() {
                 if let Some(entity) = self.entities.get(&id) {
-                    validate_routes(entity, 1, 1)?;
+                    validate_routes(entity, ability.slot_count(), ability.max_waypoints())?;
                 }
                 taking += 1;
             }
@@ -241,10 +240,10 @@ impl SimWorld {
             return Err(GameCommandError::NoRallySlotTakes);
         }
         for &id in recipients {
-            if !self.can_rally(id) {
-                continue;
-            }
-            let Some(chosen) = Self::rally_slot_taking(slot) else {
+            let Some(chosen) = self
+                .rally_ability_of(id)
+                .and_then(|ability| ability.slot_taking(slot, target))
+            else {
                 continue;
             };
             if let Some(entity) = self.entities.get_mut(&id) {
@@ -258,14 +257,22 @@ impl SimWorld {
         Ok(GameCommandReceipt::Accepted { recipients: taking })
     }
 
-    /// The slot of the default rally ability (one slot, taking every target) that a `SetRally`
-    /// naming `slot` sets: its only slot for the smart command (`None`) and for `Some(0)`, and
-    /// none for any other slot.
-    fn rally_slot_taking(slot: Option<u8>) -> Option<u8> {
-        match slot {
-            None | Some(DEFAULT_SLOT) => Some(DEFAULT_SLOT),
-            Some(_) => None,
-        }
+    /// The rally ability of `id` when it can hold a rally: alive, completed, unloaded, and of
+    /// an archetype that trains units (D-3; S5: every production structure has a rally).
+    /// Ownership is the selection's check.
+    fn rally_ability_of(&self, id: EntityId) -> Option<RallyAbility<'_>> {
+        let entity = self.entities.get(&id)?;
+        let capable = entity.is_alive() && entity.is_completed && !entity.is_loaded_in_transport();
+        let arch = self.catalog.get(entity.unit_type_id).ok()?;
+        (capable && !arch.trains_units.is_empty()).then(|| RallyAbility::of(arch))
+    }
+
+    /// The rally slot a new unit of `product` made by `producer` uses (D-4), if any.
+    pub(crate) fn rally_slot_for(&self, producer: EntityId, product: UnitTypeId) -> Option<u8> {
+        let producer = self.entities.get(&producer)?;
+        let arch = self.catalog.get(producer.unit_type_id).ok()?;
+        let product = self.catalog.get(product).ok()?;
+        RallyAbility::of(arch).slot_used_by(product)
     }
 
     /// Checks a rally target once per command (D-3): a point on the map, a live unit of
@@ -302,29 +309,25 @@ impl SimWorld {
         Ok(())
     }
 
-    /// Whether `id` can hold a rally: alive, completed, unloaded, and of an archetype that
-    /// trains units (D-3). Ownership is the selection's check.
-    fn can_rally(&self, id: EntityId) -> bool {
-        self.entities.get(&id).is_some_and(|entity| {
-            entity.is_alive()
-                && entity.is_completed
-                && !entity.is_loaded_in_transport()
-                && self
-                    .catalog
-                    .get(entity.unit_type_id)
-                    .is_ok_and(|arch| !arch.trains_units.is_empty())
-        })
+    /// The point the route of `producer`'s rally slot `slot` resolves to now, in world units
+    /// (D-5; plan `2026-11-25-rallies` D-4): its first waypoint that resolves. `None` without a
+    /// route in that slot, or when no waypoint resolves. The exit order, the new unit's order
+    /// and the player view all read this one resolution, so they agree.
+    #[must_use]
+    pub fn rally_point(&self, producer: EntityId, slot: u8) -> Option<SimVec2> {
+        let rallies = &self.entities.get(&producer)?.rallies;
+        route_of(rallies, slot)?
+            .waypoints
+            .iter()
+            .find_map(|&target| self.waypoint_point(target))
     }
 
-    /// The point `producer`'s rally resolves to now, in world units (D-5): the point itself, the
-    /// node's centre, or where the target unit stands while it is alive and not carried. `None`
-    /// without a rally, for a rally to a unit that is dead, gone or carried, and for a node not on
-    /// the map. The exit order, the new unit's order and the player view all read this one
-    /// resolution, so they agree.
+    /// Where one waypoint resolves now, in world units: the point itself, the node's centre, or
+    /// where the target unit stands while it is alive and not carried. `None` for a unit that is
+    /// dead, gone or carried, and for a node not on the map.
     #[must_use]
-    pub fn rally_point(&self, producer: EntityId) -> Option<SimVec2> {
-        let rallies = &self.entities.get(&producer)?.rallies;
-        match *route_of(rallies, DEFAULT_SLOT)?.waypoints.first()? {
+    pub fn waypoint_point(&self, target: RallyTarget) -> Option<SimVec2> {
+        match target {
             RallyTarget::Point(point) => Some(point),
             RallyTarget::Node(node) => self.map.resources().get(node.0 as usize).map(|n| n.pos),
             RallyTarget::Unit(unit) => self
@@ -335,7 +338,8 @@ impl SimWorld {
         }
     }
 
-    /// Gives `child`, just made by `producer`, the order `producer`'s rally means (D-4), through
+    /// Gives `child`, just made by `producer`, the order the rally of the slot it uses means
+    /// (D-4; plan `2026-11-25-rallies` D-4: no slot, or an empty one, gives none), through
     /// the admission a player's order takes, so every rule of that order applies. Returns the
     /// order the child took, if any.
     ///
@@ -356,14 +360,21 @@ impl SimWorld {
         child: EntityId,
     ) -> Option<UnitOrder> {
         let producer_entity = self.entities.get(&producer)?;
-        if let Err(source) = validate_routes(producer_entity, 1, 1) {
+        let ability = RallyAbility::of(self.catalog.get(producer_entity.unit_type_id).ok()?);
+        if let Err(source) = validate_routes(
+            producer_entity,
+            ability.slot_count(),
+            ability.max_waypoints(),
+        ) {
             self.report_production_failure(source);
             return None;
         }
-        let rally = *route_of(&producer_entity.rallies, DEFAULT_SLOT)?
+        let child_entity = self.entities.get(&child)?;
+        let owner = child_entity.owner;
+        let slot = ability.slot_used_by(self.catalog.get(child_entity.unit_type_id).ok()?)?;
+        let rally = *route_of(&producer_entity.rallies, slot)?
             .waypoints
             .first()?;
-        let owner = self.entities.get(&child)?.owner;
         let recipients = [child];
         let target = match rally {
             RallyTarget::Point(point) => point,
@@ -379,7 +390,7 @@ impl SimWorld {
                 let Some(target) = self.entities.get(&unit).filter(|e| e.is_alive()) else {
                     // "As if there'd never been a rally point" (S7).
                     if let Some(entity) = self.entities.get_mut(&producer) {
-                        clear_route(&mut entity.rallies, DEFAULT_SLOT);
+                        clear_route(&mut entity.rallies, slot);
                     }
                     return None;
                 };

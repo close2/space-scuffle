@@ -1050,9 +1050,10 @@ fn a_selected_structures_rally_is_drawn_and_hidden_when_deselected() {
     let mut harness = skirmish();
     let base = select_base(&mut harness);
     harness.step(2);
+    let slot = harness.world().entities[&base].rallies[0].slot;
     let point = harness
         .world()
-        .rally_point(base)
+        .rally_point(base, slot)
         .expect("the base auto-rallied");
     let drawn = |harness: &mut Harness| -> Vec<(RallyMarker, Vec3)> {
         let world = harness.app.world_mut();

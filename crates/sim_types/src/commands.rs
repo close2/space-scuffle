@@ -189,6 +189,9 @@ pub struct AutoRallySpec {
     pub radius: SimScalar,
     /// The kinds of resource the search accepts (the effect's validator, `Minerals`).
     pub kinds: ResourceKindSet,
+    /// The rally slot the auto-rally fills (`RallyHatchery` command 1 for the Hatchery, plan
+    /// `2026-11-25-rallies` D-4); below the structure's slot count.
+    pub slot: u8,
 }
 
 /// A damage-absorbing barrier that raises itself when its unit takes damage (`StarCraft` II's

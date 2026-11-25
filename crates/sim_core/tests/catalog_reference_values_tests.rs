@@ -5303,3 +5303,76 @@ fn structures_with_energy_regenerate_as_5_0_14() {
         ["Nexus", "Orbital Command", "Shield Battery"]
     );
 }
+
+/// B-164 (plan `2026-11-25-rallies` WP2, §2.3): every producer's rally ability is 5.0.14's.
+/// - Every structure that trains units authors one slot used by every unit and taking every
+///   target (`CAbilRally` with one empty `InfoArray` entry: core AbilData:671-701; `Rally`,
+///   `RallyCommand`, `RallyNexus`: liberty AbilData:859-884), except the Hatchery, Lair and
+///   Hive analogues.
+/// - Those carry `RallyHatchery` (liberty AbilData:885-897; UnitData:8246-8260, 8329-8341,
+///   8408-8418): `InfoArray` 0 for non-workers that refuses resources
+///   (`NotResourcesOrEnemyTargetType`, liberty ValidatorData:667-669, 694-703) and `InfoArray`
+///   1 for workers that a right click on the ground does not set (`SetOnGround 0`), both
+///   excluding the Queen (`NotQueen`, liberty ValidatorData:1598-1601). Their auto-rally fills
+///   slot 1 (voidmulti EffectData:2507-2537).
+/// - Every rally holds up to four waypoints (TeamLiquid 2011, plan S10; a community figure,
+///   B-215).
+#[test]
+fn the_shipped_rallies_are_5_0_14s() -> TestResult {
+    use sim_types::RallyUsers;
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let queen = catalogs
+        .units
+        .archetypes()
+        .find(|a| !is_structure(a) && analogue(a).starts_with("Queen"))
+        .ok_or("no Queen analogue")?
+        .slug
+        .clone();
+    let mut hatcheries = 0;
+    for archetype in catalogs
+        .units
+        .archetypes()
+        .filter(|a| is_structure(a) && !a.trains_units.is_empty())
+    {
+        let slug = &archetype.slug;
+        let rally = archetype
+            .rally
+            .as_ref()
+            .ok_or(format!("{slug}: no rally"))?;
+        assert_eq!(rally.max_waypoints, 4, "{slug}");
+        assert!(
+            rally.slots.iter().all(|slot| !slot.label.is_empty()),
+            "{slug}"
+        );
+        let auto_slot = archetype.capabilities.auto_rally.map(|auto| auto.slot);
+        if matches!(analogue(archetype), "Hatchery" | "Lair" | "Hive") {
+            hatcheries += 1;
+            assert_eq!(rally.slots.len(), 2, "{slug}");
+            let (army, worker) = (&rally.slots[0], &rally.slots[1]);
+            assert_eq!(army.used_by, RallyUsers::NonWorkers, "{slug}");
+            assert!(!army.on_resources && army.smart_on_ground, "{slug}");
+            assert_eq!(worker.used_by, RallyUsers::Workers, "{slug}");
+            assert!(worker.on_resources && !worker.smart_on_ground, "{slug}");
+            for slot in [army, worker] {
+                assert_eq!(slot.excludes, [queen.clone()], "{slug}: NotQueen");
+            }
+            assert_eq!(auto_slot, Some(1), "{slug}: the worker rally");
+        } else {
+            assert_eq!(rally.slots.len(), 1, "{slug}");
+            let slot = &rally.slots[0];
+            assert_eq!(slot.used_by, RallyUsers::All, "{slug}");
+            assert!(slot.excludes.is_empty(), "{slug}");
+            assert!(slot.on_resources && slot.smart_on_ground, "{slug}");
+            assert!(auto_slot.is_none_or(|slot| slot == 0), "{slug}");
+        }
+    }
+    assert_eq!(hatcheries, 3, "the Hatchery, Lair and Hive analogues");
+    for archetype in catalogs
+        .units
+        .archetypes()
+        .filter(|a| a.trains_units.is_empty())
+    {
+        assert!(archetype.rally.is_none(), "{}: no rally", archetype.slug);
+    }
+    Ok(())
+}

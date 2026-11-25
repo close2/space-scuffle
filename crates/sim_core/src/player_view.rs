@@ -164,11 +164,14 @@ impl SimWorld {
         if entity.cargo.is_some() {
             out.laden.push(entity.id);
         }
-        if let Some(point) = self.rally_point(entity.id) {
-            out.rallies.push(RallyView {
-                entity: entity.id,
-                point: point.to_f32_array(),
-            });
+        for route in &entity.rallies {
+            if let Some(point) = self.rally_point(entity.id, route.slot) {
+                out.rallies.push(RallyView {
+                    entity: entity.id,
+                    slot: route.slot,
+                    point: point.to_f32_array(),
+                });
+            }
         }
         if let Ok(arch) = self.catalog.get(entity.unit_type_id) {
             let capacity = arch.capabilities.transport_capacity;

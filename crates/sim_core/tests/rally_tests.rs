@@ -6,6 +6,11 @@
 //! from the map's nodes and the archetype's authored `auto_rally`, and on constructed maps for
 //! the cases the showcase does not reach. No identity is named: the hall is whichever archetype
 //! carries the capability.
+//!
+//! Plan `2026-11-25-rallies` adds the routes (WP1: one route per slot, their invariants) and the
+//! rally slots as data (WP2, P-2 and P-3): the structure with a worker slot and an army slot is
+//! the one whose authored rally ability has a `Workers` slot, and its products are told apart by
+//! the harvest capability and the slots' exclusions.
 
 use sim_core::economy::{GameCommandError, GameCommandReceipt};
 use sim_core::scenario::load_scenario_world;
@@ -13,7 +18,8 @@ use sim_core::{SimWorld, UpgradeCatalog};
 use sim_map::{CliffLevel, GameMap, MapCell, ResourceKind, ResourceNode};
 use sim_types::{
     AutoRallySpec, EntityId, PlayerCommand, PlayerId, PlayerSlot, RallyRoute, RallyTarget,
-    ResourceNodeId, ShapeKind, SimScalar, SimVec2, Tick, TickBundle, UnitOrder, UnitTypeId,
+    RallyUsers, ResourceNodeId, ShapeKind, SimScalar, SimVec2, Tick, TickBundle, UnitOrder,
+    UnitTypeId,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -738,6 +744,315 @@ fn corrupt_routes_are_invariant_failures() -> TestResult {
         );
         assert!(reported, "{routes:?}: the spawn reported nothing");
         assert_eq!(b.front_order(child), None, "{routes:?}");
+    }
+    Ok(())
+}
+
+/// The rally slots of a Hatchery analogue: the catalog's structure whose rally ability has a slot
+/// for workers and one for non-workers (5.0.14 `RallyHatchery`), read by capability, with its
+/// products sorted by which slot uses them.
+struct Hatch {
+    base: Base,
+    hatch: EntityId,
+    /// The slot used by non-workers, which refuses resources.
+    army_slot: u8,
+    /// The slot used by workers, which a right click on the ground does not set.
+    worker_slot: u8,
+    /// A worker it trains (the harvest capability).
+    worker: UnitTypeId,
+    /// A non-worker it trains that uses the army slot.
+    army: UnitTypeId,
+    /// A product every slot excludes (the Queen analogue).
+    excluded: UnitTypeId,
+}
+
+impl Hatch {
+    fn new() -> Result<Self, Box<dyn std::error::Error>> {
+        let mut base = Base::new()?;
+        let arch = base
+            .world
+            .catalog
+            .archetypes()
+            .find(|arch| {
+                arch.rally.as_ref().is_some_and(|rally| {
+                    rally.slots.len() > 1
+                        && rally
+                            .slots
+                            .iter()
+                            .any(|slot| slot.used_by == RallyUsers::Workers)
+                })
+            })
+            .ok_or("no structure with a worker rally slot")?
+            .clone();
+        let rally = arch.rally.clone().ok_or("no rally")?;
+        let slot_of = |users: RallyUsers| -> Result<u8, Box<dyn std::error::Error>> {
+            let index = rally
+                .slots
+                .iter()
+                .position(|slot| slot.used_by == users)
+                .ok_or("no such slot")?;
+            Ok(u8::try_from(index)?)
+        };
+        let (army_slot, worker_slot) = (
+            slot_of(RallyUsers::NonWorkers)?,
+            slot_of(RallyUsers::Workers)?,
+        );
+        let excluded_by_all = |slug: &str| {
+            rally
+                .slots
+                .iter()
+                .all(|slot| slot.excludes.iter().any(|s| s == slug))
+        };
+        let mut products = arch
+            .trains_units
+            .iter()
+            .filter_map(|slug| base.world.catalog.get_by_slug(slug))
+            .filter(|p| !matches!(p.shape, ShapeKind::BuildingDome { .. }));
+        let worker = products
+            .clone()
+            .find(|p| p.capabilities.harvester.is_some())
+            .ok_or("no worker")?
+            .unit_type_id;
+        let army = products
+            .clone()
+            .find(|p| p.capabilities.harvester.is_none() && !excluded_by_all(&p.slug))
+            .ok_or("no army product")?
+            .unit_type_id;
+        let excluded = products
+            .find(|p| excluded_by_all(&p.slug))
+            .ok_or("no excluded product")?
+            .unit_type_id;
+        // The prerequisites of every product, so each can be trained; the structure itself
+        // stands with the field (anchored at `FIELD`) in its auto-rally's reach.
+        let mut cell = 2;
+        for product in [worker, army, excluded] {
+            let required = base.world.catalog.get(product)?.requires_structures.clone();
+            for slug in required {
+                let id = base.world.catalog.id_by_slug(&slug).ok_or("prerequisite")?;
+                base.world.spawn_structure(id, PlayerId(0), 24, cell)?;
+                cell += 6;
+            }
+        }
+        let hatch = base
+            .world
+            .spawn_structure(arch.unit_type_id, PlayerId(0), 14, 9)?;
+        Ok(Self {
+            base,
+            hatch,
+            army_slot,
+            worker_slot,
+            worker,
+            army,
+            excluded,
+        })
+    }
+
+    fn routes(&self) -> &[RallyRoute] {
+        &self.base.world.entities[&self.hatch].rallies
+    }
+
+    fn set(
+        &mut self,
+        target: RallyTarget,
+        slot: Option<u8>,
+    ) -> Result<GameCommandReceipt, GameCommandError> {
+        let hatch = self.hatch;
+        self.base
+            .command(vec![hatch], UnitOrder::SetRally { target, slot })
+    }
+}
+
+fn at(x: f64, y: f64) -> SimVec2 {
+    SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(y))
+}
+
+/// P-2 (S3, S7, S8): the Hatchery analogue's auto-rally fills its worker slot only, the slot the
+/// data names.
+#[test]
+fn the_hatchery_auto_rally_fills_the_worker_slot() -> TestResult {
+    let h = Hatch::new()?;
+    let spec = h
+        .base
+        .world
+        .catalog
+        .get(h.base.world.entities[&h.hatch].unit_type_id)?
+        .capabilities
+        .auto_rally
+        .ok_or("no auto-rally")?;
+    assert_eq!(spec.slot, h.worker_slot);
+    assert_eq!(
+        h.routes(),
+        [RallyRoute::single(
+            h.worker_slot,
+            RallyTarget::Node(ResourceNodeId(0))
+        )]
+    );
+    Ok(())
+}
+
+/// P-2 (S4, S8): a right click on a resource sets the worker rally, since the army slot refuses
+/// resources.
+#[test]
+fn a_right_click_on_a_field_sets_the_worker_rally() -> TestResult {
+    let mut h = Hatch::new()?;
+    let geyser = RallyTarget::Node(ResourceNodeId(1));
+    assert_eq!(
+        h.set(geyser, None),
+        Ok(GameCommandReceipt::Accepted { recipients: 1 })
+    );
+    assert_eq!(h.routes(), [RallyRoute::single(h.worker_slot, geyser)]);
+    Ok(())
+}
+
+/// P-2 (S3 `SetOnGround 0`, S8): a right click on the ground, or on a unit, sets the army rally
+/// and leaves the worker rally as it was.
+#[test]
+fn a_right_click_on_the_ground_sets_the_army_rally() -> TestResult {
+    let mut h = Hatch::new()?;
+    let worker_route = RallyRoute::single(h.worker_slot, RallyTarget::Node(ResourceNodeId(0)));
+    let ground = RallyTarget::Point(at(16.5, 26.5));
+    h.set(ground, None)?;
+    let mut expected = vec![
+        RallyRoute::single(h.army_slot, ground),
+        worker_route.clone(),
+    ];
+    expected.sort_by_key(|route| route.slot);
+    assert_eq!(h.routes(), expected);
+    let friend = h
+        .base
+        .world
+        .spawn_unit(h.base.soldier, PlayerId(0), at(16.5, 16.5))?;
+    h.set(RallyTarget::Unit(friend), None)?;
+    let mut expected = vec![
+        RallyRoute::single(h.army_slot, RallyTarget::Unit(friend)),
+        worker_route,
+    ];
+    expected.sort_by_key(|route| route.slot);
+    assert_eq!(h.routes(), expected);
+    Ok(())
+}
+
+/// P-2 (S8: "press the G key and left-click"): the card's worker entry sets the worker rally on
+/// the ground, which a right click cannot.
+#[test]
+fn the_worker_entry_sets_the_worker_rally_on_the_ground() -> TestResult {
+    let mut h = Hatch::new()?;
+    let ground = RallyTarget::Point(at(16.5, 26.5));
+    h.set(ground, Some(h.worker_slot))?;
+    assert_eq!(h.routes(), [RallyRoute::single(h.worker_slot, ground)]);
+    Ok(())
+}
+
+/// P-2 (S4): the army entry refuses a resource, and nothing changes.
+#[test]
+fn the_army_rally_refuses_a_resource() -> TestResult {
+    let mut h = Hatch::new()?;
+    let before = h.routes().to_vec();
+    assert_eq!(
+        h.set(RallyTarget::Node(ResourceNodeId(1)), Some(h.army_slot)),
+        Err(GameCommandError::NoRallySlotTakes)
+    );
+    assert_eq!(h.routes(), before);
+    Ok(())
+}
+
+/// P-2 (S3, S8): a worker uses the worker rally and a non-worker the army rally.
+#[test]
+fn workers_and_non_workers_use_their_own_slots() -> TestResult {
+    let mut h = Hatch::new()?;
+    let target = at(16.5, 26.5);
+    h.set(RallyTarget::Point(target), None)?;
+    let (worker, _) = h.base.train(h.hatch, h.worker)?;
+    assert_eq!(
+        h.base.front_order(worker),
+        Some(UnitOrder::Harvest {
+            target: ResourceNodeId(0)
+        })
+    );
+    let (army, _) = h.base.train(h.hatch, h.army)?;
+    assert_eq!(h.base.front_order(army), Some(UnitOrder::Move { target }));
+    Ok(())
+}
+
+/// P-2, B-217 (S5 `NotQueen`, S8: "the queen is independently created"): the product every slot
+/// excludes uses no rally, whatever the routes hold; and a non-worker gets no order while only
+/// the worker rally is set (no fall-through).
+#[test]
+fn the_queen_analogue_uses_no_rally() -> TestResult {
+    let mut h = Hatch::new()?;
+    let (army, _) = h.base.train(h.hatch, h.army)?;
+    assert_eq!(
+        h.base.front_order(army),
+        None,
+        "only the worker rally is set"
+    );
+    h.set(RallyTarget::Point(at(16.5, 26.5)), None)?;
+    let (excluded, _) = h.base.train(h.hatch, h.excluded)?;
+    assert_eq!(h.base.front_order(excluded), None);
+    Ok(())
+}
+
+/// P-2 (D-4): the exit is chosen nearest the first waypoint of the slot the product uses: a
+/// worker leaves on the side of its field, a non-worker on the side of the army rally.
+#[test]
+fn the_exit_faces_the_products_slot() -> TestResult {
+    let mut h = Hatch::new()?;
+    let field = h.base.world.map.resources()[0].pos;
+    let south = at(6.5, 30.5);
+    h.set(RallyTarget::Point(south), None)?;
+    let gap = |a: SimVec2, b: SimVec2| (a - b).length_sq();
+    let (worker, _) = h.base.train(h.hatch, h.worker)?;
+    let (army, _) = h.base.train(h.hatch, h.army)?;
+    let (worker_at, army_at) = (
+        h.base.world.entities[&worker].position,
+        h.base.world.entities[&army].position,
+    );
+    assert!(
+        gap(worker_at, field) < gap(army_at, field),
+        "{worker_at:?} {army_at:?}"
+    );
+    assert!(
+        gap(army_at, south) < gap(worker_at, south),
+        "{worker_at:?} {army_at:?}"
+    );
+    Ok(())
+}
+
+/// P-3: a producer with one slot and a single-waypoint rally gives the same order and the same
+/// exit as the default rally ability of plan `2026-11-23-production-queue` (the archetype
+/// without a spec), for a point, a field and a friend.
+#[test]
+fn a_one_slot_producer_is_unchanged() -> TestResult {
+    let shipped = Base::new()?;
+    let barracks_type = shipped.world.entities[&shipped.barracks].unit_type_id;
+    let spec = shipped.world.catalog.get(barracks_type)?.rally.clone();
+    assert!(
+        spec.as_ref().is_some_and(|spec| spec.slots.len() == 1),
+        "{spec:?}"
+    );
+    let friend_at = at(16.5, 16.5);
+    for target in [
+        RallyTarget::Point(at(14.5, 26.5)),
+        RallyTarget::Node(ResourceNodeId(0)),
+        RallyTarget::Unit(EntityId(0)),
+    ] {
+        let mut outcomes = Vec::new();
+        for authored in [true, false] {
+            let mut b = Base::new()?;
+            if !authored {
+                b.world.catalog.get_mut(barracks_type)?.rally = None;
+            }
+            let friend = b.world.spawn_unit(b.soldier, PlayerId(0), friend_at)?;
+            let target = match target {
+                RallyTarget::Unit(_) => RallyTarget::Unit(friend),
+                other => other,
+            };
+            b.set_rally(b.barracks, target)?;
+            let (child, _) = b.train(b.barracks, b.soldier)?;
+            outcomes.push((b.front_order(child), b.world.entities[&child].position));
+        }
+        assert_eq!(outcomes[0], outcomes[1], "{target:?}");
+        assert!(outcomes[0].0.is_some(), "{target:?}: an order");
     }
     Ok(())
 }

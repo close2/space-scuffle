@@ -1487,8 +1487,9 @@ fn the_view_lists_only_the_viewers_own_resolved_rallies() -> TestResult {
     let (away, _) = base_of(&world, AWAY)?;
     let rallied = |world: &SimWorld, id| !world.entities[&id].rallies.is_empty();
     assert!(rallied(&world, home) && rallied(&world, away));
+    let slot = world.entities[&home].rallies[0].slot;
     let point = world
-        .rally_point(home)
+        .rally_point(home, slot)
         .ok_or("the home hall's rally resolves")?;
     let view = view_of(&world, HOME);
     assert_eq!(view.rallies.len(), 1);
@@ -1687,5 +1688,86 @@ fn only_the_struck_players_view_lists_a_snapshot_and_refills_it_in_place() -> Te
             world.current_tick
         );
     }
+    Ok(())
+}
+
+/// Plan `2026-11-25-rallies` D-7 (WP2): the view publishes one entry per route with its slot,
+/// sorted by slot: a structure with a worker slot and an army slot, the worker slot filled by
+/// its auto-rally and the army slot by a right click on the ground, shows both, each at its
+/// own point.
+#[test]
+fn the_view_publishes_each_rally_routes_slot() -> TestResult {
+    use sim_types::{RallyTarget, RallyUsers, ResourceKind};
+    let field = ResourceNode {
+        pos: SimVec2::new(SimScalar::from_num(12.5), SimScalar::from_num(12.5)),
+        kind: ResourceKind::Mineral,
+        remaining: 1500,
+        cell: (12, 12),
+        placed: None,
+    };
+    let map = GameMap::from_cells(
+        32,
+        32,
+        vec![MapCell::default_ground(CliffLevel(0)); 32 * 32],
+        vec![field],
+        vec![],
+    )?;
+    let mut world = SimWorld::with_catalogs(map, 7, units()?, UpgradeCatalog::default())?;
+    let hall = world
+        .catalog
+        .archetypes()
+        .find(|arch| {
+            arch.capabilities.auto_rally.is_some()
+                && arch.rally.as_ref().is_some_and(|rally| {
+                    rally
+                        .slots
+                        .iter()
+                        .any(|slot| slot.used_by == RallyUsers::Workers)
+                })
+        })
+        .ok_or("no auto-rallying structure with a worker slot")?;
+    let (hall_type, worker_slot) = (
+        hall.unit_type_id,
+        hall.capabilities
+            .auto_rally
+            .map(|auto| auto.slot)
+            .ok_or("auto")?,
+    );
+    let hall = world.spawn_structure(hall_type, HOME, 4, 10)?;
+    let ground = SimVec2::new(SimScalar::from_num(20.5), SimScalar::from_num(26.5));
+    step(
+        &mut world,
+        vec![command(
+            HOME,
+            vec![hall],
+            UnitOrder::SetRally {
+                target: RallyTarget::Point(ground),
+                slot: None,
+            },
+        )],
+    );
+    let routes = world.entities[&hall].rallies.clone();
+    assert_eq!(routes.len(), 2, "{routes:?}");
+    let army_slot = routes
+        .iter()
+        .map(|route| route.slot)
+        .find(|&slot| slot != worker_slot)
+        .ok_or("no army route")?;
+    let view = view_of(&world, HOME);
+    let published: Vec<(EntityId, u8, [f32; 2])> = view
+        .rallies
+        .iter()
+        .map(|rally| (rally.entity, rally.slot, rally.point))
+        .collect();
+    let mut expected = vec![
+        (
+            hall,
+            worker_slot,
+            world.map.resources()[0].pos.to_f32_array(),
+        ),
+        (hall, army_slot, ground.to_f32_array()),
+    ];
+    expected.sort_by_key(|&(_, slot, _)| slot);
+    assert_eq!(published, expected);
     Ok(())
 }

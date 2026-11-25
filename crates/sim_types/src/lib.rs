@@ -73,7 +73,7 @@ pub use presentation::{
     SpellMissileView, StanceView, StatusFlags, StatusKind, StatusView, StrikeEnds, WeaponKey,
     WeaponSlot,
 };
-pub use rally::{RallyRoute, RallyTarget};
+pub use rally::{RallyRoute, RallySlotSpec, RallySpec, RallyTarget, RallyUsers};
 pub use resource_kind_set::ResourceKindSet;
 pub use snapshot::{
     AttackSwing, BubbleRenderInstance, CombatEventVisual, MatchResult, PlayerStatusView,

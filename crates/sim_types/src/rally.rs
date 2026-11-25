@@ -5,7 +5,10 @@
 //! (plans `2026-11-23-production-queue` D-3 and `2026-11-25-rallies` D-2):
 //! - [`RallyTarget`], one waypoint: a point, a unit or a resource node;
 //! - [`RallyRoute`], the waypoints one slot of a structure holds, in the order the new unit
-//!   walks them.
+//!   walks them;
+//! - [`RallySpec`], [`RallySlotSpec`] and [`RallyUsers`], a structure's rally ability as catalog
+//!   data (D-1): its slots, which units use each and which targets each takes, and the
+//!   waypoint cap.
 //!
 //! # How it fits
 //! `sim_core` stores a structure's routes in `Entity::rallies`, hashes them, and turns a route
@@ -60,6 +63,62 @@ impl RallyRoute {
     }
 }
 
+const fn default_true() -> bool {
+    true
+}
+
+/// Which units use a rally slot (5.0.14 `CAbilRally` `InfoArray` `UseFilters`; plan
+/// `2026-11-25-rallies` D-1). A worker is a unit with the harvest capability.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum RallyUsers {
+    /// Every unit (no filter).
+    #[default]
+    All,
+    /// Workers only (`Worker;-`).
+    Workers,
+    /// Every unit but workers (`-;Worker`).
+    NonWorkers,
+}
+
+/// One rally of a production structure (one `InfoArray` entry of 5.0.14's `CAbilRally`; plan
+/// `2026-11-25-rallies` D-1).
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RallySlotSpec {
+    /// The card entry's text, from data (the button face's name); not empty.
+    pub label: String,
+    /// Which units use this slot (`UseFilters`).
+    #[serde(default)]
+    pub used_by: RallyUsers,
+    /// Unit slugs that never use it (`UseValidators`, e.g. `NotQueen`); each an existing unit,
+    /// none twice.
+    #[serde(default)]
+    pub excludes: Vec<String>,
+    /// Whether it may be set on a resource node (`SetValidators NotResourcesOrEnemyTargetType`
+    /// makes it `false`).
+    #[serde(default = "default_true")]
+    pub on_resources: bool,
+    /// Whether a right click (the smart command) on the ground sets it (`SetOnGround`). The
+    /// card's entry for the slot sets it on the ground either way.
+    #[serde(default = "default_true")]
+    pub smart_on_ground: bool,
+}
+
+/// A production structure's rally ability (5.0.14 `CAbilRally`; plan `2026-11-25-rallies`
+/// D-1): its slots and how many waypoints one slot's route holds.
+///
+/// An archetype that trains units and carries no spec has the default ability: one slot used by
+/// every unit, taking every target, of one waypoint.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RallySpec {
+    /// Most targets one slot's route holds; Shift appends until then (B-165). At least 1.
+    pub max_waypoints: u8,
+    /// The slots in `InfoArray` order; slot `i` is the card's `Rally{i+1}`. At least one, at
+    /// most `u8::MAX`.
+    pub slots: Vec<RallySlotSpec>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::{RallyRoute, RallyTarget};
@@ -70,6 +129,22 @@ mod tests {
         let route = RallyRoute::single(1, RallyTarget::Node(ResourceNodeId(3)));
         assert_eq!(route.slot, 1);
         assert_eq!(route.waypoints, [RallyTarget::Node(ResourceNodeId(3))]);
+    }
+
+    /// D-1: a slot authored with its label alone takes every unit and every target.
+    #[test]
+    fn a_slot_defaults_to_every_unit_and_every_target() -> Result<(), Box<dyn std::error::Error>> {
+        let spec: super::RallySpec =
+            ron::from_str(r#"(max_waypoints: 4, slots: [(label: "Set Rally Point")])"#)?;
+        assert_eq!(spec.max_waypoints, 4);
+        let slot = &spec.slots[0];
+        assert_eq!(slot.used_by, super::RallyUsers::All);
+        assert!(slot.excludes.is_empty() && slot.on_resources && slot.smart_on_ground);
+        assert!(ron::from_str::<super::RallySpec>(
+            r#"(max_waypoints: 4, slots: [(label: "x", colour: 1)])"#
+        )
+        .is_err());
+        Ok(())
     }
 
     #[test]
