@@ -196,3 +196,108 @@ instruction is to stop and report figures. The attempt was not made. Candidates 
 3. B4 in battle 27 is 1.6 % above the base's interval (12.62 against 12.42), D-δ off 12.33.
 
 The WP1 fix (K-1, B-208) is independent of E-2: it changes no outcome of record and lowers every enemy overlap.
+
+## 7. The resumed WP2 under Amendment 2 (F-1, B2-a/B2-b, B6-max, C-1′): stops again
+
+**Outcome: the resumed WP2 fails pre-registered checks and stops (A2.4).** No marker is written, nothing is restated,
+and the goldens are not re-recorded.
+
+### 7.1 Code and tests (`82b77a41`)
+
+- F-1 as A2.1 in `solver.rs`; D-SHOVE-E′ and the D-δ eligibility replica in `contact_checks.rs` (two columns
+  appended).
+- Red before F-1 (`~/scratch/enemy-contact/red2/`): F-T1 (friend overlap 10.4 % at tick 17 in the corridor), F-T2 (the
+  held friend moved (0.080, 0.074), not (0.05, 0.05)), F-T3 (the attacker moved by the projection's rounding). F-T6
+  was green before F-1: it asserts only E-2's enemy invariants. Its chain's largest friend overlap fell from 1.00 to
+  0.50 with F-1. W0-T6 and W0-T7 were red by compilation.
+- Green after F-1: every test of A2.4's list, F-T1 with no `#[ignore]` (corridor and open field), and every guard. The
+  only failing sim_core and sim_fixtures tests on the tree are the golden replay and the matchup matrix (battle 26),
+  which are WP3's records.
+
+### 7.2 Base re-derived on `main` `28d875fb`
+
+`main` moved during the run (B-207 and B-199 fixed; matrix worlds moved). The branch merged it (`d57c8b92`). Every
+arm was rebuilt in a fresh target directory from scratch trees of that merge:
+- base: the merge with `solver.rs`, `collision.rs`, `movement_rules.rs` and `movement_rules.ron` as on `main`;
+- WP1: the base with WP1's `solver.rs`;
+- control C-b: the base with `movement_rules.rs` and `.ron` as on the branch;
+- WP2′: the merge itself;
+- WP2′-off: the merge with the switch off.
+
+The runs on `4b3f0c7d` (`matrix/a2*`, judged the same way) failed the same checks and were discarded with that base.
+
+New base: 24 seeds, failures 2 of record, 33 over all; Legacy 3 and 22; held-out Solver 22, held-out Legacy 30. The
+close-battle list is unchanged (`a3-close-list.md`).
+
+### 7.3 Matrix (`matrix/a3*`; `a3-checks-all.md`, `a3-checks-held.md`)
+
+- **Switch off:** `a3wp2p-off` equals `a3wp1-solver` byte for byte. E2-T8 is re-pinned on the new base:
+  `0x7e1cffb0addde4de` and `0x2cc569e6926d895e`.
+- **Legacy (C-1′ part 1):** `a3wp2p-legacy` equals `a3base-legacy` byte for byte.
+- **Overall:** failures of record 2 → 6, over all seeds 33 → 51; held-out 22 → 36. No Class D battle flips. Largest
+  enemy overlap 0.00 % everywhere.
+
+| Battle | Base: wins b/r, fails record/all, max enemy, max friend, D-SHOVE-E′ b/r | WP2′ |
+|---|---|---|
+| 10 | 0/24, 0/0, 0.44 %, 46.76 %, 0.044/0.004 | 0/24, 0/0, 0.00 %, 46.76 %, 0.000/0.003 |
+| 23a | 0/24, 0/0, 0.00 %, 0.74 %, 0.004/0.000 | 0/24, 0/0, 0.00 %, 0.74 %, 0.000/0.000 |
+| 26 (R) | 19/5, 0/2, 2.59 %, 37.06 %, 2.645/4.462 | 2/22, **3/15**, 0.00 %, **40.44 %**, 0.091/0.001 |
+| 27 | 0/24, 0/0, 2.45 %, 37.02 %, 4.871/0.637 | 0/24, 0/0, 0.00 %, 37.02 %, 0.305/0.139 |
+| 28 (R, B-192) | 7/17, 2/18, 1.34 %, 37.02 %, 1.017/2.621 | 1/23, 3/23, 0.00 %, 37.02 %, 0.213/0.000 |
+| 29 | 24/0, 0/0, 3.79 %, 37.02 %, 1.672/3.312 | 24/0, 0/0, 0.00 %, 37.02 %, 0.363/0.000 |
+| 38a (R) | 24/0, 0/0, 0.91 %, 22.22 %, 0.025/0.000 | 24/0, 0/0, 0.00 %, 22.22 %, 0.018/0.000 |
+| 38b (R) | 0/7, 0/0, 0.56 %, 22.22 %, 0.009/0.000 | 0/6, 0/0, 0.00 %, 22.22 %, 0.006/0.000 |
+
+**Failing checks, 24 seeds:**
+- **23a:**
+  - B2-a: red 0.001 on the D-δ-off arm, against Legacy's 0.000 [0.000, 0.000]; two seeds, 0.0166 and 0.0118.
+  - B6-max: 0.7424 % against the base's 0.7401 %.
+- **26:**
+  - B2-b: blue 0.091 against Legacy 0.074 [0.062, 0.087].
+  - B6-max: 40.44 % against 37.06 %.
+- **27:**
+  - B1: R10 free 1,468 per seed against the base's [724, 1,067], and blocked 1,620 against [892, 1,308].
+  - B2-b: blue 0.305 against [0.239, 0.337], which passes; red 0.139 against [0.082, 0.112], which fails.
+- **38a:** B7′, blue 2.508 per engaged second against the base's [2.523, 2.615].
+
+B3, B4 and B5 pass everywhere. B4 in battle 27: 11.29 per seed against the base's [7.96, 12.67].
+
+**Held-out B2:**
+- B2-b fails in 10 (red), 27 (both sides), 28 (blue) and 29 (blue).
+- B2-a fails in 23a (red).
+
+**B6-max trace (A2.4)** for battle 26 seed 15 (`diag3/b26s15`): the worst pair is 40.45 % at tick 75, between
+zergling 45 (approaching colossus 103) and zergling 46 (engaged on 103, touching it). That is **a direct contact,
+F-1's case**. Over the seed, the pair-ticks above the base's 37.06 % split into 1 direct contact and 2 chains. One
+reading, not verified: zergling 46 is under D-δ. Its radial yield is removed by `along_ring` before F-1, and A2.1
+keeps that radial part removed (F-T3), so the walker behind it takes only its own half of the radial overlap.
+
+**D-SHOVE-E′ can exceed D-SHOVE-E** (on the old base: battle 27 blue 0.323 against D-SHOVE-E 0.223, battle 28 blue
+0.213 against 0.183). Removing the own-ring tangent can raise the outward part relative to a second touching enemy.
+That is a property of A2.2's definition, reported, not changed.
+
+### 7.4 Throughput (`perf/a3*.txt`, three runs each)
+
+| Scenario | Legacy base | C-a (WP1) | C-b | WP2′ Legacy | Solver base | WP2′ Solver (C-2) | WP2′ Solver / base Legacy |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 64 × 64 | 9.7839 G | +0.000 % | +0.006 % | **+0.43 %** | 16.305 G | 16.759 G (+2.78 %) | **+71.3 %** |
+| 128 × 128 | 10.1862 G | +0.005 % | +0.006 % | +0.07 % | 10.956 G | 11.101 G (+1.32 %) | +9.0 % |
+| canyon | 17.3841 G | −0.008 % | +0.003 % | **+0.38 %** | 27.239 G | 27.824 G (+2.15 %) | **+60.05 %** |
+
+- **C-0 holds:** the lowest run is 70 ticks per second.
+- **C-2 holds,** by +2.78 % on 64 × 64.
+- **C-1′:**
+  - Part 1 holds (the Legacy matrix is byte-identical; the Legacy harness was not run).
+  - Part 2: WP2′'s Legacy delta lies outside the controls' band in every scenario.
+  - Part 3: `perf record -e instructions:u` of Legacy 64 × 64 on the base and on WP2′ (`perfrec/`) puts the excess and
+    the savings in functions whose source is unchanged (`int_sqrt` under a new symbol, `unit_components` no longer
+    inlined, `remove_blocked_velocity`, `scan_candidates`, `sim_map`'s `PlayerVisionMap::cast`, `on_connected_ground`).
+    That is layout and inlining, which passes under A2.3's rule.
+- **Q0111's thresholds are crossed:** 64 × 64 +71.3 % over Legacy (threshold 70 %), canyon +60.05 % (threshold 60 %).
+  Not filed: the package stopped.
+
+### 7.5 Not run
+
+The harness (development and held-out, every arm). It was stopped once the matrix checks had failed. The
+enemy-free byte-identity check of A2.4 therefore rests on the solver tests (F-T5 and E2-T9) and on F-1's construction
+(no walls without enemies), not on the harness families.
