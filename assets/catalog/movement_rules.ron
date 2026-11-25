@@ -44,8 +44,19 @@
 // - `nudge_engaged_along_ring` (deviation D-delta, Q0095): allies may nudge an engaged melee unit
 //   along its attack ring (its correction keeps only the part along the ring's tangent), never out
 //   of range, never by enemies, never on Hold Position. On when absent.
+// - `crowd_iterations` (C-3', plan `docs/plans/2026-11-26-friend-crowd-overlap.md` §4.1, B-219):
+//   after `iterations`, the solver keeps iterating while a friend pair overlaps by more than
+//   `moving_overlap_permille` and the friends' summed excess over it still falls, up to this many
+//   iterations in all. Equal to `iterations` switches the extension off; absent reads
+//   `iterations`. Shipped off until owner question Q0118 is answered: the plan's crowd test P-1
+//   (`a_crowd_pressing_a_front_stays_within_the_moving_bound`, a channel crowd `crowd_depth` rows
+//   deep and 12 wide of the smallest ground radius, every body stepped by the worst injection rho
+//   toward a row of holding bodies) derives 151 on this catalog; the plan's WP2 writes it here.
+// - `crowd_depth` (C-3'a): the depth, in bodies, of the deepest crowd behind a front that
+//   `crowd_iterations` is derived for: the 400-unit throughput reference army packed as a disc,
+//   ceil(sqrt(400 / pi)) = 12. Absent reads 12.
 // Validated at load: iterations >= 1, 0 < dead_band_permille < moving_overlap_permille < 1000,
-// side_horizon_factor >= 1.
+// side_horizon_factor >= 1, iterations <= crowd_iterations <= 1000, crowd_depth >= 1.
 (
     group_routing: (
         lane_tolerance_permille: 75,
@@ -62,5 +73,7 @@
         side_horizon_factor: 2,
         moving_friends_push: true,
         nudge_engaged_along_ring: true,
+        crowd_iterations: 21,
+        crowd_depth: 12,
     ),
 )

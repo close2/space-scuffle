@@ -8,8 +8,11 @@
 //! iterations over them: each iteration computes every pair's correction from the positions at
 //! its start, averages each body's corrections over the pairs that move it, and passes the
 //! averaged target through a terrain step (C-6); an iteration in which nothing moved ends the
-//! loop. A final pass over the hard pairs (enemies, and pairs in which one body may not move)
-//! sums its corrections without averaging (C-1b).
+//! loop. Past the `iterations` of C-3, the crowd extension C-3′ (plan
+//! `2026-11-26-friend-crowd-overlap` §4.1) keeps iterating while a friend pair overlaps by more
+//! than D-α's moving bound and the friends' summed excess over it still falls, up to
+//! `crowd_iterations` in all. A final pass over the hard pairs (enemies, and pairs in which one
+//! body may not move) sums its corrections without averaging (C-1b).
 //!
 //! # How it fits
 //! The movement phase fills the solver from the bodies' tick-start and committed positions and
@@ -21,8 +24,10 @@
 //! - **Order independence (C-1a).** A pair is stored with its lower-id body first, so its
 //!   correction does not depend on where either body sits in the list; corrections are summed in
 //!   Q32.32, which is exact integer addition; the division by a body's contact count and the
-//!   terrain step read that body alone; the early stop is a global test. The result is a
-//!   function of the set of bodies.
+//!   terrain step read that body alone; the early stop and C-3′'s two tests (an exact integer
+//!   sum over pairs) are global. The result is a function of the set of bodies.
+//! - A solve that ends within C-3's `iterations`, or reaches them with no friend pair above the
+//!   moving bound, is bit-identical whatever `crowd_iterations` is.
 //! - A body with a share of zero in a pair is never moved by it; a fixed body is never moved.
 //! - An overlap of at most the dead band (`dead_band_permille` of the radius sum) is never
 //!   corrected (C-4).
@@ -224,7 +229,19 @@ pub(crate) struct SolverBody {
 
 /// What one pair's geometry gives in an iteration: both bodies' corrections, shares applied,
 /// `None` within the dead band, or the arithmetic fault to report.
-type Correction = Result<Option<(SimVec2, SimVec2)>, MovementMathError>;
+type Correction = Result<Option<Corrected>, MovementMathError>;
+
+/// One pair's corrections outside the dead band.
+#[derive(Debug, Clone, Copy)]
+struct Corrected {
+    /// The first body's correction, world units.
+    delta_a: SimVec2,
+    /// The second body's correction, world units.
+    delta_b: SimVec2,
+    /// C-3′: for a friend pair, its overlap beyond D-α's moving bound (zero within it), world
+    /// units; zero for any other pair.
+    excess: SimScalar,
+}
 
 /// One pair that may touch, lower id first, with its shares.
 #[derive(Debug, Clone, Copy)]
@@ -244,6 +261,9 @@ struct Pair {
     radius_sum: SimScalar,
     /// The overlap at or below which the pair is left alone (C-4), world units.
     dead_band: SimScalar,
+    /// C-3′: for a friend pair, D-α's moving bound (`moving_overlap_permille` of the radius sum),
+    /// world units; `None` for an enemy pair.
+    moving_bound: Option<SimScalar>,
     /// The pair's correction at its bodies' positions when it was computed: reused while neither
     /// body has moved since, since it is a function of the two positions alone.
     cached: Option<Correction>,
@@ -274,8 +294,12 @@ struct Accumulator {
 pub(crate) struct SolverSettings {
     /// Jacobi iterations (C-3).
     pub iterations: u8,
+    /// C-3′: the most averaged iterations in all; at or below `iterations`, no extension.
+    pub crowd_iterations: u16,
     /// Dead band in thousandths of the radius sum (C-4).
     pub dead_band_permille: u16,
+    /// D-α's moving bound in thousandths of the radius sum, the bound C-3′ iterates to.
+    pub moving_overlap_permille: u16,
     /// D-β.
     pub moving_friends_push: bool,
 }
@@ -283,8 +307,9 @@ pub(crate) struct SolverSettings {
 /// What one solve did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) struct SolveReport {
-    /// Averaged iterations run before the early stop (at most the setting).
-    pub iterations: u8,
+    /// Averaged iterations run before the early stop: at most `iterations`, or with C-3′ at most
+    /// `crowd_iterations`.
+    pub iterations: u16,
     /// Pairs in the last list built.
     pub pairs: usize,
     /// Times the pair list was rebuilt within the solve (Verlet rule).
@@ -451,6 +476,9 @@ impl ContactSolver {
         };
         let band = i128::from(radius_sum.raw()) * permille / 1000;
         let dead_band = SimScalar::from_raw(i64::try_from(band).unwrap_or(i64::MAX));
+        let moving = i128::from(radius_sum.raw()) * i128::from(settings.moving_overlap_permille);
+        let moving_bound =
+            friends.then(|| SimScalar::from_raw(i64::try_from(moving / 1000).unwrap_or(i64::MAX)));
         self.pairs.push(Pair {
             a: u32::try_from(low).unwrap_or(u32::MAX),
             b: u32::try_from(high).unwrap_or(u32::MAX),
@@ -464,6 +492,7 @@ impl ContactSolver {
             nudge_b: b.party.nudge.filter(|_| friends),
             radius_sum,
             dead_band,
+            moving_bound,
             cached: None,
             cached_at: (0, 0),
         });
@@ -475,11 +504,22 @@ impl ContactSolver {
         self.pairs.len()
     }
 
-    /// Builds the pair list over [`Self::bodies`] and runs the K averaged iterations and the hard
-    /// pass (C-1, C-1b), rebuilding the list by the Verlet rule ([`PAIR_SLACK`]). `connected`
-    /// says whether two bodies may touch across the terrain between them; `terrain` takes a body,
-    /// its current position and the averaged target, and returns where the body may go: the
-    /// target, a slide along a wall, or `None` to stay (C-6).
+    /// Builds the pair list over [`Self::bodies`] and runs the K averaged iterations, C-3′'s
+    /// extension past them, and the hard pass (C-1, C-1b), rebuilding the list by the Verlet rule
+    /// ([`PAIR_SLACK`]). `connected` says whether two bodies may touch across the terrain between
+    /// them; `terrain` takes a body, its current position and the averaged target, and returns
+    /// where the body may go: the target, a slide along a wall, or `None` to stay (C-6).
+    // PERFORMANCE RATIONALE:
+    // Why: A crowd pressed against a front needs a number of averaged iterations that grows with
+    // the square of its depth (plan `2026-11-26-friend-crowd-overlap` §2.5), far more than C-3's
+    // K; running every tick to that count would multiply the cost of every capped tick.
+    // What: C-3′ iterates past K only while a friend pair is above D-α's moving bound and the
+    // friends' summed excess over it fell in the last iteration. The excess is summed inside
+    // `accumulate` from the overlaps it already computes (and the cached ones it reuses), so the
+    // test costs one addition per corrected pair and no separate scan.
+    // Trade-off: One addition per corrected pair in every averaged iteration, and with the
+    // extension on, one accumulation past K on a tick that reaches K, whose corrections are
+    // discarded when it shows no pair above the bound (the hard pass reuses its cached pairs).
     pub(crate) fn solve(
         &mut self,
         (settings, map_size): (SolverSettings, (u32, u32)),
@@ -491,9 +531,17 @@ impl ContactSolver {
         self.steps.clear();
         self.steps.resize(self.bodies.len(), BodyStep::default());
         let mut done = SolveReport::default();
-        for _ in 0..settings.iterations {
+        let fixed = u16::from(settings.iterations);
+        let mut last_excess: Option<i128> = None;
+        for iteration in 1..=settings.crowd_iterations.max(fixed) {
+            let excess = self.accumulate(Pass::Averaged, report);
+            // C-3′: past K, only while a friend pair is above the moving bound (a positive
+            // excess) and the last iteration reduced the excess.
+            if iteration > fixed && !(excess > 0 && last_excess.is_some_and(|last| excess < last)) {
+                break;
+            }
+            last_excess = Some(excess);
             done.iterations += 1;
-            self.accumulate(Pass::Averaged, report);
             if !self.apply(true, &mut terrain, report) {
                 break;
             }
@@ -528,7 +576,10 @@ impl ContactSolver {
     /// Sums the corrections of `pass`'s pairs from the current positions; a pair neither of whose
     /// bodies moved since its correction was computed reuses it (K-1: by the bodies' move counts,
     /// so a summed pass never reads a correction from positions before an earlier application).
-    fn accumulate(&mut self, pass: Pass, report: &mut impl FnMut(MovementInvariant)) {
+    /// Returns C-3′'s friend excess of those pairs at the current positions: the exact sum, in raw
+    /// Q32.32 units, of every friend pair's overlap beyond the moving bound.
+    fn accumulate(&mut self, pass: Pass, report: &mut impl FnMut(MovementInvariant)) -> i128 {
+        let mut excess = 0_i128;
         self.sums.clear();
         self.sums.resize(self.bodies.len(), Accumulator::default());
         for pair in &mut self.pairs {
@@ -551,9 +602,10 @@ impl ContactSolver {
             pair.cached_at = counts;
             match correction {
                 Ok(None) => {}
-                Ok(Some((delta_a, delta_b))) => {
-                    let added = add_to(&mut self.sums, ia, delta_a, pair.share_a)
-                        .and_then(|()| add_to(&mut self.sums, ib, delta_b, pair.share_b));
+                Ok(Some(corrected)) => {
+                    excess += i128::from(corrected.excess.raw());
+                    let added = add_to(&mut self.sums, ia, corrected.delta_a, pair.share_a)
+                        .and_then(|()| add_to(&mut self.sums, ib, corrected.delta_b, pair.share_b));
                     if let Err(source) = added {
                         report(MovementInvariant::Arithmetic {
                             entity: a.id,
@@ -569,6 +621,7 @@ impl ContactSolver {
                 }),
             }
         }
+        excess
     }
 
     /// Keeps the hard friend pass monotone (plan Amendment 15, O1): a body whose summed step has a
@@ -798,7 +851,8 @@ fn pair_normal(a: &SolverBody, b: &SolverBody) -> Result<SimVec2, MovementMathEr
     })
 }
 
-/// The pair's corrections for `a` and `b`, shares applied, or `None` within the dead band.
+/// The pair's corrections for `a` and `b`, shares applied, and its friend excess (C-3′), or `None`
+/// within the dead band.
 // PERFORMANCE RATIONALE:
 // Why: This runs for every listed pair in every iteration; a root for the distance and another
 // for the normal, each with 128-bit divisions, were most of the solver's cost (evidence §5.3).
@@ -847,7 +901,14 @@ fn pair_correction(pair: &Pair, a: &SolverBody, b: &SolverBody) -> Correction {
         super::math::checked_vec_neg(push(pair.share_b)?)?,
         pair.nudge_b,
     )?;
-    Ok(Some((delta_a, delta_b)))
+    let excess = pair.moving_bound.map_or(SimScalar::ZERO, |bound| {
+        overlap.saturating_sub(bound).max(SimScalar::ZERO)
+    });
+    Ok(Some(Corrected {
+        delta_a,
+        delta_b,
+        excess,
+    }))
 }
 
 #[cfg(test)]
@@ -974,7 +1035,9 @@ mod tests {
 
     const SETTINGS: SolverSettings = SolverSettings {
         iterations: 14,
+        crowd_iterations: 14,
         dead_band_permille: 10,
+        moving_overlap_permille: 50,
         moving_friends_push: true,
     };
 
@@ -1029,6 +1092,16 @@ mod tests {
         bodies: &[SolverBody],
         settings: SolverSettings,
     ) -> (ContactSolver, Vec<MovementInvariant>) {
+        let (solver, _, errors) = solve_reporting(world, bodies, settings);
+        (solver, errors)
+    }
+
+    /// [`solve_on`] with the solve's report.
+    fn solve_reporting(
+        world: &mut crate::SimWorld,
+        bodies: &[SolverBody],
+        settings: SolverSettings,
+    ) -> (ContactSolver, SolveReport, Vec<MovementInvariant>) {
         let mut solver = ContactSolver::default();
         solver.bodies.extend_from_slice(bodies);
         let mut errors = Vec::new();
@@ -1036,7 +1109,7 @@ mod tests {
         let map = &world.map;
         let size = (map.width(), map.height());
         let pathfinder = &mut world.pathfinder;
-        solver.solve(
+        let done = solver.solve(
             (settings, size),
             |a, b| bodies_touch(map, a, b),
             |body, target| {
@@ -1050,7 +1123,7 @@ mod tests {
             },
             &mut report,
         );
-        (solver, errors)
+        (solver, done, errors)
     }
 
     fn overlap_share(a: &SolverBody, b: &SolverBody) -> f64 {
@@ -1675,11 +1748,433 @@ mod tests {
             .iter()
             .find(|p| p.last)
             .ok_or("the enemy pair")?;
-        let Some((delta_a, delta_b)) = pair_correction(pair, a, b)? else {
+        let Some(Corrected {
+            delta_a, delta_b, ..
+        }) = pair_correction(pair, a, b)?
+        else {
             return Err("the enemy pair still overlaps after the averaged iteration".into());
         };
         assert_eq!(*target_a - a.position, delta_a, "first body's correction");
         assert_eq!(*target_b - b.position, delta_b, "second body's correction");
+        Ok(())
+    }
+
+    /// The shipped contact rules as solver settings, with C-3′'s cap `crowd_iterations`.
+    fn shipped_settings(crowd_iterations: u16) -> SolverSettings {
+        let contact = crate::test_support::shipped_catalogs()
+            .units
+            .movement_rules()
+            .contact();
+        SolverSettings {
+            iterations: contact.iterations,
+            crowd_iterations,
+            dead_band_permille: contact.dead_band_permille,
+            moving_overlap_permille: contact.moving_overlap_permille,
+            moving_friends_push: contact.moving_friends_push,
+        }
+    }
+
+    /// C-3′a's crowd from the shipped catalog (plan `2026-11-26-friend-crowd-overlap` §4.1): the
+    /// smallest collision radius of a mobile ground archetype, C-3's worst injection `ρ` (the
+    /// largest `(s_a + s_b) / (r_a + r_b)` over pairs of mobile ground archetypes, `s` the top
+    /// speed times the largest speed multiplier) and the catalog's `crowd_depth`.
+    fn catalog_crowd() -> (f64, f64, u16) {
+        let catalogs = crate::test_support::shipped_catalogs();
+        let ground: Vec<(f64, f64)> = catalogs
+            .units
+            .archetypes()
+            .filter(|a| a.mover_type == sim_types::MoverType::Ground && !a.is_immobile_by_default())
+            .map(|a| {
+                let multiplier = [
+                    a.overclock.map(|o| o.speed_multiplier),
+                    a.capabilities.attack_dash.map(|d| d.speed_multiplier),
+                ]
+                .into_iter()
+                .flatten()
+                .map(|m| f64::from(m.to_f32()))
+                .fold(1.0_f64, f64::max);
+                (
+                    f64::from(a.max_speed.to_f32()) * multiplier,
+                    f64::from(a.collision_radius.to_f32()),
+                )
+            })
+            .collect();
+        let radius = ground.iter().map(|g| g.1).fold(f64::INFINITY, f64::min);
+        let mut rho = 0.0_f64;
+        for (i, a) in ground.iter().enumerate() {
+            for b in &ground[i..] {
+                rho = rho.max((a.0 + b.0) / (a.1 + b.1));
+            }
+        }
+        let depth = catalogs.units.movement_rules().contact().crowd_depth;
+        (radius, rho, depth)
+    }
+
+    /// The bodies of a channel crowd: a front row of 12 holding bodies of radius `r` across a
+    /// channel 12 bodies wide whose left edge is `left`, and `depth` hexagonal rows behind it
+    /// (12 and 11 bodies alternately) standing in contact, all moving. Front first, ids from 1.
+    fn channel_crowd(
+        left: f64,
+        r: f64,
+        depth: u16,
+    ) -> Result<Vec<SolverBody>, Box<dyn std::error::Error>> {
+        let front_party = ContactParty {
+            holding: true,
+            ..party(0)
+        };
+        let walker = ContactParty {
+            moving: true,
+            ..party(0)
+        };
+        let mut bodies = Vec::new();
+        for row in 0..=depth {
+            let offset = f64::from(row % 2) * r;
+            let count = if row % 2 == 0 { 12 } else { 11 };
+            for column in 0..count {
+                let x = left + r + offset + 2.0 * r * f64::from(column);
+                let y = 10.0 + 2.0 * r * 0.866_025_4 * f64::from(row);
+                let id = u32::try_from(bodies.len())? + 1;
+                let who = if row == 0 { front_party } else { walker };
+                bodies.push(solver_body(id, who, r, at(x, y), at(x, y)));
+            }
+        }
+        Ok(bodies)
+    }
+
+    /// The whole cells a channel 12 bodies of radius `r` wide takes: `⌈24 r⌉`.
+    fn channel_cells(r: f64) -> Result<u32, Box<dyn std::error::Error>> {
+        Ok((1..40)
+            .find(|&cells| f64::from(cells) >= 24.0 * r)
+            .ok_or("a channel narrower than the map")?)
+    }
+
+    /// A 40 × 40 world with a channel of walkable ground `width` cells wide from column 14:
+    /// columns 13 and `14 + width` are walls.
+    fn channel_world(width: u32) -> Result<crate::SimWorld, Box<dyn std::error::Error>> {
+        let mut map = sim_map::GameMap::new(
+            40,
+            40,
+            sim_map::MapCell::default_ground(sim_map::CliffLevel(0)),
+        )?;
+        for y in 0..40 {
+            map.cell_mut(13, y)?.flags = sim_map::CellFlags::empty();
+            map.cell_mut(14 + width, y)?.flags = sim_map::CellFlags::empty();
+        }
+        Ok(crate::test_support::world(map, 3))
+    }
+
+    /// What P-1's scene did: the largest friend overlap share over pairs the solver corrects
+    /// (not both holding) at the end of any tick from tick 25 on, and every tick's iterations.
+    struct CrowdRun {
+        worst: f64,
+        iterations: Vec<u16>,
+    }
+
+    /// Ticks P-1's crowd is stepped, and the tick from which it is judged (one second to fill).
+    const CROWD_TICKS: usize = 100;
+    const CROWD_JUDGED_FROM: usize = 25;
+
+    /// P-1's scene (plan `2026-11-26-friend-crowd-overlap` §4.1, C-3′a): [`channel_crowd`] of the
+    /// catalog's crowd, every walker stepping `ρ · r` toward the front each tick, solved with the
+    /// shipped settings and the cap `crowd_iterations`, each tick starting where the last ended.
+    fn crowd_run(crowd_iterations: u16) -> Result<CrowdRun, Box<dyn std::error::Error>> {
+        let (r, rho, depth) = catalog_crowd();
+        let mut world = channel_world(channel_cells(r)?)?;
+        let settings = shipped_settings(crowd_iterations);
+        let mut bodies = channel_crowd(14.0, r, depth)?;
+        let step = SimScalar::from_num(rho * r);
+        let mut run = CrowdRun {
+            worst: 0.0,
+            iterations: Vec::new(),
+        };
+        for tick in 0..CROWD_TICKS {
+            for body in &mut bodies {
+                body.start = body.position;
+                if !body.party.holding {
+                    body.position.y = body.position.y.saturating_sub(step);
+                }
+            }
+            let (solved, report, errors) = solve_reporting(&mut world, &bodies, settings);
+            if !errors.is_empty() {
+                return Err(format!("tick {tick}: {errors:?}").into());
+            }
+            bodies.clone_from(&solved.bodies);
+            run.iterations.push(report.iterations);
+            if tick + 1 >= CROWD_JUDGED_FROM {
+                for (i, a) in bodies.iter().enumerate() {
+                    for b in &bodies[i + 1..] {
+                        if !(a.party.holding && b.party.holding) {
+                            run.worst = run.worst.max(overlap_share(a, b));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(run)
+    }
+
+    /// D-α's moving bound of the shipped catalog, a share of the radius sum.
+    fn moving_bound() -> f64 {
+        f64::from(shipped_settings(0).moving_overlap_permille) / 1000.0
+    }
+
+    /// P-1 (plan `2026-11-26-friend-crowd-overlap` WP1, the derivation of C-3′a): a crowd
+    /// `crowd_depth` rows deep and 12 wide of the catalog's smallest ground radius, every body
+    /// stepping by the catalog's worst injection toward a row of holding bodies, breaks D-α's
+    /// moving bound with C-3's K alone (stop rule 1: were it within, the diagnosis of B-219 would
+    /// be wrong); the smallest `crowd_iterations` that keeps every friend pair within the bound
+    /// from tick 25 on is found and printed (WP2 writes it into the data), and one fewer fails.
+    #[test]
+    fn a_crowd_pressing_a_front_stays_within_the_moving_bound(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let bound = moving_bound();
+        let k = u16::from(shipped_settings(0).iterations);
+        let without = crowd_run(k)?;
+        assert!(
+            without.worst > bound,
+            "the crowd stays within the bound at K = {k} ({:.4}): B-219's diagnosis is wrong",
+            without.worst
+        );
+        let passes = |cap: u16| crowd_run(cap).map(|run| run.worst <= bound);
+        let most = crate::catalog::MAX_CROWD_ITERATIONS;
+        assert!(
+            passes(most)?,
+            "no cap up to {most} keeps the crowd within the bound"
+        );
+        let (mut low, mut high) = (k, most);
+        while high - low > 1 {
+            let middle = low + (high - low) / 2;
+            if passes(middle)? {
+                high = middle;
+            } else {
+                low = middle;
+            }
+        }
+        let derived = crowd_run(high)?;
+        let fewer = crowd_run(high - 1)?;
+        println!(
+            "C-3′a: crowd_iterations {high} (worst {:.4}; {} gives {:.4}; K {k} gives {:.4})",
+            derived.worst,
+            high - 1,
+            fewer.worst,
+            without.worst
+        );
+        assert!(derived.worst <= bound && fewer.worst > bound);
+        Ok(())
+    }
+
+    /// P-5 (plan `2026-11-26-friend-crowd-overlap` WP1): the shipped `crowd_iterations` covers the
+    /// catalog's crowd: with the extension on, P-1's scene stays within D-α's moving bound at the
+    /// shipped cap, so a catalog change that deepens the crowd or speeds its injection fails here
+    /// until the data follows (as C-3's test does for K). Shipped switched off (equal to
+    /// `iterations`, owner question Q0118), it pins that the shipped solve is today's.
+    #[test]
+    fn crowd_iterations_cover_the_catalogs_crowd() -> Result<(), Box<dyn std::error::Error>> {
+        let contact = crate::test_support::shipped_catalogs()
+            .units
+            .movement_rules()
+            .contact();
+        if !contact.crowd_extension_on() {
+            assert_eq!(contact.crowd_iterations, u16::from(contact.iterations));
+            return Ok(());
+        }
+        let run = crowd_run(contact.crowd_iterations)?;
+        assert!(
+            run.worst <= moving_bound(),
+            "crowd_iterations {} leaves {:.4}",
+            contact.crowd_iterations,
+            run.worst
+        );
+        Ok(())
+    }
+
+    /// P-6 (plan `2026-11-26-friend-crowd-overlap` WP1), a cost guard: with the validation's
+    /// largest cap, no tick of P-1's scene runs to it: the progress test and the bound end every
+    /// solve first. Prints the mean and largest iterations per tick.
+    #[test]
+    fn the_crowd_extension_ends_before_the_cap() -> Result<(), Box<dyn std::error::Error>> {
+        let most = crate::catalog::MAX_CROWD_ITERATIONS;
+        let run = crowd_run(most)?;
+        let largest = run.iterations.iter().copied().max().unwrap_or(0);
+        let total: u32 = run.iterations.iter().map(|&i| u32::from(i)).sum();
+        println!(
+            "P-6: iterations per tick mean {:.1}, largest {largest}",
+            f64::from(total) / f64::from(u32::try_from(run.iterations.len())?)
+        );
+        assert!(largest < most, "a tick ran to the cap {most}");
+        Ok(())
+    }
+
+    /// The bodies' positions by id.
+    fn positions(solver: &ContactSolver) -> Vec<(EntityId, SimVec2)> {
+        let mut out: Vec<_> = solver.bodies.iter().map(|b| (b.id, b.position)).collect();
+        out.sort_by_key(|p| p.0);
+        out
+    }
+
+    /// The largest friend overlap share among `bodies` over pairs not both holding.
+    fn worst_friend(bodies: &[SolverBody]) -> f64 {
+        let mut worst = 0.0_f64;
+        for (i, a) in bodies.iter().enumerate() {
+            for b in &bodies[i + 1..] {
+                if a.party.owner == b.party.owner && !(a.party.holding && b.party.holding) {
+                    worst = worst.max(overlap_share(a, b));
+                }
+            }
+        }
+        worst
+    }
+
+    /// P-2 (plan `2026-11-26-friend-crowd-overlap` WP1): the extension runs only above D-α's
+    /// moving bound. Every C-3 crowd that ends within 5 % at K stops at K with the extension on,
+    /// bit-identical to the extension off. P-1's crowd, pressed for 29 ticks with the extension
+    /// on and stepped once more, ends that tick's solve above the bound at K, and with the
+    /// extension on it continues past K and ends within the bound before the cap.
+    #[test]
+    fn the_extension_runs_only_above_the_moving_bound() -> Result<(), Box<dyn std::error::Error>> {
+        let mut world = flat_world(None)?;
+        let (off, on) = (shipped_settings(0), shipped_settings(1000));
+        let off = SolverSettings {
+            crowd_iterations: u16::from(off.iterations),
+            ..off
+        };
+        let mut within = 0;
+        for seed in 1..=200 {
+            let bodies = injected_crowd(seed)?;
+            let (one, report_off, e1) = solve_reporting(&mut world, &bodies, off);
+            if worst_friend(&one.bodies) > moving_bound() {
+                continue;
+            }
+            within += 1;
+            let (two, report_on, e2) = solve_reporting(&mut world, &bodies, on);
+            assert_eq!((e1, e2), (vec![], vec![]));
+            assert!(
+                report_on.iterations <= u16::from(off.iterations),
+                "seed {seed}"
+            );
+            assert_eq!(report_on, report_off, "seed {seed}");
+            assert_eq!(positions(&one), positions(&two), "seed {seed}");
+        }
+        assert!(within > 150, "{within} crowds within the bound");
+        let (r, rho, depth) = catalog_crowd();
+        let mut channel = channel_world(channel_cells(r)?)?;
+        let mut bodies = channel_crowd(14.0, r, depth)?;
+        let step = SimScalar::from_num(rho * r);
+        for tick in 0..30 {
+            for body in &mut bodies {
+                body.start = body.position;
+                if !body.party.holding {
+                    body.position.y = body.position.y.saturating_sub(step);
+                }
+            }
+            if tick == 29 {
+                break;
+            }
+            let (solved, _, errors) = solve_reporting(&mut channel, &bodies, on);
+            assert_eq!(errors, []);
+            bodies.clone_from(&solved.bodies);
+        }
+        let (stopped, report_off, _) = solve_reporting(&mut channel, &bodies, off);
+        let (extended, report_on, errors) = solve_reporting(&mut channel, &bodies, on);
+        assert_eq!(errors, []);
+        assert_eq!(report_off.iterations, u16::from(off.iterations));
+        assert!(worst_friend(&stopped.bodies) > moving_bound());
+        assert!(
+            report_on.iterations > report_off.iterations
+                && report_on.iterations < on.crowd_iterations,
+            "{report_on:?}"
+        );
+        let worst = worst_friend(&extended.bodies);
+        assert!(
+            worst <= moving_bound(),
+            "worst {worst:.4} after {report_on:?}"
+        );
+        Ok(())
+    }
+
+    /// P-7 (plan `2026-11-26-friend-crowd-overlap` WP1, the constructed form of harness scene
+    /// corner 248): a walker wedged between a holding friend in front and a presser behind it,
+    /// itself pressed against a second holding friend, all on one line with less room between
+    /// the holders than the two bodies need. No solution lies within the bound, and since the
+    /// holders do not move, the overlaps along the line always sum to the same length: while
+    /// every pair is above the bound the friends' excess cannot fall, though the bodies still
+    /// move toward their balance. The extension stops at the first iteration past K (whose
+    /// excess did not fall), so the solve is bit-identical to the extension off and no friend
+    /// overlap ends larger; without the progress test it would run on.
+    #[test]
+    fn the_extension_stops_when_it_makes_no_progress() -> Result<(), Box<dyn std::error::Error>> {
+        let mut world = flat_world(None)?;
+        let (off, on) = (shipped_settings(0), shipped_settings(1000));
+        let off = SolverSettings {
+            crowd_iterations: u16::from(off.iterations),
+            ..off
+        };
+        let r = 0.375;
+        let holder = ContactParty {
+            holding: true,
+            ..party(0)
+        };
+        let walker = ContactParty {
+            moving: true,
+            ..party(0)
+        };
+        // Centres 0.525, 0.675 and 0.6 apart (overlaps 30 %, 10 % and 20 % of 0.75), the walker
+        // and the presser stepped toward the front holder this tick.
+        let line = [20.0, 20.525, 21.2, 21.8];
+        let bodies = [
+            solver_body(1, holder, r, at(line[0], 20.0), at(line[0], 20.0)),
+            solver_body(2, walker, r, at(line[1] + 0.1, 20.0), at(line[1], 20.0)),
+            solver_body(3, walker, r, at(line[2] + 0.1, 20.0), at(line[2], 20.0)),
+            solver_body(4, holder, r, at(line[3], 20.0), at(line[3], 20.0)),
+        ];
+        let (stopped, report_off, e1) = solve_reporting(&mut world, &bodies, off);
+        let (extended, report_on, e2) = solve_reporting(&mut world, &bodies, on);
+        assert_eq!((e1, e2), (vec![], vec![]));
+        assert_eq!(
+            report_off.iterations,
+            u16::from(off.iterations),
+            "{report_off:?}"
+        );
+        assert!(
+            worst_friend(&stopped.bodies) > moving_bound(),
+            "{report_off:?}"
+        );
+        assert_eq!(report_on, report_off);
+        assert_eq!(positions(&extended), positions(&stopped));
+        Ok(())
+    }
+
+    /// P-3 (plan `2026-11-26-friend-crowd-overlap` WP1): with the extension on, every
+    /// permutation of a random mixed crowd gives bit-identical positions, under D-β on and off;
+    /// the crowds are solved with K = 4 so that the extension runs.
+    #[test]
+    fn the_extension_does_not_depend_on_body_order() -> Result<(), Box<dyn std::error::Error>> {
+        let mut world = flat_world(Some(30))?;
+        let mut extended = 0;
+        for seed in 1..=30 {
+            for push in [true, false] {
+                let settings = SolverSettings {
+                    iterations: 4,
+                    crowd_iterations: 400,
+                    moving_friends_push: push,
+                    ..SETTINGS
+                };
+                let bodies = crowd(seed, 48);
+                let mut shuffled = bodies.clone();
+                let mut rng = Stream(seed ^ 0x5EED);
+                for last in (1..shuffled.len()).rev() {
+                    let pick = usize::try_from(rng.below(last as u64 + 1))?;
+                    shuffled.swap(last, pick);
+                }
+                let (one, r1, e1) = solve_reporting(&mut world, &bodies, settings);
+                let (two, r2, e2) = solve_reporting(&mut world, &shuffled, settings);
+                assert_eq!((e1, e2), (vec![], vec![]));
+                assert_eq!(r1, r2, "seed {seed}, D-β {push}");
+                extended += u32::from(r1.iterations > 4);
+                assert_eq!(positions(&one), positions(&two), "seed {seed}, D-β {push}");
+            }
+        }
+        assert!(extended >= 10, "{extended} solves extended");
         Ok(())
     }
 

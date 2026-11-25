@@ -271,9 +271,11 @@ pub(crate) struct MovementWorkspace {
     pair_scratch: Vec<usize>,
     /// The contact solver's retained buffers (plan `2026-11-20-contact-solver` C-1).
     pub(crate) solver: solver::ContactSolver,
-    /// Averaged iterations the contact solver ran in the latest collision phase; 0 under the legacy
-    /// pipeline. Derived output for the cost report: never read by the simulation, never hashed.
-    contact_iterations: u8,
+    /// Averaged iterations the contact solver ran in the latest collision phase, C-3′'s extension
+    /// included; 0 under the legacy pipeline. Derived output for the cost report and the probe
+    /// counter of plan `2026-11-26-friend-crowd-overlap`: never read by the simulation, never
+    /// hashed.
+    contact_iterations: u16,
     /// Pair-list rebuilds of the contact solver in the latest collision phase (Verlet rule).
     /// Derived output for the cost report, like [`Self::contact_iterations`].
     contact_rebuilds: u8,
@@ -523,10 +525,12 @@ impl SimWorld {
     }
 
     /// Averaged iterations the contact solver ran in the latest collision phase (plan
-    /// `2026-11-20-contact-solver` C-1, the early stop); 0 under the legacy pipeline. Derived
-    /// output for the cost report, excluded from checksums and never consulted by the simulation.
+    /// `2026-11-20-contact-solver` C-1, the early stop), C-3′'s extension past the catalog's
+    /// `contact.iterations` included (plan `2026-11-26-friend-crowd-overlap` §4.1); 0 under the
+    /// legacy pipeline. Derived output for the cost report and the trace's extension counters,
+    /// excluded from checksums and never consulted by the simulation.
     #[must_use]
-    pub fn contact_iterations(&self) -> u8 {
+    pub fn contact_iterations(&self) -> u16 {
         self.movement.contact_iterations
     }
 

@@ -417,7 +417,9 @@ impl SimWorld {
         }
         let settings = SolverSettings {
             iterations: contact.iterations,
+            crowd_iterations: contact.crowd_iterations,
             dead_band_permille: contact.dead_band_permille,
+            moving_overlap_permille: contact.moving_overlap_permille,
             moving_friends_push: contact.moving_friends_push,
         };
         let (map, pathfinder) = (&self.map, &mut self.pathfinder);

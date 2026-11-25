@@ -6,14 +6,16 @@
 //! `FollowRangeSlop`, plan `2026-11-26-follow-order` D-4) and the contact rules of plan
 //! `2026-11-20-contact-solver` (§3.6): which movement pipeline runs, the contact solver's
 //! iteration count, its dead band and moving-overlap bound (sanctioned deviation D-α), the side
-//! rule's horizon factor and the D-β switch. It is parsed into [`MovementRules`], validated, and
+//! rule's horizon factor, the D-β switch, and the crowd extension C-3′ of plan
+//! `2026-11-26-friend-crowd-overlap` (`crowd_iterations`, `crowd_depth`). It is parsed into [`MovementRules`], validated, and
 //! carried by the [`UnitCatalog`](super::UnitCatalog) the world is built with. Like every catalog
 //! it is not hashed; lockstep peers must load equal files.
 //!
 //! Invariants: a [`MovementRules`] value always has a tolerance in `0..=1000` permille, a leash
 //! radius of at least one world unit, a whole follow slop of at least zero world units, and
 //! [`ContactRules`] with at least one iteration,
-//! `0 < dead_band_permille < moving_overlap_permille < 1000` and a horizon factor of at least 1.
+//! `0 < dead_band_permille < moving_overlap_permille < 1000`, a horizon factor of at least 1,
+//! `iterations ≤ crowd_iterations ≤ 1000` and a crowd depth of at least 1.
 
 use crate::error::{SimCoreError, SimResult};
 use serde::Deserialize;
@@ -32,6 +34,15 @@ pub const STARCRAFT_ACQUIRE_LEASH_RADIUS: u16 = 21;
 /// carry it; the file authors the shipped value.
 pub const STARCRAFT_FOLLOW_RANGE_SLOP: u16 = 1;
 
+/// The most averaged iterations per tick C-3′ may run (plan `2026-11-26-friend-crowd-overlap`
+/// §4.1): a bound on the cost of one tick, far above any derived value.
+pub const MAX_CROWD_ITERATIONS: u16 = 1000;
+
+/// C-3′a's reference crowd depth, in bodies (plan `2026-11-26-friend-crowd-overlap` §4.1): the
+/// throughput reference army of 400 units packed as a disc against a front, `⌈√(400 / π)⌉ = 12`.
+/// The depth a file that omits `crowd_depth` reads.
+pub const REFERENCE_CROWD_DEPTH: u16 = 12;
+
 /// Which local movement pipeline the tick runs (plan `2026-11-20-contact-solver` §3.6, a
 /// migration switch until the legacy pipeline is deleted).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -46,7 +57,7 @@ pub enum MovementPipeline {
 
 /// The contact rules of `movement_rules.ron` (plan `2026-11-20-contact-solver` §3.3, §3.6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(from = "ContactRulesFile")]
 pub struct ContactRules {
     /// The pipeline the tick runs.
     pub pipeline: MovementPipeline,
@@ -68,13 +79,66 @@ pub struct ContactRules {
     pub moving_friends_push: bool,
     /// Deviation D-δ (Q0095, Q0052 addendum): allies may nudge an engaged melee unit along its
     /// attack ring, never out of range, never by enemies, never on Hold Position. On when absent.
-    #[serde(default = "nudge_default")]
     pub nudge_engaged_along_ring: bool,
+    /// C-3′ (plan `2026-11-26-friend-crowd-overlap` §4.1): the most averaged iterations per tick
+    /// in all. Past `iterations`, the solver keeps iterating while a friend pair overlaps by more
+    /// than `moving_overlap_permille` and the friends' summed excess over it still falls. Equal
+    /// to `iterations` switches the extension off; a file that omits it reads `iterations`.
+    pub crowd_iterations: u16,
+    /// C-3′a: the depth, in bodies, of the deepest crowd behind a front for which
+    /// `crowd_iterations` is derived; [`REFERENCE_CROWD_DEPTH`] when the file omits it. Read by
+    /// the derivation test only.
+    pub crowd_depth: u16,
+}
+
+/// The contact section as `movement_rules.ron` writes it: `nudge_engaged_along_ring`,
+/// `crowd_iterations` and `crowd_depth` may be absent.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ContactRulesFile {
+    pipeline: MovementPipeline,
+    iterations: u8,
+    dead_band_permille: u16,
+    moving_overlap_permille: u16,
+    side_horizon_factor: u8,
+    moving_friends_push: bool,
+    #[serde(default = "nudge_default")]
+    nudge_engaged_along_ring: bool,
+    #[serde(default, deserialize_with = "present")]
+    crowd_iterations: Option<u16>,
+    #[serde(default = "crowd_depth_default")]
+    crowd_depth: u16,
+}
+
+impl From<ContactRulesFile> for ContactRules {
+    fn from(file: ContactRulesFile) -> Self {
+        Self {
+            pipeline: file.pipeline,
+            iterations: file.iterations,
+            dead_band_permille: file.dead_band_permille,
+            moving_overlap_permille: file.moving_overlap_permille,
+            side_horizon_factor: file.side_horizon_factor,
+            moving_friends_push: file.moving_friends_push,
+            nudge_engaged_along_ring: file.nudge_engaged_along_ring,
+            crowd_iterations: file.crowd_iterations.unwrap_or(u16::from(file.iterations)),
+            crowd_depth: file.crowd_depth,
+        }
+    }
 }
 
 /// D-δ is on unless the file switches it off (Q0095).
 const fn nudge_default() -> bool {
     true
+}
+
+/// A field the file writes as a plain value, `None` only when it is absent (`serde(default)`).
+fn present<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<u16>, D::Error> {
+    u16::deserialize(deserializer).map(Some)
+}
+
+/// C-3′a's depth when the file omits it.
+const fn crowd_depth_default() -> u16 {
+    REFERENCE_CROWD_DEPTH
 }
 
 impl ContactRules {
@@ -88,7 +152,15 @@ impl ContactRules {
         side_horizon_factor: 2,
         moving_friends_push: true,
         nudge_engaged_along_ring: true,
+        crowd_iterations: 21,
+        crowd_depth: REFERENCE_CROWD_DEPTH,
     };
+
+    /// Whether C-3′ is switched on: `crowd_iterations` above `iterations`.
+    #[must_use]
+    pub fn crowd_extension_on(&self) -> bool {
+        self.crowd_iterations > u16::from(self.iterations)
+    }
 
     /// These rules if they are valid (§3.6).
     ///
@@ -114,6 +186,15 @@ impl ContactRules {
         }
         if self.side_horizon_factor == 0 {
             return Err(invalid("side_horizon_factor", "must be at least 1"));
+        }
+        if self.crowd_iterations < u16::from(self.iterations) {
+            return Err(invalid("crowd_iterations", "must be at least iterations"));
+        }
+        if self.crowd_iterations > MAX_CROWD_ITERATIONS {
+            return Err(invalid("crowd_iterations", "must be at most 1000"));
+        }
+        if self.crowd_depth == 0 {
+            return Err(invalid("crowd_depth", "must be at least 1"));
         }
         Ok(self)
     }
@@ -436,6 +517,41 @@ mod tests {
             );
         }
     }
+    /// P-4 (plan `2026-11-26-friend-crowd-overlap` WP1): `crowd_iterations` absent reads
+    /// `iterations` (the extension off) and `crowd_depth` absent reads the reference depth; a
+    /// value below `iterations`, above 1,000 or a zero depth is refused with a typed error naming
+    /// the field.
+    #[test]
+    fn the_crowd_fields_default_off_and_are_validated() -> SimResult<()> {
+        let absent = MovementRules::from_ron_str(&text(21, CONTACT))?.contact();
+        assert_eq!(absent.crowd_iterations, 21);
+        assert!(!absent.crowd_extension_on());
+        assert_eq!(absent.crowd_depth, REFERENCE_CROWD_DEPTH);
+        let with = |fields: &str| CONTACT.replace("true)", &format!("true, {fields})"));
+        let on =
+            MovementRules::from_ron_str(&text(21, &with("crowd_iterations: 120, crowd_depth: 9")))?
+                .contact();
+        assert_eq!((on.crowd_iterations, on.crowd_depth), (120, 9));
+        assert!(on.crowd_extension_on());
+        let most = MovementRules::from_ron_str(&text(21, &with("crowd_iterations: 1000")))?;
+        assert_eq!(most.contact().crowd_iterations, MAX_CROWD_ITERATIONS);
+        for (fields, field) in [
+            ("crowd_iterations: 20", "crowd_iterations"),
+            ("crowd_iterations: 1001", "crowd_iterations"),
+            ("crowd_depth: 0", "crowd_depth"),
+        ] {
+            let result = MovementRules::from_ron_str(&text(21, &with(fields)));
+            assert!(
+                matches!(
+                    &result,
+                    Err(SimCoreError::CatalogInvalidValue { field: named, .. }) if named == field
+                ),
+                "{fields}: {result:?}"
+            );
+        }
+        Ok(())
+    }
+
     /// Deviation D-δ (Q0095): the nudge switch is on when the file omits it, and the file can
     /// switch it off.
     #[test]

@@ -78,3 +78,26 @@ Why the current solver hits `50–170` rounds on 10-deep crowds: a **Jacobi** po
 
 7. **Velocity Obstacles (RVO2 / ORCA)** (*van den Berg et al. 2008/2011*):
    - Already known from `VO-4` and `Q0097` Update 2 to deadlock in corners, narrow chokes, and against immovable obstacles/attackers; generally inferior to hybrids above for SC2-style combat.
+
+## Update (implementation agent, 2026-11-25): (a) measured, stopped for review
+
+The switch-over to option (a) was measured against its pre-registered checks (plan
+`2026-11-26-friend-crowd-overlap` Amendment 1, evidence `2026-11-26-friend-crowd-overlap` §5). It does what it was
+for: friendly pairs above 5 % fall by 99 % in the four big zergling battles (battle 26: 1,008 → 10 per run, worst
+43.6 % → 7.9 %), and nothing changes where crowds stay within the bound. Cost: +47 % on the 64 × 64 benchmark, +43 %
+on canyon (about 56 ticks per second projected; it could not be measured on a quiet host). But the plan's stop rules
+were hit: battle 27's worst overlap stays at 11 % (above the 10 % target), zerglings in battle 27 stand with room
+more often, and battles not on the close list (29, 30, 34) change results within their noise. So the change is
+built but switched off, and is waiting for review; no answer is needed from you unless you want to waive those
+checks. Your blank-sheet guidance above is noted for the next movement round.
+
+## Resolution
+
+Answered (a). Plan `2026-11-26-friend-crowd-overlap` built it: WP0 (the measurement repair) and WP1 (C-3′, with its
+cap `crowd_iterations` 151 derived by P-1) are merged, but **latent**: the shipped `movement_rules.ron` keeps the
+extension off, so no world changes. The switch-over (WP2) stopped on its pre-registered checks (update above, evidence
+§5): it removes 99 % of the friendly overlap, but battle 27 stays at 11 % against the 10 % target, a few behaviour
+checks miss narrowly, and three non-close battles move within their noise. The orchestrator did not waive the checks.
+Following the owner's strategic guidance and Q0120 (a), the switch is decided inside the movement redesign (plan
+`2026-11-27-gated-movement`, being written), which takes C-3′ switched on as its cost baseline (Q0124 (a)) and judges
+it together with the new contact rules. B-219 stays open until then.
