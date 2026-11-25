@@ -631,3 +631,29 @@ Recommendation: (a).
   `balancemulti`, follows `parent=`, and prints each unit's effective flags with layer and line). Run with
   `python3 -I collide.py ~/scratch/combat_wp3_data Colossus Zergling …`.
 - `~/scratch/collision-classes/` for binaries, worlds, probes and traces.
+
+---
+
+## As built (implementation agent, 2026-11-25)
+
+Branch `collision-classes-plan`, from `main` `f390c4a2` (B-208 landed) and merged with `main` `91350af1` (rallies,
+schema 48). Figures in evidence [`2026-11-25-collision-classes`](../evidence/2026-11-25-collision-classes.md).
+
+| WP | State | Commit |
+|---|---|---|
+| WP0 | Done: B-211, B-212, B-213 registered; base `0d3c6d0b`, the close-battle list (21 battles in Class R) and the census fixed before WP1's first build (evidence §1) | `cd95a3ad` |
+| WP1 | Done, latent: D-1 to D-3 and R-8; every measured world byte-identical to WP0 under both pipelines (evidence §2); A-1 to A-9 red first | `6bcb6f8b` |
+| WP2 | Done: D-6, B-212 fixed; every measured world byte-identical; A-10 red first | `82723f29` |
+| WP3 | **Parked** on branch `collision-classes-wp3-wip` (head `42761cf2`), reverted here: only battle 26 moved (zerglings win 24 of 24, two seeds of record above the range), and B4, B6 and B7′ failed against the WP0 base, so it was not restated (§7.3, stop rule 7); pending the owner's question Q0117 | `d0c67ceb`, reverted |
+| WP4 | Not run: held-out seeds and the client capture belong with WP3; throughput and the golden proof were measured on WP3's tree and the merged tree (evidence §4) | — |
+
+**Deviations from the plan as written:**
+- `CollisionClass` is defined in `sim_types` (`ids.rs`) and re-exported as `sim_core::movement::CollisionClass`, because
+  the resolved mode spec `UnitModeSpec` lives in `sim_types` (§13).
+- A-10 is a unit test in `production/exits.rs` using a `#[cfg(test)]` catalog helper
+  (`UnitCatalog::author_collision_class_for_test`) to author a class on an edited archetype.
+- A-1 checks the archetypes and modes that author no class (on WP3's tree the colossus analogue's class differs by
+  design). A-8 and A-12 pick melee weapons that fire only at rest (`AllowedMovement::Stopped`); A-12 orders the attack
+  explicitly on an unarmed, holding target (an unarmed unit is no automatic target), and reads "not held by its body"
+  as: every unit outside its band still walks or touches a friend. A-11 and A-12 live on the parked branch.
+- The schema stays at 48: no hashed state was added.
