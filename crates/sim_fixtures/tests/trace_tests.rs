@@ -760,3 +760,142 @@ fn a_delayed_instant_weapons_release_replays_no_strike() -> TestResult {
     }
     Ok(())
 }
+
+/// One unarmed scratch body of A-9 in the catalog's RON form: radius 0.5, the authored `class`.
+fn meter_body(slug: &str, id: u16, class: Option<&str>) -> String {
+    let class = class.map_or_else(String::new, |name| {
+        format!("collision_class: Some(\"{name}\"),")
+    });
+    format!(
+        r#"(
+            slug: "{slug}", unit_type_id: {id}, faction: "automaton_directorate",
+            display_name: "{slug}", lore: "Scratch archetype of trace_tests.rs.",
+            sc2_analogue: "None", showcase_hero: false, showcase_order: None,
+            shape: UnitSphere, silhouette: LightProngs, mover_type: Ground,
+            attributes: (bits: 1), max_hp: 100.0, max_shields: 0.0, max_energy: 0.0,
+            start_energy: 0.0, life_armor: 0.0, shield_armor: 0.0, hp_regen_per_tick: 0.0,
+            shield_regen_per_tick: 0.0, energy_regen_per_tick: 0.0, max_speed: 0.15,
+            acceleration: 0.15, deceleration: 0.15, turn_rate_deg_per_tick: 180.0,
+            collision_radius: 0.5, separation_radius: 0.5, push_priority: 10, sight_radius: 8.0,
+            scan_range: 8.0, attack_target_priority: 20, primary_weapon: Either,
+            acquire_tie_break: Closest, mineral_cost: 50, gas_cost: 0, supply_cost: 1,
+            supply_provided: 0, build_time_ticks: 100, weapon: None,
+            {class}
+        ),"#
+    )
+}
+
+/// The figures A-9 reads from one scene: the enemy overlap, its pair-ticks, side 1's D-SHOVE and
+/// side 0's D-R10 `free` unit-ticks.
+type MeterFigures = (f64, u32, f64, u32);
+
+/// A-9's scene (plan `2026-11-25-collision-classes` A-9): an enemy pair overlapping by 60 % of
+/// its radius sum, of classes `pair` (`true` is the authored class `x`, `false` ground), whose
+/// player 1 body is moved 0.1 away from the other between two observations (a shove), and a
+/// ground melee chaser of player 0 standing on an automatic chase of a far target while another
+/// enemy's ring is covered by eight friends of class `blockers`.
+fn meter_scene(pair: (bool, bool), blockers: bool) -> Result<MeterFigures, Box<dyn Error>> {
+    use sim_core::SimWorld;
+    use sim_fixtures::trace::contact_checks::ContactMeter;
+    use sim_types::{AttackOrigin, PlayerId, SimScalar, SimVec2, UnitOrder};
+    let units = sim_fixtures::UNITS_RON;
+    let list_end = units.rfind(']').ok_or("end of the unit list")?;
+    let edited = format!(
+        "{}{}\n{}\n{}",
+        &units[..list_end],
+        meter_body("meter_x", 240, Some("x")),
+        meter_body("meter_ground", 241, None),
+        &units[list_end..]
+    );
+    let factions = sim_fixtures::shipped_factions();
+    let mut catalog =
+        UnitCatalog::from_ron_str_bundle(&factions, &edited, sim_fixtures::STRUCTURES_RON)?;
+    let upgrades = UpgradeCatalog::from_ron_str(&factions, sim_fixtures::UPGRADES_RON)?;
+    let x = catalog.id_by_slug("meter_x").ok_or("x")?;
+    let ground = catalog.id_by_slug("meter_ground").ok_or("ground")?;
+    let weapon = catalog
+        .archetypes()
+        .filter_map(|arch| arch.ground_weapon.clone())
+        .find(|w| {
+            w.melee
+                && w.splash.is_none()
+                && w.min_range == SimScalar::ZERO
+                && w.allowed_movement == sim_types::AllowedMovement::Stopped
+        })
+        .ok_or("a shipped melee weapon")?;
+    let mut chaser_arch = catalog.get(ground)?.clone();
+    chaser_arch.unit_type_id = sim_types::UnitTypeId(242);
+    chaser_arch.slug = "meter_chaser".into();
+    chaser_arch.weapon = Some(weapon.clone());
+    chaser_arch.ground_weapon = Some(weapon);
+    let chaser_type = chaser_arch.unit_type_id;
+    catalog.register(chaser_arch);
+    let map = sim_map::GameMap::new(
+        64,
+        64,
+        sim_map::MapCell::default_ground(sim_map::CliffLevel(0)),
+    )?;
+    let mut world = SimWorld::with_catalogs(map, 3, catalog, upgrades)?;
+    let at = |x: f64, y: f64| SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(y));
+    let kind = |authored: bool| if authored { x } else { ground };
+    world.spawn_unit(kind(pair.0), PlayerId(0), at(30.0, 40.0))?;
+    let shoved = world.spawn_unit(kind(pair.1), PlayerId(1), at(30.4, 40.0))?;
+    let chaser = world.spawn_unit(chaser_type, PlayerId(0), at(10.0, 20.0))?;
+    let far = world.spawn_unit(ground, PlayerId(1), at(40.0, 20.0))?;
+    world.spawn_unit(ground, PlayerId(1), at(14.0, 20.0))?;
+    for k in 0..8 {
+        let angle = f64::from(k) * std::f64::consts::FRAC_PI_4;
+        let (dx, dy) = (1.1 * angle.cos(), 1.1 * angle.sin());
+        world.spawn_unit(kind(blockers), PlayerId(0), at(14.0 + dx, 20.0 + dy))?;
+    }
+    world
+        .entities
+        .get_mut(&chaser)
+        .ok_or("chaser")?
+        .order_queue
+        .push_back(UnitOrder::AttackTarget {
+            target: far,
+            origin: AttackOrigin::Acquired,
+        });
+    let mut meter = ContactMeter::new();
+    meter.observe(&world);
+    world.entities.get_mut(&shoved).ok_or("shoved")?.position = at(30.5, 40.0);
+    meter.observe(&world);
+    let checks = meter.total();
+    Ok((
+        checks.enemy_overlap,
+        checks.enemy_overlap_ticks,
+        checks.sides[1].shove,
+        checks.sides[0].r10[3],
+    ))
+}
+
+/// A-9 (plan `2026-11-25-collision-classes`, D-3 R-8): the contact meter counts no enemy overlap,
+/// no touching (D-SHOVE) and no ring blocker (D-R10) across collision classes, and the same
+/// figures within an authored class as within the ground class.
+#[test]
+fn the_contact_meter_counts_only_pairs_of_one_class() -> TestResult {
+    let ground = meter_scene((false, false), false)?;
+    let authored = meter_scene((true, true), false)?;
+    let across = meter_scene((true, false), true)?;
+    assert!(
+        ground.0 > 0.55 && ground.1 > 0 && ground.2 > 0.05,
+        "{ground:?}"
+    );
+    assert_eq!(
+        ground.3, 0,
+        "a ring covered by the chaser's class has no room"
+    );
+    assert_eq!(
+        authored, ground,
+        "an authored class counts as the ground class"
+    );
+    assert_eq!(across.0, 0.0, "no enemy overlap across classes: {across:?}");
+    assert_eq!(across.1, 0);
+    assert_eq!(across.2, 0.0, "no touching across classes");
+    assert!(
+        across.3 > 0,
+        "bodies of another class leave the ring free: {across:?}"
+    );
+    Ok(())
+}

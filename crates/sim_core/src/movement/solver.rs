@@ -210,7 +210,8 @@ pub(crate) struct SolverBody {
     pub id: EntityId,
     /// Who gives way to whom.
     pub party: ContactParty,
-    /// Its layer, collision and terrain radii and body class: only bodies of one class touch.
+    /// Its layer, collision and terrain radii and collision class: only bodies whose classes
+    /// touch meet.
     pub policy: MotionPolicy,
     /// Where the body stood when the tick began, world units.
     pub start: SimVec2,
@@ -330,6 +331,8 @@ pub(crate) struct ContactSolver {
     steps: Vec<BodyStep>,
     grid: BodyGrid,
     near: Vec<usize>,
+    /// The largest radius per collision class of this rebuild ([`super::largest_by_class`]).
+    largest: Vec<SimScalar>,
 }
 
 /// One body's last terrain step within a solve (the active set of [`ContactSolver`]).
@@ -357,11 +360,12 @@ impl ContactSolver {
         self.pairs.clear();
         self.anchors.clear();
         self.anchors.extend(self.bodies.iter().map(|b| b.position));
-        let mut largest = [SimScalar::ZERO; super::BODY_CLASSES];
-        for body in &self.bodies {
-            let class = body.policy.body_class();
-            largest[class] = largest[class].max(body.policy.radius);
-        }
+        super::largest_by_class(
+            &mut self.largest,
+            self.bodies
+                .iter()
+                .map(|b| (b.policy.class, b.policy.radius)),
+        );
         self.grid.rebuild(
             map_size.0,
             map_size.1,
@@ -373,8 +377,8 @@ impl ContactSolver {
             if a.ghost {
                 continue;
             }
-            let class = a.policy.body_class();
-            let reach = a.policy.radius + largest[class] + PAIR_SLACK;
+            let class = a.policy.class;
+            let reach = a.policy.radius + self.largest[class.index()] + PAIR_SLACK;
             near.clear();
             let bodies = &self.bodies;
             self.grid.for_each_near(a.position, reach, |other| {
@@ -384,7 +388,7 @@ impl ContactSolver {
                     + i128::from(PAIR_SLACK.raw());
                 if other > index
                     && !b.ghost
-                    && b.policy.body_class() == class
+                    && b.policy.class.touches(class)
                     && super::math::within_distance(a.position, b.position, limit)
                 {
                     near.push(other);
@@ -979,7 +983,7 @@ mod tests {
             layer: super::super::MovementLayer::Ground,
             radius,
             terrain: radius,
-            burrowed: false,
+            class: sim_types::CollisionClass::GROUND,
         }
     }
 

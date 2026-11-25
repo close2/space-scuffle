@@ -350,7 +350,7 @@ impl SimWorld {
     fn scan_ring(&mut self, chase: &RingChase, rho: SimScalar) {
         let centre = self.tick_start_position(chase.target);
         let policy = chase.entry.policy;
-        let class = policy.body_class();
+        let class = policy.class.index();
         let obstacles = &self.movement.obstacles[class];
         let reach = rho
             .saturating_add(policy.radius)
