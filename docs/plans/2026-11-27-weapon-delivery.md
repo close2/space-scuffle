@@ -733,7 +733,7 @@ fixed. Commit `docs: close B-227 (plan 2026-11-27-weapon-delivery WP4)`.
 
 ---
 
-## 15. Owner question (draft, not filed; number provisional, next free at filing)
+## 15. Owner question (filed on main as [Q0129](../questions/open/0129-mothership-carrier-identity.md))
 
 ````markdown
 # Q0129: Is the Mothership Carrier the Carrier, the Mothership, or a mix?
