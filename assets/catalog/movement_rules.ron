@@ -15,6 +15,12 @@
 // `AcquireLeashResetRadius` 5 and `AcquireMovementLimit` 21 (GameData.xml:10 and 8) are not
 // modelled: what they do is not sourced (recorded in B-142). Whole world units, at least 1.
 //
+// `pursuit.follow_range_slop`: a unit following another (the follow order, plan
+// `docs/plans/2026-11-26-follow-order.md` D-4) and resting by it walks again once its target stands
+// more than this many world units from where it stood when the follower came to rest (5.0.14
+// `CAbilMove` `FollowRangeSlop` 1, core AbilData.xml:1371-1377 at 5444e12f13; the Battlecruiser's
+// own move ability has none, B-223). Whole world units, at least 0.
+//
 // `contact`: the contact rules of plan `docs/plans/2026-11-20-contact-solver.md` (§3.6; owner
 // answer Q0092 (a); sanctioned deviations D-alpha and D-beta of
 // `docs/questions/closed/0052-sanctioned-sc2-deviations.md`).
@@ -46,6 +52,7 @@
     ),
     pursuit: (
         acquire_leash_radius: 21,
+        follow_range_slop: 1,
     ),
     contact: (
         pipeline: Solver,

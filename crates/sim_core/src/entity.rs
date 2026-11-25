@@ -722,6 +722,17 @@ impl Entity {
         )
     }
 
+    /// Whether this unit stands as an idle body for contact: it [is idle](Self::is_idle), or it
+    /// rests under a follow ([`MovementMemory::follow_rest`] set; plan `2026-11-26-follow-order`
+    /// D-7). Moving friends push such a body aside, as they push an idle one. Acquisition, the
+    /// HUD and the tasks read [`Self::is_idle`], whose meaning does not change.
+    #[must_use]
+    pub fn stands_idle(&self) -> bool {
+        self.is_idle()
+            || (matches!(self.order_queue.front(), Some(UnitOrder::Follow { .. }))
+                && self.movement.follow_rest.is_some())
+    }
+
     /// Creates a new entity initialized from its archetype definition.
     #[must_use]
     pub fn from_archetype(
@@ -924,7 +935,8 @@ impl Entity {
     }
 
     /// Whether the unit's front order walks it (plan `2026-11-23-turret-wind-up` D-3): a move or
-    /// an attack-move, a task order with a goal to walk to, or a cast, whose approach may walk.
+    /// an attack-move, a task order with a goal to walk to, a cast, whose approach may walk, or a
+    /// follow while its follower does not rest (plan `2026-11-26-follow-order` D-4).
     /// It is the classification the movement phase's `walking_goal` makes, read from the order
     /// and not from the displacement, so a collision push never counts as walking. An attack
     /// order's pursuit is not counted: inside an attack order no weapon is gated by movement.
@@ -936,6 +948,7 @@ impl Entity {
                 | UnitOrder::AttackMove { .. }
                 | UnitOrder::CastAbility { .. },
             ) => true,
+            Some(UnitOrder::Follow { .. }) => self.movement.follow_rest.is_none(),
             Some(_) => self.has_task_order() && self.task.goal.is_some(),
             None => false,
         }
@@ -1705,14 +1718,15 @@ mod order_walks_tests {
 
     /// Whether `walking_goal` walks a unit whose front order is `order` and whose task leg has a
     /// goal when `task_goal`: a move or attack-move walks to its point, a task order to its leg's
-    /// goal, and a cast approaches its target. Every other order stands, or pursues as an attack
-    /// (`AttackTarget`). The match lists every variant, so a new order fails to compile here
+    /// goal, a cast approaches its target, and a follow walks while it does not rest (its memory is
+    /// fresh here). Every other order stands, or pursues as an attack (`AttackTarget`). The match lists every variant, so a new order fails to compile here
     /// until it is classified.
     fn walks(order: &UnitOrder, task_goal: bool) -> bool {
         match order {
             UnitOrder::Move { .. }
             | UnitOrder::AttackMove { .. }
-            | UnitOrder::CastAbility { .. } => true,
+            | UnitOrder::CastAbility { .. }
+            | UnitOrder::Follow { .. } => true,
             UnitOrder::Harvest { .. }
             | UnitOrder::ReturnCargo
             | UnitOrder::Build { .. }
@@ -1728,8 +1742,7 @@ mod order_walks_tests {
             | UnitOrder::CancelConstruction
             | UnitOrder::Research { .. }
             | UnitOrder::CancelProduction { .. }
-            | UnitOrder::SetRally { .. }
-            | UnitOrder::Follow { .. } => false,
+            | UnitOrder::SetRally { .. } => false,
         }
     }
 

@@ -56,8 +56,8 @@ pub use error::{CollisionClassLayersFault, CollisionClassNameFault, SimCoreError
 pub use published_actions::ActionSet;
 pub use steering::{
     check_cluster_arrival, compute_concave_arc_steering, compute_push_displacement,
-    compute_unified_local_steering, resolve_push_interaction, PushEntityParams, SpatialHashGrid,
-    SteeringObstacle, GRID_HEIGHT, GRID_WIDTH, SPATIAL_CELL_SIZE,
+    compute_unified_local_steering, resolve_push_interaction, FollowRest, PushEntityParams,
+    SpatialHashGrid, SteeringObstacle, GRID_HEIGHT, GRID_WIDTH, SPATIAL_CELL_SIZE,
 };
 pub use tech_tree::TechTreeValidator;
 pub use upgrades::{UpgradeCatalog, UpgradeDef, UpgradeId, WeaponHitUnlock};

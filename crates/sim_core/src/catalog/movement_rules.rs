@@ -2,7 +2,8 @@
 //!
 //! The file holds the group-routing tolerance of plan `2026-11-10-group-routing` (D-7, sanctioned
 //! deviation S-7), the leash of an automatic chase (5.0.14's `AcquireLeashRadius`, plan
-//! `2026-11-18-contour-footprints` Amendment 4, B-142) and the contact rules of plan
+//! `2026-11-18-contour-footprints` Amendment 4, B-142), the follow's resume drift (5.0.14's
+//! `FollowRangeSlop`, plan `2026-11-26-follow-order` D-4) and the contact rules of plan
 //! `2026-11-20-contact-solver` (§3.6): which movement pipeline runs, the contact solver's
 //! iteration count, its dead band and moving-overlap bound (sanctioned deviation D-α), the side
 //! rule's horizon factor and the D-β switch. It is parsed into [`MovementRules`], validated, and
@@ -10,7 +11,8 @@
 //! it is not hashed; lockstep peers must load equal files.
 //!
 //! Invariants: a [`MovementRules`] value always has a tolerance in `0..=1000` permille, a leash
-//! radius of at least one world unit, and [`ContactRules`] with at least one iteration,
+//! radius of at least one world unit, a whole follow slop of at least zero world units, and
+//! [`ContactRules`] with at least one iteration,
 //! `0 < dead_band_permille < moving_overlap_permille < 1000` and a horizon factor of at least 1.
 
 use crate::error::{SimCoreError, SimResult};
@@ -24,6 +26,11 @@ pub const MAX_LANE_TOLERANCE_PERMILLE: u16 = 1000;
 /// `AcquireLeashRadius` 21 (core `GameData.xml`:9 at `5444e12f13`). The rules a catalog is built
 /// with before `movement_rules.ron` replaces them carry it; the file authors the shipped value.
 pub const STARCRAFT_ACQUIRE_LEASH_RADIUS: u16 = 21;
+
+/// 5.0.14's follow slop, in world units: `CAbilMove` `FollowRangeSlop` 1 (core `AbilData.xml`:1371–1377
+/// at `5444e12f13`). The rules a catalog is built with before `movement_rules.ron` replaces them
+/// carry it; the file authors the shipped value.
+pub const STARCRAFT_FOLLOW_RANGE_SLOP: u16 = 1;
 
 /// Which local movement pipeline the tick runs (plan `2026-11-20-contact-solver` §3.6, a
 /// migration switch until the legacy pipeline is deleted).
@@ -117,6 +124,7 @@ impl ContactRules {
 pub struct MovementRules {
     lane_tolerance_permille: u16,
     acquire_leash_radius: u16,
+    follow_range_slop: u16,
     contact: ContactRules,
 }
 
@@ -132,6 +140,7 @@ struct MovementRulesFile {
 #[serde(deny_unknown_fields)]
 struct PursuitFile {
     acquire_leash_radius: u32,
+    follow_range_slop: u32,
 }
 
 #[derive(Deserialize)]
@@ -148,6 +157,7 @@ impl MovementRules {
     pub const PER_UNIT: Self = Self {
         lane_tolerance_permille: 0,
         acquire_leash_radius: STARCRAFT_ACQUIRE_LEASH_RADIUS,
+        follow_range_slop: STARCRAFT_FOLLOW_RANGE_SLOP,
         contact: ContactRules::LEGACY,
     };
 
@@ -168,6 +178,7 @@ impl MovementRules {
         Ok(Self {
             lane_tolerance_permille,
             acquire_leash_radius: STARCRAFT_ACQUIRE_LEASH_RADIUS,
+            follow_range_slop: STARCRAFT_FOLLOW_RANGE_SLOP,
             contact: ContactRules::LEGACY,
         })
     }
@@ -187,6 +198,24 @@ impl MovementRules {
             })?;
         Ok(Self {
             acquire_leash_radius,
+            ..self
+        })
+    }
+
+    /// These rules with the follow's resume drift set to `slop` world units (plan
+    /// `2026-11-26-follow-order` D-4).
+    ///
+    /// # Errors
+    /// [`SimCoreError::CatalogInvalidValue`] for a slop above `u16::MAX`.
+    pub fn with_follow_range_slop(self, slop: u32) -> SimResult<Self> {
+        let follow_range_slop =
+            u16::try_from(slop).map_err(|_| SimCoreError::CatalogInvalidValue {
+                definition: "pursuit".to_owned(),
+                field: "follow_range_slop".to_owned(),
+                reason: "must be a whole number of world units from 0 to 65535",
+            })?;
+        Ok(Self {
+            follow_range_slop,
             ..self
         })
     }
@@ -214,6 +243,7 @@ impl MovementRules {
             .map_err(|e| SimCoreError::RonDeserializationError(e.to_string()))?;
         Self::with_lane_tolerance(file.group_routing.lane_tolerance_permille)?
             .with_acquire_leash_radius(file.pursuit.acquire_leash_radius)?
+            .with_follow_range_slop(file.pursuit.follow_range_slop)?
             .with_contact(file.contact)
     }
 
@@ -228,6 +258,14 @@ impl MovementRules {
     #[must_use]
     pub fn acquire_leash_radius(self) -> SimScalar {
         SimScalar::from_i32(i32::from(self.acquire_leash_radius))
+    }
+
+    /// The follow's resume drift, world units: a follower at rest walks again once its target
+    /// stands more than this from where it stood when the follower came to rest (5.0.14's
+    /// `FollowRangeSlop`; plan `2026-11-26-follow-order` D-4).
+    #[must_use]
+    pub fn follow_range_slop(self) -> SimScalar {
+        SimScalar::from_i32(i32::from(self.follow_range_slop))
     }
 
     /// The group-routing tolerance in permille: a member adopts its group's lane when the lane
@@ -275,12 +313,45 @@ mod tests {
         Ok(())
     }
 
-    /// A `movement_rules.ron` text with the given leash and contact section.
+    /// A `movement_rules.ron` text with the given leash and contact section, and the follow slop 1.
     fn text(leash: u32, contact: &str) -> String {
+        text_with_slop(leash, "1", contact)
+    }
+
+    /// A `movement_rules.ron` text with the given leash, follow slop and contact section.
+    fn text_with_slop(leash: u32, slop: &str, contact: &str) -> String {
         format!(
             "(group_routing: (lane_tolerance_permille: 75), pursuit: (acquire_leash_radius: \
-             {leash}), contact: {contact})"
+             {leash}, follow_range_slop: {slop}), contact: {contact})"
         )
+    }
+
+    /// Plan `2026-11-26-follow-order` D-4: the follow slop is a whole number of world units from
+    /// 0 to 65535, read from the file; any other value is refused.
+    #[test]
+    fn the_follow_slop_is_read_and_must_be_whole_and_in_range() -> SimResult<()> {
+        let rules = MovementRules::from_ron_str(&text_with_slop(21, "1", CONTACT))?;
+        assert_eq!(rules.follow_range_slop(), SimScalar::ONE);
+        let none = MovementRules::from_ron_str(&text_with_slop(21, "0", CONTACT))?;
+        assert_eq!(none.follow_range_slop(), SimScalar::ZERO);
+        assert_eq!(
+            MovementRules::PER_UNIT.follow_range_slop(),
+            SimScalar::from_i32(i32::from(STARCRAFT_FOLLOW_RANGE_SLOP))
+        );
+        assert!(matches!(
+            MovementRules::from_ron_str(&text_with_slop(21, "65536", CONTACT)),
+            Err(SimCoreError::CatalogInvalidValue { .. })
+        ));
+        for refused in ["-1", "1.5"] {
+            assert!(
+                matches!(
+                    MovementRules::from_ron_str(&text_with_slop(21, refused, CONTACT)),
+                    Err(SimCoreError::RonDeserializationError(_))
+                ),
+                "{refused}"
+            );
+        }
+        Ok(())
     }
 
     /// The shipped contact section's values, as RON.
