@@ -206,3 +206,40 @@ plans README's last rows, both kept. On `4f4ef72d`:
   identical to WP0's (`client-final/`).
 - `cargo gate quick`: green (fmt, clippy on `client`, `sim_core`, `sim_fixtures` and `sim_types`, 147 test targets);
   `cargo clippy --workspace --all-targets -- -D warnings`: clean.
+
+## 7. Q0119 (b) and the merges of `main` `3e7f661a`, `1ea9cf44`, `8dde83cd` and `a0384b78`
+
+### 7.1 The change (`94445b39`, records `d5b76eb6`)
+
+The owner answered Q0119 (b) (`705d350d`): a member with Attack that cannot attack an A-clicked mobile unit follows it
+with Scan Move, as the Medivac-class members do. `submit_attack_on_unit` now gives `Follow { AcquireMove }` to every
+member that cannot attack a mobile target; the attack-move to the point stays only for a structure target. The
+simulation is unchanged.
+
+### 7.2 Red run (`red/q0119-red-lib.log`, `red/q0119-red-int.log`)
+
+The updated tests on the previous client code (`scripts/red_q0119.sh`): the queue unit test
+`an_attack_on_a_unit_splits_the_selection_into_attackers_and_walkers` and `battle_mode_tests`'
+`an_a_click_on_ones_own_unit_attacks_it` and `a_mixed_army_a_clicked_on_an_air_unit_follows_attacks_and_walks` fail.
+All pass on `94445b39`.
+
+### 7.3 Worlds
+
+- `compare.sh world-wp0 world-q0119` (`94445b39`, before the merge of `1ea9cf44`): 483 files, 0 differing.
+- `main` `1ea9cf44` adds meter columns to the trace outputs, so from there the baseline is `main`'s own worlds.
+  `world-main3` (`1ea9cf44`) against `world-merged3` (`2b7ee4d8`): 483 files, 0 differing. `world-main4`
+  (`8dde83cd`) against `world-merged4` (`e68f3493`): 483 files, 0 differing. `world-main5` (`a0384b78`) against `world-merged5` (`c2705e74`,
+  the final tree): 483 files, 0 differing.
+
+### 7.4 Goldens and gates
+
+- `goldens.sh` on `2b7ee4d8` (label `merged3g`) and `e68f3493` (label `g4`): both fixtures and
+  `DEFAULT_SANDBOX_CHECKSUM` pass on all eight runs at WP1's lists (schema 50). A first `merged3` run lost its
+  scratch tree to a world run of the same label mid-way; it was repeated under its own label.
+- `cargo gate quick`: green on `d5b76eb6` and on `e68f3493`. `cargo clippy --workspace --all-targets -- -D warnings`:
+  clean on `2b7ee4d8` and `e68f3493`.
+- On the final tree `c2705e74`: `goldens.sh g5` passes all eight runs at WP1's lists; `cargo gate quick` is green;
+  workspace clippy is clean; `simall.sh merged5` 1,836 passed, 0 failed, 5 ignored; the client targets of §5.2
+  pass (context-order 32, input 40, mode 22, card 35, HUD 35, steady-state sync 11, allocation-count sync 10,
+  rally GPU 1 and 1 ignored, skirmish 8 and 2 ignored, lib 545); and the skirmish match alone is won at tick 6,342 in
+  1,645 frames with WP0's stage log.
