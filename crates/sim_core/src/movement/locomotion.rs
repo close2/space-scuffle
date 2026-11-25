@@ -945,9 +945,7 @@ impl SimWorld {
         self.movement.probes = super::MovementProbes::default();
         // The determinism probe (`set_movement_order_rotation`): the visit starts `offset` places
         // in and wraps round; offset 0 visits in entity order, as shipped.
-        let start = super::rotation_start(self.movement.order_rotation, entries.len());
-        let (wrapped, first) = entries.split_at(start);
-        for &entry in first.iter().chain(wrapped) {
+        for &entry in super::rotated(&entries, self.movement.order_rotation) {
             match self.prepare_actor_motion(entry) {
                 Ok(MotionAction::Commit(proposal)) => self.commit_motion(entry, proposal),
                 Ok(MotionAction::Pursue(target, origin)) => {

@@ -920,8 +920,10 @@ fn m1_of_the_meter_matches_the_harness_definition() -> TestResult {
     let id = ids[0];
     let start = world.entities[&id].position;
     let (x0, y0) = (f64::from(start.x.to_f32()), f64::from(start.y.to_f32()));
-    // Steps of the speed (0.1 a tick in this scene's draw or more), a half-speed turn back, a
-    // full turn back, a crawl below the moving line, and a sideways step.
+    // Steps of twice the top speed or more (every corpus speed is 0.1 to 0.1875 a tick), a turn
+    // back of 0.06 (above a quarter of any corpus speed), a full turn back, a crawl below the
+    // moving line, a sideways step and its turn back, and a turn back of 0.024: above an eighth
+    // of every corpus speed and below a quarter, so it moves but never reverses.
     let mut x = x0;
     let mut y = y0;
     for (dx, dy) in [
@@ -933,6 +935,7 @@ fn m1_of_the_meter_matches_the_harness_definition() -> TestResult {
         (0.001, 0.0),
         (0.0, 0.2),
         (0.0, -0.2),
+        (0.0, 0.024),
     ] {
         x += dx;
         y += dy;

@@ -495,6 +495,14 @@ pub(crate) fn rotation_start(offset: u32, len: usize) -> usize {
     usize::try_from(offset).map_or(0, |offset| offset % len)
 }
 
+/// `items` visited from [`rotation_start`] to the end and then from the start, each once: the
+/// order of the determinism probe ([`SimWorld::set_movement_order_rotation`]). Offset 0 visits
+/// `items` in order.
+pub(crate) fn rotated<T>(items: &[T], offset: u32) -> impl Iterator<Item = &T> {
+    let (wrapped, first) = items.split_at(rotation_start(offset, items.len()));
+    first.iter().chain(wrapped)
+}
+
 /// Exact circle overlap without overflow even for extreme signed setup coordinates.
 pub(crate) fn circles_overlap(a: SimVec2, ar: SimScalar, b: SimVec2, br: SimScalar) -> bool {
     let dx = (i128::from(a.x.raw()) - i128::from(b.x.raw())).unsigned_abs();
@@ -930,6 +938,17 @@ mod tests {
         assert_eq!(rotation_start(7, 5), 2);
         assert_eq!(rotation_start(u32::MAX, 1), 0);
         assert_eq!(rotation_start(9, 0), 0);
+    }
+
+    /// A rotated visit sees every item once, in order from the offset, wrapping round.
+    #[test]
+    fn a_rotated_visit_sees_every_item_once_from_the_offset() {
+        let items = [10, 11, 12, 13];
+        let visit = |offset| rotated(&items, offset).copied().collect::<Vec<_>>();
+        assert_eq!(visit(0), vec![10, 11, 12, 13]);
+        assert_eq!(visit(1), vec![11, 12, 13, 10]);
+        assert_eq!(visit(6), vec![12, 13, 10, 11]);
+        assert_eq!(rotated::<u8>(&[], 3).count(), 0);
     }
 
     /// Review F-1 (plan `2026-11-18-inner-radius` D-2): an air archetype built past the loader

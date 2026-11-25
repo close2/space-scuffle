@@ -412,12 +412,8 @@ impl SimWorld {
         solver.bodies.clear();
         // The determinism probe (`set_movement_order_rotation`): the fill starts `offset` places
         // in and wraps round; offset 0 fills in entity order, as shipped.
-        let start = super::rotation_start(self.movement.order_rotation, entries.len());
-        let (wrapped, first) = entries.split_at(start);
-        for entry in first
-            .iter()
-            .chain(wrapped)
-            .filter(|entry| !entry.foundation)
+        for entry in
+            super::rotated(entries, self.movement.order_rotation).filter(|entry| !entry.foundation)
         {
             if let Some(actor) = self.entities.get(&entry.id) {
                 solver.bodies.push(self.solver_body(*entry, actor));
@@ -574,6 +570,42 @@ mod tests {
             };
             assert_eq!(ids.len(), 2, "{pipeline:?}, the two units: {ids:?}");
             assert!(!ids.contains(&structure), "{pipeline:?}: {ids:?}");
+        }
+        Ok(())
+    }
+
+    /// The determinism probe (plan `2026-11-27-gated-movement` `WP0a`) reaches the contact
+    /// solver. The phase's actors are the structure and the two units, in id order; the
+    /// structure is no body. Offset 0 fills in id order; offset 2 starts the visit at the second
+    /// unit, and so does offset 5, which wraps round.
+    #[test]
+    fn the_order_rotation_rotates_the_solver_fill() -> Result<(), Box<dyn std::error::Error>> {
+        for (offset, first) in [(0, 0), (1, 0), (2, 1), (5, 1)] {
+            let (mut world, _, _) = structure_and_units()?;
+            let rules = world.catalog.movement_rules();
+            world
+                .catalog
+                .set_movement_rules(rules.with_contact(crate::catalog::ContactRules {
+                    pipeline: MovementPipeline::Solver,
+                    ..rules.contact()
+                })?);
+            world.set_movement_order_rotation(offset);
+            world.resolve_collisions_and_push();
+            assert!(world.drain_diagnostics().next().is_none());
+            let mut units: Vec<EntityId> = world
+                .entities
+                .values()
+                .filter(|e| !e.is_immobile)
+                .map(|e| e.id)
+                .collect();
+            units.sort_unstable();
+            let filled: Vec<EntityId> = world.movement.solver.bodies.iter().map(|b| b.id).collect();
+            assert_eq!(
+                filled.first(),
+                units.get(first),
+                "offset {offset}: {filled:?}"
+            );
+            assert_eq!(filled.len(), 2, "offset {offset}: every body once");
         }
         Ok(())
     }
