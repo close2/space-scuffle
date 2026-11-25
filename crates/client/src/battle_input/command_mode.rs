@@ -30,8 +30,8 @@ use bevy::math::Vec3;
 use bevy::prelude::Resource;
 use sim_core::{SimWorld, UnitArchetype};
 use sim_types::{
-    AbilityEffectSpec, EntityId, PlayerId, ResourceKind, ShapeKind, SimScalar, SimVec2,
-    SiteRefusal, UnitOrder, UnitTypeId,
+    AbilityEffectSpec, EntityId, PlayerId, RallyTarget, ResourceKind, ShapeKind, SimScalar,
+    SimVec2, SiteRefusal, UnitOrder, UnitTypeId,
 };
 
 use super::context_order::sim_point;
@@ -62,6 +62,13 @@ pub enum CommandMode {
     CastAtPoint(CastKey),
     /// The next left click on a unit the viewer sees casts this unit ability on it.
     CastOnUnit(CastKey),
+    /// The next left click sets the selected structures' rally of this slot on what is under
+    /// the pointer: the ground, a node, or a unit (plan `2026-11-25-rallies` D-8). Shift appends
+    /// a waypoint and keeps the mode, as Shift keeps a targeting mode in 5.0.14.
+    Rally {
+        /// The rally slot, in the structures' `InfoArray` order.
+        slot: u8,
+    },
 }
 
 impl CommandMode {
@@ -100,7 +107,7 @@ impl CommandMode {
     pub const fn cast_key(self) -> Option<CastKey> {
         match self {
             Self::CastAtPoint(key) | Self::CastOnUnit(key) => Some(key),
-            Self::Normal | Self::AttackMove | Self::Place(_) => None,
+            Self::Normal | Self::AttackMove | Self::Place(_) | Self::Rally { .. } => None,
         }
     }
 
@@ -131,11 +138,16 @@ impl CommandMode {
                 cell_x: 0,
                 cell_y: 0,
             }),
+            Self::Rally { slot } => Some(UnitOrder::SetRally {
+                target: RallyTarget::Point(SimVec2::new(SimScalar::ZERO, SimScalar::ZERO)),
+                slot: Some(slot),
+            }),
         }
     }
 
     /// The order a left click at `ground`, a Bevy world point, means for `owner` in this mode.
-    /// For the Attack mode it is the ground case; a click on an enemy unit is aimed by
+    /// For the Attack and Rally modes it is the ground case; a click on a unit (or, for a rally,
+    /// a node) is aimed by
     /// [`collect_pointer_intent`](super::collect_pointer_intent), which can pick units.
     ///
     /// Returns the order, how to mark it, and the Bevy world point the marker belongs at.
@@ -165,6 +177,14 @@ impl CommandMode {
                     ground,
                 ))
             }
+            Self::Rally { slot } => Ok((
+                UnitOrder::SetRally {
+                    target: RallyTarget::Point(sim_point(ground)),
+                    slot: Some(slot),
+                },
+                OrderMarkerKind::Rally,
+                ground,
+            )),
             Self::Place(structure_type) => {
                 let structure = world
                     .catalog

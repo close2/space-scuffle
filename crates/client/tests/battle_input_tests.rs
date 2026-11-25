@@ -1084,3 +1084,157 @@ fn changing_the_controlled_player_drops_the_old_players_selection() {
     assert_eq!(harness.selection().ids().len(), 0);
     assert_eq!(harness.selection().group(0).len(), 0);
 }
+
+/// The commands waiting in the battle's queue, in submission order.
+fn pending_commands(harness: &Harness) -> Vec<sim_types::PlayerCommand> {
+    harness
+        .app
+        .world()
+        .resource::<BattleSession>()
+        .commands
+        .pending_commands()
+        .map(|(_, command)| command.clone())
+        .collect()
+}
+
+/// Plan `2026-11-25-rallies` D-8 (B-165): a structure alone, right-clicked and then
+/// Shift-right-clicked, submits two rallies, the second queued, and the simulation keeps both
+/// as waypoints of one route.
+#[test]
+fn shift_right_clicks_append_rally_waypoints() {
+    let mut harness = Harness::battle();
+    let base = local_producer(&harness);
+    harness.select(base);
+    let position = harness.simulated_position(base);
+    let first = harness.ground_on_screen(harness.open_ground(position, 6.0));
+    let second = harness.ground_on_screen(harness.open_ground(position, 9.0));
+    harness.click(MouseButton::Right, first);
+    harness.with_key_held(client::input_bindings::SHIFT_MODIFIERS[0], |harness| {
+        harness.click(MouseButton::Right, second);
+    });
+    let commands = pending_commands(&harness);
+    let rallies: Vec<bool> = commands
+        .iter()
+        .filter(|command| {
+            command.entities == [base]
+                && matches!(
+                    command.order,
+                    UnitOrder::SetRally {
+                        target: sim_types::RallyTarget::Point(_),
+                        slot: None,
+                    }
+                )
+        })
+        .map(|command| command.queue)
+        .collect();
+    assert_eq!(rallies, [false, true], "{commands:?}");
+    harness.resume();
+    harness.step(3);
+    let routes = &harness.world().entities[&base].rallies;
+    assert_eq!(routes.len(), 1, "{routes:?}");
+    assert_eq!(routes[0].waypoints.len(), 2, "{routes:?}");
+}
+
+/// Plan `2026-11-25-rallies` D-8 (S8: "press the G key and left-click"): with a structure that
+/// has a worker rally slot selected, the card's entry for that slot arms the rally mode, and a
+/// left click on the ground then submits `SetRally` naming the slot and leaves the mode. The
+/// shipped structures with a worker slot have no media, so the battle's own producer is given
+/// that ability in a temporary catalog ([`battle_harness::root_with_two_rally_slots`]).
+#[cfg(unix)]
+#[test]
+fn the_worker_rally_entry_then_a_left_click_sets_the_worker_slot() {
+    use client::battle_hud::card::{CardAction, CommandCard};
+    use client::battle_input::command_mode::CommandMode;
+    let slug = {
+        let shipped = Harness::boot_scenario(ClientMode::Skirmish, SKIRMISH_SCENARIO);
+        let base = local_producer(&shipped);
+        let world = shipped.world();
+        world
+            .catalog
+            .get(world.entities[&base].unit_type_id)
+            .expect("the producer's archetype")
+            .slug
+            .clone()
+    };
+    let root = battle_harness::root_with_two_rally_slots(&slug);
+    // The command card belongs to the skirmish's HUD.
+    let mut harness = Harness::boot_root(root.path(), ClientMode::Skirmish, SKIRMISH_SCENARIO);
+    let base = local_producer(&harness);
+    let position = harness.simulated_position(base);
+    harness.look_at(position);
+    let worker_slot = {
+        let world = harness.world();
+        let rally = world
+            .catalog
+            .get(world.entities[&base].unit_type_id)
+            .expect("the producer's archetype")
+            .rally
+            .clone()
+            .expect("the edited rally ability");
+        let slot = rally
+            .slots
+            .iter()
+            .position(|slot| slot.used_by == sim_types::RallyUsers::Workers)
+            .expect("a worker slot");
+        u8::try_from(slot).expect("few slots")
+    };
+    harness.select(base);
+    harness.step(1);
+    let key = harness
+        .app
+        .world()
+        .resource::<CommandCard>()
+        .slots
+        .iter()
+        .flatten()
+        .find(|slot| slot.action == CardAction::Mode(CommandMode::Rally { slot: worker_slot }))
+        .unwrap_or_else(|| {
+            panic!(
+                "the worker rally entry on the card: selection {:?}, card {:?}",
+                harness.selection().ids(),
+                harness.app.world().resource::<CommandCard>().slots
+            )
+        })
+        .key;
+    harness.tap_key(key);
+    assert_eq!(
+        *harness.app.world().resource::<CommandMode>(),
+        CommandMode::Rally { slot: worker_slot }
+    );
+    let target =
+        harness.ground_on_screen(harness.open_ground(harness.simulated_position(base), 6.0));
+    harness.click(MouseButton::Left, target);
+    let commands = pending_commands(&harness);
+    assert!(
+        commands.iter().any(|command| command.entities == [base]
+            && !command.queue
+            && matches!(
+                command.order,
+                UnitOrder::SetRally {
+                    target: sim_types::RallyTarget::Point(_),
+                    slot: Some(slot),
+                } if slot == worker_slot
+            )),
+        "{commands:?}"
+    );
+    assert_eq!(
+        *harness.app.world().resource::<CommandMode>(),
+        CommandMode::Normal
+    );
+    assert_eq!(
+        harness.selection().ids(),
+        [base],
+        "the click selected nothing"
+    );
+    harness.resume();
+    harness.step(3);
+    assert!(
+        harness.world().entities[&base]
+            .rallies
+            .iter()
+            .any(|route| route.slot == worker_slot
+                && matches!(route.waypoints[..], [sim_types::RallyTarget::Point(_)])),
+        "{:?}",
+        harness.world().entities[&base].rallies
+    );
+}

@@ -1015,9 +1015,10 @@ fn right_click_on_a_friend_or_the_structure_itself_rallies_to_it() {
     assert_eq!(harness.world().entities[&base].rallies, []);
 }
 
-/// D-10, B-166: a right click on an enemy rallies to the ground under it.
+/// D-10, plan `2026-11-25-rallies` D-8 (B-166): a right click on an enemy rallies to the enemy
+/// itself, and the simulation stores the unit.
 #[test]
-fn right_click_on_an_enemy_rallies_to_the_ground_under_it() {
+fn right_click_on_an_enemy_rallies_to_the_enemy() {
     let mut harness = skirmish();
     let base = select_base(&mut harness);
     let worker = workers(&harness)[0];
@@ -1032,14 +1033,99 @@ fn right_click_on_an_enemy_rallies_to_the_ground_under_it() {
     harness.resume();
     harness.step(3);
     harness.pause();
-    let position = harness.world().entities[&enemy].position;
     let at = harness.unit_on_screen(enemy);
     harness.click(MouseButton::Right, at);
-    let RallyTarget::Point(point) = captured_rally(&harness, base) else {
-        panic!("a point rally");
-    };
-    let gap = (point - position).length_sq().to_f32().sqrt();
-    assert!(gap < 1.5, "{point:?} against {position:?}");
+    assert_eq!(captured_rally(&harness, base), RallyTarget::Unit(enemy));
+    harness.resume();
+    harness.step(2);
+    assert_eq!(
+        harness.world().entities[&base].rallies[0].waypoints,
+        [RallyTarget::Unit(enemy)]
+    );
+}
+
+/// Plan `2026-11-25-rallies` D-8 (B-216): a right click on the player's own completed extractor
+/// rallies to the gas node under it, so new workers harvest there.
+#[test]
+fn right_click_on_the_own_extractor_rallies_to_its_node() {
+    let mut harness = skirmish();
+    let base = select_base(&mut harness);
+    let origin = harness.world().entities[&base].position;
+    let world = harness.world();
+    let extractor_type = world
+        .catalog
+        .archetypes()
+        .find(|arch| {
+            arch.capabilities.is_gas_extractor
+                && arch.faction
+                    == world
+                        .catalog
+                        .get(world.entities[&base].unit_type_id)
+                        .map_or(arch.faction, |base| base.faction)
+        })
+        .expect("the base's faction has an extractor")
+        .unit_type_id;
+    let mut gas: Vec<(SimScalar, usize, (u32, u32))> = world
+        .map
+        .resources()
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| node.kind == ResourceKind::Gas)
+        .map(|(index, node)| (node.pos.distance_sq(origin), index, node.cell))
+        .collect();
+    gas.sort_unstable();
+    let (node, extractor) = gas
+        .into_iter()
+        .find_map(|(_, index, cell)| {
+            let id = harness
+                .world_mut()
+                .spawn_structure(extractor_type, LOCAL_PLAYER, cell.0 - 1, cell.1 - 1)
+                .ok()?;
+            Some((ResourceNodeId(u32::try_from(index).ok()?), id))
+        })
+        .expect("a gas node near home takes an extractor");
+    harness.resume();
+    harness.step(3);
+    harness.pause();
+    let at = harness.unit_on_screen(extractor);
+    harness.click(MouseButton::Right, at);
+    assert_eq!(captured_rally(&harness, base), RallyTarget::Node(node));
+}
+
+/// Plan `2026-11-25-rallies` D-8 (B-165): a Shift-right-click with a structure selected queues
+/// its rally, which the simulation appends as a waypoint.
+#[test]
+fn shift_right_click_queues_a_rally_waypoint() {
+    let mut harness = skirmish();
+    let base = select_base(&mut harness);
+    let worker = workers(&harness)[0];
+    let ground = harness.open_ground(harness.simulated_position(base), 8.0);
+    let at = harness.ground_on_screen(ground);
+    harness.click(MouseButton::Right, at);
+    let at = harness.unit_on_screen(worker);
+    harness.with_key_held(SHIFT_MODIFIERS[0], |harness| {
+        harness.click(MouseButton::Right, at);
+    });
+    let queued: Vec<(RallyTarget, bool)> = pending(&harness)
+        .iter()
+        .filter_map(|command| match command.order {
+            UnitOrder::SetRally { target, .. } if command.entities == [base] => {
+                Some((target, command.queue))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(queued.len(), 2, "{queued:?}");
+    assert!(
+        matches!(queued[0], (RallyTarget::Point(_), false)),
+        "{queued:?}"
+    );
+    assert_eq!(queued[1], (RallyTarget::Unit(worker), true));
+    harness.resume();
+    harness.step(2);
+    let waypoints = &harness.world().entities[&base].rallies[0].waypoints;
+    assert_eq!(waypoints.len(), 2, "{waypoints:?}");
+    assert_eq!(waypoints[1], RallyTarget::Unit(worker));
 }
 
 /// D-10: while the base is selected its rally reticle stands on the ground at the rally point the
