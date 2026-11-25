@@ -31,8 +31,8 @@
 //!   proposal-caused and contact-caused ones (plan `2026-11-19-crowd-edge-steering` D-5); a table
 //!   written before them ([`UNSPLIT_CSV_HEADER`]) is read with its reversals unsplit.
 //! - The contact checks ([`super::contact_checks`], plan `2026-11-24-solver-retarget-and-shoving`
-//!   §5.1: D-SHOVE, D-R10, D-CHURN and the counters of its behaviour checks; then plan
-//!   `2026-11-25-enemy-contact-and-ring-retarget` §6: D-SHOVE-E, B7′'s engaged unit-ticks, the
+//!   §5.1: D-SHOVE, D-R10, D-CHURN and the counters of its behaviour checks; then
+//!   evidence `2026-11-25-solver-pair-cache` §2: D-SHOVE-E, B7′'s engaged unit-ticks, the
 //!   enemy-overlap ticks and the friend overlap, appended last) are the last [`CHECK_COLUMNS`]
 //!   columns, a measurement like the blocking columns; a table written before them
 //!   ([`SPLIT_CSV_HEADER`]) is read without them.

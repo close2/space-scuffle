@@ -415,7 +415,7 @@ fn a_unit_behind_a_friend_is_held_up_before_it_reaches_the_target() -> TestResul
     Ok(())
 }
 
-/// W0-T5 (plan `2026-11-25-enemy-contact-and-ring-retarget` §6): B7′'s engaged unit-ticks on
+/// W0-T5 (evidence `2026-11-25-solver-pair-cache` §2): B7′'s engaged unit-ticks on
 /// a constructed two-unit battle. The melee unit walks 5 world units to the holding ranged unit;
 /// it counts exactly the observed states in which the ranged unit, its only target, lies within
 /// its band (read here from the catalog's range and radii), and the ranged unit, in range of it

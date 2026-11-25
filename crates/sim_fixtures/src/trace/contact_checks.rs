@@ -1,5 +1,6 @@
-//! The behaviour checks of plans `2026-11-24-solver-retarget-and-shoving` (§5.1, §6.1) and
-//! `2026-11-25-enemy-contact-and-ring-retarget` (§6, §7.1), measured on a running world: enemy
+//! The behaviour checks of plan `2026-11-24-solver-retarget-and-shoving` (§5.1, §6.1; on branch
+//! `solver-followup`) and of the enemy-contact plan (on branch `enemy-contact-plan`), as
+//! evidence `2026-11-25-solver-pair-cache` §2 summarises them, measured on a running world: enemy
 //! shoving (D-SHOVE and its repair D-SHOVE-E), standing with room elsewhere (D-R10), target
 //! returns (D-CHURN), and the counters the checks B1, B3, B6 and B7′ read.
 //!
@@ -20,8 +21,8 @@
 //!   room for the unit or A outranked B (threat, attack target priority, primary weapon), and
 //!   `unexplained` otherwise.
 //! - **B1** ([`SideChecks::blocked`]): unit-ticks classified [`Activity::Blocked`].
-//! - **D-SHOVE-E** ([`SideChecks::shove_e`], plan `2026-11-25-enemy-contact-and-ring-retarget`
-//!   §6): for a unit that proposed no motion and was not holding, per tick, the largest outward
+//! - **D-SHOVE-E** ([`SideChecks::shove_e`],
+//!   evidence `2026-11-25-solver-pair-cache` §2): for a unit that proposed no motion and was not holding, per tick, the largest outward
 //!   radial part of its displacement over the enemies touching it at the tick's start
 //!   ([`shove_e_of`]). A nudge along the unit's own attack ring is tangential to the enemy it
 //!   touches and counts only to second order; a shove away from the enemy counts fully.
@@ -117,7 +118,7 @@ pub struct ContactChecks {
     pub friend_overlap_ticks: u32,
 }
 
-/// D-SHOVE-E for one unit and one tick (plan `2026-11-25-enemy-contact-and-ring-retarget` §6):
+/// D-SHOVE-E for one unit and one tick (evidence `2026-11-25-solver-pair-cache` §2):
 /// `0` unless the unit proposed no motion and was not holding; otherwise the largest
 /// `max(0, Δx · (s_u − s_e) / |s_u − s_e|)` over the enemies touching it at the tick's start,
 /// `moved` being its displacement `Δx` (world units) and `away` the offsets `s_u − s_e` from each
@@ -595,7 +596,7 @@ mod tests {
         assert!(shove_of(true, false, false, 0.1).abs() < 1e-12);
     }
 
-    /// W0-T1′ (plan `2026-11-25-enemy-contact-and-ring-retarget` §6): a standing unit displaced
+    /// W0-T1′ (evidence `2026-11-25-solver-pair-cache` §2): a standing unit displaced
     /// 0.1 straight away from a touching enemy counts 0.1; a unit nudged 0.1 along its ring
     /// round the touching enemy counts at most `0.1 · 0.1 / (r + r_e)` (second order); a walking
     /// unit, a holder and a unit pushed towards the enemy count 0; the largest enemy counts.

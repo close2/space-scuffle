@@ -10,8 +10,8 @@
 //! checks of plan `2026-11-24-solver-retarget-and-shoving` (§5.1): D-SHOVE, the distance units
 //! were moved by enemy contact while proposing no motion, and D-R10, the unit-ticks spent standing
 //! on an automatic chase while another enemy had room, in its four columns
-//! ([`crate::trace::contact_checks`]); and, appended last, D-SHOVE-E of plan
-//! `2026-11-25-enemy-contact-and-ring-retarget` §6, the outward part of that distance only.
+//! ([`crate::trace::contact_checks`]); and, appended last, D-SHOVE-E of
+//! evidence `2026-11-25-solver-pair-cache` §2, the outward part of that distance only.
 //!
 //! # How it fits
 //! Archetypes are chosen by their properties from the shipped catalog, never by name (charter
