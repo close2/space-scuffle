@@ -26,3 +26,6 @@ Only matches with this unit change; it is in none of the test battles.
 
 ## Answer
 
+- **Option (a): The Carrier.** Align life and shields to the Carrier (`300` life / `150` shields) and build the Carrier's interceptor hangar (`B-22`: up to 8 interceptors built one by one, flying out to attack and recalled).
+
+**Reasoning:** Its cost (`350/250`), supply (`6`), build time, range (`8`), weapon name, and description already match the Carrier, and the Cosmic Enclave has no other Carrier; a separate Mothership unit can always be added independently later if desired.
