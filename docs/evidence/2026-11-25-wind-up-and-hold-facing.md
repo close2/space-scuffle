@@ -164,3 +164,39 @@ to 226,533 binary units in sum (mean 3.0° to 0.36°); W-1 standing while able 8
 part:** hull turns of a holder on ticks with no available target at either end rise from 24 to 58 (battles 11b,
 37a, 37b, 38a, 38b; the first in 11b seed 22 at tick 9, a Marauder analogue). Not yet traced; the probe reads the
 target at the ends of ticks, so a target acquired and killed within one tick counts.
+
+## Amendment 1: the three traced items and the restatements
+
+The probe gained two tick-exact hooks (`~/scratch/wind-up-hold/scripts/apply_probe2.py`): the weapon phase records,
+per unit, whether its weapon step turned the hull and whether the step's target had passed the availability test at
+that moment; the blocking meter prints every stall give-up with its tick, unit, kind and order. Probe copies of WP0,
+WP1 and the head (`6f78fc88`) were built in a fresh target directory with fresh file times (`a1.md5` lists three
+binaries; an earlier attempt that reused the probe target directory with archived file times rebuilt nothing and
+was discarded).
+
+1. **W-2, the extra give-up on battle 31 seed 4, follows the divergence.** The per-unit traces of seed 4 first differ
+   on tick 255 (stalker 16 no longer stands for a wind-up whose target died, stalkers 18, 20 and 21 then move
+   differently: class H); the armies stay level to tick 400 (8 v 9 on WP0, 8 v 8 on WP1). WP1's one new give-up is
+   on tick 409, stalker 21 chasing marauder 2 under an acquired attack (`NoProgress`) in an 8 v 7 fight that exists
+   only on WP1's run, 154 ticks after the first difference; WP0's run of the same seed has no give-up and the other
+   eleven give-ups of battle 31 are identical in tick, unit and position on both trees. The seed's winner flips
+   (WP0 red 4 left at tick 700, WP1 blue 4 left at tick 671). Not a new stall.
+2. **W-3, battle 26's rate drop of 1.12 %, is the denominator.** Over its 20 traced seeds the zerglings release
+   9,546 → 9,687 strikes in 393,193 → 403,620 alive unit-ticks (24.28 → 24.00 per 1,000) and the colossi 1,353 →
+   1,344 in 36,779 → 36,502 (36.79 → 36.82). The zerglings' strike count is set by the colossi's life they must take,
+   while more zerglings survive (mean 12.20 → 14.55 left; the colossi die sooner, seeds 4 and 6 flip to the
+   zerglings), so their alive unit-ticks grow 2.7 % against 1.5 % more strikes. Per alive colossus the firing rate
+   does not drop. No unit fires less often for the change.
+3. **W-5, holder hull turns with no available target (24 → 58), are artifacts of the end-of-tick probe.** All 58 on
+   the head's matrix are weapon steps that turned the hull towards a target that passed the availability test at
+   that moment (`weapon-at-live-target` 58, `weapon-without-target` 0, `not-the-weapon` 0); the target was lost later
+   in the same tick (killed in the same combat phase, mostly the abduct and Baneling battles 11b, 37a, 37b, 38a and
+   38b). By construction (`face_target_between_shots` needs the target `swing_target_live` passed) the weapon never
+   turns a hull towards nothing; nothing to fix.
+
+**Restatements** (charter §8, Amendment 1). No seed of record misses on the final tree; the matrix's misses are
+battle 28 (11 and 22 of record, as before, and 1, 2, 3, 4, 5, 6, 8, 10, 13, 14, 15, 16), 26 seed 13, 32 seed 13
+(as before), 33 seed 10, 36a seeds 4, 12, 14, 39a seeds 4, 5, 9, 14 and 41 seeds 4 and 7 (all as before). So every
+expectation is kept and the fixture comments of battles 21, 32, 26 and 33 record the moved runs with their first
+differences (WP1 table above). Battle 28 keeps `known_bug: Some("B-192")`: its claim still fails on both seeds of
+record; it now holds on seeds 9 and 17 and fails on 5.
