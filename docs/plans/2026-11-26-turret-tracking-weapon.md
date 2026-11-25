@@ -666,7 +666,7 @@ tree (Q0061, charter §4.3). No `unwrap`; `expect` only with `invariant:`; no ca
 
 ---
 
-## 15. Draft owner question (not filed; Q0116 provisional)
+## 15. Owner question (filed as [Q0116](../questions/open/0116-siege-tank-turret-tracking.md))
 
 ```markdown
 # Q0116: How a Siege Tank's turret picks what to follow while it moves, and whether Immortals and Colossi do the same
