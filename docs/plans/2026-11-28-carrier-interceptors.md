@@ -923,7 +923,7 @@ Q0129 (plan 2026-11-28-carrier-interceptors WP6)`.
 
 ---
 
-## 15. Owner question (draft; provisional number, not filed by this commit)
+## 15. Owner question (filed on main as [Q0130](../questions/open/0130-interceptors-hover-or-strafe.md))
 
 ````markdown
 # Q0130: Interceptors hover instead of strafing until the movement work ends; is that acceptable for now?
