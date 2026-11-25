@@ -19,3 +19,4 @@ built on a solver that shoved enemies and was stopped. StarCraft II's exact rule
 
 ## Answer
 
+- **Option (a): Switch to the nearest enemy with free room within scan range, and keep it until reached (`D-ε`).** Directly fixes Battle 28 (`B-192`) and eliminates rear melee units stalling idle behind a surrounded front rank.

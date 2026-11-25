@@ -18,3 +18,4 @@ run less often.
 
 ## Answer
 
+- **Option (a): Budget = today's movement with the `Q0118` crowd fix, and ≥ 50 ticks/s on every benchmark.** Preserves the ≥ 50 TPS real-time floor while letting the redesign prove its net solver-iteration savings organically.

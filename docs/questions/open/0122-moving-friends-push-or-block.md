@@ -19,3 +19,4 @@ that are queued and standing.
 
 ## Answer
 
+- **Option (c): Measure both in the new movement's first package and decide then.** Compare pushing by priority (`D-β`) against moving-allies-block (with idle allies still pushed) inside the new architecture so the decision is backed by real measurements.
