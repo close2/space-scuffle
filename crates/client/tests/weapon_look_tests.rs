@@ -1230,7 +1230,7 @@ fn a_mover_weapons_projectile_flies_its_travel_and_lands_its_impact_after_the_fl
             (WeaponSlot::Air, archetype.air_weapon.as_ref()),
         ];
         for (slot, weapon) in slots {
-            if !weapon.is_some_and(|weapon| !weapon.missile_movers.is_empty()) {
+            if weapon.is_none_or(|weapon| weapon.missile_movers.is_empty()) {
                 continue;
             }
             let source = EffectSource {

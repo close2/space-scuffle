@@ -119,3 +119,73 @@ interleaved.
 
 The trace binaries, the throughput binary and the worlds of this tree are kept under `~/scratch/weapon-delivery/`
 (`bin-wp0/`, `bench-bin-wp0/`, `world-wp0/`) for the comparisons of WP1 to WP4.
+
+## WP1: missile movers, latent (`16934087`)
+
+Red first (`~/scratch/weapon-delivery/red/`): on WP0's tree with only WP1's tests, `sim_types`'s lib test fails to
+compile (no `MissileMover`, `MissilePhase`, no field `missile_movers`; `wp1-red-sim_types.log`), and so do `sim_core`'s
+lib test, `checksum_state_tests`, `hidden_harvester_tests` and the new `missile_mover_tests` (no field `mover`, `phase`,
+`travelled` on `ActiveProjectile`, no `MissileMoverDef`; `wp1-red-sim_core.log`, built on a `git archive` copy of WP0
+with the test files overlaid). Green after the change: W-1 to W-4, W-7 to W-9 (`missile_mover_tests.rs`: a constant
+missile's position and landing tick equal the old step's on every tick; one phase lands on the first tick whose
+`v₀k + ak²/2` reaches the path; a phase switches on the first tick whose path reaches its end, restarting or carrying
+the speed; the band is chosen inclusively at the release and kept when the target closes; a mover missile fuels out on
+the tick a constant one does; a lost target's missile flies its profile to the last point; the event's flight time is
+the integration's), the `missile_flight` unit tests (W-1's `ceil(path / speed)` over every shipped speed and a table
+of paths, W-2 to W-4), W-5 (`validation.rs`, every D-4 rule refused naming its field) and W-6 (`checksum_state_tests.rs`).
+
+**Worlds.** WP1's worlds (binaries and assets of the commit) against WP0's: `compare.sh` finds 490 files, none
+differing.
+
+**Latent proof (§5, stop rule 1).** A `git archive` copy of `16934087` whose encoding lists `missile_movers` and the
+projectile's `mover`, `phase` and `travelled` under `unhashed` and whose schema is 53
+(`~/scratch/weapon-delivery/scripts/unhash.py`), each build in a fresh target directory (`proofcopy.sh wp1-latent
+16934087 unhash.py`), reproduces every recorded checkpoint of both goldens and `DEFAULT_SANDBOX_CHECKSUM` on native debug
+and release and on `wasm32-wasip1` release and debug: 8 of 8. The committed tree hashes the fields at schema 56
+(provisional; 54 and 55 are reserved for the Gated plan), so its golden and sandbox tests fail by design until WP4.
+
+## WP2: the data (`0cf9656b`)
+
+Red first on WP1's tree (`red/wp2-red.log`): W-10 (`flying_saucer`'s Disruptor Beam instant where 5.0.14 launches a
+missile), V-19 (the Carrier's salvo `Snapshot`), W-11 to W-16 (no shipped weapon with movers or a hidden launch), W-17
+and W-18 fail. All pass after the data. The measured flight ticks equal §2.3's table at every distance: the Phoenix
+analogue 2, 8 and 10 ticks at edge 0.5, 3 and 5 (release tick counted), both strikes on one missile, the reveal on the
+landing tick and not before; the Spine Crawler analogue 6, 7, 7, 4, 4, 5 at edge 0.5, 2, 3, 3.5, 5, 7, the short band
+the slower. The full `sim_types`, `sim_core` and `sim_fixtures` suites on WP2's data: every test binary green but the
+goldens and the sandbox (schema bytes, re-recorded in WP4).
+
+**World check (§6.4, §6.5).** WP2's worlds against WP1's: 490 files, none differing; `matrixdiff.py` lists nothing. No
+first difference exists, so no world is classed; no outcome moved, and no close battle is restated (stop rules 2 and 4
+hold). The prediction of §6.6 holds: no measured world fires the three weapons (WP0's probe).
+
+## WP3: client looks (`c788b407`)
+
+No `client/src` file changes (stop rule 7 holds). Red on WP2's tree (`red/wp3-red.log`):
+`every_shipped_weapon_names_the_looks_of_the_event_it_publishes` (`flying_saucer Air None Projectile: prism_beam does
+not fly the path`) and W-20 fail. Green after the data: W-19 (`effect_catalog_tests`, 41 tests, `impaler_tentacle`
+validates), W-20 (`weapon_look_tests`). W-21: `sync_steady_state_tests` (13) and `sync_allocation_count_tests` (10
+children under valgrind) pass unchanged on WP3's data.
+
+**Deviation (W-21).** A Phoenix-analogue volley cannot be staged in the client harness: `flying_saucer` has no
+flipbook media, and the client refuses to present a unit without it (the visibility plan met the same limit for its
+spellcasters). Its travel, `plasma_bolt`, is the one seven shipped missile weapons already fly in those tests. Other
+deviations: W-13's air target has no "loaded" case (an air unit boards no transport; the ground target covers all
+five); W-14 clears the random delay on a scratch copy so the period is exact, and the victims hold position.
+
+## WP4: re-record, final worlds (`3518b58d`)
+
+**Merge.** `main` `39df7177` (docs only: Q0129 answered (a)) merged as `1943995d`. **Latent proof on the merged tree:**
+a fresh-target copy of `1943995d` with the fields unhashed at schema 53 reproduces main's goldens and
+`DEFAULT_SANDBOX_CHECKSUM` (`1_324_710_836_022_737_298`) on native debug and release and `wasm32-wasip1` release and
+debug, 8 of 8: neither the mechanism nor the data moves any hashed state of the goldens' worlds.
+
+**Re-record (§5).** `golden_replay.ron`, `golden_replay_orders.ron` (schema 53 → 56, with the plan's header) and
+`DEFAULT_SANDBOX_CHECKSUM` (now `6_457_533_297_407_649_319`) re-recorded once on the final tree; a fresh-target
+`git archive` copy of `3518b58d` passes both goldens and the sandbox on the four builds, 8 of 8 (`proofcopy.sh
+final-recorded 3518b58d`).
+
+**Final worlds against WP0's** (WP0's tree is `main` `c3c372c6` plus docs): 490 files, none differing; `matrixdiff.py`
+lists nothing.
+
+**Held-out (§7.3) and throughput (§5):** run by `~/scratch/weapon-delivery/scripts/wp4-all.sh 3518b58d`; results in
+`compare-heldout.txt` and `bench-{wp0,final}-r{1,2}.{log,perf}`, to be entered here.
