@@ -5453,3 +5453,125 @@ fn shipped_spell_visibility_follows_starcraft() -> TestResult {
     );
     Ok(())
 }
+
+/// One speed phase of a 5.0.14 missile mover in world units and ticks (`Speed`, `Acceleration`,
+/// `MaxSpeed`, `Outro`'s midpoint), converted as the catalog's speeds and accelerations are: a
+/// Normal speed `v` is `0.056 v` per tick, a Normal acceleration `a` is `0.003136 a` per tick
+/// squared (plan `2026-11-27-weapon-delivery` §2).
+type PhaseRow = (Option<f32>, f32, f32, Option<f32>);
+
+/// One mover of a launch effect's `Movers`: its `IfRangeLTE` bound (`None` on the last, which
+/// admits any distance) and its phases.
+type MoverRow = (Option<f32>, &'static [PhaseRow]);
+
+/// W-18 (plan `2026-11-27-weapon-delivery` D-2): every shipped weapon with missile movers, by
+/// analogue and block, with the 5.0.14 movers of its launch effect.
+const SC2_MISSILE_MOVERS: [(&str, &str, &[MoverRow], f32, &str); 2] = [
+    (
+        "Phoenix",
+        "air_weapon",
+        &[
+            // MissileDefault (core MoverData:13-25): Acceleration 3200 reaches MaxSpeed 18.75
+            // within a tenth of a tick, so a constant 1.05.
+            (Some(1.0), &[(Some(1.05), 0.0, 1.05, None)]),
+            // IonCannonsWeapon{Left,Right} (liberty MoverData:446-484): Throw Speed 6 MaxSpeed 6
+            // to Outro 1,1.5 (phases 0 and 1 merged, midpoint 1.25), then Guidance Acceleration
+            // 60 to MaxSpeed 40; its IfRangeLTE 6 is the last band, so unbounded.
+            (
+                None,
+                &[
+                    (Some(0.336), 0.0, 0.336, Some(1.25)),
+                    (None, 0.18816, 2.24, None),
+                ],
+            ),
+        ],
+        2.24,
+        "IonCannonsLMLeft, IonCannonsLMRight, liberty EffectData:1972-1981 (S5, S7, S8)",
+    ),
+    (
+        "Spine Crawler",
+        "ground_weapon",
+        &[
+            // SpineCrawlerTentacleExtendShort (liberty MoverData:243-265): Throw Speed 1,
+            // Acceleration 10, MaxSpeed 20, Outro 0.2,0.4 (midpoint 0.3); Guidance Acceleration
+            // 140, MaxSpeed 200.
+            (
+                Some(3.0),
+                &[
+                    (Some(0.056), 0.03136, 1.12, Some(0.3)),
+                    (None, 0.43904, 11.2, None),
+                ],
+            ),
+            // SpineCrawlerTentacleExtendLong (:266-278): Guidance Speed 12, Acceleration 140,
+            // MaxSpeed 200; its IfRangeLTE 7 is the weapon's range and the last band.
+            (None, &[(Some(0.672), 0.43904, 11.2, None)]),
+        ],
+        11.2,
+        "ImpalerTentacleLM, liberty EffectData:2151-2162 (S10, S11)",
+    ),
+];
+
+/// W-18: the movers and top speed of every shipped weapon that has movers follow 5.0.14, and
+/// every row names a shipped weapon.
+#[test]
+fn missile_movers_follow_starcraft() -> TestResult {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let close = |got: SimScalar, want: f32| (f(got) - want).abs() < 0.001;
+    let mut seen = std::collections::BTreeSet::new();
+    for archetype in catalogs.units.archetypes() {
+        for (block, weapon) in weapon_blocks(archetype) {
+            let Some(weapon) = weapon.filter(|weapon| !weapon.missile_movers.is_empty()) else {
+                continue;
+            };
+            let name = analogue(archetype);
+            if block == "weapon" && archetype.ground_weapon.as_ref() == Some(weapon) {
+                continue;
+            }
+            let (_, _, movers, top, source) = SC2_MISSILE_MOVERS
+                .iter()
+                .find(|(unit, row_block, ..)| *unit == name && *row_block == block)
+                .ok_or_else(|| format!("{} ({name}) {block}: no movers row", archetype.slug))?;
+            let speed = weapon
+                .projectile_speed
+                .ok_or("a weapon with movers is a missile")?;
+            assert!(close(speed, *top), "{name} {block}: top speed ({source})");
+            assert_eq!(
+                weapon.missile_movers.len(),
+                movers.len(),
+                "{name} {block} ({source})"
+            );
+            for (index, (mover, (bound, phases))) in
+                weapon.missile_movers.iter().zip(movers.iter()).enumerate()
+            {
+                assert_eq!(
+                    mover.up_to_range.map(f),
+                    *bound,
+                    "{name} {block} mover {index} bound ({source})"
+                );
+                assert_eq!(mover.phases.len(), phases.len(), "{name} mover {index}");
+                for (phase, &(start, acceleration, max, ends)) in mover.phases.iter().zip(*phases) {
+                    let same = |got: Option<SimScalar>, want: Option<f32>| match (got, want) {
+                        (Some(got), Some(want)) => close(got, want),
+                        (None, None) => true,
+                        _ => false,
+                    };
+                    assert!(
+                        same(phase.speed, start)
+                            && close(phase.acceleration, acceleration)
+                            && close(phase.max_speed, max)
+                            && same(phase.ends_after, ends),
+                        "{name} {block} mover {index}: {phase:?} ({source})"
+                    );
+                }
+            }
+            seen.insert(name.to_owned());
+        }
+    }
+    for (unit, ..) in &SC2_MISSILE_MOVERS {
+        assert!(
+            seen.contains(*unit),
+            "movers row {unit} has no shipped weapon"
+        );
+    }
+    Ok(())
+}

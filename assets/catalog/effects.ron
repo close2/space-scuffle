@@ -3221,6 +3221,27 @@
                 ),
             ],
         ),
+        // A Spine Crawler-like tentacle (plan 2026-11-27-weapon-delivery D-8): a chitin strip drawn
+        // out from the dome towards its target over the tentacle's flight (`lasts: FlightTime`, its
+        // tail held at the dome by a trail longer than any reach), led by a chitin spine riding its
+        // head; `impaler_strike` lands when it arrives. The shipped `chitin_spine` texture and
+        // `spine_chitin` ramp of `impaler_strike`: no new image.
+        "impaler_tentacle": (
+            class: Minor,
+            event: Shot,
+            layers: [
+                (
+                    block: Ribbon(texture: "chitin_spine", ramp: "spine_chitin", repeat: 0.6, trail: Some(12.0),
+                        taper: (0.1, 0.35), soft_depth: 0.05, sort_bias: -0.05),
+                    size: (scale: 0.14), duration: 0.6, curve: "flight_hold", lasts: FlightTime,
+                ),
+                (
+                    block: Sprite(texture: "chitin_spine", ramp: "spine_chitin", ride: true, stretch: 1.6,
+                        soft_depth: 0.05),
+                    size: (scale: 0.24), duration: 0.6, curve: "flight_hold", lasts: FlightTime, priority: Critical,
+                ),
+            ],
+        ),
         // The default death (plan WP11, replacing the legacy glass shatter): the bubble's glass
         // breaks outward in pale shards with dark edges, thrown out to about one and a half
         // radii, one soft pale flash where it stood, and a little dust. Sized by the bubble.

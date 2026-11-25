@@ -409,36 +409,220 @@ fn an_instant_weapon_or_a_zero_reveal_authoring_launch_visibility_is_refused() {
     );
 }
 
-/// V-19 (plan `2026-11-27-launch-and-spell-visibility` §2.1 S3, S4, D-1): no shipped weapon
-/// authors a launch visibility, so every one reads the engine default of `CEffectLaunchMissile`,
-/// a snapshot (`core` EffectData:102), which no 5.0.14 weapon launch overrides (the five
-/// launch overrides of the game data are spells). Mode weapons are included.
+/// How 5.0.14 delivers a weapon's damage: through a missile its launch effect creates
+/// (`CEffectLaunchMissile`), or at once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Delivery {
+    Missile,
+    Instant,
+}
+
+/// One row of the delivery census (W-10, plan `2026-11-27-weapon-delivery` D-1): a shipped
+/// weapon, by its unit's slug and the weapon's name, with its 5.0.14 weapon, the effect that
+/// delivers it and where the data says so (game data `5444e12f13`).
+struct DeliveryRow {
+    slug: &'static str,
+    weapon: &'static str,
+    game: &'static str,
+    delivery: Delivery,
+    /// A registered bug under which the row is delivered otherwise than the game delivers it;
+    /// the census then pins today's delivery, so a fix changes this row on purpose.
+    known_bug: Option<&'static str>,
+}
+
+const fn row(
+    slug: &'static str,
+    weapon: &'static str,
+    game: &'static str,
+    delivery: Delivery,
+) -> DeliveryRow {
+    DeliveryRow {
+        slug,
+        weapon,
+        game,
+        delivery,
+        known_bug: None,
+    }
+}
+
+/// Every shipped weapon, unit and structure, mode overrides included (W-10).
+const DELIVERY_CENSUS: [DeliveryRow; 44] = [
+    row("welder_drone", "Drill Slash", "FusionCutter, liberty WeaponData:195", Delivery::Instant),
+    row("pulse_bot", "Pulse Carbine", "GuassRifle, liberty WeaponData:203", Delivery::Instant),
+    row("rhino_beetle", "Acid Saliva", "AcidSaliva -> AcidSalivaLM, liberty EffectData:2136", Delivery::Missile),
+    row("psi_grey", "Psi-Blade Double Slash", "PsiBlades, liberty WeaponData:150", Delivery::Instant),
+    row("railgun_crawler", "Twin Heavy Railgun", "90mmCannons, liberty WeaponData:237", Delivery::Instant),
+    row("railgun_crawler", "Crucio Shock Cannon", "CrucioShockCannon, liberty WeaponData:255", Delivery::Instant),
+    row(
+        "flying_saucer",
+        "Disruptor Beam",
+        "IonCannons -> IonCannonsLMLeft, IonCannonsLMRight, liberty EffectData:1972, :1977",
+        Delivery::Missile,
+    ),
+    row("shock_golem", "Concussive Shells", "PunisherGrenades -> PunisherGrenadesLM, liberty EffectData:1636", Delivery::Missile),
+    row("jet_jumper", "Dual Gauss Pistols", "P38ScytheGuassPistol, liberty WeaponData:317", Delivery::Instant),
+    row("specter_android", "Null-Sniper Rifle", "C10CanisterRifle, liberty WeaponData:573", Delivery::Instant),
+    row("napalm_wheeler", "Napalm Emitter", "InfernalFlameThrower, liberty WeaponData:582", Delivery::Instant),
+    row("colossus_mech", "Thor's Hammer", "ThorsHammer, liberty WeaponData:224", Delivery::Instant),
+    row(
+        "colossus_mech",
+        "High Impact Payload",
+        "LanceMissileLaunchers -> LanceMissileLaunchersDamage, swarmmulti WeaponData:39",
+        Delivery::Instant,
+    ),
+    row("vector_interceptor", "Sky Torpedo Volley", "LanzerTorpedoes -> LanzerTorpedoesLM, liberty EffectData:1707", Delivery::Missile),
+    row(
+        "sky_bastion",
+        "Lexington Rockets",
+        "LiberatorMissileLaunchers -> LiberatorDamageMissileLM, void EffectData:2979",
+        Delivery::Missile,
+    ),
+    row("cloak_gunship", "Backlash Thermite Rockets", "BacklashRockets -> BacklashRocketsLM, liberty EffectData:2558", Delivery::Missile),
+    row("grav_harvester", "Particle Beam", "ParticleBeam, liberty WeaponData:142", Delivery::Instant),
+    row("warp_strider", "Particle Disruptor", "ParticleDisruptors, liberty EffectData:2335", Delivery::Missile),
+    row("prism_weaver", "Disruption Beam", "DisruptionBeam, liberty WeaponData:539", Delivery::Instant),
+    row("astral_vagrant", "Glaive Cannon", "Adept -> AdeptLM, void EffectData:2762", Delivery::Missile),
+    row("cerebral_elder", "Psi-Bolt", "HighTemplarWeapon -> HighTemplarWeaponLM, voidmulti EffectData:1532", Delivery::Missile),
+    row("shadow_visitor", "Warp Blade", "WarpBlades, liberty WeaponData:161", Delivery::Instant),
+    row("void_goliath", "Phase Disruptor", "PhaseDisruptors, liberty WeaponData:507", Delivery::Instant),
+    row("tripod_annihilator", "Thermal Lance Sweep", "ThermalLances, liberty WeaponData:493", Delivery::Instant),
+    row("prismatic_saucer", "Prismatic Beam", "PrismaticBeam, liberty WeaponData:118", Delivery::Instant),
+    DeliveryRow {
+        slug: "mothership_carrier",
+        weapon: "Interceptor Fleet Salvo",
+        game: "InterceptorLaunch, liberty WeaponData:601, spends interceptors through CarrierInterceptor, a \
+               CEffectUseMagazine, liberty EffectData:1940; the Mothership's MothershipBeam is instant, \
+               voidmulti EffectData:2669",
+        delivery: Delivery::Instant,
+        known_bug: Some("B-22"),
+    },
+    row("nectar_worker", "Mandible Bite", "Spines, liberty WeaponData:349", Delivery::Instant),
+    row("razor_mantis", "Scythe Slash", "Claws, liberty WeaponData:357", Delivery::Instant),
+    row("volatile_tick", "Volatile Burst", "VolatileBurst, liberty WeaponData:463", Delivery::Instant),
+    row("mortar_stag", "Corrosive Bile", "RavagerWeapon -> RavagerWeaponLM, void EffectData:1605", Delivery::Missile),
+    row("thorn_viper", "Needle Spines", "NeedleSpines -> NeedleSpinesLaunchMissile, liberty EffectData:565", Delivery::Missile),
+    row("burrow_scorpion", "Subterranean Spines", "LurkerMP, swarm WeaponData:215", Delivery::Instant),
+    row("sonic_bat", "Glaive Stinger", "GlaiveWurm, liberty EffectData:2185", Delivery::Missile),
+    row(
+        "sky_leviathan",
+        "Parasitic Spores",
+        "ParasiteSpore -> ParasiteSporeLaunchMissile, liberty EffectData:2580",
+        Delivery::Missile,
+    ),
+    row(
+        "spore_matriarch",
+        "Broodling Swarm",
+        "BroodlingEscort -> BroodlingEscortLaunchA, liberty EffectData:2664",
+        Delivery::Missile,
+    ),
+    row("stag_behemoth", "Kaiser Blades Cleave", "KaiserBlades, liberty WeaponData:430", Delivery::Instant),
+    row("hive_matron", "Matron Talons", "TalonsMissile -> TalonsLM, libertymulti EffectData:236", Delivery::Missile),
+    row("hive_matron", "Acid Spores", "AcidSpines -> AcidSpinesLM, liberty EffectData:2840", Delivery::Missile),
+    row("planetary_bulwark_dome", "Ibiks Cannons", "TwinIbiksCannon, liberty WeaponData:133", Delivery::Instant),
+    row("flak_array_dome", "Longbolt AA Missiles", "LongboltMissile -> LongboltMissileLM, liberty EffectData:1789", Delivery::Missile),
+    row("tesla_sentinel_dome", "Phase Discharge", "PhotonCannon -> PhotonCannonLM, liberty EffectData:2569", Delivery::Missile),
+    row("tesla_sentinel_dome", "Phase Discharge AA", "PhotonCannon -> PhotonCannonLM, liberty EffectData:2569", Delivery::Missile),
+    row(
+        "thorn_lasher_dome",
+        "Impaler Spine",
+        "ImpalerTentacle -> ImpalerTentacleLM, liberty WeaponData:365, EffectData:2151",
+        Delivery::Missile,
+    ),
+    row("spore_spire_dome", "Spore Volley", "AcidSpew -> SporeCrawler, liberty EffectData:2168", Delivery::Missile),
+];
+
+/// The census row of `slug`'s weapon named `weapon`.
+fn census_row(slug: &str, weapon: &str) -> Option<&'static DeliveryRow> {
+    DELIVERY_CENSUS
+        .iter()
+        .find(|row| row.slug == slug && row.weapon == weapon)
+}
+
+/// Every weapon of `archetype`: its own, then each mode's overrides.
+fn every_weapon(archetype: &UnitArchetype) -> impl Iterator<Item = &WeaponSpec> {
+    let modes = archetype.modes.iter().flat_map(|mode| {
+        [
+            mode.ground_weapon_override.as_ref(),
+            mode.air_weapon_override.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        .flatten()
+    });
+    own_weapons(archetype).chain(modes)
+}
+
+/// W-10 (plan `2026-11-27-weapon-delivery` D-1, §2.2 rules 1, 2, 7): every shipped weapon is
+/// delivered as 5.0.14 delivers it, a missile exactly where the game's weapon launches one
+/// (`projectile_speed` set). A row under a registered bug pins today's delivery: the Mothership
+/// Carrier's salvo stays a missile until B-22 builds interceptors.
+#[test]
+fn every_weapon_is_delivered_as_starcraft_delivers_it() -> TestResult {
+    let world = flat_world(16)?;
+    let mut seen = std::collections::BTreeSet::new();
+    for archetype in world.catalog.archetypes() {
+        for weapon in every_weapon(archetype) {
+            let row = census_row(&archetype.slug, &weapon.name).ok_or_else(|| {
+                format!(
+                    "{}'s {} is in the delivery census",
+                    archetype.slug, weapon.name
+                )
+            })?;
+            seen.insert((row.slug, row.weapon));
+            let missile = weapon.projectile_speed.is_some();
+            match row.known_bug {
+                None => assert_eq!(
+                    missile,
+                    row.delivery == Delivery::Missile,
+                    "{}'s {} is delivered as {} ({:?})",
+                    row.slug,
+                    row.weapon,
+                    row.game,
+                    row.delivery
+                ),
+                Some(bug) => assert!(
+                    missile,
+                    "{}'s {} stays a missile until {bug} changes it",
+                    row.slug, row.weapon
+                ),
+            }
+        }
+    }
+    for row in &DELIVERY_CENSUS {
+        assert!(
+            seen.contains(&(row.slug, row.weapon)),
+            "the census row {}'s {} names a shipped weapon",
+            row.slug,
+            row.weapon
+        );
+    }
+    Ok(())
+}
+
+/// V-19 (plan `2026-11-27-launch-and-spell-visibility` §2.1 S3, S4, D-1), with plan
+/// `2026-11-27-weapon-delivery` D-7: every shipped missile weapon reads the engine default of
+/// `CEffectLaunchMissile`, a snapshot (`core` EffectData:102), which no 5.0.14 weapon launch
+/// overrides (the five launch overrides of the game data are spells); a weapon whose game
+/// counterpart launches no missile (the census row under B-22) shows nothing at its release
+/// (`Hidden`), until the bug replaces its missile. Mode weapons are included.
 #[test]
 fn launch_visibility_follows_starcraft() -> TestResult {
-    assert!(
-        !UNITS.contains("launch_visibility:") && !STRUCTURES.contains("launch_visibility:"),
-        "no shipped weapon row authors the field"
-    );
     let world = flat_world(16)?;
     let mut missiles = 0;
     for archetype in world.catalog.archetypes() {
-        let modes = archetype.modes.iter().flat_map(|mode| {
-            [
-                mode.ground_weapon_override.as_ref(),
-                mode.air_weapon_override.as_ref(),
-            ]
-            .into_iter()
-            .flatten()
-            .flatten()
-        });
-        for weapon in own_weapons(archetype).chain(modes) {
+        for weapon in every_weapon(archetype) {
             missiles += usize::from(weapon.projectile_speed.is_some());
+            let launchless = census_row(&archetype.slug, &weapon.name)
+                .is_some_and(|row| row.known_bug.is_some() && row.delivery == Delivery::Instant);
+            let expected = if launchless {
+                sim_types::AttackVisibility::Hidden
+            } else {
+                sim_types::AttackVisibility::Snapshot
+            };
             assert_eq!(
-                weapon.launch_visibility,
-                sim_types::AttackVisibility::Snapshot,
+                weapon.launch_visibility, expected,
                 "{}'s {} launches as 5.0.14's missiles do",
-                archetype.slug,
-                weapon.name
+                archetype.slug, weapon.name
             );
         }
     }

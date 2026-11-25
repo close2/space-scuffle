@@ -215,7 +215,8 @@ pub struct ActiveProjectile {
     pub target_pos: SimVec2,
     /// Locomotion layer of the target, retained so an impact on bare ground keeps its plane.
     pub target_mover: MoverType,
-    /// Travel speed per tick.
+    /// Speed per tick, world units, at the start of the next tick: a constant missile's one
+    /// speed, or a mover missile's current speed (plan `2026-11-27-weapon-delivery` D-2).
     pub speed: SimScalar,
     /// Weapon specification for damage resolution.
     pub weapon_spec: WeaponSpec,
@@ -230,6 +231,15 @@ pub struct ActiveProjectile {
     /// onto it; a target whose count has moved on since teleported in flight (plan
     /// `2026-11-24-weapon-validation` D-2). Zero for a projectile without a unit target.
     pub target_teleport_count: u16,
+    /// Index into `weapon_spec.missile_movers` of the mover chosen at the release by the edge
+    /// distance to the target (`IfRangeLTE`, plan `2026-11-27-weapon-delivery` D-2); `None` for
+    /// a missile flying the constant `speed`.
+    pub mover: Option<u8>,
+    /// Index of the chosen mover's phase the missile flies; zero for a constant missile.
+    pub phase: u8,
+    /// Path flown since the release, world units, which ends each phase (`Outro`); zero for a
+    /// constant missile, whose flight reads no phase.
+    pub travelled: SimScalar,
 }
 
 /// What a unit remembers about its movement order between ticks.

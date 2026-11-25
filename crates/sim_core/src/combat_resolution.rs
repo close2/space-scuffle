@@ -70,6 +70,7 @@ use crate::world::presentation::{
     mode_index, weapon_source, AttackSnapshotRecord, PresentationWorkspace, SnapshotPose,
 };
 use crate::world::SimWorld;
+use missile_flight::{FlightProfile, MoverTick};
 use sim_map::{CliffSpan, PlayerVisionMap, SimMap};
 use sim_types::{
     AbilitySource, AttackVisibility, CombatEventVisual, EffectContext, EffectSource, EffectTarget,
@@ -77,6 +78,8 @@ use sim_types::{
     ProjectileTargetLossBehavior, SimAngle, SimScalar, SimVec2, SplashCliff, SplashImpact,
     SplashShape, StrikeEnds, Tick, UnitOrder, UnitTypeId, WeaponVisualKind,
 };
+
+mod missile_flight;
 
 /// Lowest impact distance used for flight timing, so a point-blank launch still takes a tick.
 const MIN_FLIGHT_DISTANCE: f64 = 0.05;
@@ -1086,6 +1089,11 @@ impl SimWorld {
     /// Spawns the projectile for `shot` and emits its renderer event, then records what the
     /// release shows of the attacker to the owner of the unit it is aimed at (`StarCraft` II's
     /// `CEffectLaunchMissile` `Visibility`, plan `2026-11-27-launch-and-spell-visibility` D-2).
+    ///
+    /// A weapon with movers chooses its mover here, once, by the edge distance its range check
+    /// reads (centre distance less both collision radii), and the missile starts at that mover's
+    /// first speed; a weapon without movers flies at `speed`, its `projectile_speed` (plan
+    /// `2026-11-27-weapon-delivery` D-2).
     fn launch_projectile(&mut self, shot: PreparedShot, speed: SimScalar) {
         let target_pos = self
             .entities
@@ -1111,26 +1119,72 @@ impl SimWorld {
             });
 
         let delta = target_pos - shot.origin;
-        let dist = delta.length();
-        let dir = delta.normalize_or_zero();
+        let edge_distance = delta.length() - target_radius - attacker_radius;
+        let mover = missile_flight::choose_mover(&shot.weapon.missile_movers, edge_distance);
+        let chosen = mover.and_then(|index| shot.weapon.missile_movers.get(usize::from(index)));
+        let profile = chosen.map_or(FlightProfile::Constant(speed), FlightProfile::Mover);
+        // The renderer event's flight time over the range edges (a structure's engine radius);
+        // presentation only.
+        let ticks_to_impact = missile_flight::flight_ticks(
+            profile,
+            edge_distance.max(SimScalar::from_num(MIN_FLIGHT_DISTANCE)),
+            shot.weapon.max_projectile_lifetime_ticks,
+        )
+        .max(1);
+        let speed = chosen.map_or(speed, missile_flight::launch_speed);
+        self.emit_projectile_visual(
+            &shot,
+            target_pos,
+            delta.normalize_or_zero(),
+            ticks_to_impact,
+        );
+        self.presentation.record_projectile(id, shot.source);
 
-        let eff_dist =
-            (dist - target_radius - attacker_radius).max(SimScalar::from_num(MIN_FLIGHT_DISTANCE));
-        let ticks_to_impact = (eff_dist / speed)
-            .saturating_ceil()
-            .saturating_to_u32()
-            .max(1);
+        let remaining_lifetime_ticks = shot.weapon.max_projectile_lifetime_ticks;
+        let target_teleport_count = self
+            .entities
+            .get(&shot.target)
+            .map_or(0, |target| target.teleport_count);
+        let (cause, aimed_at) = (AttackCause::launch(&shot), shot.target);
+        self.projectiles.push(ActiveProjectile {
+            id,
+            owner: shot.owner,
+            attacker_id: Some(shot.attacker),
+            source_pos: shot.origin,
+            current_pos: shot.origin,
+            target_id: Some(shot.target),
+            target_pos,
+            target_mover,
+            speed,
+            weapon_spec: shot.weapon,
+            source_slug: Some(shot.source_slug),
+            remaining_lifetime_ticks,
+            strikes: shot.strikes,
+            target_teleport_count,
+            mover,
+            phase: 0,
+            travelled: SimScalar::ZERO,
+        });
+        self.record_attack_presentation(cause, aimed_at);
+    }
+
+    /// Emits the renderer event of `shot`'s missile, flying along `dir` toward `target_pos` for
+    /// `ticks_to_impact` ticks. Its ends lie on the drawn bubbles, so a projectile lands on a
+    /// dome's glass (plan `2026-11-18-structure-radius` D-6). Presentation only.
+    fn emit_projectile_visual(
+        &mut self,
+        shot: &PreparedShot,
+        target_pos: SimVec2,
+        dir: SimVec2,
+        ticks_to_impact: u32,
+    ) {
         #[expect(
             clippy::cast_precision_loss,
             reason = "presentation only: this value drives no simulation decision"
         )]
         let flight_duration_secs =
             (ticks_to_impact as f32) / f32::from(sim_types::TICKS_PER_SECOND);
-
-        // Emit visual projectile event for client VFX rendering. The flight time above uses the
-        // range edges (a structure's engine radius); the visual's ends lie on the drawn bubbles,
-        // so a projectile lands on a dome's glass (plan `2026-11-18-structure-radius` D-6).
-        let (attacker_drawn, target_drawn) = self.drawn_radii(&shot);
+        let (attacker_drawn, target_drawn) = self.drawn_radii(shot);
         let spawn_pos_2d = shot.origin + dir * attacker_drawn;
         let impact_pos_2d = target_pos - dir * target_drawn;
         let z_spawn = self.map.terrain_altitude_at(spawn_pos_2d);
@@ -1156,31 +1210,6 @@ impl SimWorld {
                     target: shot.target,
                 }),
             });
-        self.presentation.record_projectile(id, shot.source);
-
-        let remaining_lifetime_ticks = shot.weapon.max_projectile_lifetime_ticks;
-        let target_teleport_count = self
-            .entities
-            .get(&shot.target)
-            .map_or(0, |target| target.teleport_count);
-        let (cause, aimed_at) = (AttackCause::launch(&shot), shot.target);
-        self.projectiles.push(ActiveProjectile {
-            id,
-            owner: shot.owner,
-            attacker_id: Some(shot.attacker),
-            source_pos: shot.origin,
-            current_pos: shot.origin,
-            target_id: Some(shot.target),
-            target_pos,
-            target_mover,
-            speed,
-            weapon_spec: shot.weapon,
-            source_slug: Some(shot.source_slug),
-            remaining_lifetime_ticks,
-            strikes: shot.strikes,
-            target_teleport_count,
-        });
-        self.record_attack_presentation(cause, aimed_at);
     }
 
     /// Resolves a hitscan, beam or melee shot: direct strikes, then splash, then visuals.
@@ -1891,13 +1920,32 @@ impl SimWorld {
             return ProjectileStep::Disjointed;
         };
 
+        // A mover missile's step is its phase's integration (plan `2026-11-27-weapon-delivery`
+        // D-2); a constant missile steps its speed, as it always has.
         let delta = proj.target_pos - proj.current_pos;
-        if delta.length() <= proj.speed + target_radius {
-            ProjectileStep::Impact
-        } else {
-            proj.current_pos += delta.normalize_or_zero() * proj.speed;
-            ProjectileStep::Flying
+        let flown = proj
+            .mover
+            .and_then(|index| proj.weapon_spec.missile_movers.get(usize::from(index)))
+            .and_then(|mover| {
+                missile_flight::current_phase(mover, proj.phase)
+                    .map(|phase| (mover, MoverTick::of(phase, proj.speed)))
+            });
+        let step = flown.map_or(proj.speed, |(_, tick)| tick.step);
+        if delta.length() <= step + target_radius {
+            return ProjectileStep::Impact;
         }
+        proj.current_pos += delta.normalize_or_zero() * step;
+        if let Some((mover, tick)) = flown {
+            proj.travelled += tick.step;
+            proj.speed = tick.next;
+            missile_flight::enter_due_phases(
+                mover,
+                &mut proj.phase,
+                proj.travelled,
+                &mut proj.speed,
+            );
+        }
+        ProjectileStep::Flying
     }
 
     /// Refreshes a projectile's aim point and returns the surface radius to stop at.
@@ -2129,6 +2177,9 @@ mod tests {
             remaining_lifetime_ticks: u16::MAX,
             strikes: 1,
             target_teleport_count: 0,
+            mover: None,
+            phase: 0,
+            travelled: SimScalar::ZERO,
         });
         let unit = EffectTarget::Unit(target);
         world.effects.missiles.push(ActiveMissile {

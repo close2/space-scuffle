@@ -15,9 +15,21 @@
 // `launch_visibility` (a missile weapon's field, beside `attack_visibility`): what the missile's
 // release shows of its attacker to the player whose unit it is aimed at, StarCraft II's
 // CEffectLaunchMissile `Visibility` (plan 2026-11-27-launch-and-spell-visibility D-1). Omitted,
-// the engine default `Snapshot` (core EffectData:102), which no 5.0.14 weapon launch overrides,
-// so no row names it: the image is made when the missile leaves, a flight time before the
-// impact's. `Visible(reveal_ticks: N)` and `Hidden` are accepted on a missile weapon only.
+// the engine default `Snapshot` (core EffectData:102), which no 5.0.14 weapon launch overrides:
+// the image is made when the missile leaves, a flight time before the impact's. Only the
+// Mothership Carrier's salvo names it, `Hidden`, because its game counterpart launches no missile
+// (bug B-22; plan 2026-11-27-weapon-delivery D-7). `Visible(reveal_ticks: N)` and `Hidden` are
+// accepted on a missile weapon only.
+//
+// `missile_movers` (a missile weapon's field): StarCraft II's CEffectLaunchMissile `Movers`, the
+// range bands of speed phases its missile may fly (plan 2026-11-27-weapon-delivery D-2). Each
+// mover is `(up_to_range, phases)`: chosen at the release when the edge-to-edge distance is at
+// most `up_to_range` (`IfRangeLTE`; `None` on the last mover, which admits any distance); each
+// phase `(speed, acceleration, max_speed, ends_after)` in world units per tick and per tick
+// squared (a Normal speed v is 0.056 v per tick, a Normal acceleration a is 0.003136 a), `speed`
+// `None` carrying the speed in and `ends_after` the path flown at which the next phase starts
+// (the midpoint of the phase's `Outro`; `None` on the last phase). With movers, `projectile_speed`
+// is the missile's top speed. Omitted: a constant `projectile_speed`.
 (
     attack_snapshot_cap_ticks: Some(25),
     units: [
@@ -634,7 +646,12 @@
                 // BehaviorData:237-240), 3 x 25 / 1.4 = 53.6 ticks, rounded half up to 54 (Q0052 S-5);
                 // plan 2026-11-23-vision-and-detection D-4, D-5.
                 attack_visibility: Visible(reveal_ticks: 54),
-                visual_kind: LaserBeam,
+                // 5.0.14 IonCannons (liberty WeaponData:184-193) is the persistent IonCannons (liberty
+                // EffectData:1959-1967): PeriodCount 2, IonCannonsLMLeft and IonCannonsLMRight on its release
+                // tick (PeriodicPeriodArray 0, 0), each a CEffectLaunchMissile (:1972, :1977) whose
+                // IonCannonsU strike (5, +5 light) lands at its impact. Both missiles fly the same path, so
+                // one missile carries both strikes; plan 2026-11-27-weapon-delivery D-1 (B-227).
+                visual_kind: Projectile,
                 target_flags: (bits: 255),
                 min_range: 0.0,
                 max_range: 5.0,
@@ -659,7 +676,20 @@
                 backswing_ticks: 9,
                 random_delay_ticks: (-1.1161, 2.2321),
                 splash: None,
-                projectile_speed: None,
+                // The top speed of the movers below: IonCannonsWeapon MaxSpeed 40 x 0.056 (D-5).
+                projectile_speed: Some(2.24),
+                // 5.0.14 IonCannonsLMLeft and IonCannonsLMRight Movers (liberty EffectData:1973-1974,
+                // :1978-1979): MissileDefault IfRangeLTE 1 (core MoverData:13-25: Acceleration 3200 reaches
+                // MaxSpeed 18.75 within a tenth of a tick, a constant 1.05), then IonCannonsWeaponLeft or Right
+                // IfRangeLTE 6, the last band (liberty MoverData:446-484: Throw Speed 6, MaxSpeed 6 to Outro
+                // 0.4,0.85 and a second phase to Outro 1,1.5, merged and switched at 1.25; then Guidance
+                // Acceleration 60 to MaxSpeed 40). The Phoenix's range never exceeds 7, and its ammo unit's own
+                // mover IonCannonsWeapon has the same phases, so the last band admits any distance.
+                // Plan 2026-11-27-weapon-delivery D-2, D-3 (B-52).
+                missile_movers: [
+                    (up_to_range: Some(1.0), phases: [(speed: Some(1.05), acceleration: 0.0, max_speed: 1.05, ends_after: None)]),
+                    (up_to_range: None, phases: [(speed: Some(0.336), acceleration: 0.0, max_speed: 0.336, ends_after: Some(1.25)), (speed: None, acceleration: 0.18816, max_speed: 2.24, ends_after: None)]),
+                ],
                 weapon_class: Some("enclave_air_weapons"),
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 0.0,
@@ -671,7 +701,9 @@
             ),
             // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
             effects: (
-                weapons: [(weapon: Air, travel: Some("prism_beam"), impact: Some("beam_burn"))],
+                // The Ion Cannons' two missiles fly as the Enclave's energy bolt (plan
+                // 2026-11-27-weapon-delivery D-8); a sustained beam look rides only an instant beam.
+                weapons: [(weapon: Air, travel: Some("plasma_bolt"), impact: Some("beam_burn"))],
             ),
             veo_prompts: {
                 Idle: "Roswell Flying Saucer: Spinning metallic disc with rotating perimeter lights and ventral purple anti-grav glow.",
@@ -2631,6 +2663,12 @@
                 // BehaviorData:237-240), 3 x 25 / 1.4 = 53.6 ticks, rounded half up to 54 (Q0052 S-5);
                 // plan 2026-11-23-vision-and-detection D-4, D-5.
                 attack_visibility: Visible(reveal_ticks: 54),
+                // 5.0.14 launches no missile for this attack: the Carrier's InterceptorLaunch spends
+                // interceptors through CarrierInterceptor, a CEffectUseMagazine (liberty EffectData:893, :1940),
+                // and the Mothership's beam is instant (MothershipBeam, voidmulti EffectData:2669), so its
+                // release shows no image. The missile stands in for interceptors until bug B-22; the unit's
+                // identity is bug B-228 and owner question Q0129. Plan 2026-11-27-weapon-delivery D-7.
+                launch_visibility: Hidden,
                 visual_kind: Projectile,
                 target_flags: (bits: 255),
                 min_range: 0.0,

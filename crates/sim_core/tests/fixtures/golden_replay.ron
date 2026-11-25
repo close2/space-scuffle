@@ -516,8 +516,14 @@
 // reproduced. Behaviour: none. (53 is provisional, the next free at merge: 51 and 52 are
 // reserved for the Gated movement plan.) Proved on native debug and release and wasm32-wasip1
 // release and debug, each in a fresh target directory.
+// Re-recorded for plan 2026-11-27-weapon-delivery (checksum schema 53 -> 56): each weapon
+// encodes its missile movers and each projectile its mover, phase and path flown; with those left
+// out at schema 53 every checkpoint reproduced. Behaviour: none in these worlds (no weapon with
+// movers fires; the Mothership Carrier does not appear). (56 is provisional, the next free at
+// merge: 54 and 55 are reserved for the Gated movement plan.) Proved on native debug and release
+// and wasm32-wasip1 release and debug, each in a fresh target directory.
 (
-    checksum_schema: 53,
+    checksum_schema: 56,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -543,25 +549,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x478053814a1e6b34,
-        0xcd292c11fa9c1783,
-        0x3c62832642ca8fc7,
-        0x73e7f9f99dcc64b2,
-        0x2cf55279ae4eeb77,
-        0xd15017ad4828ab9e,
-        0x192a69f13876dc4f,
-        0x98b61266db6c0e05,
-        0x51e1c415c3b22709,
-        0x5b8a7600684f292b,
-        0xa0e41596d802d7e4,
-        0x7c157a3510a190b3,
-        0xd703d34f3d85a50f,
-        0x6477fbde5e2002c4,
-        0xda1a8e309baa28fb,
-        0x70de8ca33fbfe1cc,
-        0x9ef89e4a71a12d88,
-        0x66596f9d4ffb73f0,
-        0x218d63c1660a3cf3,
-        0x19d98cabc62330bd,
+        0x76eb40e0d776f396,
+        0xa323dde0c67b6480,
+        0x58957e2e73d10a2a,
+        0x4a79caab1917b23b,
+        0x6a87e2d66c5a6fd9,
+        0x69ce52fc2ad86f07,
+        0x745293dd72e1c49f,
+        0x892d9cb62578a977,
+        0x8879af8459c88851,
+        0xceffbc1a3342e5f1,
+        0x30afd3650d3c79a3,
+        0x689877c01ae5987e,
+        0x00e02acbf4f28572,
+        0x22879909d925e3df,
+        0x9daac36da978c2c2,
+        0x21465c2e3bf0f463,
+        0xed0646fbb31bb2b0,
+        0x81bb291e5457265a,
+        0x718e0945c1bf1d60,
+        0xcdac3723741de74f,
     ],
 )

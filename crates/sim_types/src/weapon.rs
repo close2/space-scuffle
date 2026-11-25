@@ -530,7 +530,10 @@ pub struct WeaponSpec {
     pub random_delay_max: SimScalar,
     /// Area-of-effect splash specifications, if applicable.
     pub splash: Option<SplashSpec>,
-    /// Projectile linear flight speed per tick (`None` for hitscan / continuous beams).
+    /// The missile's speed, world units per tick: its constant speed, or with
+    /// [`Self::missile_movers`] its top speed, the greatest `max_speed` of their phases
+    /// (validated; plan `2026-11-27-weapon-delivery` D-5). `None`: an instant weapon (hitscan,
+    /// beam or melee), which launches no missile.
     pub projectile_speed: Option<SimScalar>,
     /// Weapon class whose `WeaponDamageLevel` upgrades scale this weapon, resolved from its
     /// slug in `assets/catalog/factions.ron`; `None` for a weapon no upgrade scales.
@@ -580,6 +583,45 @@ pub struct WeaponSpec {
     /// weapon.
     #[serde(default)]
     pub launch_visibility: AttackVisibility,
+    /// The movers the weapon's missile may fly: `StarCraft` II's `CEffectLaunchMissile` `Movers`
+    /// array, tried in order at the release (plan `2026-11-27-weapon-delivery` D-2). Empty, the
+    /// default: the missile flies at the constant `projectile_speed`. Read only for a weapon
+    /// with a `projectile_speed`; catalog validation refuses a list on an instant weapon, and
+    /// requires the last mover to admit any distance.
+    #[serde(default)]
+    pub missile_movers: Vec<MissileMover>,
+}
+
+/// One entry of a missile launch's `Movers` array (`StarCraft` II `CEffectLaunchMissile`): the
+/// speed phases a missile flies when the distance at its release is at most `up_to_range`
+/// (plan `2026-11-27-weapon-delivery` D-2). A missile chooses its mover once, at the release.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MissileMover {
+    /// Greatest edge-to-edge distance, world units, between attacker and target at the release
+    /// for which this mover is chosen (`IfRangeLTE`, inclusive): the centre distance less both
+    /// collision radii, as the weapon's range check measures it. `None` admits any distance and
+    /// is allowed only on the last mover.
+    pub up_to_range: Option<SimScalar>,
+    /// The mover's `MotionPhases`, flown in order; at least one.
+    pub phases: Vec<MissilePhase>,
+}
+
+/// One `MotionPhases` entry of a missile mover, reduced to its speed profile: the path's shape
+/// (`Throw`, `Guidance`) is not modelled, only how fast the missile covers it (plan
+/// `2026-11-27-weapon-delivery` D-2, D-3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MissilePhase {
+    /// Speed the phase starts at, world units per tick (`Speed`); `None` carries the speed the
+    /// missile has when the phase starts (zero on the first phase).
+    pub speed: Option<SimScalar>,
+    /// Change of speed per tick, world units per tick squared (`Acceleration`); not negative.
+    pub acceleration: SimScalar,
+    /// Greatest speed in the phase, world units per tick (`MaxSpeed`); positive. A speed
+    /// carried in above it drops to it on the phase's first tick.
+    pub max_speed: SimScalar,
+    /// Path length flown since the release, world units, at which the next phase starts (the
+    /// midpoint of the phase's `Outro`, D-3); `None` on the last phase and only there.
+    pub ends_after: Option<SimScalar>,
 }
 
 /// What a weapon's missile re-checks about its target in flight: `StarCraft` II's
@@ -916,6 +958,7 @@ mod tests {
             attack_visibility: AttackVisibility::Snapshot,
             missile_validation: MissileValidation::default(),
             launch_visibility: AttackVisibility::Snapshot,
+            missile_movers: Vec::new(),
         }
     }
 
@@ -941,6 +984,59 @@ mod tests {
             let read: WeaponSpec = ron::from_str(&text.replace(field, written))?;
             assert_eq!(read.launch_visibility, expected, "{written}");
         }
+        Ok(())
+    }
+
+    /// Plan `2026-11-27-weapon-delivery` D-2: a weapon that leaves its missile movers out
+    /// flies its constant `projectile_speed` (an empty list); authored movers read in order,
+    /// each with its range bound (`None` admits any distance) and its phases, a phase's
+    /// omitted start speed and end read as `None`.
+    #[test]
+    fn missile_movers_default_to_none_and_read_bands_and_phases(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use super::{MissileMover, MissilePhase, WeaponSpec};
+        let text = ron::to_string(&missile_weapon())?;
+        let field = "missile_movers:[]";
+        assert!(text.contains(field), "premise: the field is written");
+        let omitted: WeaponSpec = ron::from_str(&text.replace(&format!(",{field}"), ""))?;
+        assert_eq!(omitted.missile_movers, Vec::new());
+        let scalar = |raw: i64| format!("\"q32.32:v1:{raw}\"");
+        let one = SimScalar::ONE.raw();
+        let half = SimScalar::HALF.raw();
+        let written = format!(
+            "missile_movers:[(up_to_range:Some({two}),phases:[(speed:Some({half}),\
+             acceleration:{zero},max_speed:{half},ends_after:Some({one}))]),\
+             (up_to_range:None,phases:[(speed:None,acceleration:{half},max_speed:{two},\
+             ends_after:None)])]",
+            two = scalar(2 * one),
+            half = scalar(half),
+            zero = scalar(0),
+            one = scalar(one),
+        );
+        let read: WeaponSpec = ron::from_str(&text.replace(field, &written))?;
+        assert_eq!(
+            read.missile_movers,
+            vec![
+                MissileMover {
+                    up_to_range: Some(SimScalar::from_i32(2)),
+                    phases: vec![MissilePhase {
+                        speed: Some(SimScalar::HALF),
+                        acceleration: SimScalar::ZERO,
+                        max_speed: SimScalar::HALF,
+                        ends_after: Some(SimScalar::ONE),
+                    }],
+                },
+                MissileMover {
+                    up_to_range: None,
+                    phases: vec![MissilePhase {
+                        speed: None,
+                        acceleration: SimScalar::HALF,
+                        max_speed: SimScalar::from_i32(2),
+                        ends_after: None,
+                    }],
+                },
+            ]
+        );
         Ok(())
     }
 }
