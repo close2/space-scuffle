@@ -2252,3 +2252,12 @@ switching. The number 42, once reserved for this plan's G-6′, stays unused.
 - the B-192 and B-193 plan, on branch `solver-followup-plan`. It starts from G-6′ on `contact-solver-g6p-wip`
   (Amendment 18). It has the owner's §8 guidance (Q0103): a close battle a movement fix moves is restated, and only
   broken behaviour is a bug.
+
+## Amendment 21 (implementer, 2026-11-25, at the orchestrator's direction): B-208 landed separately
+
+The active set's pair cache (Amendment 3, item 1) keyed reuse on a per-application `moved` flag that every application
+cleared for every body, so the summed passes (C-1b) reused corrections from before the last averaged iteration
+(B-208). It is fixed on its own, outside this plan, by keying the cache on each body's move count (K-1 of the parked
+enemy-contact plan, branch `enemy-contact-plan`), on branch `solver-pair-cache` (`1a1c1d9b`). The summed passes now
+read corrections at the positions they start from, as C-1b states. Figures and the orchestrator's decision are in
+[evidence `2026-11-25-solver-pair-cache`](../evidence/2026-11-25-solver-pair-cache.md).
