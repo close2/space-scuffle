@@ -22,3 +22,4 @@ client.
 
 ## Answer
 
+- **Option (b): Let them follow too.** Units that have a weapon but cannot hit the A-clicked target (e.g. a Marauder A-clicked onto a Viking, or an unburrowed Lurker) follow the target and fight valid enemies on the way, matching Scan Move units so mixed armies stay and move together (updating `Q0105` for unit-targeted A-clicks).
