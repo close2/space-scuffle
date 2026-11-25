@@ -1771,3 +1771,58 @@ fn the_view_publishes_each_rally_routes_slot() -> TestResult {
     assert_eq!(published, expected);
     Ok(())
 }
+
+/// Plan `2026-11-25-rallies` D-7 (WP3): the view publishes one entry per waypoint that resolves,
+/// with its index in the route; a waypoint on a unit that is gone is left out and the others
+/// keep their indices.
+#[test]
+fn the_view_publishes_each_resolvable_waypoint_with_its_index() -> TestResult {
+    use sim_types::RallyTarget;
+    let mut world = skirmish()?;
+    let (home, _) = base_of(&world, HOME)?;
+    let crew = builders(&world, HOME);
+    let (first, last) = (
+        SimVec2::new(SimScalar::from_num(20.5), SimScalar::from_num(20.5)),
+        SimVec2::new(SimScalar::from_num(24.5), SimScalar::from_num(20.5)),
+    );
+    let order = |target, queue| PlayerCommand {
+        queue,
+        ..command(HOME, vec![home], UnitOrder::SetRally { target, slot: None })
+    };
+    step(
+        &mut world,
+        vec![
+            order(RallyTarget::Point(first), false),
+            order(RallyTarget::Unit(crew[0]), true),
+            order(RallyTarget::Point(last), true),
+        ],
+    );
+    let slot = world.entities[&home].rallies[0].slot;
+    let entries = |world: &SimWorld| -> Vec<(u8, u8, [f32; 2])> {
+        view_of(world, HOME)
+            .rallies
+            .iter()
+            .filter(|rally| rally.entity == home)
+            .map(|rally| (rally.slot, rally.index, rally.point))
+            .collect()
+    };
+    let crew_at = world.entities[&crew[0]].position.to_f32_array();
+    assert_eq!(
+        entries(&world),
+        [
+            (slot, 0, first.to_f32_array()),
+            (slot, 1, crew_at),
+            (slot, 2, last.to_f32_array())
+        ]
+    );
+    world.entities.get_mut(&crew[0]).ok_or("worker absent")?.hp = SimScalar::ZERO;
+    step(&mut world, Vec::new());
+    assert_eq!(
+        entries(&world),
+        [
+            (slot, 0, first.to_f32_array()),
+            (slot, 2, last.to_f32_array())
+        ]
+    );
+    Ok(())
+}

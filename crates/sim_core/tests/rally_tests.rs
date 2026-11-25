@@ -288,6 +288,45 @@ impl Base {
             })
     }
 
+    /// Issues `SetRally` from player 0 to `producer`, Shift-queued when `queue`.
+    fn shift_rally(
+        &mut self,
+        producer: EntityId,
+        target: RallyTarget,
+        queue: bool,
+    ) -> Result<GameCommandReceipt, GameCommandError> {
+        self.tick_with(vec![PlayerCommand {
+            player_id: PlayerId(0),
+            entities: vec![producer],
+            order: UnitOrder::SetRally { target, slot: None },
+            queue,
+        }]);
+        self.world
+            .game_command_outcomes()
+            .first()
+            .map_or(Err(GameCommandError::UnsupportedOrder), |outcome| {
+                outcome.result.clone()
+            })
+    }
+
+    /// The waypoints of `producer`'s slot-0 route.
+    fn waypoints(&self, producer: EntityId) -> Vec<RallyTarget> {
+        self.world.entities[&producer]
+            .rallies
+            .first()
+            .map(|route| route.waypoints.clone())
+            .unwrap_or_default()
+    }
+
+    /// The child's whole order queue.
+    fn orders(&self, id: EntityId) -> Vec<UnitOrder> {
+        self.world.entities[&id]
+            .order_queue
+            .iter()
+            .cloned()
+            .collect()
+    }
+
     fn set_rally(&mut self, producer: EntityId, target: RallyTarget) -> TestResult {
         self.command(vec![producer], UnitOrder::SetRally { target, slot: None })?;
         assert_eq!(
@@ -1054,5 +1093,166 @@ fn a_one_slot_producer_is_unchanged() -> TestResult {
         assert_eq!(outcomes[0], outcomes[1], "{target:?}");
         assert!(outcomes[0].0.is_some(), "{target:?}: an order");
     }
+    Ok(())
+}
+
+/// The cap of waypoints the catalog authors for `producer`'s rally ability.
+fn cap_of(b: &Base, producer: EntityId) -> Result<usize, Box<dyn std::error::Error>> {
+    let arch = b
+        .world
+        .catalog
+        .get(b.world.entities[&producer].unit_type_id)?;
+    Ok(usize::from(
+        arch.rally.as_ref().ok_or("no rally ability")?.max_waypoints,
+    ))
+}
+
+/// P-4 (D-3, B-165, B-215): Shift appends a waypoint until the route holds the cap the row
+/// authors; the next Shift-click is refused with `RallyWaypointsFull` and changes nothing, and a
+/// click without Shift starts the route again.
+#[test]
+fn shift_appends_waypoints_up_to_the_cap() -> TestResult {
+    let mut b = Base::new()?;
+    let cap = cap_of(&b, b.barracks)?;
+    assert!(cap > 1, "a cap that allows waypoints");
+    let targets: Vec<RallyTarget> = (0..=cap)
+        .zip(0_u32..)
+        .map(|(_, i)| RallyTarget::Point(at(10.5 + 2.0 * f64::from(i), 26.5)))
+        .collect();
+    for (i, &target) in targets.iter().enumerate().take(cap) {
+        assert_eq!(
+            b.shift_rally(b.barracks, target, i > 0),
+            Ok(GameCommandReceipt::Accepted { recipients: 1 })
+        );
+        assert_eq!(b.waypoints(b.barracks), targets[..=i]);
+    }
+    assert_eq!(
+        b.shift_rally(b.barracks, targets[cap], true),
+        Err(GameCommandError::RallyWaypointsFull)
+    );
+    assert_eq!(b.waypoints(b.barracks), targets[..cap]);
+    b.shift_rally(b.barracks, targets[cap], false)?;
+    assert_eq!(b.waypoints(b.barracks), [targets[cap]]);
+    Ok(())
+}
+
+/// P-4 (D-3): a rally on the structure itself clears the slot's route, with Shift as without.
+#[test]
+fn shift_on_the_structure_itself_clears_the_slot() -> TestResult {
+    let mut b = Base::new()?;
+    b.shift_rally(b.barracks, RallyTarget::Point(at(10.5, 26.5)), false)?;
+    b.shift_rally(b.barracks, RallyTarget::Point(at(14.5, 26.5)), true)?;
+    assert_eq!(b.waypoints(b.barracks).len(), 2);
+    b.shift_rally(b.barracks, RallyTarget::Unit(b.barracks), true)?;
+    assert_eq!(b.world.entities[&b.barracks].rallies, []);
+    Ok(())
+}
+
+/// P-4 (D-5, S10 post 25): a new unit gets one order per waypoint, the first replacing and the
+/// rest queued, and walks them in order, arriving at each.
+#[test]
+fn a_new_unit_walks_its_waypoints_in_order() -> TestResult {
+    let mut b = Base::new()?;
+    let points = [at(14.5, 26.5), at(22.5, 26.5), at(22.5, 14.5)];
+    for (i, &point) in points.iter().enumerate() {
+        b.shift_rally(b.barracks, RallyTarget::Point(point), i > 0)?;
+    }
+    let (child, _) = b.train(b.barracks, b.soldier)?;
+    let expected: Vec<UnitOrder> = points
+        .iter()
+        .map(|&target| UnitOrder::Move { target })
+        .collect();
+    assert_eq!(b.orders(child), expected);
+    let mut reached = Vec::new();
+    for _ in 0..1_500 {
+        if b.world.entities[&child].order_queue.is_empty() {
+            break;
+        }
+        let pending = b.world.entities[&child].order_queue.len();
+        b.tick();
+        if b.world.entities[&child].order_queue.len() < pending {
+            reached.push(b.world.entities[&child].position);
+        }
+    }
+    assert_eq!(
+        reached.len(),
+        points.len(),
+        "every waypoint reached: {reached:?}"
+    );
+    for (at, point) in reached.iter().zip(points) {
+        assert!(
+            (*at - point).length_sq() < SimScalar::ONE,
+            "{at:?} at {point:?}"
+        );
+    }
+    Ok(())
+}
+
+/// P-4 (D-5, S10 post 25: "end with minerals. Your freshly produced SCV will take the tour"): a
+/// worker whose route ends on a field walks the earlier points and then harvests it.
+#[test]
+fn a_route_ending_on_a_field_leaves_a_worker_harvesting() -> TestResult {
+    let mut b = Base::new()?;
+    let field = ResourceNodeId(0);
+    let tour = at(16.5, 16.5);
+    b.shift_rally(b.hall, RallyTarget::Point(tour), false)?;
+    b.shift_rally(b.hall, RallyTarget::Node(field), true)?;
+    let (child, _) = b.train(b.hall, b.worker)?;
+    assert_eq!(
+        b.orders(child),
+        [
+            UnitOrder::Move { target: tour },
+            UnitOrder::Harvest { target: field }
+        ]
+    );
+    let mut toured = false;
+    for _ in 0..1_500 {
+        b.tick();
+        let entity = &b.world.entities[&child];
+        toured |= (entity.position - tour).length_sq() < SimScalar::ONE;
+        if toured && entity.cargo.is_some() {
+            return Ok(());
+        }
+    }
+    Err(format!("toured {toured}, never carried a load").into())
+}
+
+/// P-4 (D-5, S10 posts 1 and 35): a waypoint on a unit that has died is dropped and the new unit
+/// goes on to the next; when every waypoint has died the route is cancelled and the unit gets
+/// no order.
+#[test]
+fn a_dead_waypoint_is_skipped_and_an_all_dead_route_is_cancelled() -> TestResult {
+    let mut b = Base::new()?;
+    let first = b.world.spawn_unit(b.soldier, PlayerId(0), at(16.5, 16.5))?;
+    let second = b.world.spawn_unit(b.soldier, PlayerId(0), at(20.5, 16.5))?;
+    b.shift_rally(b.barracks, RallyTarget::Unit(first), false)?;
+    b.shift_rally(b.barracks, RallyTarget::Unit(second), true)?;
+    b.world.entities.get_mut(&first).ok_or("first")?.hp = SimScalar::ZERO;
+    let (child, _) = b.train(b.barracks, b.soldier)?;
+    let stood = b.world.entities[&second].position;
+    assert_eq!(b.orders(child), [UnitOrder::Move { target: stood }]);
+    assert_eq!(
+        b.waypoints(b.barracks),
+        [RallyTarget::Unit(second)],
+        "pruned"
+    );
+    b.world.entities.get_mut(&second).ok_or("second")?.hp = SimScalar::ZERO;
+    let (child, _) = b.train(b.barracks, b.soldier)?;
+    assert_eq!(b.orders(child), []);
+    assert_eq!(b.world.entities[&b.barracks].rallies, [], "cancelled");
+    Ok(())
+}
+
+/// P-4 (D-5): a waypoint whose order admission refuses (a point too near the map's corner for
+/// the unit's terrain radius) is skipped, so the next waypoint's order is the first issued.
+#[test]
+fn a_refused_waypoint_order_is_skipped() -> TestResult {
+    let mut b = Base::new()?;
+    let corner = at(0.0, 0.0);
+    let next = at(14.5, 26.5);
+    b.shift_rally(b.barracks, RallyTarget::Point(corner), false)?;
+    b.shift_rally(b.barracks, RallyTarget::Point(next), true)?;
+    let (child, _) = b.train(b.barracks, b.soldier)?;
+    assert_eq!(b.orders(child), [UnitOrder::Move { target: next }]);
     Ok(())
 }

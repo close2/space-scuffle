@@ -151,6 +151,11 @@ pub enum GameCommandError {
     /// slot takes it from a right click.
     #[error("no selected structure has a rally slot that takes this target")]
     NoRallySlotTakes,
+    /// Shift appends a rally waypoint only while the route holds fewer than the structure's
+    /// `max_waypoints` (plan `2026-11-25-rallies` D-3, B-215): every selected structure whose
+    /// slot takes the target already holds a full route.
+    #[error("every selected structure's rally holds its most waypoints")]
+    RallyWaypointsFull,
     /// The transport lifecycle refused the operation.
     #[error(transparent)]
     Transport(#[from] TransportAdmissionError),
@@ -407,7 +412,7 @@ impl SimWorld {
             UnitOrder::Load { carrier } => self.admit_load(player, recipients, carrier, cmd.queue),
             UnitOrder::UnloadAll => self.admit_unload(player, recipients, cmd.queue),
             UnitOrder::SetRally { target, slot } => {
-                self.admit_set_rally(player, recipients, target, slot)
+                self.admit_set_rally(player, recipients, target, slot, cmd.queue)
             }
             _ => Err(GameCommandError::UnsupportedOrder),
         }

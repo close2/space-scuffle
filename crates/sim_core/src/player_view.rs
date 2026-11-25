@@ -164,13 +164,18 @@ impl SimWorld {
         if entity.cargo.is_some() {
             out.laden.push(entity.id);
         }
+        // Plan `2026-11-25-rallies` D-7: one entry per waypoint that resolves, so the list is
+        // sorted by entity, slot and index.
         for route in &entity.rallies {
-            if let Some(point) = self.rally_point(entity.id, route.slot) {
-                out.rallies.push(RallyView {
-                    entity: entity.id,
-                    slot: route.slot,
-                    point: point.to_f32_array(),
-                });
+            for (&waypoint, index) in route.waypoints.iter().zip(0_u8..) {
+                if let Some(point) = self.waypoint_point(waypoint) {
+                    out.rallies.push(RallyView {
+                        entity: entity.id,
+                        slot: route.slot,
+                        index,
+                        point: point.to_f32_array(),
+                    });
+                }
             }
         }
         if let Ok(arch) = self.catalog.get(entity.unit_type_id) {

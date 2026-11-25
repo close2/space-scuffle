@@ -59,6 +59,14 @@ fn route_of(rallies: &[RallyRoute], slot: u8) -> Option<&RallyRoute> {
         .and_then(|index| rallies.get(index))
 }
 
+/// The route of `slot` in `rallies`, sorted by slot, for writing, if it holds one.
+fn route_of_mut(rallies: &mut [RallyRoute], slot: u8) -> Option<&mut RallyRoute> {
+    rallies
+        .binary_search_by_key(&slot, |route| route.slot)
+        .ok()
+        .and_then(|index| rallies.get_mut(index))
+}
+
 /// Makes `waypoints` the route of `slot` in `rallies`, keeping them sorted by slot.
 fn set_route(rallies: &mut Vec<RallyRoute>, slot: u8, waypoints: Vec<RallyTarget>) {
     match rallies.binary_search_by_key(&slot, |route| route.slot) {
@@ -194,11 +202,26 @@ impl SimWorld {
     }
 }
 
+/// What `SetRally` does to one recipient's route (plan `2026-11-25-rallies` D-3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RallyWrite {
+    /// The target is the recipient itself: the slot's route is removed.
+    Clear(u8),
+    /// The slot's route becomes the one target (no Shift, or an empty route).
+    Set(u8),
+    /// Shift: the target is appended to the slot's route.
+    Append(u8),
+    /// Shift on a route that holds its cap of waypoints: not taken (B-215).
+    Full,
+}
+
 impl SimWorld {
     /// Admits `SetRally` (D-3): every capable recipient whose rally ability has a slot that
-    /// takes `target` (the named `slot`, or for `None` the first that takes it) makes `target`
-    /// that slot's route, or clears the route when `target` is the recipient itself. Shift is
-    /// not read yet: a rally holds one waypoint (B-165).
+    /// takes `target` (the named `slot`, or for `None` the first that takes it) writes that
+    /// slot's route. Without `queue` the route becomes `[target]`; with `queue` (Shift) the
+    /// target is appended while the route holds fewer than the ability's `max_waypoints`, and a
+    /// full route does not take it (B-215). An empty route is set as if without Shift. A target
+    /// equal to the recipient itself clears the slot's route, with or without Shift.
     ///
     /// A capable recipient is an alive, completed, owned and unloaded entity whose archetype
     /// trains units (S5: every production structure has a rally). Its routes are checked before
@@ -207,9 +230,10 @@ impl SimWorld {
     /// # Errors
     /// The selection's own refusals; [`GameCommandError::NoCapableProducer`] when no recipient
     /// can rally; [`GameCommandError::NoRallySlotTakes`] when some can but none has a slot that
-    /// takes the target; [`GameCommandError::RallyOutsideMap`] for a point off the map;
-    /// [`GameCommandError::InvalidRallyTarget`] for a unit that does not exist, is dead or is
-    /// another player's; [`GameCommandError::UnknownResourceNode`] for a node not on the map;
+    /// takes the target; [`GameCommandError::RallyWaypointsFull`] when every recipient whose slot
+    /// takes it holds a full route; [`GameCommandError::RallyOutsideMap`] for a point off the
+    /// map; [`GameCommandError::InvalidRallyTarget`] for a unit that does not exist, is dead or
+    /// is another player's; [`GameCommandError::UnknownResourceNode`] for a node not on the map;
     /// [`GameCommandError::Invariant`] for a recipient whose routes break their invariants.
     pub(crate) fn admit_set_rally(
         &mut self,
@@ -217,44 +241,84 @@ impl SimWorld {
         recipients: &[EntityId],
         target: RallyTarget,
         slot: Option<u8>,
+        queue: bool,
     ) -> Result<GameCommandReceipt, GameCommandError> {
         self.validate_selection(player, recipients)?;
         self.validate_rally_target(player, target)?;
-        let (mut capable, mut taking) = (0, 0);
+        let (mut capable, mut taking, mut full) = (0, 0, 0);
         for &id in recipients {
-            let Some(ability) = self.rally_ability_of(id) else {
+            if self.rally_ability_of(id).is_none() {
                 continue;
-            };
+            }
             capable += 1;
-            if ability.slot_taking(slot, target).is_some() {
-                if let Some(entity) = self.entities.get(&id) {
-                    validate_routes(entity, ability.slot_count(), ability.max_waypoints())?;
-                }
-                taking += 1;
+            match self.rally_write(id, slot, target, queue)? {
+                Some(RallyWrite::Full) => full += 1,
+                Some(_) => taking += 1,
+                None => {}
             }
         }
         if capable == 0 {
             return Err(GameCommandError::NoCapableProducer);
         }
         if taking == 0 {
-            return Err(GameCommandError::NoRallySlotTakes);
+            return Err(if full > 0 {
+                GameCommandError::RallyWaypointsFull
+            } else {
+                GameCommandError::NoRallySlotTakes
+            });
         }
         for &id in recipients {
-            let Some(chosen) = self
-                .rally_ability_of(id)
-                .and_then(|ability| ability.slot_taking(slot, target))
-            else {
+            let write = self.rally_write(id, slot, target, queue)?;
+            let Some(entity) = self.entities.get_mut(&id) else {
                 continue;
             };
-            if let Some(entity) = self.entities.get_mut(&id) {
-                if target == RallyTarget::Unit(id) {
-                    clear_route(&mut entity.rallies, chosen);
-                } else {
+            match write {
+                Some(RallyWrite::Clear(chosen)) => clear_route(&mut entity.rallies, chosen),
+                Some(RallyWrite::Set(chosen)) => {
                     set_route(&mut entity.rallies, chosen, vec![target]);
                 }
+                Some(RallyWrite::Append(chosen)) => {
+                    if let Some(route) = route_of_mut(&mut entity.rallies, chosen) {
+                        route.waypoints.push(target);
+                    }
+                }
+                Some(RallyWrite::Full) | None => {}
             }
         }
         Ok(GameCommandReceipt::Accepted { recipients: taking })
+    }
+
+    /// What `SetRally` does to recipient `id` (D-3), or `None` when it cannot rally or has no
+    /// slot that takes `target`. Read-only, so admission can count before it writes.
+    ///
+    /// # Errors
+    /// [`GameCommandError::Invariant`] when the recipient's routes break their invariants.
+    fn rally_write(
+        &self,
+        id: EntityId,
+        slot: Option<u8>,
+        target: RallyTarget,
+        queue: bool,
+    ) -> Result<Option<RallyWrite>, GameCommandError> {
+        let (Some(ability), Some(entity)) = (self.rally_ability_of(id), self.entities.get(&id))
+        else {
+            return Ok(None);
+        };
+        let Some(chosen) = ability.slot_taking(slot, target) else {
+            return Ok(None);
+        };
+        validate_routes(entity, ability.slot_count(), ability.max_waypoints())?;
+        if target == RallyTarget::Unit(id) {
+            return Ok(Some(RallyWrite::Clear(chosen)));
+        }
+        let held = route_of(&entity.rallies, chosen).map_or(0, |route| route.waypoints.len());
+        Ok(Some(if !queue || held == 0 {
+            RallyWrite::Set(chosen)
+        } else if held < usize::from(ability.max_waypoints()) {
+            RallyWrite::Append(chosen)
+        } else {
+            RallyWrite::Full
+        }))
     }
 
     /// The rally ability of `id` when it can hold a rally: alive, completed, unloaded, and of
@@ -338,27 +402,62 @@ impl SimWorld {
         }
     }
 
-    /// Gives `child`, just made by `producer`, the order the rally of the slot it uses means
-    /// (D-4; plan `2026-11-25-rallies` D-4: no slot, or an empty one, gives none), through
-    /// the admission a player's order takes, so every rule of that order applies. Returns the
-    /// order the child took, if any.
+    /// Gives `child`, just made by `producer`, the orders the route of the rally slot it uses
+    /// means (plan `2026-11-25-rallies` D-4, D-5): no slot, or an empty one, gives none.
     ///
-    /// | Rally | Order |
+    /// 1. **Prune.** Every `Unit` waypoint whose unit is dead or gone is removed from the route
+    ///    (S10, S11); a route left empty is removed and gives no order ("as if there'd never
+    ///    been a rally point", S9).
+    /// 2. **Issue.** Each remaining waypoint, in order, gives the order it means through the
+    ///    admission a player's order takes, the first order issued replacing the child's orders
+    ///    and every later one queued:
+    ///
+    /// | Waypoint | Order |
     /// |---|---|
-    /// | none | none |
     /// | a point | `Move` to it |
     /// | a node | `Harvest` when admission accepts the child for it; else `Move` to its centre |
-    /// | a unit, alive and not carried | `Load` when it is the player's and admission accepts the child as its passenger; else `Move` to where it stands now |
-    /// | a unit, alive but carried | none; the rally stays |
-    /// | a unit, dead or gone | none, and the route is removed |
+    /// | a unit, not carried | `Load` when it is the player's and admission accepts the child as its passenger; else `Move` to where it stands now |
+    /// | a unit, carried | none this time; the waypoint stays |
     ///
-    /// An ordinary refusal of the child's order leaves the child idle, as a refused player order
-    /// would; an invariant failure is reported as a diagnostic and leaves it idle too.
-    pub(super) fn give_rally_order(
-        &mut self,
-        producer: EntityId,
-        child: EntityId,
-    ) -> Option<UnitOrder> {
+    /// A refused order is skipped, so the next waypoint's order becomes the first issued, as a
+    /// refused player order would leave the unit. An invariant failure is reported as a
+    /// diagnostic and ends the issuing. Orders queued after a `Harvest` never run, since the
+    /// harvest does not end; that is the game's route that ends in minerals (S10 post 25).
+    // PERFORMANCE RATIONALE:
+    // Why: A spawn issues up to `max_waypoints` admissions and must not allocate.
+    // What: The route is read by index, one waypoint copied at a time, rather than cloned.
+    // Trade-off: The route is looked up again per waypoint, O(slots) each, on a small cap.
+    pub(super) fn give_rally_order(&mut self, producer: EntityId, child: EntityId) {
+        let Some(slot) = self.child_rally_slot(producer, child) else {
+            return;
+        };
+        if !self.prune_rally_route(producer, slot) {
+            return;
+        }
+        let mut issued = false;
+        for index in 0.. {
+            let Some(target) = self
+                .entities
+                .get(&producer)
+                .and_then(|entity| route_of(&entity.rallies, slot))
+                .and_then(|route| route.waypoints.get(index))
+                .copied()
+            else {
+                break;
+            };
+            match self.issue_waypoint_order(child, target, issued) {
+                Ok(taken) => issued |= taken,
+                Err(source) => {
+                    self.report_production_failure(source);
+                    break;
+                }
+            }
+        }
+    }
+
+    /// The rally slot `child` uses at `producer` (D-4), after checking the producer's route
+    /// invariants; a violation is reported as a diagnostic and gives no slot.
+    fn child_rally_slot(&mut self, producer: EntityId, child: EntityId) -> Option<u8> {
         let producer_entity = self.entities.get(&producer)?;
         let ability = RallyAbility::of(self.catalog.get(producer_entity.unit_type_id).ok()?);
         if let Err(source) = validate_routes(
@@ -369,42 +468,76 @@ impl SimWorld {
             self.report_production_failure(source);
             return None;
         }
-        let child_entity = self.entities.get(&child)?;
-        let owner = child_entity.owner;
-        let slot = ability.slot_used_by(self.catalog.get(child_entity.unit_type_id).ok()?)?;
-        let rally = *route_of(&producer_entity.rallies, slot)?
-            .waypoints
-            .first()?;
+        let child_type = self.entities.get(&child)?.unit_type_id;
+        ability.slot_used_by(self.catalog.get(child_type).ok()?)
+    }
+
+    /// Removes every `Unit` waypoint of `producer`'s route in `slot` whose unit is dead or gone,
+    /// and the route itself when nothing is left (D-5). Whether a route remains.
+    fn prune_rally_route(&mut self, producer: EntityId, slot: u8) -> bool {
+        let Some(route) = self
+            .entities
+            .get_mut(&producer)
+            .and_then(|entity| route_of_mut(&mut entity.rallies, slot))
+        else {
+            return false;
+        };
+        let mut waypoints = std::mem::take(&mut route.waypoints);
+        waypoints.retain(|waypoint| match *waypoint {
+            RallyTarget::Unit(unit) => self.entities.get(&unit).is_some_and(Entity::is_alive),
+            RallyTarget::Point(_) | RallyTarget::Node(_) => true,
+        });
+        let Some(entity) = self.entities.get_mut(&producer) else {
+            return false;
+        };
+        if waypoints.is_empty() {
+            clear_route(&mut entity.rallies, slot);
+            return false;
+        }
+        if let Some(route) = route_of_mut(&mut entity.rallies, slot) {
+            route.waypoints = waypoints;
+        }
+        true
+    }
+
+    /// Issues `child` the order one waypoint means (D-5), queued behind its orders when `queue`.
+    /// Whether the child took an order; a refusal is not an error.
+    ///
+    /// # Errors
+    /// The [`ProductionInvariant`] a harvest or load admission reports.
+    fn issue_waypoint_order(
+        &mut self,
+        child: EntityId,
+        target: RallyTarget,
+        queue: bool,
+    ) -> Result<bool, ProductionInvariant> {
+        let Some(owner) = self.entities.get(&child).map(|entity| entity.owner) else {
+            return Ok(false);
+        };
         let recipients = [child];
-        let target = match rally {
+        let point = match target {
             RallyTarget::Point(point) => point,
-            RallyTarget::Node(node) => match self.admit_harvest(owner, &recipients, node, false) {
-                Ok(_) => return Some(UnitOrder::Harvest { target: node }),
-                Err(GameCommandError::Invariant(source)) => {
-                    self.report_production_failure(source);
-                    return None;
-                }
-                Err(_) => self.map.resources().get(node.0 as usize)?.pos,
+            RallyTarget::Node(node) => match self.admit_harvest(owner, &recipients, node, queue) {
+                Ok(_) => return Ok(true),
+                Err(GameCommandError::Invariant(source)) => return Err(source),
+                Err(_) => match self.map.resources().get(node.0 as usize) {
+                    Some(node) => node.pos,
+                    None => return Ok(false),
+                },
             },
             RallyTarget::Unit(unit) => {
-                let Some(target) = self.entities.get(&unit).filter(|e| e.is_alive()) else {
-                    // "As if there'd never been a rally point" (S7).
-                    if let Some(entity) = self.entities.get_mut(&producer) {
-                        clear_route(&mut entity.rallies, slot);
-                    }
-                    return None;
+                let Some(target) = self
+                    .entities
+                    .get(&unit)
+                    .filter(|entity| entity.is_alive() && !entity.is_loaded_in_transport())
+                else {
+                    return Ok(false);
                 };
-                if target.is_loaded_in_transport() {
-                    return None;
-                }
                 let (position, own) = (target.position, target.owner == owner);
                 if own {
-                    match self.admit_load(owner, &recipients, unit, false) {
-                        Ok(_) => return Some(UnitOrder::Load { carrier: unit }),
-                        Err(GameCommandError::Invariant(source)) => {
-                            self.report_production_failure(source);
-                            return None;
-                        }
+                    match self.admit_load(owner, &recipients, unit, queue) {
+                        Ok(_) => return Ok(true),
+                        Err(GameCommandError::Invariant(source)) => return Err(source),
                         Err(_) => {}
                     }
                 }
@@ -412,10 +545,10 @@ impl SimWorld {
             }
         };
         // Movement admission reports its own invariant failures as diagnostics.
-        let order = UnitOrder::Move { target };
-        self.issue_movement_prevalidated(owner, &recipients, &order, false)
-            .ok()
-            .map(|_| order)
+        let order = UnitOrder::Move { target: point };
+        Ok(self
+            .issue_movement_prevalidated(owner, &recipients, &order, queue)
+            .is_ok())
     }
 }
 

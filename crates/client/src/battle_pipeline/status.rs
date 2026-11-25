@@ -286,6 +286,7 @@ pub fn write_game_reason(output: &mut String, error: &GameCommandError) {
         GameCommandError::NoRallySlotTakes => {
             "no selected structure has a rally that takes that target"
         }
+        GameCommandError::RallyWaypointsFull => "the rally holds its most waypoints",
         GameCommandError::Transport(error) => transport_reason(error),
         GameCommandError::Production(error) => {
             write_production_reason(output, error);

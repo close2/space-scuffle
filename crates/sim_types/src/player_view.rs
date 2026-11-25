@@ -83,9 +83,9 @@ pub struct PlayerView {
     /// locks here.
     #[serde(default)]
     pub cast_states: Vec<CastStateView>,
-    /// The viewer's production structures' rallies that resolve to a point, one entry per route,
-    /// sorted by entity ID and then slot (plans `2026-11-23-production-queue` D-10 and
-    /// `2026-11-25-rallies` D-7).
+    /// The viewer's production structures' rally waypoints that resolve to a point, one entry
+    /// per waypoint, sorted by entity ID, slot and index (plans `2026-11-23-production-queue`
+    /// D-10 and `2026-11-25-rallies` D-7).
     #[serde(default)]
     pub rallies: Vec<RallyView>,
     /// Living, uncarried entities of other players that their own attacks reveal to the viewer
@@ -194,6 +194,10 @@ pub struct RallyView {
     /// The rally slot of the route this point belongs to (plan `2026-11-25-rallies` D-7).
     #[serde(default)]
     pub slot: u8,
+    /// The waypoint's position in its route, 0 first (plan `2026-11-25-rallies` D-7). Waypoints
+    /// that do not resolve are left out, so indices may skip.
+    #[serde(default)]
+    pub index: u8,
     /// Its rally resolved to a point on the map plane, world units `[x, y]`: presentation
     /// output, converted from fixed point (charter §3.2). A rally to a unit follows it, since
     /// the view resolves it every tick.
@@ -458,6 +462,7 @@ mod tests {
             rallies: vec![RallyView {
                 entity: EntityId(3),
                 slot: 1,
+                index: 2,
                 point: [12.5, 7.25],
             }],
             attack_revealed: vec![EntityId(21)],
