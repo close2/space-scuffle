@@ -146,7 +146,12 @@ use std::path::PathBuf;
 /// weapon encodes its launch visibility; with the field left out at schema 50 a copy of the final
 /// tree reproduces `13_849_945_286_125_516_044` on all four builds. Behaviour: none. (53 is
 /// provisional, the next free at merge: 51 and 52 are reserved for the Gated movement plan.)
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 1_324_710_836_022_737_298;
+/// Re-recorded for plan 2026-11-27-weapon-delivery (checksum schema 53 -> 56): each weapon
+/// encodes its missile movers and each projectile its mover, phase and path flown; with those
+/// left out at schema 53 a copy of the final tree reproduces `1_324_710_836_022_737_298` on all
+/// four builds. Behaviour: none. (56 is provisional, the next free at merge: 54 and 55 are
+/// reserved for the Gated movement plan.)
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 6_457_533_297_407_649_319;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

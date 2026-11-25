@@ -4197,3 +4197,120 @@ fn an_edited_spell_visibility_changes_the_storms_image_without_recompiling() -> 
     bundle.finish()?;
     Ok(())
 }
+
+/// Plays the structure whose ground weapon flies movers against an unarmed mobile ground unit
+/// `edge` world units away, edge to edge, on the catalogs `catalogs`; returns the flight in
+/// ticks, the release tick counted (plan `2026-11-27-weapon-delivery` W-12).
+fn mover_structure_flight(
+    catalogs: RuntimeCatalogs,
+    edge: f64,
+) -> Result<u32, Box<dyn std::error::Error>> {
+    let map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?;
+    let mut world = SimWorld::with_catalogs(map, 7, catalogs.units, catalogs.upgrades)?;
+    let structure = world
+        .catalog
+        .archetypes()
+        .find(|archetype| {
+            matches!(archetype.shape, ShapeKind::BuildingDome { .. })
+                && archetype
+                    .ground_weapon
+                    .as_ref()
+                    .is_some_and(|weapon| !weapon.missile_movers.is_empty())
+        })
+        .ok_or("a structure ground weapon with movers")?
+        .clone();
+    let victim = world
+        .catalog
+        .archetypes()
+        .find(|archetype| {
+            archetype.max_hp > SimScalar::from_i32(30)
+                && archetype.max_speed > SimScalar::ZERO
+                && archetype.weapon.is_none()
+                && archetype.mover_type == sim_types::MoverType::Ground
+                && !matches!(archetype.shape, ShapeKind::BuildingDome { .. })
+        })
+        .ok_or("an unarmed mobile ground unit")?
+        .clone();
+    let dome = world.spawn_structure(structure.unit_type_id, PlayerId(0), 6, 15)?;
+    let origin = world.entities[&dome].position;
+    let at = SimVec2::new(
+        origin.x + structure.collision_radius + victim.collision_radius + SimScalar::from_num(edge),
+        origin.y,
+    );
+    let target = world.spawn_unit(victim.unit_type_id, PlayerId(1), at)?;
+    let full = world.entities[&target].hp + world.entities[&target].shields;
+    world
+        .entities
+        .get_mut(&dome)
+        .ok_or("dome")?
+        .issue_order(sim_types::UnitOrder::attack(target), false)
+        .map_err(|error| format!("{error:?}"))?;
+    let mut released = None;
+    for tick in 1..=120 {
+        world.step(&sim_types::TickBundle {
+            tick: sim_types::Tick(tick),
+            commands: Vec::new(),
+            state_checksum: None,
+        });
+        if released.is_none() && !world.projectiles.is_empty() {
+            released = Some(tick);
+        }
+        let now = world
+            .entities
+            .get(&target)
+            .map_or(SimScalar::ZERO, |e| e.hp + e.shields);
+        if now != full {
+            let released = released.unwrap_or(tick);
+            return Ok(tick - released + 1);
+        }
+    }
+    Err("the tentacle landed within 120 ticks".into())
+}
+
+/// W-17 (plan `2026-11-27-weapon-delivery` D-2): the movers are catalog data read at run time.
+/// In a copied `structures.ron`, a slower long band lengthens the tentacle's flight at edge 5,
+/// and removing the short band shortens it at edge 2 (the long band is the faster), in the same
+/// binary.
+#[test]
+fn edited_missile_movers_change_a_flight_without_recompiling() -> TestResult {
+    let shipped = |edge| -> Result<u32, Box<dyn std::error::Error>> {
+        mover_structure_flight(
+            RuntimeCatalogs::load_from_directory(catalog_directory())?,
+            edge,
+        )
+    };
+    let edited =
+        |label: &str, from: &str, to: &str, edge| -> Result<u32, Box<dyn std::error::Error>> {
+            let bundle = Bundle::new(label)?;
+            let structures = std::fs::read_to_string(bundle.directory.join(FILES[1]))?;
+            assert_eq!(
+                structures.matches(from).count(),
+                1,
+                "premise: {from:?} is authored once"
+            );
+            std::fs::write(
+                bundle.directory.join(FILES[1]),
+                structures.replace(from, to),
+            )?;
+            let flight = mover_structure_flight(bundle.load()?, edge);
+            bundle.finish()?;
+            flight
+        };
+    let long_band = "(up_to_range: None, phases: [(speed: Some(0.672), acceleration: 0.43904, max_speed: 11.2, ends_after: None)])";
+    let slower = "(up_to_range: None, phases: [(speed: Some(0.672), acceleration: 0.0, max_speed: 0.672, ends_after: None)])";
+    let at_five = (
+        shipped(5.0)?,
+        edited("slow-long-band", long_band, slower, 5.0)?,
+    );
+    assert!(
+        at_five.1 > at_five.0,
+        "a slower long band flies longer: {at_five:?}"
+    );
+    let short_band = "(up_to_range: Some(3.0), phases: [(speed: Some(0.056), acceleration: 0.03136, max_speed: 1.12, ends_after: Some(0.3)), (speed: None, acceleration: 0.43904, max_speed: 11.2, ends_after: None)]),";
+    let at_two = (shipped(2.0)?, edited("no-short-band", short_band, "", 2.0)?);
+    assert!(
+        at_two.1 < at_two.0,
+        "without the short band it strikes sooner: {at_two:?}"
+    );
+    Ok(())
+}

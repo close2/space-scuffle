@@ -1204,3 +1204,85 @@ fn a_held_beams_burns_follow_its_end() {
     stray.attach_burn(&event, burn);
     assert_eq!(stray.slots().len(), 0);
 }
+
+/// W-20 (plan `2026-11-27-weapon-delivery` D-8): the shipped weapons whose missiles fly movers
+/// (found by their movers, never by name) publish a projectile event that asks for their unit's
+/// travel along the flight, a travel that flies (a layer lasting the flight), and for their
+/// impact delayed by the flight, so the strike lands where and when the missile does.
+#[test]
+fn a_mover_weapons_projectile_flies_its_travel_and_lands_its_impact_after_the_flight() {
+    let (catalog, units, tables) = shipped();
+    let mut checked = 0;
+    for archetype in units.archetypes() {
+        let structure = matches!(archetype.shape, sim_types::ShapeKind::BuildingDome { .. });
+        let slots = [
+            (
+                if structure || archetype.ground_weapon != archetype.weapon {
+                    WeaponSlot::Ground
+                } else {
+                    WeaponSlot::Primary
+                },
+                archetype
+                    .ground_weapon
+                    .as_ref()
+                    .or(archetype.weapon.as_ref()),
+            ),
+            (WeaponSlot::Air, archetype.air_weapon.as_ref()),
+        ];
+        for (slot, weapon) in slots {
+            if weapon.is_none_or(|weapon| weapon.missile_movers.is_empty()) {
+                continue;
+            }
+            let source = EffectSource {
+                unit_type: archetype.unit_type_id,
+                weapon: WeaponKey { slot, mode: None },
+            };
+            let flight = 0.28;
+            let event = CombatEventVisual::ProjectileVisual {
+                pos: [4.0, 4.0, 0.5],
+                vel: [10.0, 0.0, 0.0],
+                owner: PlayerId(0),
+                duration_secs: Some(flight),
+                source,
+                ends: None,
+            };
+            let travel = travel_request(&event, &tables, &catalog)
+                .unwrap_or_else(|| panic!("{} names a travel", archetype.slug));
+            assert_eq!(
+                Some(travel.effect),
+                tables.travel(source),
+                "{}",
+                archetype.slug
+            );
+            assert_eq!(travel.bound.get(Binding::FlightTime), flight);
+            assert!(
+                catalog.effect(travel.effect).is_some_and(flies),
+                "{}'s travel flies the missile's path",
+                archetype.slug
+            );
+            let impact = spawn_request(&event, &tables, &catalog)
+                .unwrap_or_else(|| panic!("{} names an impact", archetype.slug));
+            assert_eq!(
+                Some(impact.effect),
+                tables.impact(source),
+                "{}",
+                archetype.slug
+            );
+            assert_eq!(
+                impact.delay, flight,
+                "{}: the impact waits for the flight",
+                archetype.slug
+            );
+            assert!(
+                (impact.anchor - Vec3::new(4.0 + 10.0 * flight, 0.5, 4.0)).length() < 1e-4,
+                "{}: the impact lands where the missile arrives",
+                archetype.slug
+            );
+            checked += 1;
+        }
+    }
+    assert!(
+        checked >= 2,
+        "premise: an air and a structure weapon fly movers, {checked} found"
+    );
+}

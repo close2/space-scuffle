@@ -90,6 +90,9 @@ fn projectile() -> ActiveProjectile {
         remaining_lifetime_ticks: 25,
         strikes: 1,
         target_teleport_count: 0,
+        mover: None,
+        phase: 0,
+        travelled: SimScalar::ZERO,
     }
 }
 
@@ -295,6 +298,28 @@ fn every_public_entity_field_changes_the_world_checksum() {
     assert_ne!(unit_type, sim_types::UnitTypeId(u16::MAX));
 }
 
+/// A one-phase mover admitting any distance, for W-6 (plan `2026-11-27-weapon-delivery` D-6).
+fn mover() -> sim_types::MissileMover {
+    sim_types::MissileMover {
+        up_to_range: None,
+        phases: vec![sim_types::MissilePhase {
+            speed: None,
+            acceleration: SimScalar::HALF,
+            max_speed: SimScalar::from_i32(2),
+            ends_after: None,
+        }],
+    }
+}
+
+/// [`mover`] with its phase changed by `edit`.
+fn with_phase(edit: fn(&mut sim_types::MissilePhase)) -> sim_types::MissileMover {
+    let mut changed = mover();
+    for phase in &mut changed.phases {
+        edit(phase);
+    }
+    changed
+}
+
 #[test]
 fn every_projectile_field_and_live_effect_state_changes_the_world_checksum() {
     let mut world = world();
@@ -308,6 +333,9 @@ fn every_projectile_field_and_live_effect_state_changes_the_world_checksum() {
             source_slug => None, remaining_lifetime_ticks => 24, strikes => 2,
             // Plan `2026-11-24-weapon-validation` D-7: the target's teleport count at launch.
             target_teleport_count => 1,
+            // W-6 (plan `2026-11-27-weapon-delivery` D-6): the chosen mover, its phase and the
+            // path flown since the release.
+            mover => Some(0), mover => Some(1), phase => 1, travelled => SimScalar::HALF,
         },
         |projectile| {
             world.projectiles = vec![projectile.clone()];
@@ -522,6 +550,7 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
     original.attack_visibility = sim_types::AttackVisibility::Snapshot;
     original.missile_validation = sim_types::MissileValidation::default();
     original.launch_visibility = sim_types::AttackVisibility::Snapshot;
+    original.missile_movers = Vec::new();
     let splash = SplashSpec {
         zones: vec![
             sim_types::SplashZone {
@@ -595,6 +624,16 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
                 // Plan `2026-11-27-launch-and-spell-visibility` D-5: each case, and the reveal ticks.
                 launch_visibility => sim_types::AttackVisibility::Visible { reveal_ticks: 54 },
                 launch_visibility => sim_types::AttackVisibility::Hidden,
+                // W-6 (plan `2026-11-27-weapon-delivery` D-6): the movers, each value alone.
+                missile_movers => vec![mover()],
+                missile_movers => vec![sim_types::MissileMover { up_to_range: Some(SimScalar::ONE), ..mover() }],
+                missile_movers => vec![sim_types::MissileMover { phases: vec![], ..mover() }],
+                missile_movers => vec![mover(), mover()],
+                missile_movers => vec![with_phase(|p| p.speed = Some(SimScalar::ONE))],
+                missile_movers => vec![with_phase(|p| p.speed = Some(SimScalar::ZERO))],
+                missile_movers => vec![with_phase(|p| p.acceleration = SimScalar::ONE)],
+                missile_movers => vec![with_phase(|p| p.max_speed = SimScalar::from_i32(3))],
+                missile_movers => vec![with_phase(|p| p.ends_after = Some(SimScalar::ONE))],
             },
         |weapon| {
             world

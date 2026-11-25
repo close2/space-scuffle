@@ -751,6 +751,9 @@ fn all_three_splash_routes_ignore_cargo_at_dormant_pickup_coordinates() -> TestR
                 remaining_lifetime_ticks: 10,
                 strikes: 1,
                 target_teleport_count: 0,
+                mover: None,
+                phase: 0,
+                travelled: SimScalar::ZERO,
             });
         }
         f.world.try_load_unit_into_transport(passenger, carrier)?;
@@ -790,6 +793,9 @@ fn committed_projectile_from_loaded_attacker_still_damages_without_cargo_retalia
         remaining_lifetime_ticks: 10,
         strikes: 1,
         target_teleport_count: 0,
+        mover: None,
+        phase: 0,
+        travelled: SimScalar::ZERO,
     });
     f.world.try_load_unit_into_transport(attacker, carrier)?;
     let before = f.world.entities[&attacker].clone();
