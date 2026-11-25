@@ -20,7 +20,7 @@
 //! - At most `u8::MAX - BUILT_IN` names (plan D-2), so every index fits a `u8`.
 
 use super::{UnitArchetypeDef, UnitModeSpecDef};
-use crate::error::{SimCoreError, SimResult};
+use crate::error::{CollisionClassLayersFault, CollisionClassNameFault, SimCoreError, SimResult};
 use crate::movement::MovementLayer;
 use sim_types::CollisionClass;
 use std::collections::BTreeMap;
@@ -51,11 +51,13 @@ impl CollisionClassTable {
                 check_name(&unit.slug, &field, name)?;
                 match seen.get(name) {
                     Some(&(first_layer, first)) if first_layer != layer => {
-                        return Err(SimCoreError::CatalogCollisionClassLayers {
-                            name: name.to_owned(),
-                            first: first.to_owned(),
-                            second: unit.slug.clone(),
-                        });
+                        return Err(SimCoreError::CatalogCollisionClassLayers(Box::new(
+                            CollisionClassLayersFault {
+                                name: name.to_owned(),
+                                first: first.to_owned(),
+                                second: unit.slug.clone(),
+                            },
+                        )));
                     }
                     Some(_) => {}
                     None => {
@@ -156,11 +158,13 @@ fn check_name(definition: &str, field: &str, name: &str) -> SimResult<()> {
     if valid {
         Ok(())
     } else {
-        Err(SimCoreError::CatalogCollisionClassName {
-            definition: definition.to_owned(),
-            field: field.to_owned(),
-            name: name.to_owned(),
-        })
+        Err(SimCoreError::CatalogCollisionClassName(Box::new(
+            CollisionClassNameFault {
+                definition: definition.to_owned(),
+                field: field.to_owned(),
+                name: name.to_owned(),
+            },
+        )))
     }
 }
 
@@ -185,7 +189,7 @@ mod tests {
             assert!(
                 matches!(
                     check_name("u", "collision_class", bad),
-                    Err(SimCoreError::CatalogCollisionClassName { .. })
+                    Err(SimCoreError::CatalogCollisionClassName(_))
                 ),
                 "{bad:?}"
             );

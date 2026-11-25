@@ -420,7 +420,7 @@ fn a3_authored_classes_are_validated_and_sorted() -> TestResult {
     for bad in ["", "Tall", "tall walker", "tall-walker"] {
         let result = load(&[scratch_body("a", 1, "Ground", Some(bad))]);
         assert!(
-            matches!(result, Err(SimCoreError::CatalogCollisionClassName { ref name, .. }) if name == bad),
+            matches!(result, Err(SimCoreError::CatalogCollisionClassName(ref fault)) if fault.name == bad),
             "{bad:?}: {result:?}"
         );
     }
@@ -429,7 +429,7 @@ fn a3_authored_classes_are_validated_and_sorted() -> TestResult {
         scratch_body("b", 2, "Air", Some("shared")),
     ]);
     assert!(
-        matches!(spans, Err(SimCoreError::CatalogCollisionClassLayers { ref name, .. }) if name == "shared"),
+        matches!(spans, Err(SimCoreError::CatalogCollisionClassLayers(ref fault)) if fault.name == "shared"),
         "{spans:?}"
     );
     let catalog = load(&[

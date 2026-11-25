@@ -117,28 +117,25 @@ pub enum SimCoreError {
     },
 
     /// An authored collision class name is empty or has a character outside `[a-z0-9_]` (plan
-    /// `2026-11-25-collision-classes` D-2).
-    #[error("invalid collision class '{name}' at '{field}' in '{definition}': use [a-z0-9_]+")]
-    CatalogCollisionClassName {
-        /// Slug of the unit that authors the name.
-        definition: String,
-        /// Field path within the definition (`collision_class` or `modes.<mode>.collision_class`).
-        field: String,
-        /// The authored name.
-        name: String,
-    },
+    /// `2026-11-25-collision-classes` D-2). Boxed, so the error stays small.
+    #[error(
+        "invalid collision class '{}' at '{}' in '{}': use [a-z0-9_]+",
+        .0.name,
+        .0.field,
+        .0.definition
+    )]
+    CatalogCollisionClassName(Box<CollisionClassNameFault>),
 
     /// One authored collision class resolves for a ground stance and for an air stance, so it
-    /// would span the two movement layers (plan `2026-11-25-collision-classes` D-2).
-    #[error("collision class '{name}' spans ground and air: '{first}' and '{second}'")]
-    CatalogCollisionClassLayers {
-        /// The authored name.
-        name: String,
-        /// Slug of the first unit whose stance resolved to it.
-        first: String,
-        /// Slug of the unit whose stance has the other layer.
-        second: String,
-    },
+    /// would span the two movement layers (plan `2026-11-25-collision-classes` D-2). Boxed, so
+    /// the error stays small.
+    #[error(
+        "collision class '{}' spans ground and air: '{}' and '{}'",
+        .0.name,
+        .0.first,
+        .0.second
+    )]
+    CatalogCollisionClassLayers(Box<CollisionClassLayersFault>),
 
     /// The catalog authors more collision class names than a class index holds (plan
     /// `2026-11-25-collision-classes` D-2: at most `u8::MAX - 3`).
@@ -195,6 +192,28 @@ pub enum SimCoreError {
     /// Specified unit or structure type slug was not found.
     #[error("Invalid unit or structure type slug: {0}")]
     InvalidUnitType(String),
+}
+
+/// The payload of [`SimCoreError::CatalogCollisionClassName`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CollisionClassNameFault {
+    /// Slug of the unit that authors the name.
+    pub definition: String,
+    /// Field path within the definition (`collision_class` or `modes.<mode>.collision_class`).
+    pub field: String,
+    /// The authored name.
+    pub name: String,
+}
+
+/// The payload of [`SimCoreError::CatalogCollisionClassLayers`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CollisionClassLayersFault {
+    /// The authored name.
+    pub name: String,
+    /// Slug of the first unit whose stance resolved to it.
+    pub first: String,
+    /// Slug of the unit whose stance has the other layer.
+    pub second: String,
 }
 
 impl From<sim_map::MapError> for SimCoreError {

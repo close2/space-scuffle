@@ -52,7 +52,7 @@ pub use entity::{
     ActiveBuff, ActiveProjectile, BarrierState, Cargo, Entity, LastSeen, MovementMemory,
     PendingLine, PendingLineView, PendingStrikes, SlotClaim, UnitTask, WeaponPhase,
 };
-pub use error::{SimCoreError, SimResult};
+pub use error::{CollisionClassLayersFault, CollisionClassNameFault, SimCoreError, SimResult};
 pub use published_actions::ActionSet;
 pub use steering::{
     check_cluster_arrival, compute_concave_arc_steering, compute_push_displacement,
