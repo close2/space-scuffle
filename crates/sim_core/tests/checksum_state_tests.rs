@@ -153,6 +153,46 @@ fn every_production_job_field_changes_the_world_checksum() {
     );
 }
 
+/// Plan `2026-11-25-rallies` D-2, P-1: a structure's routes are hashed whole. Changing a
+/// route's slot, adding a waypoint, changing a waypoint's target, adding a second route or
+/// removing the route each change the checksum.
+#[test]
+fn every_rally_route_change_changes_the_world_checksum() {
+    use sim_types::{RallyRoute, RallyTarget, ResourceNodeId};
+    let mut world = world();
+    let original = vec![RallyRoute::single(0, RallyTarget::Point(point(3, 5)))];
+    assert_mutations(
+        &original,
+        &[
+            ("the route's slot", |routes: &mut Vec<RallyRoute>| {
+                routes[0].slot = 1;
+            }),
+            ("a second waypoint", |routes: &mut Vec<RallyRoute>| {
+                routes[0].waypoints.push(RallyTarget::Unit(EntityId(2)));
+            }),
+            ("the waypoint's target", |routes: &mut Vec<RallyRoute>| {
+                routes[0].waypoints[0] = RallyTarget::Point(point(3, 6));
+            }),
+            ("the waypoint's kind", |routes: &mut Vec<RallyRoute>| {
+                routes[0].waypoints[0] = RallyTarget::Node(ResourceNodeId(0));
+            }),
+            ("a second route", |routes: &mut Vec<RallyRoute>| {
+                routes.push(RallyRoute::single(1, RallyTarget::Unit(EntityId(2))));
+            }),
+            ("no route", |routes: &mut Vec<RallyRoute>| routes.clear()),
+        ],
+        |routes| {
+            world
+                .entities
+                .get_mut(&EntityId(1))
+                .expect("fixture has entity 1")
+                .rallies
+                .clone_from(routes);
+            world.compute_checksum()
+        },
+    );
+}
+
 #[test]
 fn every_public_entity_field_changes_the_world_checksum() {
     let mut world = world();
@@ -199,9 +239,9 @@ fn every_public_entity_field_changes_the_world_checksum() {
             captured_supply_used => 99,
             captured_supply_provided => 99,
             // Plan `2026-11-23-production-queue` D-3, D-6: each rally variant is hashed.
-            rally => Some(sim_types::RallyTarget::Point(point(3, 5))),
-            rally => Some(sim_types::RallyTarget::Unit(EntityId(2))),
-            rally => Some(sim_types::RallyTarget::Node(sim_types::ResourceNodeId(0))),
+            rallies => vec![sim_types::RallyRoute::single(0, sim_types::RallyTarget::Point(point(3, 5)))],
+            rallies => vec![sim_types::RallyRoute::single(0, sim_types::RallyTarget::Unit(EntityId(2)))],
+            rallies => vec![sim_types::RallyRoute::single(0, sim_types::RallyTarget::Node(sim_types::ResourceNodeId(0)))],
             is_mineral_walking => true,
             is_holding_position => true,
             current_anim => AnimState::Attack,

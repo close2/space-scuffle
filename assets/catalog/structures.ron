@@ -43,6 +43,9 @@
             hides_harvesters: false,
             requires_structures: [],
             trains_units: ["welder_drone"],
+            // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
+            // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
+            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
             researches_upgrades: [],
             ground_weapon: None,
             air_weapon: None,
@@ -93,6 +96,9 @@
             hides_harvesters: false,
             requires_structures: ["assembly_bay_dome"],
             trains_units: ["welder_drone"],
+            // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
+            // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
+            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
             researches_upgrades: [],
             ground_weapon: None,
             air_weapon: None,
@@ -141,6 +147,9 @@
             hides_harvesters: false,
             requires_structures: ["weapons_arsenal_dome"],
             trains_units: ["welder_drone"],
+            // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
+            // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
+            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
             researches_upgrades: [],
             ground_weapon: Some((
                 name: "Ibiks Cannons",
@@ -318,6 +327,9 @@
             hides_harvesters: false,
             requires_structures: ["foundry_core_dome"],
             trains_units: ["pulse_bot", "shock_golem", "jet_jumper", "specter_android"],
+            // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
+            // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
+            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
             researches_upgrades: ["combat_shield", "overclock_stim", "concussive_shells"],
             ground_weapon: None,
             air_weapon: None,
@@ -571,6 +583,9 @@
             hides_harvesters: false,
             requires_structures: ["assembly_bay_dome"],
             trains_units: ["napalm_wheeler", "railgun_crawler", "colossus_mech"],
+            // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
+            // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
+            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
             researches_upgrades: ["infernal_preigniter", "drilling_claws", "smart_servos"],
             ground_weapon: None,
             air_weapon: None,
@@ -657,6 +672,9 @@
             hides_harvesters: false,
             requires_structures: ["machining_plant_dome"],
             trains_units: ["vector_interceptor", "repair_shuttle", "sky_bastion", "cloak_gunship", "omni_probe_drone"],
+            // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
+            // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
+            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
             researches_upgrades: ["cloaking_field"],
             ground_weapon: None,
             air_weapon: None,
@@ -887,6 +905,9 @@
             hides_harvesters: false,
             requires_structures: [],
             trains_units: ["grav_harvester"],
+            // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
+            // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
+            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
             researches_upgrades: [],
             ground_weapon: None,
             air_weapon: None,
@@ -1016,6 +1037,9 @@
             hides_harvesters: false,
             requires_structures: ["citadel_nexus_dome"],
             trains_units: ["psi_grey", "warp_strider", "prism_weaver", "astral_vagrant"],
+            // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
+            // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
+            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
             researches_upgrades: [],
             ground_weapon: None,
             air_weapon: None,
@@ -1335,6 +1359,9 @@
             hides_harvesters: false,
             requires_structures: ["cybernetics_conduit_dome"],
             trains_units: ["flying_saucer", "prismatic_saucer", "mothership_carrier"],
+            // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
+            // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
+            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
             researches_upgrades: [],
             ground_weapon: None,
             air_weapon: None,
@@ -1377,6 +1404,9 @@
             hides_harvesters: false,
             requires_structures: ["cybernetics_conduit_dome"],
             trains_units: ["stealth_eye_orb", "phase_prism_saucer", "void_goliath", "tripod_annihilator"],
+            // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
+            // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
+            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
             researches_upgrades: [],
             ground_weapon: None,
             air_weapon: None,
@@ -1589,11 +1619,21 @@
             // CommandStructureAutoRally (voidmulti EffectData:2507-2537), run by CCCreateSet,
             // NexusCreateSet and HatcheryCreateSet: on creation, rally to the farthest harvestable
             // resource within Radius 6.5 (cells) that passes the Minerals validator.
-            auto_rally: Some((radius: 6.5, kinds: [Mineral])),
+            // The auto-rally fills RallyHatchery command 1, the worker rally (S7).
+            auto_rally: Some((radius: 6.5, kinds: [Mineral], slot: 1)),
             is_gas_extractor: false,
             hides_harvesters: false,
             requires_structures: [],
             trains_units: ["nectar_worker", "hive_matron", "amber_pollen_dome"],
+            // RallyHatchery (liberty AbilData:885-897): InfoArray 0 for non-workers, refusing resources
+            // (NotResourcesOrEnemyTargetType, liberty ValidatorData:667-669); InfoArray 1 for workers,
+            // SetOnGround 0; NotQueen on both (liberty ValidatorData:1598-1601). InfoArray 2
+            // (SetValidators Failure) can never be set and is not authored. Waypoints: "up to four"
+            // (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
+            rally: Some((max_waypoints: 4, slots: [
+                (label: "Set Rally Point", used_by: NonWorkers, excludes: ["hive_matron"], on_resources: false),
+                (label: "Set Worker Rally Point", used_by: Workers, excludes: ["hive_matron"], smart_on_ground: false),
+            ])),
             researches_upgrades: ["pneumatized_carapace"],
             ground_weapon: None,
             air_weapon: None,
@@ -1634,11 +1674,21 @@
             // CommandStructureAutoRally (voidmulti EffectData:2507-2537), run by CCCreateSet,
             // NexusCreateSet and HatcheryCreateSet: on creation, rally to the farthest harvestable
             // resource within Radius 6.5 (cells) that passes the Minerals validator.
-            auto_rally: Some((radius: 6.5, kinds: [Mineral])),
+            // The auto-rally fills RallyHatchery command 1, the worker rally (S7).
+            auto_rally: Some((radius: 6.5, kinds: [Mineral], slot: 1)),
             is_gas_extractor: false,
             hides_harvesters: false,
             requires_structures: ["spawning_hollow_dome"],
             trains_units: ["nectar_worker", "hive_matron", "amber_pollen_dome"],
+            // RallyHatchery (liberty AbilData:885-897): InfoArray 0 for non-workers, refusing resources
+            // (NotResourcesOrEnemyTargetType, liberty ValidatorData:667-669); InfoArray 1 for workers,
+            // SetOnGround 0; NotQueen on both (liberty ValidatorData:1598-1601). InfoArray 2
+            // (SetValidators Failure) can never be set and is not authored. Waypoints: "up to four"
+            // (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
+            rally: Some((max_waypoints: 4, slots: [
+                (label: "Set Rally Point", used_by: NonWorkers, excludes: ["hive_matron"], on_resources: false),
+                (label: "Set Worker Rally Point", used_by: Workers, excludes: ["hive_matron"], smart_on_ground: false),
+            ])),
             researches_upgrades: [],
             ground_weapon: None,
             air_weapon: None,
@@ -1679,11 +1729,21 @@
             // CommandStructureAutoRally (voidmulti EffectData:2507-2537), run by CCCreateSet,
             // NexusCreateSet and HatcheryCreateSet: on creation, rally to the farthest harvestable
             // resource within Radius 6.5 (cells) that passes the Minerals validator.
-            auto_rally: Some((radius: 6.5, kinds: [Mineral])),
+            // The auto-rally fills RallyHatchery command 1, the worker rally (S7).
+            auto_rally: Some((radius: 6.5, kinds: [Mineral], slot: 1)),
             is_gas_extractor: false,
             hides_harvesters: false,
             requires_structures: ["infestation_nursery_dome"],
             trains_units: ["nectar_worker", "hive_matron", "amber_pollen_dome"],
+            // RallyHatchery (liberty AbilData:885-897): InfoArray 0 for non-workers, refusing resources
+            // (NotResourcesOrEnemyTargetType, liberty ValidatorData:667-669); InfoArray 1 for workers,
+            // SetOnGround 0; NotQueen on both (liberty ValidatorData:1598-1601). InfoArray 2
+            // (SetValidators Failure) can never be set and is not authored. Waypoints: "up to four"
+            // (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
+            rally: Some((max_waypoints: 4, slots: [
+                (label: "Set Rally Point", used_by: NonWorkers, excludes: ["hive_matron"], on_resources: false),
+                (label: "Set Worker Rally Point", used_by: Workers, excludes: ["hive_matron"], smart_on_ground: false),
+            ])),
             researches_upgrades: [],
             ground_weapon: None,
             air_weapon: None,
@@ -1769,6 +1829,9 @@
             hides_harvesters: false,
             requires_structures: ["ancient_tree_dome"],
             trains_units: ["razor_mantis"],
+            // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
+            // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
+            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
             researches_upgrades: ["metabolic_boost", "adrenal_glands"],
             ground_weapon: None,
             air_weapon: None,
@@ -1997,6 +2060,9 @@
             hides_harvesters: false,
             requires_structures: ["spawning_hollow_dome"],
             trains_units: ["rhino_beetle"],
+            // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
+            // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
+            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
             researches_upgrades: ["glial_reconstitution", "tunneling_claws"],
             ground_weapon: None,
             air_weapon: None,
@@ -2038,6 +2104,9 @@
             hides_harvesters: false,
             requires_structures: ["spawning_hollow_dome"],
             trains_units: ["volatile_tick"],
+            // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
+            // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
+            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
             researches_upgrades: ["centrifugal_hooks"],
             ground_weapon: None,
             air_weapon: None,
@@ -2079,6 +2148,9 @@
             hides_harvesters: false,
             requires_structures: ["canopy_grove_dome"],
             trains_units: ["thorn_viper"],
+            // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
+            // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
+            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
             researches_upgrades: ["muscular_augments", "grooved_spines", "nanomuscular_swell"],
             ground_weapon: None,
             air_weapon: None,
@@ -2120,6 +2192,9 @@
             hides_harvesters: false,
             requires_structures: ["canopy_grove_dome", "spine_den_dome"],
             trains_units: ["burrow_scorpion"],
+            // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
+            // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
+            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
             researches_upgrades: ["adaptive_talons", "seismic_spines"],
             ground_weapon: None,
             air_weapon: None,
@@ -2162,6 +2237,9 @@
             hides_harvesters: false,
             requires_structures: ["canopy_grove_dome"],
             trains_units: ["sonic_bat", "sky_leviathan"],
+            // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
+            // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
+            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
             researches_upgrades: [
                 "flyer_attacks_1", "flyer_attacks_2", "flyer_attacks_3",
                 "flyer_carapace_1", "flyer_carapace_2", "flyer_carapace_3",
@@ -2207,6 +2285,9 @@
             hides_harvesters: false,
             requires_structures: ["primal_world_tree_dome", "chitin_spire_dome"],
             trains_units: ["spore_matriarch"],
+            // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
+            // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
+            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
             researches_upgrades: [],
             ground_weapon: None,
             air_weapon: None,
@@ -2248,6 +2329,9 @@
             hides_harvesters: false,
             requires_structures: ["canopy_grove_dome"],
             trains_units: ["mycelium_shaman"],
+            // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
+            // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
+            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
             researches_upgrades: ["microbial_shroud", "neural_parasite"],
             ground_weapon: None,
             air_weapon: None,
@@ -2330,6 +2414,9 @@
             hides_harvesters: false,
             requires_structures: ["primal_world_tree_dome"],
             trains_units: ["stag_behemoth"],
+            // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
+            // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
+            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
             researches_upgrades: ["chitinous_plating", "anabolic_synthesis"],
             ground_weapon: None,
             air_weapon: None,

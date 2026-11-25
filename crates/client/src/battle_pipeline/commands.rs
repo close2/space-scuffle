@@ -837,7 +837,19 @@ fn capable(
         UnitOrder::UnloadAll => archetype.capabilities.transport_capacity > 0,
         // The simulation's rule (plan `2026-11-23-production-queue` D-3): a completed structure
         // that trains units has a rally; completion is `can_receive_order`'s check.
-        UnitOrder::SetRally { .. } => !archetype.trains_units.is_empty(),
+        // A structure that trains units has a rally (plan `2026-11-23-production-queue` D-3); a
+        // named slot needs that slot (plan `2026-11-25-rallies` D-8): its authored slots, or
+        // the default ability's one slot when it authors none.
+        UnitOrder::SetRally { slot, .. } => {
+            !archetype.trains_units.is_empty()
+                && slot.is_none_or(|slot| {
+                    usize::from(slot)
+                        < archetype
+                            .rally
+                            .as_ref()
+                            .map_or(1, |rally| rally.slots.len())
+                })
+        }
         // Only a targeted effect-tree cast (plan `2026-11-10-spellcaster-mechanics` D-10). A
         // mode switch needs a direction, which only `submit_mode_switch` carries and checks
         // again at its tick (plan `2026-11-09-client-mode-commands` D-4). Other abilities have

@@ -178,10 +178,12 @@ const fn game_error_slot(error: &GameCommandError) -> usize {
         GameCommandError::Production(_) => 26,
         GameCommandError::Invariant(_) => 27,
         GameCommandError::HousedRecipient(_) => 28,
+        GameCommandError::NoRallySlotTakes => 29,
+        GameCommandError::RallyWaypointsFull => 30,
     }
 }
 
-fn game_errors() -> [GameCommandError; 29] {
+fn game_errors() -> [GameCommandError; 31] {
     let node = ResourceNodeId(7);
     [
         GameCommandError::MatchOver,
@@ -220,6 +222,8 @@ fn game_errors() -> [GameCommandError; 29] {
         GameCommandError::Production(ProductionAdmissionError::EmptySelection),
         GameCommandError::Invariant(INVARIANT),
         GameCommandError::HousedRecipient(ID),
+        GameCommandError::NoRallySlotTakes,
+        GameCommandError::RallyWaypointsFull,
     ]
 }
 

@@ -120,7 +120,10 @@ use std::collections::BTreeMap;
 /// Schema 47 adds each unit's last seen point of its attack order's target,
 /// `MovementMemory::last_seen` (target, point and whether it is lost), after `slot` (plan
 /// `2026-11-24-weapon-validation` Amendment 2, B-195). The number is the next free at merge.
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 47;
+/// Schema 48 replaces each entity's rally by its routes, `Entity::rallies`, in the same place: the
+/// route count, then per route its slot (a `u8`), its waypoint count and each waypoint in the
+/// rally's encoding (plan `2026-11-25-rallies` D-2). The number is the next free at merge.
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 48;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.

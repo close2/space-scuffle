@@ -266,6 +266,11 @@ pub struct UnitArchetype {
     /// Unit slugs that can be trained/constructed at this dome.
     #[serde(default)]
     pub trains_units: Vec<String>,
+    /// The structure's rally ability: its slots and waypoint cap (plan `2026-11-25-rallies`
+    /// D-1). `None` on an archetype that trains units is the default ability, one slot of one
+    /// waypoint used by every unit and taking every target; read only for such archetypes.
+    #[serde(default)]
+    pub rally: Option<sim_types::RallySpec>,
     /// Upgrade slugs that can be researched at this dome.
     #[serde(default)]
     pub researches_upgrades: Vec<String>,
@@ -903,6 +908,26 @@ impl UnitCatalog {
                     }
                 }
             }
+            self.validate_rally_exclusions(archetype)?;
+        }
+        Ok(())
+    }
+
+    /// Checks that every unit a rally slot of `archetype` excludes (plan `2026-11-25-rallies`
+    /// D-1) names a unit, not a structure, of the complete catalog.
+    fn validate_rally_exclusions(&self, archetype: &UnitArchetype) -> SimResult<()> {
+        let slots = archetype.rally.iter().flat_map(|rally| &rally.slots);
+        for excluded in slots.flat_map(|slot| &slot.excludes) {
+            let is_unit = self
+                .get_by_slug(excluded)
+                .is_some_and(|unit| !matches!(unit.shape, ShapeKind::BuildingDome { .. }));
+            if !is_unit {
+                return Err(SimCoreError::CatalogInvalidValue {
+                    definition: archetype.slug.clone(),
+                    field: "rally.slots.excludes".to_owned(),
+                    reason: "must name a unit of the complete catalog",
+                });
+            }
         }
         Ok(())
     }
@@ -1206,6 +1231,10 @@ struct AutoRallySpecDef {
     radius: f64,
     /// The kinds the search accepts (the effect's validator); no kind twice.
     kinds: Vec<ResourceKind>,
+    /// The rally slot it fills (plan `2026-11-25-rallies` D-4); 0 when omitted, below the
+    /// structure's slot count.
+    #[serde(default)]
+    slot: u8,
 }
 
 /// An authored barrier (`StarCraft` II's Immortal Barrier); see [`BarrierSpec`].
@@ -1988,6 +2017,8 @@ impl UnitArchetypeDef {
             abilities,
             requires_structures: self.requires_structures,
             trains_units: self.trains_units,
+            // Units carry no rally ability: only structures are authored with one.
+            rally: None,
             researches_upgrades: self.researches_upgrades,
             armor_class,
             modes,
@@ -2151,6 +2182,11 @@ struct StructureArchetypeDef {
     /// Unit slugs that can be trained/constructed at this dome.
     #[serde(default)]
     pub trains_units: Vec<String>,
+    /// The rally ability (plan `2026-11-25-rallies` D-1): slots and waypoint cap; omitted for
+    /// the default ability (one slot of one waypoint). Only a structure that trains units may
+    /// carry one.
+    #[serde(default)]
+    pub rally: Option<sim_types::RallySpec>,
     /// Upgrade slugs that can be researched at this dome.
     #[serde(default)]
     pub researches_upgrades: Vec<String>,
@@ -2191,6 +2227,7 @@ impl StructureArchetypeDef {
             auto_rally: self.auto_rally.as_ref().map(|rally| AutoRallySpec {
                 radius: SimScalar::from_num(rally.radius),
                 kinds: ResourceKindSet::of(&rally.kinds),
+                slot: rally.slot,
             }),
             is_resource_dropoff: self.is_resource_dropoff,
             is_gas_extractor: self.is_gas_extractor,
@@ -2297,6 +2334,7 @@ impl StructureArchetypeDef {
             abilities: self.abilities,
             requires_structures: self.requires_structures,
             trains_units: self.trains_units,
+            rally: self.rally,
             researches_upgrades: self.researches_upgrades,
             armor_class: None,
             modes: Vec::new(),

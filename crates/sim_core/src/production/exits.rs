@@ -59,7 +59,8 @@ impl SimWorld {
     /// ring 0 has no free cell are the outer rings searched, one cell wider each, until a ring
     /// lies wholly off the map; an outer cell needs no connection, only legal ground on the
     /// producer's level and no body. Within a ring, cells are tried clockwise from the minimum
-    /// corner, or nearest the producer's rally point first when it has one.
+    /// corner, or nearest the producer's rally point first when it has one: the first resolving
+    /// waypoint of the rally slot the product uses (plan `2026-11-25-rallies` D-4).
     pub(crate) fn production_exit(
         &mut self,
         producer: EntityId,
@@ -69,7 +70,9 @@ impl SimWorld {
         let Some(ring) = self.exit_ring(producer, product)? else {
             return Ok(None);
         };
-        let rally = self.rally_point(producer);
+        let rally = self
+            .rally_slot_for(producer, product)
+            .and_then(|slot| self.rally_point(producer, slot));
         if let Some(point) = self.search_exit_ring(&ring, ring.bounds, rally, RingTest::Zero)? {
             return Ok(Some(point));
         }

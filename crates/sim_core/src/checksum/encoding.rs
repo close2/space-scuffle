@@ -26,10 +26,10 @@ use sim_types::{AbilitySource, EffectContext, EffectId, EffectTarget, StatusId};
 use sim_types::{
     AllowedMovement, AnimState, ArmorClassId, AttackOrigin, AttackVisibility, AttributeBonuses,
     AttributeFlags, EntityId, FootprintShape, MatchResult, MissileValidation, MoverType, PerPlayer,
-    PlayerId, PlayerUpgradeState, ProjectileTargetLossBehavior, RallyTarget, ResourceNodeId,
-    SimAngle, SimScalar, SimVec2, SplashCliff, SplashImpact, SplashLine, SplashLineAxis,
-    SplashLineOrigin, SplashShape, SplashSpec, SplashZone, StructureStrike, Tick, TurretIdle,
-    UnitOrder, UnitStatDeltas, UnitTypeId, VisibilityState, WeaponClassId, WeaponSpec,
+    PlayerId, PlayerUpgradeState, ProjectileTargetLossBehavior, RallyRoute, RallyTarget,
+    ResourceNodeId, SimAngle, SimScalar, SimVec2, SplashCliff, SplashImpact, SplashLine,
+    SplashLineAxis, SplashLineOrigin, SplashShape, SplashSpec, SplashZone, StructureStrike, Tick,
+    TurretIdle, UnitOrder, UnitStatDeltas, UnitTypeId, VisibilityState, WeaponClassId, WeaponSpec,
     WeaponVisualKind,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -348,7 +348,7 @@ fields!(Entity {
     production_queue,
     captured_supply_used,
     captured_supply_provided,
-    rally,
+    rallies,
     task,
     cargo,
     construction,
@@ -939,6 +939,9 @@ impl Canonical for RallyTarget {
     }
 }
 
+// Plan `2026-11-25-rallies` D-2: a route's slot, then its waypoints (count, then each target).
+fields!(RallyRoute { slot, waypoints });
+
 impl Canonical for UnitOrder {
     fn encode(&self, encoder: &mut Encoder) {
         match self {
@@ -1006,9 +1009,10 @@ impl Canonical for UnitOrder {
                 carrier.encode(encoder);
             }
             Self::UnloadAll => 17_u8.encode(encoder),
-            Self::SetRally { target } => {
+            Self::SetRally { target, slot } => {
                 18_u8.encode(encoder);
                 target.encode(encoder);
+                slot.encode(encoder);
             }
         }
     }
@@ -1030,7 +1034,7 @@ mod tests {
         // Domain length, UTF-8 domain, schema u32, u16, i32, option tags/payload,
         // then UTF-8 string byte length and its two encoded bytes.
         let bytes = [
-            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 47, 0, 0, 0, 0x34, 0x12, 0xfe, 0xff,
+            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 48, 0, 0, 0, 0x34, 0x12, 0xfe, 0xff,
             0xff, 0xff, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0xc3, 0xa9,
         ];
         assert_eq!(encoder.finish(), xxh64(&bytes, 0));
@@ -1106,7 +1110,7 @@ mod tests {
             let mut encoder = Encoder::new("test");
             7_u32.encode(&mut encoder);
             text.as_str().encode(&mut encoder);
-            let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 47, 0, 0, 0];
+            let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 48, 0, 0, 0];
             bytes.extend([7, 0, 0, 0]);
             bytes.extend((length as u64).to_le_bytes());
             bytes.extend(text.as_bytes());
@@ -1131,7 +1135,7 @@ mod tests {
         // then the full remaining duration u32 (0x0001_0001), total, supply, the started flag
         // and payments.
         let bytes = [
-            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 47, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 48, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
             0x34, 0x12, 1, 0, 1, 0, 2, 0, 0, 0, 0x78, 0x56, 0x34, 0x12, 1, 3, 0, 0, 0, 4, 0, 0, 0,
         ];
         assert_eq!(digest(&queue), xxh64(&bytes, 0));
@@ -1142,7 +1146,7 @@ mod tests {
     #[test]
     fn rally_targets_encode_their_tag_and_payload() {
         use sim_types::{EntityId, RallyTarget, ResourceNodeId, SimScalar, SimVec2};
-        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 47, 0, 0, 0];
+        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 48, 0, 0, 0];
         let point = SimVec2::new(SimScalar::from_raw(0x0102), SimScalar::from_raw(-1));
         let mut bytes = header.to_vec();
         bytes.push(0);
@@ -1163,9 +1167,56 @@ mod tests {
         );
     }
 
+    /// Plan `2026-11-25-rallies` D-2: a structure's routes encode the route count, then per
+    /// route its slot byte, its waypoint count and each waypoint's tag and payload, after the
+    /// domain and the schema (48).
+    #[test]
+    fn rally_routes_encode_their_count_slot_and_waypoints() {
+        use sim_types::{EntityId, RallyRoute, RallyTarget, ResourceNodeId};
+        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 48, 0, 0, 0];
+        let count = |n: u64| n.to_le_bytes();
+        // No route.
+        let mut bytes = header.to_vec();
+        bytes.extend(count(0));
+        assert_eq!(digest(&Vec::<RallyRoute>::new()), xxh64(&bytes, 0));
+        // One route of two targets in slot 1.
+        let route = RallyRoute {
+            slot: 1,
+            waypoints: vec![
+                RallyTarget::Unit(EntityId(0x1234_5678)),
+                RallyTarget::Node(ResourceNodeId(9)),
+            ],
+        };
+        let mut bytes = header.to_vec();
+        bytes.extend(count(1));
+        bytes.push(1);
+        bytes.extend(count(2));
+        bytes.extend([1, 0x78, 0x56, 0x34, 0x12]);
+        bytes.extend([2, 9, 0, 0, 0]);
+        assert_eq!(digest(&vec![route.clone()]), xxh64(&bytes, 0));
+        // Two routes, slot 0 first.
+        let first = RallyRoute::single(0, RallyTarget::Node(ResourceNodeId(3)));
+        let mut bytes = header.to_vec();
+        bytes.extend(count(2));
+        bytes.push(0);
+        bytes.extend(count(1));
+        bytes.extend([2, 3, 0, 0, 0]);
+        bytes.push(1);
+        bytes.extend(count(2));
+        bytes.extend([1, 0x78, 0x56, 0x34, 0x12]);
+        bytes.extend([2, 9, 0, 0, 0]);
+        assert_eq!(digest(&vec![first, route]), xxh64(&bytes, 0));
+    }
+
+    /// Plan `2026-11-25-rallies` D-2: the schema the routes are hashed under.
+    #[test]
+    fn the_schema_is_48() {
+        assert_eq!(super::super::CHECKSUM_SCHEMA_VERSION, 48);
+    }
+
     #[test]
     fn carrier_identity_has_explicit_option_tag_and_all_id_bytes() {
-        let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 47, 0, 0, 0];
+        let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 48, 0, 0, 0];
         bytes.push(0);
         assert_eq!(digest(&None::<sim_types::EntityId>), xxh64(&bytes, 0));
         bytes.pop();

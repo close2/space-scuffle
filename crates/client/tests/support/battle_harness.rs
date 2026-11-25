@@ -607,3 +607,62 @@ pub fn burrower(world: &mut SimWorld, assets: &Path) -> (UnitTypeId, String) {
     archetype.modes.push(burrowed);
     (stand_in, mode.mode_name)
 }
+
+/// A temporary assets root, the shipped one but for `catalog/structures.ron`, in which the
+/// structure `slug` carries the rally ability of the shipped structure with a worker rally slot
+/// (plan `2026-11-25-rallies` D-1), copied as authored text, and auto-rallies that slot. Every
+/// other directory links to the shipped one. The directory must outlive the harness booted from
+/// it. Unix only: the mirror is made of symbolic links.
+///
+/// The shipped structures with two rally slots have no approved media, so a client test gives the
+/// slots to a presentable structure instead; the rule read is the data, not an identity.
+#[cfg(unix)]
+pub fn root_with_two_rally_slots(slug: &str) -> tempfile::TempDir {
+    let directory = tempfile::tempdir().expect("temporary root");
+    for entry in std::fs::read_dir(assets()).expect("shipped root") {
+        let entry = entry.expect("shipped root entry");
+        if entry.file_name() != "catalog" {
+            std::os::unix::fs::symlink(entry.path(), directory.path().join(entry.file_name()))
+                .expect("link to a shipped directory");
+        }
+    }
+    let catalog = directory.path().join("catalog");
+    std::fs::create_dir(&catalog).expect("temporary catalog directory");
+    for entry in std::fs::read_dir(assets().join("catalog")).expect("shipped catalog") {
+        let entry = entry.expect("shipped catalog file");
+        if entry.file_name() != "structures.ron" {
+            std::os::unix::fs::symlink(entry.path(), catalog.join(entry.file_name()))
+                .expect("link to a shipped catalog file");
+        }
+    }
+    let text = std::fs::read_to_string(assets().join("catalog/structures.ron"))
+        .expect("shipped structures");
+    // The first rally ability authored over several lines is a multi-slot one.
+    let start = text
+        .find("rally: Some((max_waypoints: 4, slots: [\n")
+        .expect("a structure with several rally slots");
+    let end = start + text[start..].find("])),").expect("a closed rally ability") + "])),".len();
+    let block = &text[start..end];
+    let worker_slot = block
+        .lines()
+        .skip(1)
+        .position(|line| line.contains("used_by: Workers"))
+        .expect("a worker slot");
+    let row = text
+        .find(&format!("slug: \"{slug}\""))
+        .expect("the structure's row");
+    let one_slot = "rally: Some((max_waypoints: 4, slots: [(label: \"Set Rally Point\")])),";
+    let at = row
+        + text[row..]
+            .find(one_slot)
+            .expect("the structure's one-slot rally");
+    let mut edited = text.clone();
+    edited.replace_range(at..at + one_slot.len(), block);
+    let auto = "auto_rally: Some((radius: 6.5, kinds: [Mineral]))";
+    if let Some(offset) = edited[row..at].find(auto) {
+        let from = row + offset + auto.len() - 2;
+        edited.insert_str(from, &format!(", slot: {worker_slot}"));
+    }
+    std::fs::write(catalog.join("structures.ron"), edited).expect("temporary structures");
+    directory
+}

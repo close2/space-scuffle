@@ -20,6 +20,10 @@
 //! and arm a cast mode (plan `2026-11-10-spellcaster-mechanics` D-10). Energy and cooldown are
 //! locks, read from [`PlayerView::cast_states`], because they belong to the units, not to money.
 //!
+//! A selection holding production structures ends its root list with one rally entry per rally
+//! slot of their abilities, named by data, each arming [`CommandMode::Rally`] (plan
+//! `2026-11-25-rallies` D-8). Like every entry they take their position's key (B-214, Q0115).
+//!
 //! # Invariants
 //! - Pure: [`derive_card`] depends only on its arguments, and no Bevy type but [`Resource`] is here.
 //! - A slot is enabled exactly when it carries no [`CardLock`].
@@ -187,6 +191,14 @@ pub enum CardLabel {
     Unit(UnitTypeId),
     /// The upgrade with this catalog ID.
     Upgrade(u32),
+    /// A rally slot's entry, named by the first selected structure that has the slot (plan
+    /// `2026-11-25-rallies` D-8).
+    Rally {
+        /// The structure whose slot names the entry.
+        structure: UnitTypeId,
+        /// The rally slot.
+        slot: u8,
+    },
     /// The next page.
     More,
     /// The previous page.
@@ -650,6 +662,35 @@ fn root_entries(model: &HudModel, facts: &[SelectedFact], mut emit: impl FnMut(C
             _ => {}
         }
     }
+    rally_entries(model, facts, emit);
+}
+
+/// Calls `emit` with one rally entry per slot index of the selected completed structures' rally
+/// abilities (plan `2026-11-25-rallies` D-8), after every other root entry, so the entries take
+/// the positions, and so the keys, that follow (B-214, Q0115's default (a)). Each entry is named
+/// by the first selected structure that has the slot, and arms [`CommandMode::Rally`].
+fn rally_entries(model: &HudModel, facts: &[SelectedFact], mut emit: impl FnMut(CardEntry)) {
+    let slots = completed(model, facts)
+        .map(|archetype| archetype.rally_labels.len())
+        .max()
+        .unwrap_or(0);
+    for slot in (0..slots).filter_map(|slot| u8::try_from(slot).ok()) {
+        let named = facts.iter().filter(|fact| !fact.foundation).find(|fact| {
+            model
+                .catalog
+                .archetype(fact.unit_type)
+                .is_some_and(|archetype| archetype.rally_labels.len() > usize::from(slot))
+        });
+        if let Some(fact) = named {
+            emit(CardEntry::free(
+                CardAction::Mode(CommandMode::Rally { slot }),
+                CardLabel::Rally {
+                    structure: fact.unit_type,
+                    slot,
+                },
+            ));
+        }
+    }
 }
 
 /// Calls `emit` with each structure the selected builders can raise, in catalog order.
@@ -710,6 +751,11 @@ fn label_text(label: CardLabel, model: &HudModel) -> &str {
             .catalog
             .upgrade(upgrade)
             .map_or("", |upgrade| upgrade.label.as_str()),
+        CardLabel::Rally { structure, slot } => model
+            .catalog
+            .archetype(structure)
+            .and_then(|archetype| archetype.rally_labels.get(usize::from(slot)))
+            .map_or("", String::as_str),
         CardLabel::More => "More",
         CardLabel::Back => "Back",
     }
@@ -1166,9 +1212,15 @@ mod tests {
         let card = card_for(&world, &[unit, other, structure]);
         let shown = labels(&card);
         assert_eq!(shown[..2], [CardLabel::Attack, CardLabel::Build]);
-        assert!(shown[2..]
+        // The structure's trains, then its one rally entry last (plan `2026-11-25-rallies` D-8).
+        let (rally, trains) = shown[2..].split_last().ok_or("entries")?;
+        assert!(trains
             .iter()
             .all(|label| matches!(label, CardLabel::Unit(_))));
+        assert!(
+            matches!(rally, CardLabel::Rally { slot: 0, .. }),
+            "{rally:?}"
+        );
         let mut distinct = shown.clone();
         distinct.dedup();
         assert_eq!(distinct, shown);

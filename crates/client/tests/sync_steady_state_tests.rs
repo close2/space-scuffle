@@ -872,6 +872,25 @@ fn selected_structure_keeps_card_queue_and_feed_buffers_on_every_tick() {
     }
     harness.pause();
     let base = queue_jobs_at_town_hall(&mut harness);
+    // Plan `2026-11-25-rallies` D-8: the base's rally is a route of three waypoints, two points
+    // before its auto-rallied field, so the window draws three reticles and three chained lines.
+    let centre = harness.simulated_position(base);
+    let points = [
+        harness.open_ground(centre, 6.0),
+        harness.open_ground(centre, 9.0),
+    ];
+    let world = harness.world_mut();
+    let route = world
+        .entities
+        .get_mut(&base)
+        .and_then(|entity| entity.rallies.first_mut())
+        .expect("the base auto-rallied");
+    let field = route.waypoints[0];
+    route.waypoints = points
+        .iter()
+        .map(|&point| sim_types::RallyTarget::Point(battle_harness::sim_position(point)))
+        .chain([field])
+        .collect();
     harness.resume();
     run_ticks(&mut harness, WARM_TICKS);
     let workers = local_workers(&harness);
@@ -926,8 +945,9 @@ fn selected_structure_keeps_card_queue_and_feed_buffers_on_every_tick() {
         Vec::new(),
         "retained buffers that moved or grew"
     );
-    // Plan `2026-11-23-production-queue` D-10: the selected base's auto-rally is drawn from the
-    // pool, which was filled before the window, so the census above holds with it shown.
+    // Plans `2026-11-23-production-queue` D-10 and `2026-11-25-rallies` D-8: the selected base's
+    // three-waypoint rally is drawn from the pool, which was filled before the window, so the
+    // census above holds with it shown.
     let world = harness.app.world_mut();
     let shown = world
         .query::<(
@@ -937,7 +957,7 @@ fn selected_structure_keeps_card_queue_and_feed_buffers_on_every_tick() {
         .iter(world)
         .filter(|(_, visibility)| **visibility != Visibility::Hidden)
         .count();
-    assert_eq!(shown, 2, "the base's rally reticle and line");
+    assert_eq!(shown, 6, "the base's three rally reticles and three lines");
 }
 
 /// Places a completed extractor that hides its harvesters, of the local player, over the gas

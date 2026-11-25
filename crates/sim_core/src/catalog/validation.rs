@@ -1376,6 +1376,76 @@ impl StructureArchetypeDef {
         Ok(())
     }
 
+    /// Checks the authored rally ability (plan `2026-11-25-rallies` D-1): only on a structure that
+    /// trains units, at least one waypoint, between one and `u8::MAX` slots, every label
+    /// non-empty, every exclusion named once and not blank, and the auto-rally's slot below the
+    /// slot count (one slot without a spec). Whether an exclusion names a unit is checked
+    /// against the complete catalog ([`super::UnitCatalog::validate_production_references`]).
+    fn validate_rally(&self) -> SimResult<()> {
+        let slots = match &self.rally {
+            None => 1,
+            Some(rally) => {
+                if self.trains_units.is_empty() {
+                    return Err(invalid(
+                        &self.slug,
+                        "rally",
+                        "only a structure that trains units has a rally",
+                    ));
+                }
+                if rally.max_waypoints == 0 {
+                    return Err(invalid(
+                        &self.slug,
+                        "rally.max_waypoints",
+                        "a rally holds at least one waypoint",
+                    ));
+                }
+                if rally.slots.is_empty() || rally.slots.len() > usize::from(u8::MAX) {
+                    return Err(invalid(
+                        &self.slug,
+                        "rally.slots",
+                        "a rally ability has between one and 255 slots",
+                    ));
+                }
+                for slot in &rally.slots {
+                    Self::validate_rally_slot(&self.slug, slot)?;
+                }
+                rally.slots.len()
+            }
+        };
+        if self
+            .auto_rally
+            .as_ref()
+            .is_some_and(|auto| usize::from(auto.slot) >= slots)
+        {
+            return Err(invalid(
+                &self.slug,
+                "auto_rally.slot",
+                "must name one of the structure's rally slots",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Checks one authored rally slot: a label, and each exclusion named once and not blank.
+    fn validate_rally_slot(slug: &str, slot: &sim_types::RallySlotSpec) -> SimResult<()> {
+        if slot.label.trim().is_empty() {
+            return Err(invalid(slug, "rally.slots.label", "must not be empty"));
+        }
+        for (index, excluded) in slot.excludes.iter().enumerate() {
+            if excluded.trim().is_empty() {
+                return Err(invalid(slug, "rally.slots.excludes", "must not be blank"));
+            }
+            if slot.excludes[..index].contains(excluded) {
+                return Err(invalid(
+                    slug,
+                    "rally.slots.excludes",
+                    "must not name a unit twice",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Checks that only a gas extractor hides its harvesters (plan `2026-11-24-hidden-harvesters`
     /// D-1): in 5.0.14 `HideHarvesters` is a flag of a resource behaviour, which only a structure
     /// holding a resource carries.
@@ -1393,6 +1463,7 @@ impl StructureArchetypeDef {
         validate_slug(&self.slug)?;
         structure_attributes(&self.slug, &self.attributes)?;
         self.validate_auto_rally()?;
+        self.validate_rally()?;
         self.validate_hidden_harvesters()?;
         nonnegative(&self.slug, "hp_regen_per_tick", self.hp_regen_per_tick)?;
         hp_regen_delay(
@@ -1828,7 +1899,11 @@ mod tests {
         for (row, radius, kinds, rejected) in cases {
             let case = format!("row {row}, {radius} {kinds:?}");
             let structure = &mut file.structures[row];
-            structure.auto_rally = Some(AutoRallySpecDef { radius, kinds });
+            structure.auto_rally = Some(AutoRallySpecDef {
+                radius,
+                kinds,
+                slot: 0,
+            });
             let refused = match structure.validate() {
                 Ok(()) => None,
                 Err(crate::error::SimCoreError::CatalogInvalidValue { field, .. }) => Some(field),
@@ -1836,6 +1911,103 @@ mod tests {
             };
             assert_eq!(refused.as_deref(), rejected, "{case}");
             structure.auto_rally = None;
+        }
+        Ok(())
+    }
+
+    /// Plan `2026-11-25-rallies` D-1: a rally ability sits only on a structure that trains units,
+    /// holds at least one waypoint, has a slot, labels every slot and names each exclusion once,
+    /// and the auto-rally fills one of its slots. Each refusal names its field.
+    #[test]
+    fn a_rally_ability_is_refused_unless_its_slots_cap_and_owner_are_valid(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use crate::catalog::{AutoRallySpecDef, StructureCatalogFile};
+        use sim_types::{RallySlotSpec, RallySpec, RallyUsers, ResourceKind};
+        let structures = include_str!("../../../../assets/catalog/structures.ron");
+        let mut file: StructureCatalogFile = ron::from_str(structures)?;
+        let trainer = file
+            .structures
+            .iter()
+            .position(|structure| !structure.trains_units.is_empty())
+            .ok_or("real catalog has no structure that trains units")?;
+        let idle = file
+            .structures
+            .iter()
+            .position(|structure| structure.trains_units.is_empty())
+            .ok_or("real catalog has no structure that trains nothing")?;
+        let slot = |label: &str, excludes: &[&str]| RallySlotSpec {
+            label: label.to_owned(),
+            used_by: RallyUsers::All,
+            excludes: excludes.iter().map(|&slug| slug.to_owned()).collect(),
+            on_resources: true,
+            smart_on_ground: true,
+        };
+        let spec = |max_waypoints, slots| {
+            Some(RallySpec {
+                max_waypoints,
+                slots,
+            })
+        };
+        let auto = |slot| {
+            Some(AutoRallySpecDef {
+                radius: 6.5,
+                kinds: vec![ResourceKind::Mineral],
+                slot,
+            })
+        };
+        let cases = [
+            (idle, spec(4, vec![slot("a", &[])]), None, Some("rally")),
+            (
+                trainer,
+                spec(0, vec![slot("a", &[])]),
+                None,
+                Some("rally.max_waypoints"),
+            ),
+            (trainer, spec(4, vec![]), None, Some("rally.slots")),
+            (
+                trainer,
+                spec(4, vec![slot(" ", &[])]),
+                None,
+                Some("rally.slots.label"),
+            ),
+            (
+                trainer,
+                spec(4, vec![slot("a", &["x", "x"])]),
+                None,
+                Some("rally.slots.excludes"),
+            ),
+            (
+                trainer,
+                spec(4, vec![slot("a", &[""])]),
+                None,
+                Some("rally.slots.excludes"),
+            ),
+            (
+                trainer,
+                spec(4, vec![slot("a", &[])]),
+                auto(1),
+                Some("auto_rally.slot"),
+            ),
+            (trainer, None, auto(1), Some("auto_rally.slot")),
+            (trainer, None, auto(0), None),
+            (
+                trainer,
+                spec(1, vec![slot("a", &["x"]), slot("b", &[])]),
+                auto(1),
+                None,
+            ),
+        ];
+        for (row, rally, auto_rally, rejected) in cases {
+            let case = format!("row {row}, {rally:?} {auto_rally:?}");
+            let structure = &mut file.structures[row];
+            structure.rally = rally;
+            structure.auto_rally = auto_rally;
+            let refused = match structure.validate() {
+                Ok(()) => None,
+                Err(crate::error::SimCoreError::CatalogInvalidValue { field, .. }) => Some(field),
+                Err(other) => return Err(format!("{case}: {other}").into()),
+            };
+            assert_eq!(refused.as_deref(), rejected, "{case}");
         }
         Ok(())
     }

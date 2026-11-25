@@ -22,7 +22,9 @@ use crate::movement::{MovementInvariant, MovementOutcome};
 use crate::upgrades::OVERCLOCK_ABILITY_SLUG;
 use crate::weapon_timing::SimulationDiagnostic;
 use crate::SimWorld;
-use sim_types::{AbilityTargetKind, EntityId, PlayerCommand, SimVec2, Tick, TickBundle, UnitOrder};
+use sim_types::{
+    AbilityTargetKind, EntityId, PlayerCommand, PlayerId, SimVec2, Tick, TickBundle, UnitOrder,
+};
 
 impl SimWorld {
     /// Phase 1: Process scheduled player input commands.
@@ -415,15 +417,23 @@ impl SimWorld {
     /// diagnostic (plan `2026-11-24-attack-orders` D-3). Read-only: the recipient is borrowed
     /// mutably only after this answer.
     fn takes_plain_order(&self, cmd: &PlayerCommand, ent_id: EntityId) -> bool {
-        let Some(ent) = self
-            .entities
-            .get(&ent_id)
-            .filter(|ent| ent.owner == cmd.player_id)
-        else {
+        self.takes_order(cmd.player_id, ent_id, &cmd.order)
+    }
+
+    /// The rule of [`Self::takes_plain_order`] for `player`'s unit `ent_id` and `order`, shared
+    /// with the rally's attack order on an enemy (plan `2026-11-25-rallies` D-6), so the rally
+    /// and the command admit an attack by one rule without building a [`PlayerCommand`].
+    pub(crate) fn takes_order(
+        &self,
+        player: PlayerId,
+        ent_id: EntityId,
+        order: &UnitOrder,
+    ) -> bool {
+        let Some(ent) = self.entities.get(&ent_id).filter(|ent| ent.owner == player) else {
             return false;
         };
         let arch = self.catalog.get(ent.unit_type_id).ok();
-        match cmd.order {
+        match *order {
             UnitOrder::Stop => arch.is_some_and(|arch| ent.settled_stance_orders(arch).stop),
             UnitOrder::HoldPosition => {
                 arch.is_some_and(|arch| ent.settled_stance_orders(arch).hold_position)

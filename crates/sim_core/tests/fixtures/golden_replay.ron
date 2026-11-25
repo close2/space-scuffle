@@ -486,8 +486,16 @@
 // DEFAULT_SANDBOX_CHECKSUM is unchanged. Native debug and release and wasm32-wasip1 release and
 // debug, each from a git-archive copy of 7ebabd70 built in its own fresh target directory, agree on
 // the list below.
+// Re-recorded for plan 2026-11-25-rallies WP1 (checksum schema 47 -> 48, provisional: the next free
+// number at merge): each entity's rally becomes its routes (slot, waypoints), Entity::rallies, so
+// every checkpoint changed. No behaviour changed: with the old encoding of slot 0's first waypoint
+// (an Option of a rally target) at schema 47, a git-archive copy of the WP1 tree, built in a fresh
+// target directory, reproduces main's lists of both fixtures and DEFAULT_SANDBOX_CHECKSUM on native
+// debug and release and wasm32-wasip1 release and debug (neither fixture issues a rally; the halls'
+// auto-rally stays in slot 0). Native debug and release and wasm32-wasip1 release and debug agree on
+// the list below.
 (
-    checksum_schema: 47,
+    checksum_schema: 48,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -513,25 +521,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0xc969bf8c8e8adf01,
-        0xce8fa92e6a76673c,
-        0x56871350d70c960d,
-        0xbb73776896c4df45,
-        0xf9a03d8c11f9859b,
-        0x81bd4c0e4d8a8926,
-        0xed284852e3552ebd,
-        0x0a7862116277e0e7,
-        0xc4f1664cbc0fac33,
-        0x5de11c78e75d5245,
-        0x9716a5a706309d96,
-        0x255fa66062c85947,
-        0x06dfee19905874bb,
-        0x9d73786fd7cefc60,
-        0x950060501ad04c62,
-        0x68e2e297280d7441,
-        0x41c38af895cf7d40,
-        0x9eb523331b2c7092,
-        0xe2205593657f6e18,
-        0x3e64f6ca1d25f587,
+        0x5aae38f917b29696,
+        0x44a7791c5aa54258,
+        0x72c684b2d2c14e90,
+        0x35ac0d9e57dc3436,
+        0x7dc736f8a8a4c1e8,
+        0x3b61aa0633583bd1,
+        0x13b0b6598186aff2,
+        0x7425b002f89bd6c0,
+        0x8eb960532a5c54b2,
+        0x48793532a545892e,
+        0x768d4340ff6233bc,
+        0x54c3195e55eb8328,
+        0x55573159a784d71f,
+        0x19c0e8135b989191,
+        0xac8dbf02952bd595,
+        0xf7d3859fbba7417c,
+        0x532e3645bffdbf91,
+        0x4aed6a0482dfdf01,
+        0x7f38253c218a175d,
+        0x0ad96985a563cfe4,
     ],
 )

@@ -1348,7 +1348,12 @@ fn showcase_rallies(
         .entities
         .values()
         .filter(|entity| entity.is_immobile)
-        .map(|entity| entity.rally)
+        .map(|entity| {
+            entity
+                .rallies
+                .first()
+                .and_then(|route| route.waypoints.first().copied())
+        })
         .collect())
 }
 
@@ -3821,5 +3826,110 @@ fn an_authored_order_target_only_weapon_holds_in_a_chase() -> TestResult {
         "the edited unit holds fire in the chase"
     );
     bundle.finish()?;
+    Ok(())
+}
+
+/// Plan `2026-11-25-rallies` D-1 (charter §3.3, C6): rally slots are read from `structures.ron`
+/// at run time. With the shipped rows a non-worker made by a structure with a worker slot gets
+/// no order while only the auto-rallied worker slot is set; a copy that gives that structure one
+/// unrestricted slot (and fills it by the auto-rally) restores the rule of one rally for all in
+/// the same binary, and the non-worker walks to the field. A copy whose exclusion names no unit
+/// is refused, naming the field.
+#[test]
+fn rally_slots_are_read_at_run_time() -> TestResult {
+    use sim_map::{ResourceKind, ResourceNode};
+    let bundle = Bundle::new("rally-slots")?;
+    let shipped = bundle.load()?;
+    let path = bundle.directory.join(FILES[1]);
+    let text = std::fs::read_to_string(&path)?;
+    let two_slots = text
+        .find("rally: Some((max_waypoints: 4, slots: [\n")
+        .ok_or("no structure with a slot list over several lines")?;
+    let end = two_slots + text[two_slots..].find("])),").ok_or("unterminated")? + "])),".len();
+    let hall_slug = text[..two_slots]
+        .rmatch_indices("slug: \"")
+        .next()
+        .map(|(at, _)| &text[at + 7..])
+        .and_then(|rest| rest.split('"').next())
+        .ok_or("no slug")?
+        .to_owned();
+    let mut one_slot = text.clone();
+    one_slot.replace_range(
+        two_slots..end,
+        "rally: Some((max_waypoints: 4, slots: [(label: \"Set Rally Point\")])),",
+    );
+    let one_slot = one_slot.replacen("kinds: [Mineral], slot: 1)", "kinds: [Mineral])", 3);
+    std::fs::write(&path, &one_slot)?;
+    let edited = bundle.load()?;
+    std::fs::write(
+        &path,
+        text.replacen("excludes: [\"", "excludes: [\"no_such_unit\", \"", 1),
+    )?;
+    let unknown = bundle.load();
+    bundle.finish()?;
+    assert!(
+        matches!(&unknown, Err(error) if format!("{error:?}").contains("rally.slots.excludes")),
+        "{unknown:?}"
+    );
+
+    let order_of_new_non_worker = |catalogs: RuntimeCatalogs| -> Result<
+        Option<sim_types::UnitOrder>,
+        Box<dyn std::error::Error>,
+    > {
+        let field = ResourceNode {
+            pos: SimVec2::new(SimScalar::from_num(12.5), SimScalar::from_num(12.5)),
+            kind: ResourceKind::Mineral,
+            remaining: 1500,
+            cell: (12, 12),
+            placed: None,
+        };
+        let map = GameMap::from_cells(
+            32,
+            32,
+            vec![MapCell::default_ground(CliffLevel(0)); 32 * 32],
+            vec![field],
+            vec![],
+        )?;
+        let mut world = SimWorld::with_catalogs(map, 7, catalogs.units, UpgradeCatalog::default())?;
+        let hall = world.catalog.get_by_slug(&hall_slug).ok_or("hall")?.clone();
+        let product = hall
+            .trains_units
+            .iter()
+            .filter_map(|slug| world.catalog.get_by_slug(slug))
+            .find(|p| {
+                p.capabilities.harvester.is_none()
+                    && p.requires_structures.is_empty()
+                    && !matches!(p.shape, ShapeKind::BuildingDome { .. })
+            })
+            .ok_or("a non-worker without prerequisites")?
+            .unit_type_id;
+        let id = world.spawn_structure(hall.unit_type_id, PlayerId(0), 4, 10)?;
+        assert!(!world.entities[&id].rallies.is_empty(), "auto-rallied");
+        let bank = &mut world.player_resources[sim_types::PlayerSlot::ALL[0]];
+        bank.minerals = 10_000;
+        bank.gas = 10_000;
+        world.try_queue_production(PlayerId(0), &[id], product)?;
+        let next = world.next_entity_id;
+        for _ in 0..world.catalog.get(product)?.build_time_ticks + 2 {
+            world.step(&sim_types::TickBundle {
+                tick: sim_types::Tick(world.current_tick + 1),
+                commands: Vec::new(),
+                state_checksum: None,
+            });
+            if world.next_entity_id > next {
+                let child = &world.entities[&sim_types::EntityId(next)];
+                return Ok(child.order_queue.front().cloned());
+            }
+        }
+        Err("the product never appeared".into())
+    };
+    assert_eq!(order_of_new_non_worker(shipped)?, None);
+    assert!(
+        matches!(
+            order_of_new_non_worker(edited)?,
+            Some(sim_types::UnitOrder::Move { .. })
+        ),
+        "one slot for all sends the non-worker to the field"
+    );
     Ok(())
 }
