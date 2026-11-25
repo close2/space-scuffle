@@ -722,7 +722,7 @@ Every package is implemented on branch `follow-order`:
 
 ---
 
-## 16. Owner question (draft, not filed)
+## 16. Owner question (filed as [Q0119](../questions/open/0119-follow-when-cannot-attack.md))
 
 ```markdown
 # Q0119: When you A-click a unit, should the units that cannot attack it follow it, as Scan Move units do?
