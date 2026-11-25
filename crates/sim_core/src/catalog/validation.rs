@@ -957,13 +957,22 @@ impl WeaponSpecDef {
     /// Checks the fire rules of plan `2026-11-24-fire-rules` (D-7): a lock needs a turret to lock
     /// (5.0.14's only `LockTurretWhileFiring` weapon is turreted), and a weapon that removes its
     /// attacker when it fires may not fire at a target its attack order did not name (its unit
-    /// would detonate on a target it never chose; no 5.0.14 weapon combines the two).
+    /// would detonate on a target it never chose; no 5.0.14 weapon combines the two). A turret
+    /// that tracks any enemy needs a turret too (plan `2026-11-26-turret-tracking-weapon` D-7).
     fn validate_fire_rules(&self, definition: &str, prefix: &str) -> SimResult<()> {
         if self.locks_turret_while_firing && !self.has_turret {
             return Err(invalid(
                 definition,
                 &format!("{prefix}.locks_turret_while_firing"),
                 "a weapon without a turret has no turret to lock",
+            ));
+        }
+        if self.turret_tracks_any_enemy && !self.has_turret {
+            return Err(invalid(
+                definition,
+                &format!("{prefix}.turret_tracks_any_enemy"),
+                "a weapon without a turret has no turret to track with; a tracking hull would \
+                 turn the hull, which belongs to movement",
             ));
         }
         if self.fires_at_other_targets && self.suicide_on_attack {
@@ -4698,6 +4707,7 @@ mod fire_rule_tests {
             .filter(|line| {
                 !line.contains("fires_at_other_targets")
                     && !line.contains("locks_turret_while_firing")
+                    && !line.contains("turret_tracks_any_enemy")
             })
             .collect::<Vec<_>>()
             .join("\n");
@@ -4708,9 +4718,10 @@ mod fire_rule_tests {
                 assert_eq!(
                     (
                         weapon.fires_at_other_targets,
-                        weapon.locks_turret_while_firing
+                        weapon.locks_turret_while_firing,
+                        weapon.turret_tracks_any_enemy
                     ),
-                    (false, false),
+                    (false, false, false),
                     "{}",
                     weapon.name
                 );
@@ -4718,6 +4729,37 @@ mod fire_rule_tests {
             }
         }
         assert!(checked > 0, "premise: the catalog has weapons");
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod turret_tracking_tests {
+    //! D-7 of plan `2026-11-26-turret-tracking-weapon` (T-12): a weapon whose turret tracks any
+    //! enemy needs a turret, since a tracking hull would turn the hull, which belongs to
+    //! movement; the refusal names the field.
+    use super::strike_delay_tests::refused_field;
+    use crate::catalog::WeaponSpecDef;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    #[test]
+    fn tracking_needs_a_turret() -> TestResult {
+        let hull = |weapon: &WeaponSpecDef| !weapon.has_turret;
+        let field = refused_field(hull, |weapon| weapon.turret_tracks_any_enemy = true)?;
+        assert!(field.ends_with(".turret_tracks_any_enemy"), "{field}");
+        let turret = |weapon: &WeaponSpecDef| weapon.has_turret;
+        let field = refused_field(turret, |weapon| weapon.turret_tracks_any_enemy = true)?;
+        assert_eq!(field, "accepted", "a turret may track");
+        let field = refused_field(turret, |weapon| {
+            weapon.turret_tracks_any_enemy = true;
+            weapon.locks_turret_while_firing = true;
+            weapon.fires_at_other_targets = true;
+        })?;
+        assert_eq!(
+            field, "accepted",
+            "tracking is coherent with the other flags"
+        );
         Ok(())
     }
 }

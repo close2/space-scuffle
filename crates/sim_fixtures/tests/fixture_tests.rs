@@ -135,7 +135,11 @@ use std::path::PathBuf;
 /// each entity's rally as its routes; a copy of the WP1 tree that encodes slot 0's first waypoint
 /// as the old rally and keeps schema 47 reproduces `16_195_585_963_966_674_183` on all four
 /// builds.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 601_552_017_353_564_848;
+/// Re-recorded for checksum schema 49, provisional (plan `2026-11-26-turret-tracking-weapon` WP3
+/// and Amendment 1), which encodes whether each weapon's turret tracks any enemy and the world's
+/// table of the enemies tracking turrets follow; a copy of the final tree that leaves both
+/// unhashed and keeps schema 48 reproduces `601_552_017_353_564_848` on all four builds.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 2_504_113_823_383_333_194;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

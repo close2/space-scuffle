@@ -54,11 +54,31 @@ impl SimWorld {
             });
             return;
         }
+        self.release_tracking_for(cmd);
         if cmd.entities.iter().any(|id| self.is_housed_unit(*id)) {
             self.dispatch_without_housed(command_index, cmd);
             return;
         }
         self.route_command(command_index, cmd);
+    }
+
+    /// Forgets the tracked enemy of every recipient of `cmd` whose orders it replaces: a unit of
+    /// the commanding player, under an immediate command or a queued one onto an empty queue
+    /// (plan `2026-11-26-turret-tracking-weapon` D-2, Amendment 1). Acquisition chooses anew
+    /// before the combat phase reads the table, so this only keeps the hashed table in step with
+    /// the orders, as the weapon's own target is.
+    fn release_tracking_for(&mut self, cmd: &PlayerCommand) {
+        if self.tracked_targets.is_empty() {
+            return;
+        }
+        for id in &cmd.entities {
+            let replaces = self.entities.get(id).is_some_and(|entity| {
+                entity.owner == cmd.player_id && (!cmd.queue || entity.order_queue.is_empty())
+            });
+            if replaces {
+                self.tracked_targets.release(*id);
+            }
+        }
     }
 
     /// Whether `id` is a unit inside a structure, gathering (plan `2026-11-24-hidden-harvesters`

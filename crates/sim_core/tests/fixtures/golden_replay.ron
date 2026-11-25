@@ -494,8 +494,18 @@
 // debug and release and wasm32-wasip1 release and debug (neither fixture issues a rally; the halls'
 // auto-rally stays in slot 0). Native debug and release and wasm32-wasip1 release and debug agree on
 // the list below.
+// Re-recorded for plan 2026-11-26-turret-tracking-weapon (checksum schema 48 -> 49, provisional: the
+// next free number at merge; once, on the final tree after Amendment 1): each weapon encodes whether
+// its turret tracks any enemy, and the world encodes its table of the enemies tracking turrets
+// follow (in unit id order, after the route groups); with both left out at schema 48 every
+// checkpoint reproduced. Behaviour: no checkpoint differs (no tank-mode turret is ever free with an enemy in
+// reach in either fixture, probe (t) of the plan's evidence; neither class Y nor class P occurs).
+// A git-archive copy of the final tree with both fields unhashed at schema 48, built in fresh
+// target directories, reproduces main's lists of both fixtures and DEFAULT_SANDBOX_CHECKSUM on
+// native debug and release and wasm32-wasip1 release and debug; native debug and release and
+// wasm32-wasip1 release and debug agree on the list below.
 (
-    checksum_schema: 48,
+    checksum_schema: 49,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -521,25 +531,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x5aae38f917b29696,
-        0x44a7791c5aa54258,
-        0x72c684b2d2c14e90,
-        0x35ac0d9e57dc3436,
-        0x7dc736f8a8a4c1e8,
-        0x3b61aa0633583bd1,
-        0x13b0b6598186aff2,
-        0x7425b002f89bd6c0,
-        0x8eb960532a5c54b2,
-        0x48793532a545892e,
-        0x768d4340ff6233bc,
-        0x54c3195e55eb8328,
-        0x55573159a784d71f,
-        0x19c0e8135b989191,
-        0xac8dbf02952bd595,
-        0xf7d3859fbba7417c,
-        0x532e3645bffdbf91,
-        0x4aed6a0482dfdf01,
-        0x7f38253c218a175d,
-        0x0ad96985a563cfe4,
+        0xc1d57afa0b95d7c0,
+        0x7441c550bdce20c1,
+        0x3956a9901fa218d1,
+        0x2fbd4ffc918fad89,
+        0xb4d338729a8ca5e8,
+        0x839ccfd0073b5dec,
+        0xe3203061c2f31fc1,
+        0x2fd225570aa591d3,
+        0x17f5a0c47303b409,
+        0x3a63eb6ee83c49eb,
+        0xe95d8ccb706f95f6,
+        0xa1c00e3b0a398397,
+        0xd49e08e4864afb08,
+        0x82260ab99d30a0c1,
+        0xee57626b63ce80a4,
+        0x0b7173443b92d8a1,
+        0x15a40bbc78735ff3,
+        0x3ebf30c09beb0295,
+        0x94d128d2582c2a78,
+        0x540d0d968138877e,
     ],
 )

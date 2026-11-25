@@ -22,6 +22,13 @@
 //! 7. Between shots (backswing and cooldown) every other turret faces its target at its own
 //!    rate, so the next swing never waits for a turn the cooldown left undone (D-3, B-197); a
 //!    turret never turns by more than its rate in one tick.
+//! 8. A turret whose weapon tracks any enemy ([`WeaponSpec::turret_tracks_any_enemy`]) turns
+//!    towards the enemy acquisition chose for it ([`TrackingAim`]) only on a tick the real
+//!    weapon leaves it free: no target, or a `Ready` or `RotatingToTarget` weapon whose target
+//!    lies outside its engagement band, and never during the swing of a weapon that locks its
+//!    turret. It then replaces the idle, so the turret still turns by at most one rate; nothing
+//!    else changes: no phase, cooldown, swing, shot or random draw (plan
+//!    `2026-11-26-turret-tracking-weapon` D-4).
 
 use crate::catalog::{AcquireLevel, SplashSpec, UnitArchetype, WeaponSpec};
 use crate::entity::{Entity, WeaponPhase};
@@ -510,6 +517,31 @@ pub enum Mandate {
     OwnInitiative,
 }
 
+/// Where a turret that tracks any enemy aims this tick, resolved by the combat phase from the
+/// enemy acquisition chose for it (`SimWorld::tracked_targets`, plan
+/// `2026-11-26-turret-tracking-weapon` D-4): 5.0.14's hidden `90mmCannonsFake`, which shares the
+/// Siege Tank's turret and never fires.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TrackingAim {
+    /// The tracked enemy's centre in world coordinates.
+    pub position: SimVec2,
+    /// The tracking weapon's turret rate, the most the turret turns in one tick (binary angle).
+    pub turn_rate: SimAngle,
+}
+
+/// Turns the turret towards `aim` by at most its rate; a target at the turret's own position
+/// leaves it as it is.
+fn track_turret(entity: &mut Entity, aim: TrackingAim) {
+    let delta = aim.position - entity.position;
+    if delta.length_sq() <= SimScalar::EPSILON {
+        return;
+    }
+    let bearing = SimAngle::atan2(delta.y, delta.x);
+    entity.turret_angle = entity
+        .turret_angle
+        .rotate_towards(bearing, aim.turn_rate.raw());
+}
+
 impl Mandate {
     /// Whether `weapon` may turn its mount towards a target: a turret always, a hull weapon only
     /// under an attack order.
@@ -857,6 +889,26 @@ pub fn step_entity_weapon(
     target_opt: Option<WeaponTarget>,
     mandate: Mandate,
 ) -> bool {
+    step_entity_weapon_tracking(entity, weapon, target_opt, mandate, None)
+}
+
+/// [`step_entity_weapon`] for a unit whose turret also tracks an enemy, `tracking` (plan
+/// `2026-11-26-turret-tracking-weapon` D-4; module invariant 8).
+///
+/// The real weapon owns the turret on a tick it has a target and is in `Windup`, `Backswing` or
+/// `Cooldown`, or its target lies in its engagement band. Otherwise the turret is free: with no
+/// target the tracking aim replaces the idle ([`TurretIdle`]); with a target out of band (the
+/// ready step turns nothing) the turret turns towards the aim after the step. A weapon that locks
+/// its turret holds it for tracking too through its wind-up and backswing. Tracking changes no
+/// phase, cooldown, engagement or swing, and draws nothing. Returns what [`step_entity_weapon`]
+/// returns.
+pub fn step_entity_weapon_tracking(
+    entity: &mut Entity,
+    weapon: &WeaponSpec,
+    target_opt: Option<WeaponTarget>,
+    mandate: Mandate,
+    tracking: Option<TrackingAim>,
+) -> bool {
     // A hidden unit (valid cargo, or a gatherer inside a structure; plan
     // `2026-11-24-hidden-harvesters` D-4) has no weapon participation; even cooldown/phase
     // remain frozen.
@@ -867,8 +919,17 @@ pub fn step_entity_weapon(
     if entity.engaged_target.is_some() && entity.engaged_target != target_opt.map(|t| t.id) {
         entity.engaged_target = None;
     }
+    let locked = weapon.locks_turret_while_firing
+        && matches!(
+            entity.weapon_phase,
+            WeaponPhase::Windup { .. } | WeaponPhase::Backswing { .. }
+        );
+    let tracking = tracking.filter(|_| !locked);
     if target_opt.is_none() {
-        idle_turret(entity, weapon);
+        match tracking {
+            Some(aim) => track_turret(entity, aim),
+            None => idle_turret(entity, weapon),
+        }
     }
     // Decrement weapon cooldown if running
     entity.weapon_cooldown_remaining = entity.weapon_cooldown_remaining.saturating_sub(1);
@@ -879,6 +940,32 @@ pub fn step_entity_weapon(
         entity.weapon_phase = WeaponPhase::Ready;
     }
 
+    // A ready or rotating weapon whose target lies outside its band turns nothing this tick
+    // (D-4 rule 2), so the turret is free for tracking after the step.
+    let free_with_target = tracking.and_then(|aim| {
+        let target = target_opt?;
+        let distance = entity.position.distance(target.position);
+        (matches!(
+            entity.weapon_phase,
+            WeaponPhase::Ready | WeaponPhase::RotatingToTarget { .. }
+        ) && !in_engagement_band(distance, weapon, target.combined_radius, SimScalar::ZERO))
+        .then_some(aim)
+    });
+    let released = step_weapon_phase(entity, weapon, target_opt, mandate);
+    if let Some(aim) = free_with_target {
+        track_turret(entity, aim);
+    }
+    released
+}
+
+/// Steps the weapon's phase machine for one tick once the cooldown has been counted down: the
+/// dispatch of [`step_entity_weapon`]. Returns true when a shot discharges this tick.
+fn step_weapon_phase(
+    entity: &mut Entity,
+    weapon: &WeaponSpec,
+    target_opt: Option<WeaponTarget>,
+    mandate: Mandate,
+) -> bool {
     match entity.weapon_phase {
         WeaponPhase::Ready => {
             target_opt.is_some_and(|target| step_ready_weapon(entity, weapon, target, mandate))
