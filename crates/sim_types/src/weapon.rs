@@ -474,12 +474,16 @@ pub struct WeaponSpec {
     /// Whether the weapon's turret also aims, under any order, at the best enemy this weapon
     /// reaches from where its unit stands, whenever the weapon itself leaves the turret free (no
     /// target, or a target it cannot work this tick); nothing is fired, drawn or charged.
-    /// `StarCraft` II 5.0.14 models this as a hidden second weapon on the same turret, the
-    /// unsieged Siege Tank's `90mmCannonsFake` (`Options Hidden 1`, both attack-order options
-    /// cleared, a `CEffectDamage` without amount; `balancemulti` WeaponData:7–20,
-    /// UnitData:1473), whose range, filters and turret equal the host weapon's; `false` by
+    /// `StarCraft` II 5.0.14 gets this from either of two sources, whose observable is the same:
+    /// a hidden second weapon on the same turret, the unsieged Siege Tank's `90mmCannonsFake`
+    /// (`Options Hidden 1`, both attack-order options cleared, a `CEffectDamage` without amount;
+    /// `balancemulti` WeaponData:7–20, UnitData:1473), whose range, filters and turret equal the
+    /// host weapon's; or the weapon itself, when its attack-order options are cleared while its
+    /// movement gate blocks its fire as its unit walks, the Immortal's `PhaseDisruptors` and the
+    /// Colossus' `ThermalLances` (`voidmulti` WeaponData:205–207, :256–257): their turrets aim at
+    /// the nearest enemy in reach while the unit walks and fire once it stops. `false` by
     /// default. Meaningful only with `has_turret`, which catalog validation requires (plan
-    /// `2026-11-26-turret-tracking-weapon` D-1, D-7).
+    /// `2026-11-26-turret-tracking-weapon` D-1, D-7, Amendment 2 D-A1).
     #[serde(default)]
     pub turret_tracks_any_enemy: bool,
     /// Base damage applied per hit.

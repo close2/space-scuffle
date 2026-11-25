@@ -28,7 +28,11 @@
 //!    lies outside its engagement band, and never during the swing of a weapon that locks its
 //!    turret. It then replaces the idle, so the turret still turns by at most one rate; nothing
 //!    else changes: no phase, cooldown, swing, shot or random draw (plan
-//!    `2026-11-26-turret-tracking-weapon` D-4).
+//!    `2026-11-26-turret-tracking-weapon` D-4). The capability models either a hidden tracking
+//!    weapon (the Siege Tank's) or a weapon whose attack-order options are cleared while its
+//!    movement gate blocks its fire as its unit walks (the Immortal's and the Colossus', plan
+//!    Amendment 2): the only channel to the real weapon is the turret's angle, so a turret
+//!    pre-aimed while walking may start the first swing after the unit stops earlier.
 
 use crate::catalog::{AcquireLevel, SplashSpec, UnitArchetype, WeaponSpec};
 use crate::entity::{Entity, WeaponPhase};

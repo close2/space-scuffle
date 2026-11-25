@@ -3974,10 +3974,12 @@ fn turret_off_hull_ticks(
     Ok(off)
 }
 
-/// T-11 of plan `2026-11-26-turret-tracking-weapon` (charter §3.3, zero recompilation): in the
-/// same binary, removing the shipped `turret_tracks_any_enemy: true` from a copied `units.ron`
-/// leaves its unit's turret along the hull while it walks past an enemy, and adding the field to
-/// another turreted ground weapon makes that unit's turret aim at the enemy.
+/// T-11 of plan `2026-11-26-turret-tracking-weapon` (charter §3.3, zero recompilation), extended
+/// by Amendment 2: in the same binary, removing the shipped `turret_tracks_any_enemy: true` from
+/// one unit's row of a copied `units.ron` leaves that unit's turret along the hull while it walks
+/// past an enemy, for every shipped tracking unit that walks on the ground plane (the Siege Tank
+/// analogue's hidden weapon and the Immortal and Colossus analogues' own weapons alike), and
+/// adding the field to another turreted ground weapon makes that unit's turret aim at the enemy.
 #[test]
 fn turret_tracking_follows_the_data() -> TestResult {
     let shipped = RuntimeCatalogs::load_from_directory(catalog_directory())?;
@@ -3987,24 +3989,37 @@ fn turret_tracking_follows_the_data() -> TestResult {
             .cloned()
     };
     let mobile_ground = |archetype: &sim_core::UnitArchetype| {
-        archetype.mover_type == sim_types::MoverType::Ground
-            && archetype.max_speed > SimScalar::ZERO
+        archetype.mover_type != sim_types::MoverType::Air && archetype.max_speed > SimScalar::ZERO
     };
-    let tracker = shipped
+    let trackers: Vec<(UnitTypeId, String, sim_types::AttributeFlags)> = shipped
         .units
         .archetypes()
-        .find(|archetype| {
-            mobile_ground(archetype)
-                && ground_weapon(archetype).is_some_and(|weapon| weapon.turret_tracks_any_enemy)
+        .filter_map(|archetype| {
+            let weapon = ground_weapon(archetype)?;
+            (mobile_ground(archetype) && weapon.turret_tracks_any_enemy).then(|| {
+                (
+                    archetype.unit_type_id,
+                    archetype.slug.clone(),
+                    weapon.target_flags,
+                )
+            })
         })
-        .ok_or("a shipped tracking turret")?;
-    let flags = ground_weapon(tracker).ok_or("its weapon")?.target_flags;
-    let tracker_type = tracker.unit_type_id;
+        .collect();
+    assert!(
+        trackers.len() >= 2,
+        "premise: shipped tracking turrets of both sources: {trackers:?}"
+    );
+    let flags = trackers
+        .iter()
+        .fold(sim_types::AttributeFlags::empty(), |all, tracker| {
+            all | tracker.2
+        });
     let other = shipped
         .units
         .archetypes()
         .filter(|archetype| {
-            mobile_ground(archetype)
+            archetype.mover_type == sim_types::MoverType::Ground
+                && archetype.max_speed > SimScalar::ZERO
                 && ground_weapon(archetype).is_some_and(|weapon| {
                     weapon.has_turret
                         && !weapon.turret_tracks_any_enemy
@@ -4019,13 +4034,16 @@ fn turret_tracking_follows_the_data() -> TestResult {
         .units
         .archetypes()
         .filter(|archetype| {
-            mobile_ground(archetype)
+            archetype.mover_type == sim_types::MoverType::Ground
+                && archetype.max_speed > SimScalar::ZERO
                 && archetype.harvester.is_some()
                 && archetype.acquire_level == sim_core::catalog::AcquireLevel::Defensive
-                && flags.intersects(archetype.attributes)
+                && trackers
+                    .iter()
+                    .all(|tracker| tracker.2.intersects(archetype.attributes))
         })
         .min_by_key(|archetype| archetype.unit_type_id)
-        .ok_or("a shipped worker")?
+        .ok_or("a shipped worker every tracker strikes")?
         .unit_type_id;
 
     let bundle = Bundle::new("turret-tracking")?;
@@ -4033,11 +4051,34 @@ fn turret_tracking_follows_the_data() -> TestResult {
     let flag = "turret_tracks_any_enemy: true,\n";
     assert_eq!(
         units.matches(flag).count(),
-        1,
-        "premise: one shipped tracking turret"
+        trackers.len(),
+        "premise: one flag per shipped tracking turret"
     );
-    std::fs::write(bundle.directory.join(FILES[0]), units.replacen(flag, "", 1))?;
-    let cleared = bundle.load()?;
+    for (tracker_type, slug, _) in &trackers {
+        let row = units
+            .find(&format!("slug: \"{slug}\""))
+            .ok_or("the tracker's row")?;
+        let at = units[row..].find(flag).ok_or("the tracker's flag")? + row;
+        let mut cleared_units = units.clone();
+        cleared_units.replace_range(at..at + flag.len(), "");
+        std::fs::write(bundle.directory.join(FILES[0]), cleared_units)?;
+        let cleared = bundle.load()?;
+        assert!(
+            ground_weapon(cleared.units.get(*tracker_type)?)
+                .is_some_and(|w| !w.turret_tracks_any_enemy),
+            "premise: {slug}'s flag is cleared"
+        );
+        let shipped_tracker = turret_off_hull_ticks(shipped.clone(), *tracker_type, worker)?;
+        let cleared_tracker = turret_off_hull_ticks(cleared, *tracker_type, worker)?;
+        assert!(
+            shipped_tracker > 10,
+            "the shipped turret of {slug} tracks ({shipped_tracker})"
+        );
+        assert_eq!(
+            cleared_tracker, 0,
+            "with {slug}'s field removed its turret stays on the hull"
+        );
+    }
     let anchor = format!("slug: \"{other_slug}\"");
     let start = units.find(&anchor).ok_or("the other unit's row")?;
     let turret = units[start..]
@@ -4053,18 +4094,8 @@ fn turret_tracking_follows_the_data() -> TestResult {
         "premise: the edited weapon tracks"
     );
 
-    let shipped_tracker = turret_off_hull_ticks(shipped.clone(), tracker_type, worker)?;
-    let cleared_tracker = turret_off_hull_ticks(cleared, tracker_type, worker)?;
     let shipped_other = turret_off_hull_ticks(shipped, other_type, worker)?;
     let set_other = turret_off_hull_ticks(set, other_type, worker)?;
-    assert!(
-        shipped_tracker > 10,
-        "the shipped turret tracks ({shipped_tracker})"
-    );
-    assert_eq!(
-        cleared_tracker, 0,
-        "with the field removed the turret stays on the hull"
-    );
     assert_eq!(
         shipped_other, 0,
         "the other shipped turret stays on the hull"
