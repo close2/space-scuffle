@@ -74,7 +74,7 @@ use battle_harness::{sim_position, Harness, LOCAL_PLAYER};
 #[path = "support/attack_snapshot_stage.rs"]
 mod attack_snapshot_stage;
 
-use attack_snapshot_stage::{stage, SnapshotStage};
+use attack_snapshot_stage::{cast_storm, stage, stage_caster, stage_missile, SnapshotStage};
 use client::battle_hud::attack_snapshots::{AttackSnapshotBubble, AttackSnapshotPool};
 use client::scene_controller::LiveBattleBubble;
 
@@ -1957,4 +1957,157 @@ fn a_snapshot_is_hidden_on_the_frame_the_view_drops_it() {
         "hidden on the frame the list lost it"
     );
     assert!(drawn_snapshots(&mut harness).is_empty(), "nothing drawn");
+}
+
+// --- Launch and spell images (plan 2026-11-27-launch-and-spell-visibility V-23, V-24) ----------
+
+/// The pooled snapshot entities, drawn or hidden.
+fn pooled_snapshots(harness: &Harness) -> usize {
+    harness
+        .app
+        .world()
+        .resource::<AttackSnapshotPool>()
+        .entities()
+        .count()
+}
+
+/// Life and shields of `id`.
+fn vitals_of(harness: &Harness, id: EntityId) -> Option<(SimScalar, SimScalar)> {
+    harness
+        .world()
+        .entities
+        .get(&id)
+        .map(|unit| (unit.hp, unit.shields))
+}
+
+/// Asserts that `harness` draws exactly one image, the view's only entry, through the snapshot
+/// pool and nothing else: a pooled bubble where the entry stands, never a unit, with no ring or
+/// bar, and nothing of the live unit `attacker`.
+fn assert_one_pooled_image(harness: &mut Harness, attacker: EntityId) {
+    assert_nothing_of_it_is_drawn(harness, attacker);
+    let view = &model(harness).view;
+    let [entry] = view.attack_snapshots.as_slice() else {
+        panic!("one image: {:?}", view.attack_snapshots);
+    };
+    assert_eq!(entry.entity, attacker);
+    let (x, y) = (entry.bubble.world_pos[0], entry.bubble.world_pos[1]);
+    let drawn = drawn_snapshots(harness);
+    let [(entity, at)] = drawn.as_slice() else {
+        panic!("one image drawn: {drawn:?}");
+    };
+    assert!(
+        (at.x - x).abs() < 1e-4 && (at.z - y).abs() < 1e-4,
+        "drawn where it stood: {at:?} for ({x}, {y})"
+    );
+    assert_eq!(
+        pooled_snapshots(harness),
+        1,
+        "the pool's entities are the view's list"
+    );
+    let world = harness.app.world();
+    assert!(
+        world.get::<LiveBattleBubble>(*entity).is_none(),
+        "never a unit"
+    );
+    assert!(world.get::<Children>(*entity).is_none(), "no ring, no bars");
+}
+
+/// Stages the missile soldier and runs until its release lists it to the local player, then a
+/// frame so the pool draws it; the missile is still in flight. Returns the stage.
+fn launched_unseen(harness: &mut Harness) -> SnapshotStage {
+    let staged = stage_missile(harness.world_mut());
+    let untouched = vitals_of(harness, staged.victim);
+    run_until(harness, "the release lists its attacker", |harness| {
+        model(harness)
+            .view
+            .attack_snapshots
+            .iter()
+            .any(|entry| entry.entity == staged.attacker)
+    });
+    assert!(
+        harness
+            .world()
+            .projectiles
+            .iter()
+            .any(|missile| missile.attacker_id == Some(staged.attacker)),
+        "premise: listed while its missile flies"
+    );
+    harness.step(1);
+    assert_eq!(
+        vitals_of(harness, staged.victim),
+        untouched,
+        "premise: the missile has not landed, so no hit has flashed"
+    );
+    staged
+}
+
+/// V-23: under the `Player` profile, a missile's release from where the local player does not
+/// see its attacker draws one snapshot bubble before the missile lands, through the snapshot
+/// pool: no other entity kind, and nothing of the live attacker.
+#[test]
+fn a_launch_image_is_drawn_by_the_pool_before_its_missile_lands() {
+    let mut harness = skirmish();
+    let staged = launched_unseen(&mut harness);
+    assert_one_pooled_image(&mut harness, staged.attacker);
+    let (_, at) = drawn_snapshots(&mut harness)[0];
+    assert!(
+        Vec2::new(at.x, at.z).distance(staged.high) < 1.0,
+        "on the high ground"
+    );
+}
+
+/// V-23: a storm cast from a cliff the local player does not see draws its caster as one
+/// snapshot bubble through the same pool.
+#[test]
+fn a_spell_casters_image_is_drawn_by_the_pool() {
+    let mut harness = skirmish();
+    let staged = stage_caster(harness.world_mut());
+    run_ticks(&mut harness, 2);
+    let full = vitals_of(&harness, staged.victim);
+    cast_storm(harness.world_mut(), &staged);
+    assert_ne!(
+        vitals_of(&harness, staged.victim),
+        full,
+        "premise: the storm struck"
+    );
+    run_until(&mut harness, "the storm lists its caster", |harness| {
+        model(harness)
+            .view
+            .attack_snapshots
+            .iter()
+            .any(|entry| entry.entity == staged.attacker)
+    });
+    harness.step(1);
+    assert_one_pooled_image(&mut harness, staged.attacker);
+}
+
+/// V-24: a left click on a launch image selects nothing, and a right click on it with the local
+/// soldier selected issues a point order, never an attack on the attacker.
+#[test]
+fn a_launch_image_is_never_picked_or_targeted() {
+    let mut harness = skirmish();
+    let staged = launched_unseen(&mut harness);
+    harness.look_at(staged.high);
+    let (_, at) = drawn_snapshots(&mut harness)[0];
+    let on_screen = harness.screen_position(at);
+    harness.click(MouseButton::Left, on_screen);
+    assert_eq!(harness.selection().ids(), [], "nothing selected");
+    assert_eq!(harness.selection().inspected(), None, "nothing inspected");
+
+    harness.look_at((staged.high + staged.low) * 0.5);
+    harness.select(staged.victim);
+    assert_eq!(harness.selection().ids(), [staged.victim]);
+    let (_, at) = drawn_snapshots(&mut harness)[0];
+    let on_screen = harness.screen_position(at);
+    harness.click(MouseButton::Right, on_screen);
+    let orders = pending(&harness);
+    assert_eq!(orders.len(), 1, "status: {}", harness.status());
+    assert!(
+        matches!(
+            orders[0].order,
+            UnitOrder::Move { .. } | UnitOrder::AttackMove { .. }
+        ),
+        "a click on an image is a click on the ground: {:?}",
+        orders[0].order
+    );
 }

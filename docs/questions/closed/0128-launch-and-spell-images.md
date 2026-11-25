@@ -35,3 +35,9 @@ missile launch makes its caster targetable.
 - **1(a):** The player whose unit the missile is aimed at gets the snapshot when the missile launches (causally clean — splash victims are not yet determined at launch time — and matches StarCraft II).
 - **2(a):** For a ground-targeted spell missile (e.g. Fungal Growth), nobody gets a snapshot on launch; affected players get the snapshot when it lands and hits their units (avoiding revealing a missed cast in fog).
 - **3(a):** Same unified rule as `Q0112`: the snapshot stays until you see the spot or the caster, capped at **1 second** after the last launch, hit, or pulse that refreshed it.
+
+## Resolution
+
+Answered 1(a), 2(a), 3(a), the defaults that plan `2026-11-27-launch-and-spell-visibility` built: the launch image goes
+to the owner of the aimed-at unit, a point-aimed spell missile leaves no image at launch (images come when it lands),
+and every image keeps Q0112's 1-second cap. B-205 and B-206 are fixed.

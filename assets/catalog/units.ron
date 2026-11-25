@@ -11,6 +11,13 @@
 // duration (the image lasts until seen); `None`, or leaving the field out, restores that.
 // Presentation only: no tick decision reads it, so changing it moves no battle, replay or
 // checksum. Validated at load: at least 1 (0 would drop every image before it is shown).
+//
+// `launch_visibility` (a missile weapon's field, beside `attack_visibility`): what the missile's
+// release shows of its attacker to the player whose unit it is aimed at, StarCraft II's
+// CEffectLaunchMissile `Visibility` (plan 2026-11-27-launch-and-spell-visibility D-1). Omitted,
+// the engine default `Snapshot` (core EffectData:102), which no 5.0.14 weapon launch overrides,
+// so no row names it: the image is made when the missile leaves, a flight time before the
+// impact's. `Visible(reveal_ticks: N)` and `Hidden` are accepted on a missile weapon only.
 (
     attack_snapshot_cap_ticks: Some(25),
     units: [

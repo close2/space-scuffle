@@ -634,3 +634,58 @@ fn a_named_alias_resolves_to_its_target_and_takes_no_id() {
     assert_eq!(catalog.effect_id("alias"), catalog.effect_id("hit"));
     assert_eq!(catalog.node_count(), 1);
 }
+
+/// V-17 (plan `2026-11-27-launch-and-spell-visibility` D-1): a spell damage or missile that leaves
+/// its visibility out resolves to a snapshot, an authored value resolves as written, and a visible
+/// one that reveals its caster for no tick is refused naming the node and the field.
+#[test]
+fn spell_visibility_resolves_and_a_zero_reveal_is_refused() {
+    let missile = |visibility: &str| {
+        format!(
+            r#"(name: "m", node: LaunchMissile((to: TargetUnit, speed: 1.0,
+                impact: Damage((amount: 1.0)){visibility})))"#
+        )
+    };
+    let damage =
+        |visibility: &str| format!(r#"(name: "d", node: Damage((amount: 1.0{visibility})))"#);
+    for (written, expected) in [
+        ("", AttackVisibility::Snapshot),
+        (", visibility: Hidden", AttackVisibility::Hidden),
+        (
+            ", visibility: Visible(reveal_ticks: 54)",
+            AttackVisibility::Visible { reveal_ticks: 54 },
+        ),
+    ] {
+        let catalog = load("", &format!("{}, {}", missile(written), damage(written)))
+            .expect("invariant: valid trees");
+        let kind = |name| {
+            catalog
+                .effect_id(name)
+                .and_then(|id| catalog.node(id))
+                .map(|node| node.kind)
+        };
+        assert!(
+            matches!(kind("m"), Some(EffectNode::LaunchMissile { visibility, .. }) if visibility == expected),
+            "missile {written:?}"
+        );
+        assert!(
+            matches!(kind("d"), Some(EffectNode::Damage { visibility, .. }) if visibility == expected),
+            "damage {written:?}"
+        );
+    }
+    let zero = ", visibility: Visible(reveal_ticks: 0)";
+    assert_eq!(
+        error("", &missile(zero)),
+        CatalogError::ZeroReveal {
+            effect: "m".into(),
+            field: "visibility",
+        }
+    );
+    assert_eq!(
+        error("", &damage(zero)),
+        CatalogError::ZeroReveal {
+            effect: "d".into(),
+            field: "visibility",
+        }
+    );
+}

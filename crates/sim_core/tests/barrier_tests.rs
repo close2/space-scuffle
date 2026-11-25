@@ -74,6 +74,7 @@ fn weapon(damage: i32, period: u16) -> WeaponSpec {
         melee: false,
         attack_visibility: sim_types::AttackVisibility::Snapshot,
         missile_validation: sim_types::MissileValidation::default(),
+        launch_visibility: sim_types::AttackVisibility::Snapshot,
     }
 }
 

@@ -54,14 +54,17 @@ pub(crate) struct SpellImpactRecord {
 }
 
 /// One player's snapshot of an attacker that struck it unseen (plan
-/// `2026-11-24-attacker-snapshot` D-2).
+/// `2026-11-24-attacker-snapshot` D-2): by a weapon's damage, a weapon missile's release or a
+/// spell's damage or unit-aimed missile, whose attacker is the caster (plan
+/// `2026-11-27-launch-and-spell-visibility` D-3). The record does not keep its cause: nothing
+/// reads one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct AttackSnapshotRecord {
     /// The player whose units were struck, and who keeps the image.
     pub(crate) viewer: PlayerId,
     /// The attacker. It may since have moved or died.
     pub(crate) attacker: EntityId,
-    /// The tick of the strike that last refreshed it.
+    /// The tick of the strike, launch or spell damage that made or last refreshed it.
     pub(crate) struck: Tick,
     /// What the image shows.
     pub(crate) pose: SnapshotPose,

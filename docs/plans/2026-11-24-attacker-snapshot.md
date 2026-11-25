@@ -573,11 +573,11 @@ pointer and the README row `Done`. `## As built` appended here. Commit `docs: cl
 - **B-205 (new): the launch snapshot.** A weapon missile's launch also snapshots its caster (S4), a flight time
   before the impact's snapshot and from the launch position. It differs from ours only in when the image first
   appears, and for a missile that never lands (a lost target, B-54). Modelling it needs the launch's own visibility
-  as data (`WeaponSpec` is hashed with every projectile, so a schema change) for a difference of a few ticks. Deferred.
+  as data (`WeaponSpec` is hashed with every projectile, so a schema change) for a difference of a few ticks. Deferred. *Taken up by plan `2026-11-27-launch-and-spell-visibility`.*
 - **B-206 (new): spell damage carries no `Visibility`.** `sim_types::effects::DamageDef` has no visibility field,
   so a spell's caster is neither revealed nor snapshotted to the player its damage strikes (5.0.14: `Snapshot` by
   default, `Hidden` for Psionic Storm, S3). Deferred to the effect engine's next damage change; its hook is D-2's
-  `record_attack_presentation`, called with the effect's visibility.
+  `record_attack_presentation`, called with the effect's visibility. *Taken up by plan `2026-11-27-launch-and-spell-visibility`.*
 - **Remembered structures** (`FogVisibility Snapshot` on structures, S8): out of scope since Phase 5 (D-10, Q0002
   item 1), and not registered as a bug by that decision. This plan's record and pool are a natural basis for them.
 - **Snapshot of an attack-revealed air attacker after its reveal ends:** not in the data. A `Visible` effect does not

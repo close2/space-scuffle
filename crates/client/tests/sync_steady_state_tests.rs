@@ -1579,3 +1579,108 @@ fn a_refreshed_attack_snapshot_spawns_nothing() {
         "no snapshot entity spawned"
     );
 }
+
+// --- Launch and spell images (plan 2026-11-27-launch-and-spell-visibility V-25) ----------------
+
+/// Asserts that, with the one listed image held unchanged, running frames create, modify and
+/// remove no asset, spawn nothing, and keep the fog's and the pool's buffers (P-16's window).
+fn assert_held_image_is_steady(harness: &mut Harness) {
+    run_ticks(harness, WARM_TICKS);
+    let held = snapshots_listed(harness);
+    assert_eq!(held.len(), 1, "the image is held");
+    assert_eq!(pooled(harness), 1);
+    let entities = census(harness);
+    let buffers = retained_buffers(harness.app.world());
+    reset(harness);
+    run_ticks(harness, MOVING_TICKS);
+    assert_eq!(snapshots_listed(harness), held, "the list is unchanged");
+    assert_eq!(tallies(harness).others(&[]), Vec::new(), "asset events");
+    assert_eq!(census(harness), entities, "entities spawned or despawned");
+    assert_eq!(
+        moved(&buffers, &retained_buffers(harness.app.world())),
+        Vec::new(),
+        "retained buffers that moved or grew"
+    );
+}
+
+/// V-25: a missile's launch image held unchanged (its target then made invulnerable, so the
+/// missile lands on nothing and no strike refreshes it; the cap lifted) is as steady as a
+/// strike's: running frames create no asset event, spawn nothing and keep every buffer.
+#[test]
+fn a_held_launch_image_changes_nothing_on_running_frames() {
+    let mut harness = skirmish();
+    settle(&mut harness, true);
+    harness.world_mut().catalog.set_attack_snapshot_cap(None);
+    let staged = attack_snapshot_stage::stage_missile(harness.world_mut());
+    harness.resume();
+    let mut frames = 0;
+    while snapshots_listed(&harness).is_empty() {
+        harness.step(1);
+        frames += 1;
+        assert!(frames < 2_000, "the missile soldier never released unseen");
+    }
+    let released = snapshots_listed(&harness);
+    assert!(
+        harness
+            .world()
+            .projectiles
+            .iter()
+            .any(|missile| missile.attacker_id == Some(staged.attacker)),
+        "listed at the release, while its missile flies"
+    );
+    harness
+        .world_mut()
+        .entities
+        .get_mut(&staged.victim)
+        .expect("the victim lives")
+        .is_invulnerable = true;
+    // The attacker holds, so it neither chases nor turns once its target is gone.
+    harness
+        .world_mut()
+        .entities
+        .get_mut(&staged.attacker)
+        .expect("the attacker lives")
+        .issue_order(sim_types::UnitOrder::HoldPosition, false)
+        .expect("a hold is admitted");
+    run_ticks(&mut harness, 400);
+    assert_held_image_is_steady(&mut harness);
+    assert_eq!(
+        snapshots_listed(&harness),
+        released,
+        "the launch's own image"
+    );
+}
+
+/// V-25: a storm caster's image held unchanged (the storm's pulses show nothing, and the window
+/// opens after the storm has ended; the cap lifted) is as steady as a strike's.
+#[test]
+fn a_held_spell_image_changes_nothing_on_running_frames() {
+    let mut harness = skirmish();
+    settle(&mut harness, true);
+    harness.world_mut().catalog.set_attack_snapshot_cap(None);
+    let staged = attack_snapshot_stage::stage_caster(harness.world_mut());
+    harness.resume();
+    run_ticks(&mut harness, 2);
+    attack_snapshot_stage::cast_storm(harness.world_mut(), &staged);
+    let cast = snapshots_listed(&harness);
+    let mut frames = 0;
+    while !harness.world().effects().persistents().is_empty()
+        || !harness
+            .world()
+            .effects()
+            .statuses_of(staged.victim)
+            .is_empty()
+    {
+        harness.step(1);
+        frames += 1;
+        assert!(frames < 2_000, "the storm ended");
+    }
+    let listed = snapshots_listed(&harness);
+    assert_eq!(listed.len(), 1, "the caster's image outlived the storm");
+    assert_eq!(listed[0].0, staged.attacker);
+    assert!(
+        cast.is_empty() || cast == listed,
+        "the pulses refreshed nothing"
+    );
+    assert_held_image_is_steady(&mut harness);
+}
