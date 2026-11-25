@@ -412,7 +412,7 @@ fn role_commands(scenario: &Scenario, ids: &[EntityId]) -> Vec<PlayerCommand> {
                         origin: AttackOrigin::Explicit,
                     },
                     queue: false,
-                }))
+                }));
             }
             Role::Circle { centre, radius } => {
                 for (index, corner) in corpus::circle_corners(centre, radius)

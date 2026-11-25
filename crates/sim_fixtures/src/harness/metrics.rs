@@ -787,8 +787,9 @@ impl ScenarioMeter {
         }
     }
 
-    /// Records the contact solver's iterations of the tick just played (0: the solver did not run).
-    pub fn add_iterations(&mut self, iterations: u8) {
+    /// Records the contact solver's iterations of the tick just played (0: the solver did not run),
+    /// C-3′'s extension past `contact.iterations` included: the histogram grows buckets above it.
+    pub fn add_iterations(&mut self, iterations: u16) {
         if iterations == 0 {
             return;
         }

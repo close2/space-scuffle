@@ -1,7 +1,7 @@
 # Design Round: Local Movement from a Blank Sheet (Q0118's Strategic Guidance)
 
 This is a **design-round document**, not yet an implementation plan. It answers the owner's strategic guidance in
-[Q0118](../questions/open/0118-crowd-overlap-solver-cost.md): before more patches go onto the Jacobi contact solver,
+[Q0118](../questions/closed/0118-crowd-overlap-solver-cost.md): before more patches go onto the Jacobi contact solver,
 re-examine local movement from a blank sheet. It states the requirements, turns them into a scenario suite that
 can judge any candidate, assesses the candidate architectures with sources, reports scratch prototypes of the
 strongest candidates against today's solver, and recommends an architecture with a migration path. The owner's

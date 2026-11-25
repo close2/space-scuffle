@@ -464,6 +464,119 @@ fn engaged_unit_ticks_count_the_states_in_band_of_the_target() -> TestResult {
     Ok(())
 }
 
+/// A one-battle matrix of two `RANGED` units of blue `spacing` apart side by side under
+/// `blue_order`, and one red `RANGED` unit far beyond every sight range, standing; no jitter.
+fn friend_pair(spacing: f64, blue_order: &str) -> Result<Battle, Box<dyn Error>> {
+    let text = format!(
+        "(seeds: [1], spawn_jitter: 0.0, battles: [(name: \"pair\", claim: \"test\", \
+         map_cells: 64, ticks: 12, blue: (squads: [(unit: \"{RANGED}\", count: 2, columns: 2, \
+         origin: (10.0, 10.0), spacing: {spacing})], order: {blue_order}), \
+         red: (squads: [{}]), expect: (blue: (0, 2), red: (0, 1)))])",
+        squad(RANGED, 54.0, 54.0)
+    );
+    let matrix = Matrix::from_ron_str(&text)?;
+    Ok(matrix.battle("pair")?.clone())
+}
+
+/// `RANGED`'s collision radius, world units.
+fn ranged_radius() -> Result<f64, Box<dyn Error>> {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let arch = catalogs
+        .units
+        .get(catalogs.units.id_by_slug(RANGED).ok_or("ranged unit")?)?;
+    Ok(f64::from(arch.collision_radius.to_f32()))
+}
+
+/// Plays `battle` to its end under a [`ContactMeter`] that also saw the starting state, and
+/// returns the checks and the ticks played.
+fn metered(
+    battle: &Battle,
+) -> Result<(sim_fixtures::trace::contact_checks::ContactChecks, u32), Box<dyn Error>> {
+    use sim_fixtures::trace::contact_checks::ContactMeter;
+    let mut run = BattleRun::new(battle, sim_fixtures::shipped_catalogs(), 1, 0.0)?;
+    let mut meter = ContactMeter::new();
+    meter.observe(&run.world);
+    while !run.is_finished() {
+        assert!(run.step().is_empty(), "no diagnostics");
+        meter.observe(&run.world);
+    }
+    Ok((meter.total(), run.ticks_played()))
+}
+
+/// W0-T8 (plan `2026-11-26-friend-crowd-overlap` §2.2): two idle friends spawned at 30 %
+/// overlap are separated by the first tick's solve. B6 is counted from the first stepped tick, so
+/// the run reports no pair-tick above D-α's moving bound and a maximum below it; the spawn
+/// state's 30 % is reported in the spawn-inclusive column only.
+#[test]
+fn friend_overlap_is_counted_from_the_first_stepped_tick() -> TestResult {
+    let diameter = 2.0 * ranged_radius()?;
+    let (checks, ticks) = metered(&friend_pair(0.7 * diameter, "None")?)?;
+    assert!(ticks > 1, "{ticks} ticks");
+    assert_eq!(checks.friend_overlap_ticks, 0, "{checks:?}");
+    assert!(checks.friend_overlap < 0.05, "{checks:?}");
+    let crowd = checks.crowd.ok_or("the meter reports its crowd columns")?;
+    assert!(
+        (crowd.friend_overlap_with_spawn - 0.3).abs() < 1e-3,
+        "{crowd:?}"
+    );
+    assert_eq!(crowd.corrected_overlap_ticks, 0, "{crowd:?}");
+    Ok(())
+}
+
+/// W0-T9 (plan `2026-11-26-friend-crowd-overlap` WP0): two friends holding position at 20 %
+/// overlap are a pair the contact solver never corrects (C-2's "none"): they count in the
+/// all-pairs columns on every stepped tick and not in the corrected-pairs columns.
+#[test]
+fn holding_friends_count_in_the_all_pairs_columns_only() -> TestResult {
+    let diameter = 2.0 * ranged_radius()?;
+    let (checks, ticks) = metered(&friend_pair(0.8 * diameter, "HoldPosition")?)?;
+    assert!(ticks > 1, "{ticks} ticks");
+    assert_eq!(checks.friend_overlap_ticks, ticks, "{checks:?}");
+    assert!((checks.friend_overlap - 0.2).abs() < 1e-3, "{checks:?}");
+    let crowd = checks.crowd.ok_or("the meter reports its crowd columns")?;
+    assert_eq!(crowd.corrected_overlap_ticks, 0, "{crowd:?}");
+    assert!(crowd.corrected_overlap.abs() < 1e-12, "{crowd:?}");
+    Ok(())
+}
+
+/// B8 (plan `2026-11-26-friend-crowd-overlap` WP0, the collision-classes probe §10.1 (a)): two
+/// ranged enemies spawned within each other's band, weapons ready. A state observed twice with
+/// nothing done in between counts one unit-tick standing while able on each side; a tick in
+/// which a unit starts its swing does not count for it.
+#[test]
+fn standing_while_able_counts_idle_ticks_and_not_swings() -> TestResult {
+    use sim_fixtures::trace::contact_checks::ContactMeter;
+    let battle = scripted(&squad(RANGED, 30.0, 32.0), &squad(RANGED, 33.0, 32.0))?;
+    let mut run = BattleRun::new(&battle, sim_fixtures::shipped_catalogs(), 1, 0.0)?;
+    let mut meter = ContactMeter::new();
+    meter.observe(&run.world);
+    meter.observe(&run.world);
+    let crowd = meter.total().crowd.ok_or("crowd columns")?;
+    assert_eq!(crowd.standing_able, [1, 1], "{crowd:?}");
+    assert_eq!(crowd.standing_able_cross, [0, 0], "{crowd:?}");
+    let units = [run.blue[0], run.red[0]];
+    let mut swings = 0_u32;
+    while !run.is_finished() && swings < 4 {
+        let before = meter.total().crowd.ok_or("crowd columns")?.standing_able;
+        assert!(run.step().is_empty(), "no diagnostics");
+        meter.observe(&run.world);
+        let after = meter.total().crowd.ok_or("crowd columns")?.standing_able;
+        for (side, id) in units.iter().enumerate() {
+            let Some(unit) = run.world.entities.get(id).filter(|u| u.is_alive()) else {
+                continue;
+            };
+            let swung = !matches!(unit.weapon_phase, WeaponPhase::Ready)
+                || unit.weapon_cooldown_remaining > 0;
+            if swung {
+                swings += 1;
+                assert_eq!(after[side], before[side], "side {side} swung and counted");
+            }
+        }
+    }
+    assert!(swings > 0, "the units swing");
+    Ok(())
+}
+
 #[test]
 fn tracing_a_battle_changes_nothing_and_reproduces_the_matrix_result() -> TestResult {
     let matrix = Matrix::from_ron_str(MATRIX_RON)?;
@@ -647,9 +760,13 @@ fn the_matrix_mode_writes_every_battle_and_seed_and_compares_runs() -> TestResul
          red_churn_explained,red_churn_unexplained,blue_blocked,red_blocked,blue_shots,\
          red_shots,blue_unit_ticks,red_unit_ticks,enemy_overlap,blue_shove_e,red_shove_e,\
          blue_engaged_ticks,red_engaged_ticks,enemy_overlap_ticks,friend_overlap,\
-         friend_overlap_ticks,blue_held_moved_ticks,red_held_moved_ticks,blue_held_moved_max,\
-         red_held_moved_max,blue_moving_ticks,red_moving_ticks,blue_reversals,red_reversals,\
-         blue_reversals_hi,red_reversals_hi,gate_rays,orbit_refusals,terrain_transfers"
+         friend_overlap_ticks,friend_overlap_with_spawn,friend_overlap_corrected,\
+         friend_overlap_corrected_ticks,blue_standing_able,red_standing_able,\
+         blue_standing_able_cross,red_standing_able_cross,solver_extended_ticks,\
+         solver_extended_iterations,blue_held_moved_ticks,red_held_moved_ticks,\
+         blue_held_moved_max,red_held_moved_max,blue_moving_ticks,red_moving_ticks,\
+         blue_reversals,red_reversals,blue_reversals_hi,red_reversals_hi,gate_rays,\
+         orbit_refusals,terrain_transfers"
     );
     // The reversals split into proposal- and contact-caused ones that sum to them (plan
     // `2026-11-19-crowd-edge-steering` D-5).

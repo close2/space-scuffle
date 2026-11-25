@@ -35,17 +35,21 @@
 //!   evidence `2026-11-25-solver-pair-cache` §2: D-SHOVE-E, B7′'s engaged unit-ticks, the
 //!   enemy-overlap ticks and the friend overlap, appended last) are the last [`CHECK_COLUMNS`]
 //!   columns, a measurement like the blocking columns; a table written before them
-//!   ([`SPLIT_CSV_HEADER`]) is read without them.
+//!   ([`SPLIT_CSV_HEADER`]) is read without them. The columns of plan
+//!   `2026-11-26-friend-crowd-overlap` ([`CrowdChecks`]: B6 with the spawn state, B6 over the pairs
+//!   the solver corrects, B8, the solver's extended ticks) come after them; a table written
+//!   before them ([`CONTACT_CSV_HEADER`]) is read without them, and its `friend_overlap` and
+//!   `friend_overlap_ticks` include the starting state.
 //! - The columns of plan `2026-11-27-gated-movement` (`WP0a`: H-1's held-moved counts, M1 and
 //!   M1-hi, and the cost probes; [`MovementChecks`]) come last of all, [`MOVEMENT_COLUMNS`] of
-//!   them; a table written before them ([`CHECKS_CSV_HEADER`]) is read without them.
+//!   them; a table written before them ([`CROWD_CSV_HEADER`]) is read without them.
 
 use super::blocking::{BlockingMeter, BlockingMetrics};
 use super::cli::{
     create_dir, load_catalogs, load_matrix, read, source_line, write, RunError, TraceArgs,
 };
 use super::contact_checks::{
-    ContactChecks, ContactMeter, MovementChecks, MovementSide, SideChecks,
+    ContactChecks, ContactMeter, CrowdChecks, MovementChecks, MovementSide, SideChecks,
 };
 use crate::matchup::{Battle, BattleRun, Expected, Matrix, Outcome};
 use sim_core::catalog::RuntimeCatalogs;
@@ -54,7 +58,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// The header line of `matrix.csv`: [`CHECKS_CSV_HEADER`], then the columns of plan
+/// The header line of `matrix.csv`: [`CROWD_CSV_HEADER`], then the columns of plan
 /// `2026-11-27-gated-movement` ([`MovementChecks`]).
 pub const CSV_HEADER: &str = "battle,seed,of_record,end_tick,blue_survivors,red_survivors,\
 blue_lead_hull,red_lead_hull,expectation_met,blocked_attacker_ticks,reversals,stall_giveups,\
@@ -63,21 +67,38 @@ blue_r10_unruled,blue_r10_free,red_r10_leash,red_r10_terrain,red_r10_unruled,red
 blue_churn_explained,blue_churn_unexplained,red_churn_explained,red_churn_unexplained,\
 blue_blocked,red_blocked,blue_shots,red_shots,blue_unit_ticks,red_unit_ticks,enemy_overlap,\
 blue_shove_e,red_shove_e,blue_engaged_ticks,red_engaged_ticks,enemy_overlap_ticks,friend_overlap,\
-friend_overlap_ticks,blue_held_moved_ticks,red_held_moved_ticks,blue_held_moved_max,\
-red_held_moved_max,blue_moving_ticks,red_moving_ticks,blue_reversals,red_reversals,\
-blue_reversals_hi,red_reversals_hi,gate_rays,orbit_refusals,terrain_transfers";
+friend_overlap_ticks,friend_overlap_with_spawn,friend_overlap_corrected,\
+friend_overlap_corrected_ticks,blue_standing_able,red_standing_able,blue_standing_able_cross,\
+red_standing_able_cross,solver_extended_ticks,solver_extended_iterations,blue_held_moved_ticks,\
+red_held_moved_ticks,blue_held_moved_max,red_held_moved_max,blue_moving_ticks,red_moving_ticks,\
+blue_reversals,red_reversals,blue_reversals_hi,red_reversals_hi,gate_rays,orbit_refusals,\
+terrain_transfers";
 
 /// The header of a `matrix.csv` written before the columns of plan `2026-11-27-gated-movement`:
-/// [`SPLIT_CSV_HEADER`], then the contact checks of plan `2026-11-24-solver-retarget-and-shoving`
-/// ([`ContactChecks`]). Still read by `--compare`.
-pub const CHECKS_CSV_HEADER: &str = "battle,seed,of_record,end_tick,blue_survivors,red_survivors,\
+/// [`CONTACT_CSV_HEADER`], then the columns of plan `2026-11-26-friend-crowd-overlap`
+/// ([`CrowdChecks`]). Still read by `--compare`.
+pub const CROWD_CSV_HEADER: &str = "battle,seed,of_record,end_tick,blue_survivors,red_survivors,\
 blue_lead_hull,red_lead_hull,expectation_met,blocked_attacker_ticks,reversals,stall_giveups,\
 proposal_reversals,contact_reversals,blue_shove,red_shove,blue_r10_leash,blue_r10_terrain,\
 blue_r10_unruled,blue_r10_free,red_r10_leash,red_r10_terrain,red_r10_unruled,red_r10_free,\
 blue_churn_explained,blue_churn_unexplained,red_churn_explained,red_churn_unexplained,\
 blue_blocked,red_blocked,blue_shots,red_shots,blue_unit_ticks,red_unit_ticks,enemy_overlap,\
 blue_shove_e,red_shove_e,blue_engaged_ticks,red_engaged_ticks,enemy_overlap_ticks,friend_overlap,\
-friend_overlap_ticks";
+friend_overlap_ticks,friend_overlap_with_spawn,friend_overlap_corrected,\
+friend_overlap_corrected_ticks,blue_standing_able,red_standing_able,blue_standing_able_cross,\
+red_standing_able_cross,solver_extended_ticks,solver_extended_iterations";
+
+/// The header of a `matrix.csv` written before the columns of plan
+/// `2026-11-26-friend-crowd-overlap`: [`SPLIT_CSV_HEADER`], then the contact checks of plan
+/// `2026-11-24-solver-retarget-and-shoving` ([`ContactChecks`]), still read by `--compare`.
+pub const CONTACT_CSV_HEADER: &str = "battle,seed,of_record,end_tick,blue_survivors,\
+red_survivors,blue_lead_hull,red_lead_hull,expectation_met,blocked_attacker_ticks,reversals,\
+stall_giveups,proposal_reversals,contact_reversals,blue_shove,red_shove,blue_r10_leash,\
+blue_r10_terrain,blue_r10_unruled,blue_r10_free,red_r10_leash,red_r10_terrain,red_r10_unruled,\
+red_r10_free,blue_churn_explained,blue_churn_unexplained,red_churn_explained,\
+red_churn_unexplained,blue_blocked,red_blocked,blue_shots,red_shots,blue_unit_ticks,\
+red_unit_ticks,enemy_overlap,blue_shove_e,red_shove_e,blue_engaged_ticks,red_engaged_ticks,\
+enemy_overlap_ticks,friend_overlap,friend_overlap_ticks";
 
 /// The header of a `matrix.csv` written before the contact checks, still read by `--compare`.
 pub const SPLIT_CSV_HEADER: &str = "battle,seed,of_record,end_tick,blue_survivors,\
@@ -104,8 +125,14 @@ const UNSPLIT_COLUMNS: usize = 12;
 /// counters, then the reversal split.
 const SPLIT_COLUMNS: usize = 14;
 
+/// Contact-check columns of a row written before plan `2026-11-26-friend-crowd-overlap`.
+const CONTACT_COLUMNS: usize = 28;
+
+/// The columns of plan `2026-11-26-friend-crowd-overlap` ([`CrowdChecks`]).
+const CROWD_COLUMNS: usize = 9;
+
 /// Contact-check columns at the end of a current row ([`ContactChecks`]).
-const CHECK_COLUMNS: usize = 28;
+const CHECK_COLUMNS: usize = CONTACT_COLUMNS + CROWD_COLUMNS;
 
 /// Columns of a `matrix.csv` written before the columns of plan `2026-11-27-gated-movement`:
 /// [`SPLIT_COLUMNS`], then the contact checks.
@@ -197,22 +224,24 @@ impl MatrixRow {
     }
 
     /// Parses one line of `matrix.csv` (not the header): [`CSV_COLUMNS`] cells,
-    /// [`UNSPLIT_COLUMNS`] for a table written before the reversal split, or [`OUTCOME_COLUMNS`]
-    /// for a legacy table, whose row has no blocking figures.
+    /// [`SPLIT_COLUMNS`] plus [`CONTACT_COLUMNS`] for a table written before the columns of plan
+    /// `2026-11-26-friend-crowd-overlap`, [`SPLIT_COLUMNS`] for one written before the contact
+    /// checks, [`UNSPLIT_COLUMNS`] for a table written before the reversal split, or
+    /// [`OUTCOME_COLUMNS`] for a legacy table, whose row has no blocking figures.
     ///
     /// # Errors
     /// A description of the first malformed cell.
     pub fn from_csv_line(line: &str) -> Result<Self, String> {
         let cells: Vec<&str> = line.split(',').collect();
-        if ![
+        let columns = [
             CSV_COLUMNS,
             CHECKED_COLUMNS,
+            SPLIT_COLUMNS + CONTACT_COLUMNS,
             SPLIT_COLUMNS,
             UNSPLIT_COLUMNS,
             OUTCOME_COLUMNS,
-        ]
-        .contains(&cells.len())
-        {
+        ];
+        if !columns.contains(&cells.len()) {
             return Err(format!("{} cells, expected {CSV_COLUMNS}", cells.len()));
         }
         let movement = match cells.get(CHECKED_COLUMNS..) {
@@ -223,7 +252,7 @@ impl MatrixRow {
         };
         let cells = &cells[..cells.len().min(CHECKED_COLUMNS)];
         let checks = match cells.get(SPLIT_COLUMNS..) {
-            Some(rest) if rest.len() == CHECK_COLUMNS && rest.iter().any(|c| !c.is_empty()) => {
+            Some(rest) if rest.len() >= CONTACT_COLUMNS && rest.iter().any(|c| !c.is_empty()) => {
                 Some(parse_checks(rest)?)
             }
             _ => None,
@@ -303,10 +332,24 @@ pub(crate) fn checks_cells(checks: &ContactChecks) -> String {
     cells.push(checks.enemy_overlap_ticks.to_string());
     cells.push(format!("{:.6}", checks.friend_overlap));
     cells.push(checks.friend_overlap_ticks.to_string());
+    match checks.crowd {
+        Some(crowd) => {
+            cells.push(format!("{:.6}", crowd.friend_overlap_with_spawn));
+            cells.push(format!("{:.6}", crowd.corrected_overlap));
+            cells.push(crowd.corrected_overlap_ticks.to_string());
+            cells.extend(crowd.standing_able.iter().map(u32::to_string));
+            cells.extend(crowd.standing_able_cross.iter().map(u32::to_string));
+            cells.push(crowd.extended_ticks.to_string());
+            cells.push(crowd.extended_iterations.to_string());
+        }
+        None => cells.extend(std::iter::repeat_n(String::new(), CROWD_COLUMNS)),
+    }
     cells.join(",")
 }
 
-/// Parses the [`CHECK_COLUMNS`] contact-check cells of a row.
+/// Parses the contact-check cells of a row: [`CHECK_COLUMNS`], or [`CONTACT_COLUMNS`] for a row
+/// written before the columns of plan `2026-11-26-friend-crowd-overlap` (or with those cells
+/// empty), which reads without them.
 fn parse_checks(cells: &[&str]) -> Result<ContactChecks, String> {
     let int = |index: usize| cell::<u32>(cells[index], "contact checks");
     let real = |index: usize| cell::<f64>(cells[index], "contact checks");
@@ -331,7 +374,33 @@ fn parse_checks(cells: &[&str]) -> Result<ContactChecks, String> {
         enemy_overlap_ticks: int(25)?,
         friend_overlap: real(26)?,
         friend_overlap_ticks: int(27)?,
+        crowd: parse_crowd(&cells[CONTACT_COLUMNS..])?,
     })
+}
+
+/// Parses the [`CROWD_COLUMNS`] cells of plan `2026-11-26-friend-crowd-overlap`: `None` when the
+/// row has none or they are all empty.
+fn parse_crowd(cells: &[&str]) -> Result<Option<CrowdChecks>, String> {
+    if cells.iter().all(|c| c.is_empty()) {
+        return Ok(None);
+    }
+    if cells.len() != CROWD_COLUMNS {
+        return Err(format!(
+            "{} crowd cells, expected {CROWD_COLUMNS}",
+            cells.len()
+        ));
+    }
+    let int = |index: usize| cell::<u32>(cells[index], "crowd checks");
+    let real = |index: usize| cell::<f64>(cells[index], "crowd checks");
+    Ok(Some(CrowdChecks {
+        friend_overlap_with_spawn: real(0)?,
+        corrected_overlap: real(1)?,
+        corrected_overlap_ticks: int(2)?,
+        standing_able: [int(3)?, int(4)?],
+        standing_able_cross: [int(5)?, int(6)?],
+        extended_ticks: int(7)?,
+        extended_iterations: int(8)?,
+    }))
 }
 
 /// The cells of plan `2026-11-27-gated-movement` of a row, in [`CSV_HEADER`] order: the largest
@@ -423,7 +492,8 @@ pub fn parse_matrix_csv(path: &Path, text: &str) -> Result<Vec<MatrixRow>, RunEr
         lines.next(),
         Some(
             CSV_HEADER
-                | CHECKS_CSV_HEADER
+                | CROWD_CSV_HEADER
+                | CONTACT_CSV_HEADER
                 | SPLIT_CSV_HEADER
                 | UNSPLIT_CSV_HEADER
                 | LEGACY_CSV_HEADER
@@ -1034,6 +1104,15 @@ mod tests {
                 enemy_overlap_ticks: 3,
                 friend_overlap: 0.062_5,
                 friend_overlap_ticks: 2,
+                crowd: Some(CrowdChecks {
+                    friend_overlap_with_spawn: 0.312_5,
+                    corrected_overlap: 0.046_875,
+                    corrected_overlap_ticks: 1,
+                    standing_able: [3, 5],
+                    standing_able_cross: [0, 2],
+                    extended_ticks: 6,
+                    extended_iterations: 70,
+                }),
             }),
             movement: Some(MovementChecks {
                 sides: [
@@ -1149,16 +1228,48 @@ mod tests {
         Ok(())
     }
 
+    /// Plan `2026-11-26-friend-crowd-overlap` WP0: a table written before its columns still
+    /// parses, without them, and compares on its outcome; the new columns come last.
+    #[test]
+    fn a_row_written_before_the_crowd_columns_reads_without_them() -> Result<(), String> {
+        let current = row("a_b", 5, 2, Some(SimScalar::from_i32(45)));
+        assert!(CSV_HEADER.starts_with(CONTACT_CSV_HEADER));
+        let line = current.csv_line();
+        let old_line = line
+            .split(',')
+            .take(SPLIT_COLUMNS + CONTACT_COLUMNS)
+            .collect::<Vec<_>>()
+            .join(",");
+        let old = MatrixRow::from_csv_line(&old_line)?;
+        let checks = old.checks.ok_or("contact checks")?;
+        assert_eq!(checks.crowd, None);
+        assert_eq!(
+            Some(ContactChecks {
+                crowd: None,
+                ..checks
+            }),
+            current.checks.map(|c| ContactChecks { crowd: None, ..c })
+        );
+        assert_eq!(MatrixRow::from_csv_line(&old.csv_line())?, old);
+        let path = Path::new("m.csv");
+        let table = format!("{CONTACT_CSV_HEADER}\n{old_line}\n");
+        let rows = parse_matrix_csv(path, &table).map_err(|e| e.to_string())?;
+        let comparison = Comparison::new(PathBuf::from("m.csv"), rows, &[current]);
+        assert_eq!(comparison.moved, Vec::<String>::new());
+        assert!(MatrixRow::from_csv_line(&format!("{old_line},0.5,0.1,1,0,0,0,0,0,x")).is_err());
+        Ok(())
+    }
+
     /// Plan `2026-11-27-gated-movement` `WP0a`: a table written before the H-1, M1 and probe
     /// columns still parses, without them, and compares on its outcome; the new columns come
     /// last, and a row with them survives the CSV.
     #[test]
     fn a_row_written_before_the_movement_columns_reads_without_them() -> Result<(), String> {
         let current = row("a_b", 5, 2, Some(SimScalar::from_i32(45)));
-        assert!(CSV_HEADER.starts_with(CHECKS_CSV_HEADER));
+        assert!(CSV_HEADER.starts_with(CROWD_CSV_HEADER));
         assert_eq!(
             CSV_HEADER.split(',').count(),
-            CHECKS_CSV_HEADER.split(',').count() + MOVEMENT_COLUMNS
+            CROWD_CSV_HEADER.split(',').count() + MOVEMENT_COLUMNS
         );
         let line = current.csv_line();
         assert_eq!(MatrixRow::from_csv_line(&line)?, current);
@@ -1172,7 +1283,7 @@ mod tests {
         assert_eq!(old.checks, current.checks);
         assert_eq!(MatrixRow::from_csv_line(&old.csv_line())?, old);
         let path = Path::new("m.csv");
-        let table = format!("{CHECKS_CSV_HEADER}\n{old_line}\n");
+        let table = format!("{CROWD_CSV_HEADER}\n{old_line}\n");
         let rows = parse_matrix_csv(path, &table).map_err(|e| e.to_string())?;
         let comparison = Comparison::new(PathBuf::from("m.csv"), rows, &[current]);
         assert_eq!(comparison.moved, Vec::<String>::new());
