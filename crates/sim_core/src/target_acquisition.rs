@@ -1507,7 +1507,10 @@ mod tracked_target_tests {
     fn only_a_carrier_tracks_and_a_skipped_unit_is_released() -> TestResult {
         let map = GameMap::new(8, 8, MapCell::default_ground(CliffLevel(0)))?;
         let probe = world(map, 5);
-        let tracker = ground_unit(&probe, |w| w.turret_tracks_any_enemy)?;
+        // Any carrier tracks the enemy in reach under a Move (the tank's hidden weapon and the
+        // Immortal's and Colossus' own weapons alike, plan Amendment 2): the claim needs a
+        // turreted weapon with the flag, not the catalog's order.
+        let tracker = ground_unit(&probe, |w| w.turret_tracks_any_enemy && w.has_turret)?;
         let other = ground_unit(&probe, |w| {
             !w.turret_tracks_any_enemy && w.max_range >= SimScalar::from_i32(4)
         })?;

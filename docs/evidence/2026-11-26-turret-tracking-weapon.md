@@ -212,3 +212,143 @@ measurements above were repeated on the amended tree; they supersede the WP3 gol
   64x64/100 762 and 755; 64x64/400 102 and 96; 128x128/400 167 and 172; 256x256/0 189 and 192; showcase_canyon/400
   77 and 78; 64x64 casters/400 194 and 195. Every scenario is above 50 ticks/s; the host was shared during these
   rounds (WP0's first round read 83 ticks/s on 64x64/400), so the wall-clock figures are noisier than the count.
+
+## Amendment 2: the Immortal and Colossus turrets aim while their units walk (B-218)
+
+Measurements of Amendment 2 (Q0116 part 2 (b)). Scratch material (trees, binaries, worlds, the probe patch and its
+positive control, the red runs) is under `~/scratch/turret-tracking-b218/` and `~/scratch/b218/red/`, never
+committed; the scripts are §7.2's, copied from `~/scratch/turret-tracking/scripts/` with their paths changed.
+
+### WP-A0: baseline, census, probes and close battles
+
+**Baseline.** WP-A0's tree is the branch head `98daf2e6` (`main` `263ef402` merged, schema 49). Its trace binaries
+(`cargo build --release --locked -p sim_core --example matchup_trace --example route_trace`) played a `git archive`
+copy of the tree with `measure.sh` (the matrix on the seeds of record and 16 development seeds, battle 31 on 100
+seeds, battle 33 on 64, the showcase and the showcase effects on the default seed and 1 to 8, 6,000 ticks each):
+
+```bash
+R=~/scratch/turret-tracking-b218
+$R/scripts/measure.sh $R/bin-a0 $R/tree-a0 $R/world-a0
+```
+
+The matrix plays 1,220 runs: 2 expectation misses on the seeds of record (battle 28, `known_bug` B-192, seeds 11 and
+22) and 26 over all seeds (28: 14; 39a: 4 (seeds 4, 5, 9, 14); 36a: 3 (4, 12, 14); 41: 2 (4, 7); 26: 1 (13); 32: 1
+(13); 33: 1 (10)), as at WP0. Battle 28's claim holds on development seeds 5, 7, 9 and 12 only. The throughput binary
+of this tree (`cargo bench --locked -p sim_core --bench throughput --no-run`) is kept as
+`$R/bench-bin-a0/throughput` for A2.7.
+
+**Census (c).** Found by property (a turreted weapon with `fires_outside_attack_order` and `allowed_movement` other
+than `Moving`, A2.1 S20) by the probe below: the Immortal analogue (`void_goliath`) in matrix battles 2a, 2b, 3 (one,
+an explicit attack from tick 0), 28 and 30 (ten, attack-moving, then automatic attacks); the Colossus analogue
+(`tripod_annihilator`) in 12a and 12b (one, an explicit attack), 12c (one, holding), 26 (six, attack-moving, then
+automatic attacks) and 35 (six: attack-move, then 6,219 carrier-ticks under the flight's Move and 23,236 idle, over
+20 runs). No carrier is in battles 31 and 33, the showcase, the showcase effects or either golden (the per-tick
+golden dump of the probe copy records none). The sandbox's turreted role resolves to the tank analogue
+(`crates/sim_fixtures/src/sandbox.rs`: the first mobile archetype with a turreted weapon in catalog order, type id 5,
+before the carriers' 27 and 28); the throughput scenarios play `pulse_bot` and three casters
+(`crates/sim_core/benches/throughput_scenarios.ron`); the client skirmish's pilot trains `pulse_bot`.
+
+**Probes (t), (p), stored.** A scratch patch on WP-A0's tree (`$R/scripts/probe.rs`, applied by `apply_probe.py`)
+counts (t) every tick on which a carrier's turret is free by D-4's rule (no target, or a `Ready` or
+`RotatingToTarget` weapon whose target lies outside its band, and no lock) while a ground enemy its weapon may strike
+lies in its reach on acquisition's positions, tagged with its engagement (`walking`: a non-attack order that walks
+it; `chase`: an explicit attack; `other`); (p) every swing start of a carrier while a (t) episode is open (until its
+turret next lies along the hull), with the `RotatingToTarget` ticks spent just before it (the twin's rotation, since
+this tree does not track). Its worlds equal WP-A0's (`compare.sh`: 483 files, only `matrix.err` differs, the probe's
+own log).
+
+| World | (t) tracking opportunities | (p) swings in an open episode |
+|---|---:|---:|
+| Positive control: an Immortal analogue under a Move past an idle worker (`probe_control.rs`) | 94 (`walking`, no target) | 0 |
+| Matrix 26 (seeds 1 and 12) | 4 (`other`: an automatic attack whose target left the band) | 31, every one after 0 rotation ticks |
+| Every other matrix battle, seeds of record and 1 to 16 | 0 | 0 |
+| Battles 31, 33, showcase, showcase effects, both goldens | 0 (no carrier) | 0 |
+
+No carrier walks under a non-attack order with a ground enemy in reach in any measured world (battle 35's colossi
+flee from air units only). The four (t) ticks of battle 26 fall on Colossi under automatic attacks on zerglings
+that left the band while other zerglings stood in reach (seed 1 tick 18, unit 104; seed 12 ticks 17 to 19, unit 106):
+acquisition retargets on the next tick, and the swings that follow needed no rotation in WP-A0's tree. Whether
+tracking acts there depends also on acquisition's reading (`has_workable_target`), which the probe does not apply,
+so the counts bound the exposure from above.
+
+**What WP-A1 may move, fixed here:** battle 26 on seeds 1 and 12 (class Y, then class P if the turret's angle on
+those ticks moves a later swing); every other measured world, both goldens and the sandbox byte-identical.
+
+### The close-battle list (§6.4), fixed before WP-A1
+
+Derived from WP-A0's worlds alone by `python3 -I ~/scratch/turret-tracking-b218/scripts/close.py
+~/scratch/turret-tracking-b218/world-a0` (output identical to WP0's derivation):
+
+| Battle | Runs | Blue wins | Red wins | Draws | Minority share | Item |
+|---|---:|---:|---:|---:|---:|---|
+| 14_thor_vs_ultralisk | 20 | 5 | 15 | 0 | 0.25 | 1 |
+| 26_100_lings_vs_6_colossi | 20 | 16 | 4 | 0 | 0.20 | 1, 3 |
+| 28_100_lings_vs_10_immortals | 20 | 6 | 14 | 0 | 0.30 | `known_bug` B-192: not close (item 4) |
+| 31_15_marauders_vs_15_stalkers | 20 | 17 | 3 | 0 | 0.15 | 1, 3 |
+| 31_15_marauders_vs_15_stalkers, traced | 104 | 71 | 33 | 0 | 0.32 | 2 |
+| 33_24_marines_vs_12_zealots, traced | 68 | 67 | 1 | 0 | 0.01 | 3 (item 2 not met) |
+| 32_30_marines_vs_15_banelings | 20 | 15 | 1 | 4 | 0.05 | not close |
+
+Item 3: Q0044 and Q0103 name battles 26, 33, 38a and 38b (Q0113 names 26 and 28 only as options of an answer that
+kept the work parked); `grep -n "close\|restated" crates/sim_core/tests/fixtures/matchup_matrix.ron` finds battle
+31's claim, battle 33's comment and claim, and battle 35's claim and restatement.
+
+**The list: 14, 26, 31, 33, 35, 38a, 38b.** Battle 28 carries `known_bug` (B-192) and is never on it (A2.5). The
+list is not edited after WP-A1 starts. Of its battles, 26 and 35 carry carriers.
+
+### WP-A1: the change (`f25cf62a`)
+
+**Red first** on WP-A0's data (the tests applied, `units.ron` as on WP-A0;
+`~/scratch/b218/red/wp-a1-red-final.log`): T-A1 (`b198_turret_tracking_follows_starcraft`: `void_goliath Phase
+Disruptor` lacks the flag), T-A2 (`b218_every_weapon_that_stands_to_fire_outside_attack_orders_tracks`), T-A3 to
+T-A7 (`a_carrier_that_stands_to_fire_tracks_while_it_walks`: nothing tracked on tick 128;
+`a_walking_carrier_changes_nothing_but_its_turret`: the turrets never differ;
+`a_chasing_carrier_aims_at_another_enemy_and_never_swings_at_it`, `a_carrier_pre_aimed_while_walking_swings_no_later`,
+`a_walking_carrier_ranks_by_its_tie_break`) and the extended T-11 (`turret_tracking_follows_the_data`: one tracking
+unit shipped) fail, 8 tests. T-16, now over every tracking unit, passes there (only the tank tracks).
+
+**Green and guards.** With the two flags, `turret_tracking_tests` (21), `weapon_catalog_rules_tests` (42),
+`runtime_catalog_tests` (51), `attack_swing_snapshot_tests` (6), the `sim_core` unit tests (334), `fire_rules_tests`,
+`weapon_cadence_tests`, `hull_turning_tests`, `target_selection_tests`, `weapon_validation_tests`,
+`attack_move_simulation_tests` and `sc2_who_wins_matchup_matrix_tests` (release) pass. `crates/gate/suites.ron`
+needs no change: every test is in an existing target.
+
+**World check (A2.5).** WP-A1's worlds (binaries built from the change, assets from its tree) against WP-A0's:
+`compare.sh` finds 483 files and none differing (the matrix on the seeds of record and 1 to 16, battles 31 and 33,
+the showcase and the showcase effects on the default seed and 1 to 8). No measured world moved, so none is classed
+Y or P; no outcome moved, no close battle is restated, and battle 28 keeps its state (claim failing on both seeds of
+record, `known_bug` B-192). The four (t) ticks of battle 26 left no trace in any measured output: no later swing,
+shot or position moved (a turret angle alone, class Y, is not recorded by the traces).
+
+### WP-A2: confirmation and records
+
+**Held-out seeds (§7.4)**, run once on WP-A0's tree and on the final tree (`heldout.sh`: matrix seeds 7001 to 7016,
+battles 31 and 33 on 7001 to 7064, the showcase and the showcase effects on seeds 9 to 16): 381 files, none
+differing. They confirm the development seeds; nothing was tuned or restated from them.
+
+**Goldens and sandbox.** On the final tree (`main` `3e7f661a` merged, documents only), `golden_replay_tests` (4) and
+`sim_fixtures` `fixture_tests` (3, `DEFAULT_SANDBOX_CHECKSUM`) pass unchanged in release, as predicted (no carrier in
+either golden; the sandbox's turreted role is the tank; the encoding is unchanged). No re-record; schema stays 49.
+
+**Throughput (A2.7).** `cargo bench -p sim_core --bench throughput`, WP-A0's binary (`98daf2e6`) and the final binary
+(`f25cf62a`'s code; the later commits change documents only) interleaved, each with its tree's catalog, `perf stat -e
+instructions:u` over the whole run (`bench.sh`, `bench2.sh`). Rounds 1 and 2 ran beside another worktree's `cargo
+gate package` (host load 40 to 140 on 16 cores); rounds 3 and 4 after it ended, still on a shared host (load 17 to
+30). Ticks per second, medians of 3, rounds 1 / 2 / 3 / 4:
+
+| Scenario | WP-A0 | Final |
+|---|---:|---:|
+| 64x64, 0 units | 2340 / 1372 / 3108 / 2168 | 3118 / 2528 / 3017 / 2346 |
+| 64x64, 100 | 485 / 510 / 804 / 390 | 802 / 502 / 772 / 638 |
+| 64x64, 400 | 47 / 65 / 107 / 52 | 86 / 80 / 103 / 82 |
+| 128x128, 400 | 122 / 98 / 176 / 168 | 77 / 159 / 83 / 148 |
+| 256x256, 0 | 179 / 144 / 194 / 187 | 137 / 184 / 88 / 186 |
+| showcase_canyon, 400 | 70 / 66 / 79 / 59 | 70 / 39 / 78 / 41 |
+| 64x64, 67 casters, 400 | 93 / 187 / 196 / 151 | 170 / 187 / 197 / 182 |
+
+**Instructions:** WP-A0 269,046,008,059, 269,066,236,451, 269,066,215,571 and 269,066,243,253; final
+269,046,103,895, 269,066,354,175, 269,046,107,089 and 269,046,104,491: **−0.004 %** on the means (budget +0.5 %),
+the two binaries' counts within the run-to-run spread of either. Every scenario reads 70 ticks/s or more in final
+rounds 1 and 3 and 78 or more in round 3, the quietest; the showcase reads 39 and 41 in final rounds 2 and 4, as
+WP-A0 read 47 on 64x64/400 in its round 1: host contention, not the change, which executes the same instructions
+(no carrier in any scenario). Reported to review against A-5's floor.
