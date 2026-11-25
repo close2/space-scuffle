@@ -387,6 +387,65 @@ fn missile_validation_follows_starcraft() -> TestResult {
     Ok(())
 }
 
+/// V-17 (plan `2026-11-27-launch-and-spell-visibility` D-1): an instant weapon launches no
+/// missile, so a launch visibility it authors would be read by nothing; validation refuses it,
+/// naming the field. A visible launch reveals its attacker for at least one tick, so a missile
+/// weapon authoring a zero reveal is refused too. The first shipped weapon of each kind is edited.
+#[test]
+fn an_instant_weapon_or_a_zero_reveal_authoring_launch_visibility_is_refused() {
+    for visibility in ["Hidden", "Visible(reveal_ticks: 54)"] {
+        assert_rejected(
+            UNITS,
+            "projectile_speed: None,",
+            &format!("projectile_speed: None,\n                launch_visibility: {visibility},"),
+            "launch_visibility",
+        );
+    }
+    assert_rejected(
+        UNITS,
+        "projectile_speed: Some(",
+        "launch_visibility: Visible(reveal_ticks: 0),\n                projectile_speed: Some(",
+        "launch_visibility",
+    );
+}
+
+/// V-19 (plan `2026-11-27-launch-and-spell-visibility` §2.1 S3, S4, D-1): no shipped weapon
+/// authors a launch visibility, so every one reads the engine default of `CEffectLaunchMissile`,
+/// a snapshot (`core` EffectData:102), which no 5.0.14 weapon launch overrides (the five
+/// launch overrides of the game data are spells). Mode weapons are included.
+#[test]
+fn launch_visibility_follows_starcraft() -> TestResult {
+    assert!(
+        !UNITS.contains("launch_visibility:") && !STRUCTURES.contains("launch_visibility:"),
+        "no shipped weapon row authors the field"
+    );
+    let world = flat_world(16)?;
+    let mut missiles = 0;
+    for archetype in world.catalog.archetypes() {
+        let modes = archetype.modes.iter().flat_map(|mode| {
+            [
+                mode.ground_weapon_override.as_ref(),
+                mode.air_weapon_override.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
+            .flatten()
+        });
+        for weapon in own_weapons(archetype).chain(modes) {
+            missiles += usize::from(weapon.projectile_speed.is_some());
+            assert_eq!(
+                weapon.launch_visibility,
+                sim_types::AttackVisibility::Snapshot,
+                "{}'s {} launches as 5.0.14's missiles do",
+                archetype.slug,
+                weapon.name
+            );
+        }
+    }
+    assert!(missiles > 0, "premise: missile weapons are shipped");
+    Ok(())
+}
+
 #[test]
 fn s16_weapon_ranges_and_cadence_must_be_usable() -> Result<(), Box<dyn std::error::Error>> {
     // The first firing arc a shipped structure states, whatever its value.

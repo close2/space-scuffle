@@ -1618,6 +1618,11 @@ struct WeaponSpecDef {
     /// omitted, both checks, the engine default. Refused on an instant weapon unless default.
     #[serde(default)]
     pub(crate) missile_validation: MissileValidation,
+    /// What the weapon's missile release shows of its attacker to the player whose unit it is
+    /// aimed at (plan `2026-11-27-launch-and-spell-visibility` D-1); omitted, a snapshot, the
+    /// engine default. Refused on an instant weapon unless default.
+    #[serde(default)]
+    pub(crate) launch_visibility: AttackVisibility,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1853,6 +1858,7 @@ impl UnitArchetypeDef {
             melee: w.melee,
             attack_visibility: w.attack_visibility,
             missile_validation: w.missile_validation,
+            launch_visibility: w.launch_visibility,
         })
     }
 

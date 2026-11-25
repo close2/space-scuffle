@@ -153,6 +153,7 @@ fn dummy_weapon_spec(
         melee: false,
         attack_visibility: sim_types::AttackVisibility::Snapshot,
         missile_validation: sim_types::MissileValidation::default(),
+        launch_visibility: sim_types::AttackVisibility::Snapshot,
     }
 }
 
@@ -799,6 +800,7 @@ fn test_friendly_fire_splash_damages_allies_vs_enemy_only_splash() {
         melee: false,
         attack_visibility: sim_types::AttackVisibility::Snapshot,
         missile_validation: sim_types::MissileValidation::default(),
+        launch_visibility: sim_types::AttackVisibility::Snapshot,
     };
 
     // Case B: Weapon with friendly_fire: false

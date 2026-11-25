@@ -131,7 +131,11 @@ use std::collections::BTreeMap;
 /// Schema 50 adds the `Follow` order (tag 19, then its target and kind, 0 `Move` and 1
 /// `AcquireMove`) and each unit's follow rest, `MovementMemory::follow_rest`, after `last_seen`
 /// (plan `2026-11-26-follow-order` D-1, D-4). The number is the next free at merge.
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 50;
+/// Schema 53 adds each weapon's launch visibility (0 snapshot, 1 visible with its reveal ticks, 2
+/// hidden), `WeaponSpec::launch_visibility`, after `missile_validation` (plan
+/// `2026-11-27-launch-and-spell-visibility` D-5). The number is the next free at merge: 51 and 52
+/// are reserved for the Gated movement plan.
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 53;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.

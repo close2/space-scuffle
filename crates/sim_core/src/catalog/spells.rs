@@ -30,9 +30,9 @@ mod tests;
 use crate::error::{SimCoreError, SimResult};
 use serde::Deserialize;
 use sim_types::{
-    AbilityEffectSpec, AbilitySpec, AbilityTargetKind, AttributeBonuses, AttributeFlags,
-    DamageResponses, EffectAnchor, EffectDef, EffectId, FilterAlliance, MissileView, SimScalar,
-    StatusId, StatusSpec, StructureRule, VitalChange,
+    AbilityEffectSpec, AbilitySpec, AbilityTargetKind, AttackVisibility, AttributeBonuses,
+    AttributeFlags, DamageResponses, EffectAnchor, EffectDef, EffectId, FilterAlliance,
+    MissileView, SimScalar, StatusId, StatusSpec, StructureRule, VitalChange,
 };
 use std::collections::BTreeMap;
 use thiserror::Error;
@@ -199,6 +199,15 @@ pub enum CatalogError {
         /// The displacement.
         effect: String,
     },
+    /// A spell damage or missile is `Visible` for no tick: it would reveal its caster to no one
+    /// (plan `2026-11-27-launch-and-spell-visibility` D-1).
+    #[error("'{effect}' {field}: a visible effect reveals its caster for at least one tick")]
+    ZeroReveal {
+        /// The damage or missile node.
+        effect: String,
+        /// The refused field.
+        field: &'static str,
+    },
     /// A damage amount or attribute bonus is negative.
     #[error("damage '{effect}' is negative")]
     NegativeDamage {
@@ -306,6 +315,8 @@ pub enum EffectNode {
         view: MissileView,
         /// Run on arrival.
         impact: EffectId,
+        /// What the launch shows of the caster to the owner of the unit it is aimed at.
+        visibility: AttackVisibility,
     },
     /// Deals spell damage.
     Damage {
@@ -315,6 +326,8 @@ pub enum EffectNode {
         attribute_bonus: AttributeBonuses,
         /// Victim responses.
         responses: DamageResponses,
+        /// What the damage shows of the caster to the struck unit's owner.
+        visibility: AttackVisibility,
     },
     /// Applies a status.
     ApplyStatus {

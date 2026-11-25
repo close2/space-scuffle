@@ -41,6 +41,9 @@
 //!   with the catalog's snapshot cap lifted, so the image is held and unchanged through the
 //!   window; the running live child adds the view
 //!   writer, the fog refill and the snapshot pool (plan `2026-11-24-attacker-snapshot` P-16).
+//!   They hold a spell caster's image beside it: an enemy caster on another cliff stormed a
+//!   local unit below it, and the storm ended before the session began, so the pool holds two
+//!   images, one of each cause (plan `2026-11-27-launch-and-spell-visibility` V-25).
 //!
 //! **Invariants asserted.** Two runs of the live child at the same frame count report the same
 //! window count (the measurement is deterministic); the full app's difference equals the baseline's (the client's
@@ -268,10 +271,45 @@ fn hold_attack_snapshot(simulation: &mut sim_core::SimWorld) -> TestResult {
                 .get_mut(&staged.victim)
                 .ok_or("the struck unit lives")?
                 .is_invulnerable = true;
-            return Ok(());
+            return hold_spell_image(simulation);
         }
     }
     Err("the enemy on the cliff never struck unseen".into())
+}
+
+/// Adds a spell caster's image to the held one (plan `2026-11-27-launch-and-spell-visibility`
+/// V-25): an enemy caster on another cliff storms a local unit below it, and ticks run until the
+/// storm has ended, so its `Hidden` pulses are over and the image is held unchanged.
+fn hold_spell_image(simulation: &mut sim_core::SimWorld) -> TestResult {
+    let staged = attack_snapshot_stage::stage_caster(simulation);
+    let step = |simulation: &mut sim_core::SimWorld| {
+        simulation.step(&sim_types::TickBundle {
+            tick: sim_types::Tick(simulation.current_tick),
+            commands: Vec::new(),
+            state_checksum: None,
+        });
+    };
+    step(simulation);
+    attack_snapshot_stage::cast_storm(simulation, &staged);
+    for _ in 0..400 {
+        step(simulation);
+        let effects = simulation.effects();
+        if effects.persistents().is_empty() && effects.statuses_of(staged.victim).is_empty() {
+            let mut view = sim_types::PlayerView::default();
+            simulation.write_player_view(attack_snapshot_stage::LOCAL_PLAYER, &mut view);
+            return if view
+                .attack_snapshots
+                .iter()
+                .any(|entry| entry.entity == staged.attacker)
+                && view.attack_snapshots.len() == 2
+            {
+                Ok(())
+            } else {
+                Err(format!("two held images, got {:?}", view.attack_snapshots).into())
+            };
+        }
+    }
+    Err("the storm ended within 400 ticks".into())
 }
 
 /// The local player's view, as the HUD keeps it, for the snapshot pool's fog.
@@ -1017,8 +1055,8 @@ fn run_child(variant: Variant) -> TestResult {
     Ok(())
 }
 
-/// The running live child's check after its window: the fog lists one attack snapshot and the
-/// pool draws it on one visible entity.
+/// The running live child's check after its window: the fog lists the two held images (a strike's
+/// and a spell caster's) and the pool draws each on one visible entity.
 fn check_held_snapshot(app: &mut App) -> TestResult {
     let listed = app
         .world()
@@ -1031,9 +1069,10 @@ fn check_held_snapshot(app: &mut App) -> TestResult {
         .iter(world)
         .filter(|visibility| **visibility != Visibility::Hidden)
         .count();
-    if (listed, shown) != (1, 1) {
+    // A strike's image and a spell caster's (plan `2026-11-27-launch-and-spell-visibility` V-25).
+    if (listed, shown) != (2, 2) {
         return Err(format!(
-            "the window must hold one attack snapshot, drawn once: {listed} listed, {shown} shown"
+            "the window must hold two attack images, each drawn once: {listed} listed, {shown} shown"
         )
         .into());
     }

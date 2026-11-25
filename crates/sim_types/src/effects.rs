@@ -19,11 +19,14 @@
 //! - Times are 25 Hz ticks as fixed-point values, distances world units, speeds world units per
 //!   tick. No float appears in an authored rule value.
 //! - Omitted fields take the neutral default, so a filter written `()` admits every unit.
+//! - Every `Damage` and `LaunchMissile` node carries its `Visibility`, what it shows of its
+//!   caster to the player it strikes or is aimed at, with the engine default `Snapshot` (plan
+//!   `2026-11-27-launch-and-spell-visibility` D-1).
 
 use crate::ids::{EntityId, PlayerId};
 use crate::math::{SimScalar, SimVec2};
 use crate::presentation::{AbilitySource, StatusKind};
-use crate::weapon::Attribute;
+use crate::weapon::{AttackVisibility, Attribute};
 use serde::{Deserialize, Serialize};
 
 /// Dense identity of one node of the flattened effect arena, in catalog order (named nodes in
@@ -225,6 +228,11 @@ pub struct LaunchMissileDef {
     pub view: MissileView,
     /// Node run at the target on arrival.
     pub impact: Box<EffectNodeDef>,
+    /// What the launch shows of the caster to the owner of the unit the missile is aimed at
+    /// (`CEffectLaunchMissile` `Visibility`); omitted, the engine default, a snapshot (`core`
+    /// EffectData:102). A missile aimed at a point is aimed at no unit and shows nothing.
+    #[serde(default)]
+    pub visibility: AttackVisibility,
     /// Unit validator checked before the node runs.
     #[serde(default)]
     pub require: Option<TargetFilter>,
@@ -242,6 +250,11 @@ pub struct DamageDef {
     /// The victim's responses.
     #[serde(default)]
     pub responses: DamageResponses,
+    /// What the damage shows of the caster to the struck unit's owner (`CEffectDamage`
+    /// `Visibility`); omitted, the engine default, a snapshot (`core` EffectData:62). A damage of
+    /// 0 applies it too.
+    #[serde(default)]
+    pub visibility: AttackVisibility,
     /// Unit validator checked before the node runs.
     #[serde(default)]
     pub require: Option<TargetFilter>,
@@ -525,6 +538,30 @@ mod tests {
         assert_eq!(spec.move_speed_factor, SimScalar::ONE);
         assert_eq!(spec.range_floor, default_range_floor());
         assert!(!spec.stun && !spec.reveal && spec.period_ticks.is_none());
+    }
+
+    /// Plan `2026-11-27-launch-and-spell-visibility` D-1: a spell damage or missile that leaves
+    /// its visibility out reads the engine default of `CEffectDamage` and `CEffectLaunchMissile`,
+    /// a snapshot (`core` EffectData:62, :102); an authored value reads as written.
+    #[test]
+    fn spell_visibility_defaults_to_a_snapshot_and_reads_its_cases(
+    ) -> Result<(), ron::error::SpannedError> {
+        use crate::weapon::AttackVisibility;
+        let damage: DamageDef = ron::from_str("(amount: 1.0)")?;
+        assert_eq!(damage.visibility, AttackVisibility::Snapshot);
+        let damage: DamageDef = ron::from_str("(amount: 1.0, visibility: Hidden)")?;
+        assert_eq!(damage.visibility, AttackVisibility::Hidden);
+        let missile = |visibility: &str| {
+            ron::from_str::<LaunchMissileDef>(&format!(
+                r#"(to: TargetUnit, speed: 1.0, impact: Use("hit"){visibility})"#
+            ))
+        };
+        assert_eq!(missile("")?.visibility, AttackVisibility::Snapshot);
+        assert_eq!(
+            missile(", visibility: Visible(reveal_ticks: 54)")?.visibility,
+            AttackVisibility::Visible { reveal_ticks: 54 }
+        );
+        Ok(())
     }
 
     #[test]

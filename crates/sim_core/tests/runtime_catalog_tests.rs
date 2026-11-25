@@ -4107,3 +4107,93 @@ fn turret_tracking_follows_the_data() -> TestResult {
     bundle.finish()?;
     Ok(())
 }
+
+/// V-20 (plan `2026-11-27-launch-and-spell-visibility` D-1): a spell damage's visibility is read
+/// from `ability_effects.ron` at run time. Under the shipped file the storm's first hit on a unit
+/// whose player does not see the caster lists the caster to that player; a copied file authoring
+/// `visibility: Hidden` on that first hit lists nothing, in the same binary.
+#[test]
+fn an_edited_spell_visibility_changes_the_storms_image_without_recompiling() -> TestResult {
+    let bundle = Bundle::new("spell-visibility")?;
+    let effects = std::fs::read_to_string(bundle.directory.join(FILES[5]))?;
+    let first_hit = "responses: (acquire: true, flee: true),         // ResponseFlags Acquire, Flee, :2093-2094";
+    assert_eq!(
+        effects.matches(first_hit).count(),
+        1,
+        "premise: the storm's first hit"
+    );
+    std::fs::write(
+        bundle.directory.join(FILES[5]),
+        effects.replace(
+            first_hit,
+            &format!("{first_hit}\n                visibility: Hidden,"),
+        ),
+    )?;
+    let mut listed = Vec::new();
+    for catalogs in [
+        RuntimeCatalogs::load_from_directory(catalog_directory())?,
+        bundle.load()?,
+    ] {
+        let map = GameMap::new(48, 16, MapCell::default_ground(CliffLevel(0)))?;
+        let mut world = SimWorld::with_catalogs(map, 7, catalogs.units, catalogs.upgrades)?;
+        world.catalog.set_attack_snapshot_cap(None);
+        let root = world
+            .catalog
+            .spells()
+            .effect_id("psionic_storm")
+            .ok_or("the shipped storm")?;
+        let (caster_kind, _) = world
+            .catalog
+            .archetypes()
+            .find_map(|archetype| {
+                let index = archetype.abilities.iter().position(|ability| {
+                    matches!(&ability.effect, sim_types::AbilityEffectSpec::Effect(key) if key == "psionic_storm")
+                })?;
+                Some((archetype.unit_type_id, index))
+            })
+            .ok_or("a shipped storm caster")?;
+        let victim_kind = world
+            .catalog
+            .archetypes()
+            .find(|archetype| {
+                archetype.max_hp > SimScalar::from_i32(30)
+                    && archetype.max_speed > SimScalar::ZERO
+                    && archetype.weapon.is_none()
+                    && archetype.ground_weapon.is_none()
+                    && archetype.air_weapon.is_none()
+                    && matches!(archetype.shape, ShapeKind::UnitSphere)
+            })
+            .ok_or("an unarmed unit")?
+            .unit_type_id;
+        // Far apart: neither sees the other.
+        let caster = world.spawn_unit(caster_kind, PlayerId(0), SimVec2::from_i32(44, 8))?;
+        let victim = world.spawn_unit(victim_kind, PlayerId(1), SimVec2::from_i32(4, 8))?;
+        world.step(&sim_types::TickBundle {
+            tick: sim_types::Tick(world.current_tick),
+            commands: Vec::new(),
+            state_checksum: None,
+        });
+        let position = world.entities[&caster].position;
+        world.run_effect(
+            root,
+            sim_types::EffectContext {
+                owner: PlayerId(0),
+                caster: Some(caster),
+                ability: sim_types::AbilitySource::default(),
+                origin: position,
+                source_point: position,
+                target: sim_types::EffectTarget::Point(world.entities[&victim].position),
+            },
+        );
+        let mut view = sim_types::PlayerView::default();
+        world.write_player_view(PlayerId(1), &mut view);
+        listed.push(view.attack_snapshots.len());
+    }
+    assert_eq!(
+        listed,
+        [1, 0],
+        "the shipped first hit lists the caster, the edited one nothing"
+    );
+    bundle.finish()?;
+    Ok(())
+}
