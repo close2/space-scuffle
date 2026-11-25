@@ -121,6 +121,7 @@ fn test_render_snapshot_full_serialization() {
                 range_reduced: i == 8,
                 revealed: i == 9,
             },
+            construction_hp_ratio: None,
             barrier_ratio: if i == 5 { 0.4 } else { 0.0 },
             housed: false,
         });
@@ -159,6 +160,7 @@ fn test_render_snapshot_full_serialization() {
         speed_boosted: false,
         stance: StanceView::default(),
         status: StatusFlags::default(),
+        construction_hp_ratio: None,
         barrier_ratio: 0.0,
         housed: false,
     });
@@ -195,6 +197,7 @@ fn test_render_snapshot_full_serialization() {
         speed_boosted: false,
         stance: StanceView::default(),
         status: StatusFlags::default(),
+        construction_hp_ratio: None,
         barrier_ratio: 0.0,
         housed: false,
     });
@@ -463,6 +466,7 @@ fn attack_swing_round_trips_and_the_float_progress_lane_is_gone() {
         speed_boosted: false,
         stance: StanceView::default(),
         status: StatusFlags::default(),
+        construction_hp_ratio: None,
         barrier_ratio: 0.0,
         housed: false,
     };
@@ -510,6 +514,7 @@ fn plain_bubble() -> BubbleRenderInstance {
         speed_boosted: false,
         stance: StanceView::default(),
         status: StatusFlags::default(),
+        construction_hp_ratio: None,
         barrier_ratio: 0.0,
         housed: false,
     }
@@ -526,9 +531,13 @@ fn a_bubble_written_before_the_effect_fields_still_reads() {
             ",status:(overclock:false,dash:false,slowed:false,barrier_up:false,barrier_hit:false)",
             "",
         )
-        .replace(",barrier_ratio:0.0", "");
+        .replace(",barrier_ratio:0.0", "")
+        .replace(",construction_hp_ratio:None", "");
     assert!(
-        !old.contains("stance") && !old.contains("status") && !old.contains("barrier_ratio"),
+        !old.contains("stance")
+            && !old.contains("status")
+            && !old.contains("barrier_ratio")
+            && !old.contains("construction_hp_ratio"),
         "every new field was removed from {old}"
     );
     for (flag, concealment) in [("false", Concealment::None), ("true", Concealment::Cloaked)] {

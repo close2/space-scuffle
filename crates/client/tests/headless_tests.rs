@@ -4,6 +4,8 @@
 //! - Uniform memory packing is strictly 192 bytes and 16-byte aligned.
 //! - RTS Camera perspective pitch is 58°, distance clamps to [3.0, 48.0], and bookmarks round-trip.
 //! - Visual Lab state transitions properly reflect health thresholds (cracks < 75%, brown-out < 35%).
+//! - A foundation under construction packs its damage-look ratio (health over health built), not
+//!   its health share, into the dome uniform (B-210).
 //! - Headless 60-frame simulation synchronization steps deterministically without panics.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::assert_is_empty)]
@@ -64,37 +66,7 @@ fn test_bubble_uniform_packing() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(size_of::<BubbleUniformGpu>(), 192);
     assert_eq!(align_of::<BubbleUniformGpu>(), 16);
 
-    let instance = BubbleRenderInstance {
-        entity_id: EntityId(42),
-        shape: ShapeKind::UnitSphere,
-        silhouette: SilhouetteClass::LightProngs,
-        unit_type: UnitTypeId(2),
-        owner: PlayerId(1),
-        world_pos: [10.0, 20.0, 1.5],
-        ground_z: 0.0,
-        radius: 0.75,
-        velocity: [1.2, -0.4],
-        heading_angle_rad: 1.25,
-        aim_angle_rad: -0.5,
-        is_attacking: true,
-        weapon_visual: WeaponVisualKind::Hitscan,
-        attack_target_pos: None,
-        anim_state: AnimState::Attack,
-        attack_swing: None,
-        hp_ratio: 0.65,
-        shield_ratio: 0.8,
-        shield_hit_flash: 0.2,
-        hull_hit_angle_rad: 0.75,
-        hull_hit_flash: 0.4,
-        build_or_queue_progress: None,
-        selected: true,
-        concealment: sim_types::Concealment::None,
-        speed_boosted: true,
-        stance: sim_types::StanceView::default(),
-        status: sim_types::StatusFlags::default(),
-        barrier_ratio: 0.0,
-        housed: false,
-    };
+    let instance = sample_instance();
 
     let definition = client::runtime_battle::BattleDefinition::load(
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets"),
@@ -146,6 +118,85 @@ fn test_bubble_uniform_packing() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(packed.flipbook_lanes(), lanes);
     assert_eq!((packed.frame_base, packed.frame_count), (24, 10));
     assert_eq!(packed.anim_period, 4096);
+    Ok(())
+}
+
+/// A unit sphere record with every packed field set to a distinct value.
+fn sample_instance() -> BubbleRenderInstance {
+    BubbleRenderInstance {
+        entity_id: EntityId(42),
+        shape: ShapeKind::UnitSphere,
+        silhouette: SilhouetteClass::LightProngs,
+        unit_type: UnitTypeId(2),
+        owner: PlayerId(1),
+        world_pos: [10.0, 20.0, 1.5],
+        ground_z: 0.0,
+        radius: 0.75,
+        velocity: [1.2, -0.4],
+        heading_angle_rad: 1.25,
+        aim_angle_rad: -0.5,
+        is_attacking: true,
+        weapon_visual: WeaponVisualKind::Hitscan,
+        attack_target_pos: None,
+        anim_state: AnimState::Attack,
+        attack_swing: None,
+        hp_ratio: 0.65,
+        shield_ratio: 0.8,
+        shield_hit_flash: 0.2,
+        hull_hit_angle_rad: 0.75,
+        hull_hit_flash: 0.4,
+        build_or_queue_progress: None,
+        selected: true,
+        concealment: sim_types::Concealment::None,
+        speed_boosted: true,
+        stance: sim_types::StanceView::default(),
+        status: sim_types::StatusFlags::default(),
+        construction_hp_ratio: None,
+        barrier_ratio: 0.0,
+        housed: false,
+    }
+}
+
+/// The dome's damage look reads damage, not missing build progress (B-210).
+#[test]
+fn a_foundation_packs_damage_not_build_progress() -> Result<(), Box<dyn std::error::Error>> {
+    let instance = sample_instance();
+    let definition = client::runtime_battle::BattleDefinition::load(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets"),
+        client::runtime_battle::DEFAULT_BATTLE_SCENARIO.as_ref(),
+    )?;
+    // A foundation at a
+    // fifth of its maximum health but unhurt for what it has built packs a pristine ratio, and a
+    // hurt one packs its health over the health built so far.
+    let foundation = BubbleRenderInstance {
+        shape: ShapeKind::BuildingDome {
+            footprint_w: 3,
+            footprint_h: 3,
+            shape: sim_types::FootprintShape::Box {
+                half_width_q: 6,
+                half_height_q: 6,
+                chamfer_q: 2,
+            },
+        },
+        anim_state: AnimState::Constructing,
+        build_or_queue_progress: Some(0.1),
+        hp_ratio: 0.19,
+        construction_hp_ratio: Some(1.0),
+        ..instance.clone()
+    };
+    let style = definition.palette.resolve(instance.owner)?;
+    let lanes = client::bubble_shader::still_frame_lanes(None, AnimState::Constructing);
+    let packed = BubbleUniformGpu::from_instance(&foundation, style, lanes);
+    assert_eq!(
+        packed.hp_ratio, 1.0,
+        "an unhurt foundation draws no damage look"
+    );
+    let hurt = BubbleRenderInstance {
+        construction_hp_ratio: Some(0.25),
+        ..foundation
+    };
+    let packed = BubbleUniformGpu::from_instance(&hurt, style, lanes);
+    assert_eq!(packed.hp_ratio, 0.25, "a hurt foundation draws its damage");
     Ok(())
 }
 

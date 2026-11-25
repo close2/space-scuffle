@@ -108,7 +108,9 @@ mod gpu_layout {
         /// Flipbook clock time at which the bubble's elapsed animation time is zero, in clock
         /// units of 1/1024 tick (`FlipbookLanes::origin`).
         pub anim_origin: u32,
-        /// Health ratio [0.0, 1.0] (cracks appear < 0.75, critical brown-out < 0.35).
+        /// Health ratio [0.0, 1.0] the damage look reads (cracks appear < 0.75, critical
+        /// brown-out < 0.35): `BubbleRenderInstance::damage_look_ratio`, so a foundation's
+        /// missing build progress is not drawn as damage (B-210).
         pub hp_ratio: f32,
         /// Shield energy ratio [0.0, 1.0].
         pub shield_ratio: f32,
@@ -401,7 +403,7 @@ impl BubbleUniformGpu {
             aim_angle_rad: instance.aim_angle_rad,
             is_attacking: u32::from(instance.is_attacking),
             anim_state: instance.anim_state as u32,
-            hp_ratio: instance.hp_ratio,
+            hp_ratio: instance.damage_look_ratio(),
             shield_ratio: instance.shield_ratio,
             shield_hit_flash: instance.shield_hit_flash,
             hull_hit_angle_rad: instance.hull_hit_angle_rad,

@@ -602,6 +602,7 @@ fn beam_bubble(id: u32, unit: UnitTypeId, x: f32, y: f32) -> BubbleRenderInstanc
         speed_boosted: false,
         stance: StanceView::default(),
         status: StatusFlags::default(),
+        construction_hp_ratio: None,
         barrier_ratio: 1.0,
         housed: false,
     }

@@ -47,8 +47,16 @@ pub struct BubbleRenderInstance {
     /// is ready again; `None` while no swing is under way. Published whatever `anim_state` says,
     /// so a client can keep timing an attack clip through the cooldown part of the cycle.
     pub attack_swing: Option<AttackSwing>,
-    /// Health ratio (0.0..=1.0) driving spiderweb glass cracks and CRT glitch shader.
+    /// Health ratio (0.0..=1.0): current health over maximum health. The health bar and the HUD
+    /// read it; the dome's damage look reads [`Self::damage_look_ratio`] instead.
     pub hp_ratio: f32,
+    /// On a structure under construction, its health relative to the health its construction
+    /// has built so far, capped at 1 (0.0..=1.0); `None` on anything not under construction.
+    /// A foundation's health starts at a share of its maximum and grows with every worked tick,
+    /// so its `hp_ratio` measures missing build progress as well as damage; this measures damage
+    /// alone (B-210). Older records read it as `None`.
+    #[serde(default)]
+    pub construction_hp_ratio: Option<f32>,
     /// Shield energy ratio (0.0..=1.0) driving outer energy sheen.
     pub shield_ratio: f32,
     /// Decaying ripple intensity (0.0..=1.0) at shield impact point.
@@ -88,6 +96,16 @@ pub struct BubbleRenderInstance {
     /// as `false`.
     #[serde(default)]
     pub housed: bool,
+}
+
+impl BubbleRenderInstance {
+    /// The health ratio (0.0..=1.0) the dome's damage look reads (glass cracks, scanlines and
+    /// the critical brown-out): [`Self::construction_hp_ratio`] under construction, so a
+    /// foundation that is building and unhurt shows no damage, and [`Self::hp_ratio`] otherwise.
+    #[must_use]
+    pub fn damage_look_ratio(&self) -> f32 {
+        self.construction_hp_ratio.unwrap_or(self.hp_ratio)
+    }
 }
 
 /// Where an entity stands in one attack cycle, in whole simulation ticks (25 Hz).
@@ -555,6 +573,7 @@ mod tests {
             speed_boosted: false,
             stance: StanceView::default(),
             status: StatusFlags::default(),
+            construction_hp_ratio: None,
             barrier_ratio: 0.0,
             housed: false,
         };

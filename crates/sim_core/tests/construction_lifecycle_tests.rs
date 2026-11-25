@@ -588,3 +588,75 @@ fn snapshots_publish_construction_progress() -> TestResult {
     assert_eq!(bubble.anim_state, AnimState::Idle);
     Ok(())
 }
+
+/// The published record of `id` in a fresh snapshot of `world`.
+fn published(
+    world: &mut SimWorld,
+    id: EntityId,
+) -> Result<sim_types::BubbleRenderInstance, Box<dyn Error>> {
+    Ok(world
+        .build_render_snapshot()
+        .bubbles
+        .into_iter()
+        .find(|bubble| bubble.entity_id == id)
+        .ok_or("the structure is published")?)
+}
+
+/// B-210: the dome's damage look reads damage, not missing build progress. A foundation at a
+/// tenth of its build and unhurt presents no damage; hurt, it presents its health over the health
+/// built so far; once complete, its look reads its health over its maximum again. The health bar's
+/// `hp_ratio` keeps reporting real health throughout.
+#[test]
+fn the_damage_look_of_a_foundation_reads_damage_not_build_progress() -> TestResult {
+    let (mut world, worker, dome) = fixture()?;
+    order(&mut world, ME, vec![worker], build(dome, 14, 12));
+    let site = walk_until_laid(&mut world, dome)?;
+    let total = world.catalog.get(dome)?.build_time_ticks;
+    idle(&mut world, total / 10);
+
+    let unhurt = published(&mut world, site)?;
+    let progress = unhurt
+        .build_or_queue_progress
+        .ok_or("progress is published")?;
+    assert!((0.05..=0.15).contains(&progress), "{progress}");
+    assert!(
+        unhurt.hp_ratio < 0.35,
+        "the health bar shows real health, well below the critical share: {}",
+        unhurt.hp_ratio
+    );
+    assert_eq!(unhurt.construction_hp_ratio, Some(1.0));
+    assert_eq!(
+        unhurt.damage_look_ratio(),
+        1.0,
+        "building and unhurt: no damage look"
+    );
+
+    let built = world.entities[&site].hp;
+    world.entities.get_mut(&site).ok_or("site")?.hp = built / SimScalar::from_i32(4);
+    let hurt = published(&mut world, site)?;
+    assert!(
+        (hurt.damage_look_ratio() - 0.25).abs() < 1e-3,
+        "a quarter of the health built so far: {}",
+        hurt.damage_look_ratio()
+    );
+    assert!(
+        (hurt.hp_ratio - unhurt.hp_ratio / 4.0).abs() < 1e-3,
+        "the health bar still reads health over maximum: {}",
+        hurt.hp_ratio
+    );
+
+    world.entities.get_mut(&site).ok_or("site")?.hp = built;
+    idle(&mut world, total);
+    assert!(world.entities[&site].is_completed);
+    let max_hp = world.entities[&site].max_hp;
+    world.entities.get_mut(&site).ok_or("site")?.hp = max_hp / SimScalar::from_i32(2);
+    let complete = published(&mut world, site)?;
+    assert_eq!(complete.construction_hp_ratio, None);
+    assert_eq!(complete.damage_look_ratio(), complete.hp_ratio);
+    assert!(
+        (complete.hp_ratio - 0.5).abs() < 1e-3,
+        "{}",
+        complete.hp_ratio
+    );
+    Ok(())
+}
