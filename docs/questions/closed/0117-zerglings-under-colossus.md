@@ -45,3 +45,9 @@ Recommendation: (b) if friend crowding is to be fixed soon anyway; (a) if you pr
 ## Answer
 
 - **Option (b): Keep parked for now.** Fix friend crowding first (`Q0118` / `Q0120` movement redesign), then switch on `B-209` (ground units walking under Colossi) cleanly without introducing a 2× friendly-overlap regression on `main` beforehand.
+
+## Resolution
+
+Answered (b): the colossus data change (B-209) stays parked on branch `collision-classes-wp3-wip` (`42761cf2`) until
+friend crowding is fixed (Q0118 (a), plan `2026-11-26-friend-crowd-overlap`) and the movement redesign (Q0120 (a)) has
+landed; it is then re-measured and switched on.
