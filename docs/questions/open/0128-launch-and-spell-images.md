@@ -32,3 +32,6 @@ missile launch makes its caster targetable.
 
 ## Answer
 
+- **1(a):** The player whose unit the missile is aimed at gets the snapshot when the missile launches (causally clean — splash victims are not yet determined at launch time — and matches StarCraft II).
+- **2(a):** For a ground-targeted spell missile (e.g. Fungal Growth), nobody gets a snapshot on launch; affected players get the snapshot when it lands and hits their units (avoiding revealing a missed cast in fog).
+- **3(a):** Same unified rule as `Q0112`: the snapshot stays until you see the spot or the caster, capped at **1 second** after the last launch, hit, or pulse that refreshed it.
