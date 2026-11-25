@@ -179,3 +179,48 @@ fresh target directory (`proofcopy.sh wp1-latent d52957e3 unhash.py`), reproduce
 goldens and `DEFAULT_SANDBOX_CHECKSUM` on native debug and release and on `wasm32-wasip1` release and debug: 8 of 8
 runs green. Stop rule 1 holds. The committed tree hashes the field at schema 53, so its golden and sandbox tests fail
 by design until WP4 re-records them.
+
+## WP2: the rule (`99bf0be7`)
+
+Red first on WP1's tree (`~/scratch/launch-spell-visibility/red/wp2-red-integration.log`,
+`wp2-red-unit-runtime.log`): of V-1 to V-16 in `launch_and_spell_visibility_tests.rs`, 11 fail (every new image or
+reveal is missing: V-1, V-4, V-6, V-7, V-8, V-9, V-10, V-11, V-12, V-14, V-16); V-2, V-3, V-5, V-13 and V-15 pass
+before and after, as the guards of what the rule must not record. V-20 (`runtime_catalog_tests.rs`) fails (`[0, 0]`
+for `[1, 0]`), V-22 (`world/snapshot.rs`) fails its premise (no image of the Fungal caster). V-21 was written
+against the weapon-hit path and passed there (`wp2-v21-old-path.log`): its table is the old behaviour; after the
+change the same table holds for every cause (strike, launch, spell). All pass after the change, with the effect
+engine's valgrind count (`effect_tree_allocation_tests`) still zero.
+
+**World check (§6.5).** WP2's worlds against WP1's: 483 files, none differing; `matrixdiff.py` lists nothing. No first
+difference exists, so no world is classed R or other; no outcome moved (stop rules 2 and 4 hold).
+
+**Class P (§6.6), measured.** A scratch view probe (`~/scratch/launch-spell-visibility/viewprobe/`) logs every
+player's listed images whenever they change, on the showcase and the showcase effects scenario (default seed and
+1–8, 6,000 ticks), on WP1's and WP2's trees. Their route outputs are byte-identical; the image lists differ only by
+launch images for player 0, exactly at the ticks probe (l) predicted in WP0: seed 1 ticks 568, 605, 640, 678; seed 7
+ticks 578, 613; seed 8 ticks 581, 617, 653 (each a `rhino_beetle` release, its impact refreshing the image 4 ticks
+later as on `main`). The default seed, which the `battle` take renders, and every showcase effects world list the
+same images as before.
+
+**Deviations.** V-22 extends P-9 as a unit test in `world/snapshot.rs`, since clearing images needs the crate's
+test hook; V-15's reveal half (a dead caster raises no reveal) is V-21's dead-attacker row for every cause, since a
+dead caster is reaped at the end of its tick; a loaded caster is likewise covered by V-21's hidden-attacker row
+(`transport_carrier` is crate-private). `crates/gate/suites.ron` needs no entry: the new file is a `fast` target
+(unlisted targets are fast), selected by every `sim_core` change and by the catalog rule.
+
+## WP3: client verification
+
+No `client/src` file changes (stop rule 7 holds). Red: with WP2's three new calls removed from a scratch state of
+the tree, V-23 and V-24 (`battle_fog_tests.rs`: `a_launch_image_is_drawn_by_the_pool_before_its_missile_lands`,
+`a_spell_casters_image_is_drawn_by_the_pool`, `a_launch_image_is_never_picked_or_targeted`) and V-25's spell case
+fail (`~/scratch/launch-spell-visibility/red/wp3-red.log`); V-25's launch case was then made to prove its image is the
+release's (listed while the missile flies). Green on WP2's tree: the five new client tests, the existing snapshot
+tests (P-13 to P-16), and `sync_allocation_count_tests` under valgrind (10 of 10), whose running children now hold
+two images, a strike's and a spell caster's, and count no allocation in the live battle sync.
+
+**Deviations.** No shipped spellcaster has flipbook media yet, and the client refuses to present a unit without it
+(`cannot read media .../cerebral_elder.flipbook.ron`), so the stage's storm is cast with a soldier that has media as
+the walk's caster: the image shows the caster whatever made it (D-3), so the pool is tested the same. V-25's launch
+case warms up 400 ticks after the attacker is ordered to hold: with the default 30, one bubble material was modified
+once early in the window (a live unit settling after its target became invulnerable; the listed image was unchanged
+throughout, so it is not the pool's).
