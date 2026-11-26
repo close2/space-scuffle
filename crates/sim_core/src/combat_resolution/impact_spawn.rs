@@ -133,7 +133,7 @@ impl SimWorld {
             let extra = if life.random_extra_ticks == 0 {
                 0
             } else {
-                self.rng.gen_range(0..=life.random_extra_ticks)
+                self.rng.gen_range::<u16, _>(0..=life.random_extra_ticks)
             };
             life.ticks.saturating_add(extra)
         });

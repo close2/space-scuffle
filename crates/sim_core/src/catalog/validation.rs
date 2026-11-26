@@ -5092,13 +5092,23 @@ mod missile_mover_tests {
     #[test]
     fn a_well_formed_list_is_accepted_and_an_omitted_one_reads_empty() -> TestResult {
         assert_eq!(refused(|_| {})?, "accepted");
-        let file: CatalogFile =
-            ron::from_str(include_str!("../../../../assets/catalog/units.ron"))?;
+        let text = include_str!("../../../../assets/catalog/units.ron");
+        let file: CatalogFile = ron::from_str(text)?;
+        // A row whose text authors no movers: its block, from its slug to the next, never names
+        // the field (plan `2026-11-28-broodlings` WP2 gave the first missile row movers).
+        let authors_none = |slug: &str| {
+            let start = text.find(&format!("slug: \"{slug}\"")).unwrap_or(0);
+            let rest = &text[start + 1..];
+            let block = rest.find("slug: \"").map_or(rest, |end| &rest[..end]);
+            !block.contains("missile_movers")
+        };
         let unit = file
             .units
             .into_iter()
-            .find(|unit| unit.ground_weapon.as_ref().is_some_and(missile))
-            .ok_or("a shipped missile ground weapon")?;
+            .find(|unit| {
+                unit.ground_weapon.as_ref().is_some_and(missile) && authors_none(&unit.slug)
+            })
+            .ok_or("a shipped missile ground weapon that authors no movers")?;
         let weapon = unit.ground_weapon.as_ref().ok_or("picked above")?;
         assert_eq!(weapon.missile_movers.len(), 0, "omitted reads empty");
         Ok(())
