@@ -108,6 +108,7 @@ fn custom_projectile_weapon(
         missile_validation: sim_types::MissileValidation::default(),
         launch_visibility: sim_types::AttackVisibility::Snapshot,
         missile_movers: Vec::new(),
+        magazine_launch: None,
     }
 }
 

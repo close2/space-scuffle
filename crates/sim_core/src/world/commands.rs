@@ -16,6 +16,10 @@
 //! - No command reaches a unit inside a structure (plan `2026-11-24-hidden-harvesters` D-8,
 //!   Q0108's default (a)): such a recipient is dropped from the command, and a command left with
 //!   no recipient is refused with `GameCommandError::HousedRecipient`.
+//! - No command reaches a unit whose archetype is not `selectable`, and no order names a target
+//!   whose archetype is not `order_targetable` (plan `2026-11-28-carrier-interceptors` D-8): the
+//!   first is dropped like a housed unit (`GameCommandError::UnselectableRecipient` when none is
+//!   left), the second refused with `GameCommandError::UntargetableTarget`.
 
 use crate::economy::{GameCommandError, GameCommandOutcome};
 use crate::movement::{MovementInvariant, MovementOutcome};
@@ -54,12 +58,54 @@ impl SimWorld {
             });
             return;
         }
+        if let Some(error) = self.untargetable_order_error(cmd) {
+            self.economy.outcomes.push(GameCommandOutcome {
+                tick: Tick(self.current_tick),
+                command_index,
+                player: cmd.player_id,
+                result: Err(error),
+            });
+            return;
+        }
         self.release_tracking_for(cmd);
-        if cmd.entities.iter().any(|id| self.is_housed_unit(*id)) {
+        if cmd.entities.iter().any(|id| self.is_dropped_recipient(*id)) {
             self.dispatch_without_housed(command_index, cmd);
             return;
         }
         self.route_command(command_index, cmd);
+    }
+
+    /// The refusal of an order whose target entity cannot be the target of a player's order
+    /// (plan `2026-11-28-carrier-interceptors` D-8): an attack, a follow, a load or a targeted
+    /// cast at a unit whose archetype is not `order_targetable`. Automatic targeting does not
+    /// read the flag.
+    fn untargetable_order_error(&self, cmd: &PlayerCommand) -> Option<GameCommandError> {
+        let (UnitOrder::AttackTarget { target, .. }
+        | UnitOrder::Follow { target, .. }
+        | UnitOrder::Load { carrier: target }
+        | UnitOrder::CastAbility {
+            target_entity: Some(target),
+            ..
+        }) = cmd.order
+        else {
+            return None;
+        };
+        let entity = self.entities.get(&target)?;
+        let arch = self.catalog.get(entity.unit_type_id).ok()?;
+        (!arch.order_targetable).then_some(GameCommandError::UntargetableTarget(target))
+    }
+
+    /// Whether `id` is dropped from every command that names it: a unit inside a structure
+    /// (plan `2026-11-24-hidden-harvesters` D-8) or a unit whose archetype is not `selectable`
+    /// (plan `2026-11-28-carrier-interceptors` D-8).
+    fn is_dropped_recipient(&self, id: EntityId) -> bool {
+        self.entities.get(&id).is_some_and(|entity| {
+            entity.is_housed()
+                || self
+                    .catalog
+                    .get(entity.unit_type_id)
+                    .is_ok_and(|arch| !arch.selectable)
+        })
     }
 
     /// Forgets the tracked enemy of every recipient of `cmd` whose orders it replaces: a unit of
@@ -108,15 +154,20 @@ impl SimWorld {
             .entities
             .iter()
             .copied()
-            .filter(|id| !self.is_housed_unit(*id))
+            .filter(|id| !self.is_dropped_recipient(*id))
             .collect();
         if entities.is_empty() {
             if let Some(&first) = cmd.entities.first() {
+                let error = if self.is_housed_unit(first) {
+                    GameCommandError::HousedRecipient(first)
+                } else {
+                    GameCommandError::UnselectableRecipient(first)
+                };
                 self.economy.outcomes.push(GameCommandOutcome {
                     tick: Tick(self.current_tick),
                     command_index,
                     player: cmd.player_id,
-                    result: Err(GameCommandError::HousedRecipient(first)),
+                    result: Err(error),
                 });
             }
             return;

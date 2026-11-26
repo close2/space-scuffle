@@ -211,10 +211,14 @@ impl HeldBeams {
     /// fields at most [`sim_core::production::STANDARD_SUPPLY_CAP`] supply, so the most beams
     /// any one beam unit type can hold is `MAX_PLAYERS × cap / its supply cost × its sustained
     /// weapons` (a free unit counts as costing 1); the bound is the largest over the catalog's
-    /// types, an army of only that unit. The shipped catalog's cheapest beam units cost 2
-    /// supply, which gives 800 at eight players. That bound is then limited to a
-    /// [`BEAM_POOL_SHARE`]th of the effect pool (`budget.effects`, 6144 shipped: 1536, so the
-    /// 800 holds), because every held beam is a live effect instance and a battle with that many beams still
+    /// types, an army of only that unit. A hangar's member costs no supply and is fielded only
+    /// through its hangar units (plan `2026-11-28-carrier-interceptors` D-11), so a player
+    /// fields at most `cap / the hangar unit's supply cost × max_count` of it, the largest over
+    /// the hangars that launch it ([`units_per_player`]). The shipped Saucer Interceptor, 8 per
+    /// 6-supply Carrier with two beam weapons, gives `8 × 33 × 8 × 2 = 4224`, above every
+    /// supply-bounded beam unit (the cheapest cost 2 supply: 800). That bound is then limited to
+    /// a [`BEAM_POOL_SHARE`]th of the effect pool (`budget.effects`, 6144 shipped: 1536),
+    /// because every held beam is a live effect instance and a battle with that many beams still
     /// spawns its hits and splashes. A catalog with no sustained look needs none.
     #[must_use]
     pub fn capacity_for(units: &sim_core::catalog::UnitCatalog, effects: &EffectCatalog) -> usize {
@@ -224,7 +228,6 @@ impl HeldBeams {
                 .and_then(|id| effects.effect(id))
                 .is_some_and(|effect| effect.sustain.is_some())
         };
-        let cap = sim_core::production::STANDARD_SUPPLY_CAP;
         let players = u32::try_from(sim_types::MAX_PLAYERS).unwrap_or(u32::MAX);
         let bound = units
             .archetypes()
@@ -236,7 +239,7 @@ impl HeldBeams {
                     .filter(|entry| sustained(&entry.travel))
                     .count();
                 let weapons = u32::try_from(weapons).unwrap_or(u32::MAX);
-                (cap / archetype.supply_cost.max(1))
+                units_per_player(units, archetype)
                     .saturating_mul(players)
                     .saturating_mul(weapons)
             })
@@ -547,6 +550,30 @@ pub fn keep_beams(
     beams.keep(presented, fog.as_deref(), view, &mut context);
 }
 
+/// The most units of `archetype` one player fields at the standard supply cap
+/// ([`sim_core::production::STANDARD_SUPPLY_CAP`]): `cap / its supply cost` (a free unit counts
+/// as costing 1), or, for a hangar's member, which is fielded only through its hangar units
+/// (plan `2026-11-28-carrier-interceptors` D-11), `cap / the hangar unit's supply cost ×
+/// max_count`, the largest over the hangars that launch it. Runs once at load over the catalog.
+fn units_per_player(
+    units: &sim_core::catalog::UnitCatalog,
+    archetype: &sim_core::catalog::UnitArchetype,
+) -> u32 {
+    let cap = sim_core::production::STANDARD_SUPPLY_CAP;
+    let launched = units
+        .archetypes()
+        .filter_map(|host| {
+            host.capabilities
+                .hangar
+                .filter(|hangar| hangar.member == archetype.unit_type_id)
+                .map(|hangar| {
+                    (cap / host.supply_cost.max(1)).saturating_mul(u32::from(hangar.max_count))
+                })
+        })
+        .max();
+    launched.unwrap_or(cap / archetype.supply_cost.max(1))
+}
+
 #[cfg(test)]
 #[allow(
     clippy::expect_used,
@@ -635,5 +662,53 @@ mod tests {
         let target = bubble(2, 2.0, 2.0, 0.0, 0.5);
         let line = beam_line(&attacker, &target, 0.5, None);
         assert!(line.from.is_finite() && line.to.is_finite());
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, reason = "a failed test is a panic")]
+mod bound_tests {
+    //! The per-player bound of [`super::units_per_player`]: supply for a trained unit, the
+    //! hangar for a member (plan `2026-11-28-carrier-interceptors` D-11).
+    use super::units_per_player;
+    use sim_core::production::STANDARD_SUPPLY_CAP;
+
+    #[test]
+    fn a_member_is_bounded_by_its_hangar_and_a_trained_unit_by_its_supply() {
+        let mut units = sim_fixtures::shipped_catalogs().units;
+        let (host, hangar) = units
+            .archetypes()
+            .find_map(|arch| {
+                arch.capabilities
+                    .hangar
+                    .map(|hangar| (arch.unit_type_id, hangar))
+            })
+            .expect("the shipped catalog has a hangar unit");
+        let host_supply = units.get(host).expect("the host").supply_cost;
+        let member = units.get(hangar.member).expect("the member");
+        assert_eq!(
+            units_per_player(&units, member),
+            STANDARD_SUPPLY_CAP / host_supply * u32::from(hangar.max_count),
+            "a member is fielded only through its hangar units"
+        );
+        let trained = units.get(host).expect("the host");
+        assert_eq!(
+            units_per_player(&units, trained),
+            STANDARD_SUPPLY_CAP / host_supply
+        );
+        // A bigger magazine raises the member's bound in the same binary (data, not code).
+        units
+            .get_mut(host)
+            .expect("the host")
+            .capabilities
+            .hangar
+            .as_mut()
+            .expect("its hangar")
+            .max_count = 16;
+        let member = units.get(hangar.member).expect("the member");
+        assert_eq!(
+            units_per_player(&units, member),
+            STANDARD_SUPPLY_CAP / host_supply * 16
+        );
     }
 }

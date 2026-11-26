@@ -190,8 +190,20 @@ impl BattleView<'_, '_> {
         Some(cursor.clamp(rect.min, rect.max - Vec2::splat(0.5)))
     }
 
-    /// Whether `id` is something `viewer` may see and pick.
+    /// Whether `id` is something `viewer` may see and pick. A unit whose archetype is not
+    /// `selectable` or not `order_targetable` (a hangar's member) is never picked, so a click
+    /// on it falls through to what is beneath it and a box leaves it out (plan
+    /// `2026-11-28-carrier-interceptors` D-11 item 2).
     fn can_pick(world: &SimWorld, viewer: PlayerId, id: EntityId, owner: PlayerId) -> bool {
+        let player_facing = world.entities.get(&id).is_none_or(|entity| {
+            world
+                .catalog
+                .get(entity.unit_type_id)
+                .is_ok_and(|arch| arch.selectable && arch.order_targetable)
+        });
+        if !player_facing {
+            return false;
+        }
         if owner == viewer {
             world
                 .entities
@@ -818,6 +830,46 @@ mod footprint_pick_tests {
                 "cell ({cell_x}, {})",
                 anchor.1
             );
+        }
+    }
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    reason = "a broken pick rule must fail the test loudly"
+)]
+mod hangar_pick_tests {
+    //! H-17 (plan `2026-11-28-carrier-interceptors` D-11 item 2): a unit whose archetype is not
+    //! selectable or not order-targetable is never picked, by its owner (click, box) or by an
+    //! enemy (an order's target), while every other unit is.
+    use super::BattleView;
+    use sim_map::{CliffLevel, GameMap, MapCell};
+    use sim_types::{MoverType, PlayerId, SimScalar, SimVec2};
+
+    #[test]
+    fn an_unselectable_untargetable_unit_is_never_picked() {
+        let map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))
+            .expect("invariant: a flat map");
+        let mut world = sim_fixtures::world(map, 7);
+        let kind = world
+            .catalog
+            .archetypes()
+            .find(|arch| arch.mover_type == MoverType::Air && arch.max_speed > SimScalar::ZERO)
+            .map(|arch| arch.unit_type_id)
+            .expect("a shipped air unit");
+        let (me, foe) = (PlayerId(0), PlayerId(1));
+        let unit = world
+            .spawn_unit(kind, me, SimVec2::from_i32(10, 10))
+            .expect("open ground");
+        world.update_vision();
+        assert!(BattleView::can_pick(&world, me, unit, me));
+        for (selectable, targetable) in [(false, true), (true, false), (false, false)] {
+            let arch = world.catalog.get_mut(kind).expect("the kind");
+            arch.selectable = selectable;
+            arch.order_targetable = targetable;
+            assert!(!BattleView::can_pick(&world, me, unit, me));
+            assert!(!BattleView::can_pick(&world, foe, unit, me));
         }
     }
 }

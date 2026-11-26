@@ -1087,7 +1087,23 @@ fn a_full_effect_pool_refuses_and_counts() {
 fn the_table_is_sized_from_the_catalog_and_the_budget() {
     let (mut catalog, units, _) = shipped();
     // The catalog bound, computed here on its own: per unit type, eight players fielding only
-    // it at the supply cap, times its sustained weapons; the largest over the catalog.
+    // it at the supply cap, times its sustained weapons; the largest over the catalog. A
+    // hangar's member costs no supply and is fielded only through its hangar units (plan
+    // `2026-11-28-carrier-interceptors` D-11): the cap over the hangar unit's supply, times
+    // its magazine.
+    let cap = sim_core::production::STANDARD_SUPPLY_CAP;
+    let per_player = |archetype: &UnitArchetype| {
+        units
+            .archetypes()
+            .filter_map(|host| {
+                host.capabilities
+                    .hangar
+                    .filter(|hangar| hangar.member == archetype.unit_type_id)
+                    .map(|hangar| cap / host.supply_cost.max(1) * u32::from(hangar.max_count))
+            })
+            .max()
+            .unwrap_or(cap / archetype.supply_cost.max(1))
+    };
     let sustained = |catalog: &EffectCatalog, name: &Option<String>| {
         name.as_ref()
             .and_then(|name| catalog.effect_id(name))
@@ -1103,16 +1119,17 @@ fn the_table_is_sized_from_the_catalog_and_the_budget() {
                 .iter()
                 .filter(|entry| sustained(&catalog, &entry.travel))
                 .count();
-            let per_player = usize::try_from(
-                sim_core::production::STANDARD_SUPPLY_CAP / archetype.supply_cost.max(1),
-            )
-            .expect("small");
+            let per_player = usize::try_from(per_player(archetype)).expect("small");
             sim_types::MAX_PLAYERS * per_player * weapons
         })
         .max()
         .expect("the shipped catalog has units");
-    // The shipped data: the cheapest beam units cost 2 supply and hold one beam each.
-    assert_eq!(expected, 800, "8 players x 200 supply / 2 x 1 beam");
+    // The shipped data: the Saucer Interceptor, 8 per 6-supply Carrier, holds a beam on each of
+    // its two weapons (above the cheapest supply-bounded beam units: 2 supply, one beam, 800).
+    assert_eq!(
+        expected, 4224,
+        "8 players x 200 supply / 6 x 8 members x 2 beams"
+    );
     let share = usize::try_from(catalog.budget.effects / 4).expect("small");
     let capacity = HeldBeams::capacity_for(&units, &catalog);
     eprintln!("held-beam table: {capacity} (pool share {share}, catalog bound {expected})");

@@ -62,6 +62,15 @@ pub struct InvalidBuffAttackRate {
 /// authoritative and already checksummed. Consumers must report these failures.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum SimulationDiagnostic {
+    /// A malformed hangar relation left a hangar untouched this tick (plan
+    /// `2026-11-28-carrier-interceptors` D-8).
+    #[error("simulation tick {tick:?}: {source}")]
+    HangarInvariant {
+        /// Tick at which the relation was observed.
+        tick: Tick,
+        /// The failed hangar invariant.
+        source: crate::hangar::HangarInvariant,
+    },
     /// Invalid carrier identity or passenger lifecycle suppressed an operation.
     #[error("simulation tick {tick:?}: {source}")]
     TransportInvariant {

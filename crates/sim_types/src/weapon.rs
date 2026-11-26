@@ -590,6 +590,25 @@ pub struct WeaponSpec {
     /// requires the last mover to admit any distance.
     #[serde(default)]
     pub missile_movers: Vec<MissileMover>,
+    /// The launch channel this weapon starts instead of striking (`StarCraft` II's
+    /// `CEffectCreatePersistent` of `CEffectUseMagazine`; plan `2026-11-28-carrier-interceptors`
+    /// D-4). `None`, the default, for every weapon that strikes. A launch weapon deals no damage:
+    /// its release spends its unit's hangar, one docked member per try.
+    #[serde(default)]
+    pub magazine_launch: Option<MagazineLaunch>,
+}
+
+/// How a launch weapon's release spends its unit's hangar (plan `2026-11-28-carrier-interceptors`
+/// D-4): `StarCraft` II's channelled persistent that runs the hangar's `CEffectUseMagazine` a
+/// number of times (`PeriodCount`, `PeriodicPeriodArray`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MagazineLaunch {
+    /// Launch tries per release (`PeriodCount`), at least 1. A try with no docked member
+    /// launches nothing but is spent.
+    pub tries: u8,
+    /// Ticks between tries (`PeriodicPeriodArray`), at least 1; the first try is on the release
+    /// tick.
+    pub interval_ticks: u16,
 }
 
 /// One entry of a missile launch's `Movers` array (`StarCraft` II `CEffectLaunchMissile`): the
@@ -959,7 +978,32 @@ mod tests {
             missile_validation: MissileValidation::default(),
             launch_visibility: AttackVisibility::Snapshot,
             missile_movers: Vec::new(),
+            magazine_launch: None,
         }
+    }
+
+    /// Plan `2026-11-28-carrier-interceptors` D-4: a weapon that leaves its magazine launch out
+    /// strikes (`None`); an authored launch reads its tries and interval.
+    #[test]
+    fn magazine_launch_defaults_to_none_and_reads_its_fields(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use super::{MagazineLaunch, WeaponSpec};
+        let text = ron::to_string(&missile_weapon())?;
+        let field = "magazine_launch:None";
+        assert!(text.contains(field), "premise: the field is written");
+        let omitted: WeaponSpec = ron::from_str(&text.replace(&format!(",{field}"), ""))?;
+        assert_eq!(omitted.magazine_launch, None);
+        let read: WeaponSpec = ron::from_str(
+            &text.replace(field, "magazine_launch:Some((tries:8,interval_ticks:7))"),
+        )?;
+        assert_eq!(
+            read.magazine_launch,
+            Some(MagazineLaunch {
+                tries: 8,
+                interval_ticks: 7
+            })
+        );
+        Ok(())
     }
 
     /// Plan `2026-11-27-launch-and-spell-visibility` D-1: a weapon that leaves its launch

@@ -528,6 +528,46 @@ pub struct ArchetypeCapabilities {
     /// Declarative transformation stances and operational modes.
     #[serde(default)]
     pub modes: Vec<UnitModeSpec>,
+    /// A magazine of other units this unit builds, launches with its launch weapon and recalls
+    /// (`StarCraft` II `CAbilArmMagazine`; plan `2026-11-28-carrier-interceptors` D-2). `None`
+    /// for every unit without one.
+    #[serde(default)]
+    pub hangar: Option<HangarSpec>,
+}
+
+/// A hangar: a magazine of up to `max_count` members of one other archetype, built one at a time
+/// from the owner's resources, launched by the unit's launch weapon and recalled (`StarCraft` II
+/// `CAbilArmMagazine`, `liberty` AbilData:2083; plan `2026-11-28-carrier-interceptors` D-2). The
+/// catalog resolves the authored member slug to its id once at load.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HangarSpec {
+    /// The archetype of every member.
+    pub member: UnitTypeId,
+    /// Members docked, launched and building together, at most (`MaxCount`).
+    pub max_count: u8,
+    /// Members docked, free, when the hangar unit is created (`CountStart`).
+    pub start_count: u8,
+    /// Ticks to build one member (`Time`, the ability's, not the member archetype's).
+    pub build_ticks: u16,
+    /// Builds queued at most (`QueueSize` of the hangar's queue), the one in progress included.
+    pub queue_size: u8,
+    /// Whether builds are queued by themselves while the owner can pay (`AutoBuild`,
+    /// `AutoBuildOn`).
+    pub auto_build: bool,
+    /// Centre-to-centre distance, world units, beyond which a launched member returns
+    /// (`Leash`).
+    pub leash: SimScalar,
+    /// What happens to launched members when the hangar unit dies.
+    pub on_death: HangarDeath,
+}
+
+/// What happens to a hangar's launched members when the hangar unit dies (plan
+/// `2026-11-28-carrier-interceptors` D-9), authored so that the rule is data, not assumed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HangarDeath {
+    /// Every launched member dies on the same tick (5.0.14's interceptors explode with their
+    /// Carrier; plan §2.1 S18).
+    KillMembers,
 }
 
 /// Network/relay bundle containing all validated player commands scheduled for a tick.

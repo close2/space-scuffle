@@ -151,7 +151,11 @@ use std::path::PathBuf;
 /// left out at schema 53 a copy of the final tree reproduces `1_324_710_836_022_737_298` on all
 /// four builds. Behaviour: none. (56 is provisional, the next free at merge: 54 and 55 are
 /// reserved for the Gated movement plan.)
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 6_457_533_297_407_649_319;
+/// Re-recorded for plan 2026-11-28-carrier-interceptors (checksum schema 56 -> 57): each entity
+/// encodes its hangar and hangar link, each weapon its magazine launch; with those left out at
+/// schema 56 a copy of the final tree reproduces `6_457_533_297_407_649_319` on all four builds.
+/// Behaviour: none (no hangar unit appears).
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 10_676_883_327_660_124_161;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

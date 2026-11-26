@@ -29,7 +29,7 @@ pub(crate) mod presentation;
 pub(crate) mod snapshot;
 pub mod tracked_targets;
 mod upgrade_stats;
-mod upkeep;
+pub(crate) mod upkeep;
 mod vision;
 
 use vision::VisionWorkspace;
@@ -131,6 +131,9 @@ pub struct SimWorld {
     pub(crate) tick_diagnostics: Vec<SimulationDiagnostic>,
     pub(crate) movement: crate::movement::MovementWorkspace,
     pub(crate) transport: crate::transport::TransportWorkspace,
+    /// The hangar phase's reusable id lists (plan `2026-11-28-carrier-interceptors` D-5); not
+    /// hashed, rebuilt before every read.
+    pub(crate) hangar_scratch: crate::hangar::HangarScratch,
     #[cfg(test)]
     pub(crate) transport_validation_count: std::cell::Cell<usize>,
     pub(crate) production: crate::production::ProductionWorkspace,
@@ -227,6 +230,7 @@ impl SimWorld {
             tick_diagnostics: Vec::new(),
             movement: crate::movement::MovementWorkspace::default(),
             transport: crate::transport::TransportWorkspace::default(),
+            hangar_scratch: crate::hangar::HangarScratch::default(),
             #[cfg(test)]
             transport_validation_count: std::cell::Cell::new(0),
             production: crate::production::ProductionWorkspace::new(width, height),
@@ -422,6 +426,9 @@ impl SimWorld {
         self.update_production_and_buffs();
         self.update_unit_tasks();
         self.update_vision();
+        // Launched members are directed, docked and launched before acquisition reads them
+        // (plan `2026-11-28-carrier-interceptors` D-5).
+        self.step_hangars();
         // A wind-up whose target was lost before this tick has ended before anything reads it
         // (plan `2026-11-25-wind-up-and-hold-facing` D-1).
         self.end_lost_swings();
@@ -495,6 +502,9 @@ impl SimWorld {
     /// Phase 8: Reap destroyed entities and emit death shatter visuals. A gatherer inside a
     /// structure that died comes out first (plan `2026-11-24-hidden-harvesters` D-5).
     pub fn reap_dead_and_emit_shatter(&mut self) {
+        // Launched members die with their hangar unit (plan `2026-11-28-carrier-interceptors`
+        // D-9), before the reap takes either.
+        self.reap_hangar_members();
         self.release_housed_harvesters();
         self.reap_transport_groups();
         // A reaped unit's turret tracks nothing (plan `2026-11-26-turret-tracking-weapon`

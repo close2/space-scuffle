@@ -180,10 +180,12 @@ const fn game_error_slot(error: &GameCommandError) -> usize {
         GameCommandError::HousedRecipient(_) => 28,
         GameCommandError::NoRallySlotTakes => 29,
         GameCommandError::RallyWaypointsFull => 30,
+        GameCommandError::UnselectableRecipient(_) => 31,
+        GameCommandError::UntargetableTarget(_) => 32,
     }
 }
 
-fn game_errors() -> [GameCommandError; 31] {
+fn game_errors() -> [GameCommandError; 33] {
     let node = ResourceNodeId(7);
     [
         GameCommandError::MatchOver,
@@ -224,6 +226,8 @@ fn game_errors() -> [GameCommandError; 31] {
         GameCommandError::HousedRecipient(ID),
         GameCommandError::NoRallySlotTakes,
         GameCommandError::RallyWaypointsFull,
+        GameCommandError::UnselectableRecipient(ID),
+        GameCommandError::UntargetableTarget(ID),
     ]
 }
 

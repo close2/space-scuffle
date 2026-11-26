@@ -1385,3 +1385,10 @@ Short note under charter §6 (single-cause bug fix with obvious tests; the effec
 - **Determinism:** no golden replay, matrix battle or showcase researches Concussive Shells, so no hashed state
   changes (golden replays pass unchanged in debug).
 - **B-44 and B-77 fixed; B-68 narrowed** (Concussive Shells now has its effect; 12 remain for WP18).
+
+## Amendment 27 (plan `2026-11-28-carrier-interceptors` WP6, 2026-11-26): B-22 fixed by its own plan
+
+WP18's "→ own plans" item B-22 (Carrier interceptors as one 8-strike weapon) is fixed by plan
+[`2026-11-28-carrier-interceptors`](2026-11-28-carrier-interceptors.md): the Carrier analogue carries a hangar and a
+launch weapon, and its interceptors are unit entities (`saucer_interceptor`) launched, recalled, docked and killed with
+it. Its deferred halves are B-229 (the strafe) and B-230 (hangar card commands).

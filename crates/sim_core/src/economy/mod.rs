@@ -86,6 +86,16 @@ pub enum GameCommandError {
     /// D-8, Q0108's default): no order reaches it until it comes out.
     #[error("selected entity {0:?} is inside a structure")]
     HousedRecipient(EntityId),
+    /// Every selected entity is unselectable (`UnitArchetype::selectable`; plan
+    /// `2026-11-28-carrier-interceptors` D-8): a command naming only such units, a hangar's
+    /// members, is refused; one naming others too reaches the others.
+    #[error("selected entity {0:?} cannot be selected")]
+    UnselectableRecipient(EntityId),
+    /// The order's target cannot be the target of a player's order
+    /// (`UnitArchetype::order_targetable`; D-8): an attack, follow, load or targeted cast at a
+    /// hangar's member.
+    #[error("entity {0:?} cannot be the target of an order")]
+    UntargetableTarget(EntityId),
     /// A structure cannot be started; see the reason.
     #[error(transparent)]
     Build(#[from] BuildRejection),

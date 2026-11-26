@@ -103,6 +103,8 @@ fn dummy_target_archetype(
         placement_excludes: sim_types::PlacementFlags::empty(),
         default_stance_orders: None,
         collision_class: None,
+        selectable: true,
+        order_targetable: true,
     }
 }
 
@@ -155,6 +157,7 @@ fn dummy_weapon_spec(
         missile_validation: sim_types::MissileValidation::default(),
         launch_visibility: sim_types::AttackVisibility::Snapshot,
         missile_movers: Vec::new(),
+        magazine_launch: None,
     }
 }
 
@@ -803,6 +806,7 @@ fn test_friendly_fire_splash_damages_allies_vs_enemy_only_splash() {
         missile_validation: sim_types::MissileValidation::default(),
         launch_visibility: sim_types::AttackVisibility::Snapshot,
         missile_movers: Vec::new(),
+        magazine_launch: None,
     };
 
     // Case B: Weapon with friendly_fire: false
