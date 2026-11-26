@@ -452,11 +452,7 @@ impl ActionPolicy {
             }
         }
         for (slug, terms) in &self.negative_overrides {
-            if catalog
-                .get_by_slug(slug)
-                .filter(|a| a.slug == *slug)
-                .is_none()
-            {
+            if catalog.get_by_slug(slug).is_none_or(|a| a.slug != *slug) {
                 return Err(BakerError::UnknownActionOverride {
                     path: path.to_path_buf(),
                     slug: slug.clone(),
