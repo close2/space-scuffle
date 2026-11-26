@@ -847,7 +847,7 @@ impl SimWorld {
         let target_arch = self.catalog.get(target.unit_type_id).ok()?;
         let siege = actor
             .is_sieged
-            .then_some(actor.siege_weapon.as_ref())
+            .then_some(actor.siege_weapon.as_deref())
             .flatten();
         let melee = arch
             .weapon_against(target_arch.mover_type, siege)
@@ -1551,7 +1551,7 @@ impl SimWorld {
             target_arch.mover_type,
             actor
                 .is_sieged
-                .then_some(actor.siege_weapon.as_ref())
+                .then_some(actor.siege_weapon.as_deref())
                 .flatten(),
         ) else {
             return Ok(None);
