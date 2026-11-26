@@ -11,9 +11,9 @@
 //!   battle, and capture the canvas with the clock stopped.
 //!
 //! # How tests use it
-//! Include it with `#[path = "support/gpu_battle.rs"]` next to `battle_harness.rs`; only a child
-//! that `gpu_run` launches calls [`boot_on_gpu`]. It follows `render_pool_gpu_tests.rs`, which
-//! keeps its own copy of the same boot.
+//! Include it with `#[path = "support/gpu_battle.rs"]` next to `battle_harness.rs` and
+//! `gpu_run.rs`; only a child that `gpu_run` launches may call [`boot_on_gpu`], which checks it
+//! (charter §7). It follows `render_pool_gpu_tests.rs`, which keeps its own copy of the same boot.
 
 #![allow(clippy::expect_used, clippy::panic, clippy::cast_precision_loss)]
 
@@ -30,6 +30,7 @@ use client::scene_controller::RenderEntityMap;
 use client::{ClientMode, RtsCamera};
 
 use crate::battle_harness::{self, Harness};
+use crate::gpu_run;
 
 /// Frames the battle gets to load its media.
 const READY_FRAMES: usize = 600;
@@ -37,10 +38,24 @@ const READY_FRAMES: usize = 600;
 /// Frames a capture may take to reach the disk.
 const CAPTURE_FRAMES: usize = 120;
 
+/// Panics unless this process is a child that `gpu_run` launched: the harness gives every child
+/// the Vulkan manifest of the driver it selected, and holds the GPU lock while the child runs, so
+/// no render device is built outside the harness (charter §7).
+fn assert_launched_by_gpu_run() {
+    let selection = gpu_run::selected_driver();
+    let manifest = std::env::var_os("VK_ICD_FILENAMES");
+    assert_eq!(
+        manifest.as_deref(),
+        Some(selection.manifest.as_os_str()),
+        "a GPU battle boots only in a child that gpu_run launched ({selection})"
+    );
+}
+
 /// Boots the production client on `scenario` (a path beneath the assets root) with a real
 /// renderer, drawing into an offscreen canvas of `size` physical pixels, the smog volume off,
-/// paused.
+/// paused. Only a child that `gpu_run` launched may call it.
 pub fn boot_on_gpu(scenario: &str, size: UVec2) -> Harness {
+    assert_launched_by_gpu_run();
     let root =
         client::ResolvedAssetsRoot::from_directory(&battle_harness::assets()).expect("assets root");
     let definition =
