@@ -22,3 +22,5 @@ Baneling's "whole" cost depends on a convention, not on data.
 Recommendation: (a). No measured battle trains a Baneling, so no outcome moves either way.
 
 ## Answer
+
+- **Option (a): 50 minerals, 25 gas, and 1 supply.** Matches StarCraft II's total resource cost with supply rounded up to a whole unit (matching Zergling and preventing 0-supply Baneling spam until a morph model lands in WP17).
