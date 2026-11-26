@@ -27,12 +27,13 @@ use sim_types::{
     default_projectile_lifetime_ticks, AbilitySpec, AllowedMovement, AnimState,
     ArchetypeCapabilities, ArmorClassId, AttackCommand, AttackDashSpec, AttackVisibility,
     Attribute, AttributeBonuses, AttributeFlags, AutoRallySpec, BarrierSpec, CollisionClass,
-    FactionId, FootprintShape, HangarDeath, HangarSpec, HarvesterSpec, MagazineLaunch,
+    FactionId, FootprintShape, HangarDeath, HangarSpec, HarvesterSpec, ImpactSpawn, MagazineLaunch,
     MissileMover, MissilePhase, MissileValidation, MoverType, OverclockSpec, PhaseEnd,
     PlacementFlag, PlacementFlags, ProjectileTargetLossBehavior, ResourceKind, ResourceKindSet,
-    ShapeKind, SilhouetteClass, SimAngle, SimScalar, SplashCliff, SplashImpact, SplashLine,
-    SplashLineAxis, SplashLineOrigin, SplashShape, StanceOrders, StructureStrike, TurretIdle,
-    UnitModeSpec, UnitTypeId, UpgradeEffect, WeaponVisualKind,
+    ShapeKind, SilhouetteClass, SimAngle, SimScalar, SpawnOrder, SplashCliff, SplashImpact,
+    SplashLine, SplashLineAxis, SplashLineOrigin, SplashShape, StanceOrders, StrikeMagazineSpec,
+    StructureStrike, TimedLifeSpec, TurretIdle, UnitModeSpec, UnitTypeId, UpgradeEffect,
+    WeaponVisualKind,
 };
 pub use sim_types::{SplashSpec, SplashZone, WeaponSpec};
 mod collision_classes;
@@ -43,6 +44,7 @@ mod movement_rules;
 mod placement_rules;
 mod runtime;
 mod spells;
+mod strike_validation;
 mod targeting;
 mod validation;
 
@@ -948,7 +950,8 @@ impl UnitCatalog {
             }
             self.validate_rally_exclusions(archetype)?;
         }
-        self.validate_hangar_members()
+        self.validate_hangar_members()?;
+        self.validate_impact_spawns()
     }
 
     /// Checks that every unit a rally slot of `archetype` excludes (plan `2026-11-25-rallies`
@@ -1336,6 +1339,8 @@ struct CapabilitiesDef {
     modes: Vec<UnitModeSpecDef>,
     #[serde(default)]
     hangar: Option<HangarSpecDef>,
+    #[serde(default)]
+    strike_magazine: Option<StrikeMagazineSpec>,
 }
 
 /// An authored hangar (plan `2026-11-28-carrier-interceptors` D-2): the member as a slug and
@@ -1442,6 +1447,7 @@ impl UnitModeSpecDef {
         factions: &FactionCatalog,
         classes: &CollisionClassTable,
         definition: &str,
+        unit_ids: &BTreeMap<String, UnitTypeId>,
     ) -> SimResult<UnitModeSpec> {
         let collision_class = classes.resolve_authored(
             definition,
@@ -1452,7 +1458,9 @@ impl UnitModeSpecDef {
             weapon
                 .map(|w_opt| {
                     w_opt
-                        .map(|w| UnitArchetypeDef::convert_weapon(w, factions, definition))
+                        .map(|w| {
+                            UnitArchetypeDef::convert_weapon(w, factions, definition, unit_ids)
+                        })
                         .transpose()
                 })
                 .transpose()
@@ -1739,6 +1747,59 @@ struct WeaponSpecDef {
     /// `2026-11-28-carrier-interceptors` D-4); omitted, none: the weapon strikes.
     #[serde(default)]
     pub(crate) magazine_launch: Option<MagazineLaunch>,
+    /// The units the weapon's finishing missile creates (plan `2026-11-28-broodlings` D-4);
+    /// omitted, none.
+    #[serde(default)]
+    pub(crate) impact_spawn: Option<ImpactSpawnDef>,
+}
+
+/// An authored impact spawn (plan `2026-11-28-broodlings` D-4): the created unit as a slug and
+/// the search range in world units, resolved to [`ImpactSpawn`] once every unit of the file is
+/// known. Unknown fields are refused.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ImpactSpawnDef {
+    /// The created archetype's slug.
+    pub(crate) unit: String,
+    /// Units created per strike the missile carries.
+    pub(crate) per_strike: u8,
+    /// World units around the finish point searched for a valid place.
+    pub(crate) search_range: f32,
+    /// The timed life of each created unit, if any.
+    #[serde(default)]
+    pub(crate) timed_life: Option<TimedLifeSpec>,
+    /// The first order of each created unit.
+    pub(crate) order: SpawnOrder,
+}
+
+impl ImpactSpawnDef {
+    /// The spawn with its unit resolved against the file's units and the search range in fixed
+    /// point (`SimScalar::from_f32_lossy`, as every authored distance).
+    ///
+    /// # Errors
+    /// [`SimCoreError::CatalogInvalidValue`] at `impact_spawn.unit` of the weapon `weapon` when
+    /// the slug names no unit of the units file.
+    fn resolve(
+        &self,
+        definition: &str,
+        weapon: &str,
+        unit_ids: &BTreeMap<String, UnitTypeId>,
+    ) -> SimResult<ImpactSpawn> {
+        let unit = *unit_ids
+            .get(&self.unit)
+            .ok_or_else(|| SimCoreError::CatalogInvalidValue {
+                definition: definition.to_owned(),
+                field: format!("{weapon}.impact_spawn.unit"),
+                reason: "the spawned unit names no unit of the units file",
+            })?;
+        Ok(ImpactSpawn {
+            unit,
+            per_strike: self.per_strike,
+            search_range: SimScalar::from_f32_lossy(self.search_range),
+            timed_life: self.timed_life,
+            order: self.order,
+        })
+    }
 }
 
 /// An authored missile mover (`StarCraft` II `CEffectLaunchMissile` `Movers` entry, plan
@@ -1982,16 +2043,24 @@ impl UnitArchetypeDef {
         }
     }
 
-    /// Converts an authored weapon of the definition `definition`, resolving its class slug.
+    /// Converts an authored weapon of the definition `definition`, resolving its class slug and
+    /// its impact spawn's unit slug against `unit_ids`, the units of the file (empty for a
+    /// structure, whose weapons create nothing).
     fn convert_weapon(
         w: WeaponSpecDef,
         factions: &FactionCatalog,
         definition: &str,
+        unit_ids: &BTreeMap<String, UnitTypeId>,
     ) -> SimResult<WeaponSpec> {
         let weapon_class = w
             .weapon_class
             .as_deref()
             .map(|slug| factions.resolve_weapon_class(definition, slug))
+            .transpose()?;
+        let impact_spawn = w
+            .impact_spawn
+            .as_ref()
+            .map(|spawn| spawn.resolve(definition, &w.name, unit_ids))
             .transpose()?;
         Ok(WeaponSpec {
             name: w.name,
@@ -2066,6 +2135,7 @@ impl UnitArchetypeDef {
                 .map(MissileMoverDef::to_spec)
                 .collect(),
             magazine_launch: w.magazine_launch,
+            impact_spawn,
         })
     }
 
@@ -2130,7 +2200,7 @@ impl UnitArchetypeDef {
         };
         let modes = authored_modes
             .into_iter()
-            .map(|mode| mode.into_mode_spec(factions, classes, &self.slug))
+            .map(|mode| mode.into_mode_spec(factions, classes, &self.slug, unit_ids))
             .collect::<SimResult<Vec<_>>>()?;
         let capabilities = ArchetypeCapabilities {
             overclock,
@@ -2146,6 +2216,7 @@ impl UnitArchetypeDef {
             abilities: abilities.clone(),
             modes: modes.clone(),
             hangar,
+            strike_magazine: authored.strike_magazine,
         };
         Ok((capabilities, abilities, modes))
     }
@@ -2172,7 +2243,7 @@ impl UnitArchetypeDef {
         )?;
         let convert = |weapon: Option<WeaponSpecDef>| {
             weapon
-                .map(|w| Self::convert_weapon(w, factions, &self.slug))
+                .map(|w| Self::convert_weapon(w, factions, &self.slug, unit_ids))
                 .transpose()
         };
         let weapon = convert(self.weapon.take())?;
@@ -2469,6 +2540,7 @@ impl StructureArchetypeDef {
             abilities: self.abilities.clone(),
             modes: Vec::new(),
             hangar: None,
+            strike_magazine: None,
         }
     }
 
@@ -2489,7 +2561,9 @@ impl StructureArchetypeDef {
         let faction = factions.resolve_faction(&self.slug, &self.faction)?;
         let convert = |weapon: Option<WeaponSpecDef>| {
             weapon
-                .map(|w| UnitArchetypeDef::convert_weapon(w, factions, &self.slug))
+                .map(|w| {
+                    UnitArchetypeDef::convert_weapon(w, factions, &self.slug, &BTreeMap::new())
+                })
                 .transpose()
         };
         let ground_weapon = convert(self.ground_weapon)?;
@@ -2662,9 +2736,13 @@ mod tests {
         weapon.turret_turn_rate_deg_per_tick = 20.16;
         assert_eq!(unit.turn_rate().raw(), 10_193);
         let weapon = unit.weapon.take().expect("invariant: found above");
-        let converted =
-            UnitArchetypeDef::convert_weapon(weapon, &crate::test_support::shipped_factions(), "x")
-                .expect("invariant: shipped weapon classes resolve");
+        let converted = UnitArchetypeDef::convert_weapon(
+            weapon,
+            &crate::test_support::shipped_factions(),
+            "x",
+            &BTreeMap::new(),
+        )
+        .expect("invariant: shipped weapon classes resolve");
         assert_eq!(converted.turret_turn_rate.raw(), 3_670);
     }
 

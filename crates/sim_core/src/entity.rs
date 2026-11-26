@@ -151,6 +151,71 @@ pub struct PendingLineView {
     pub count: u8,
 }
 
+/// A unit's strike magazine (plan `2026-11-28-broodlings` D-3), present exactly on entities
+/// whose archetype has a [`sim_types::StrikeMagazineSpec`]; hashed.
+///
+/// Each tick's upkeep first counts down the charge arming (arming it at 0), then starts a build
+/// when none runs and the charges armed and arming are below the capacity, then counts the build
+/// down (at 0 the charge starts arming). So a build started on the upkeep after a release
+/// finishes `build_ticks` ticks after the release, and its charge arms `arming_ticks` later. A
+/// release of the unit's weapon spends one armed charge per strike; with none armed the weapon
+/// starts no swing. At most one charge arms at a time (validation keeps `arming_ticks` below
+/// `build_ticks`), so the state needs no list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StrikeMagazineState {
+    /// Charges armed now.
+    pub armed: u8,
+    /// Ticks until the charge being armed is armed; 0 when none is arming.
+    pub arming_left: u16,
+    /// Ticks until the charge being built is built; 0 when none is building.
+    pub build_left: u16,
+}
+
+impl StrikeMagazineState {
+    /// A new unit's magazine: `spec.start` charges armed, nothing arming or building.
+    #[must_use]
+    pub const fn stocked(spec: sim_types::StrikeMagazineSpec) -> Self {
+        Self {
+            armed: spec.start,
+            arming_left: 0,
+            build_left: 0,
+        }
+    }
+
+    /// One tick of the magazine's upkeep under `spec` (see the type's rule): arming, then a new
+    /// build if there is room, then the build's countdown.
+    pub fn tick(&mut self, spec: sim_types::StrikeMagazineSpec) {
+        if self.arming_left > 0 {
+            self.arming_left -= 1;
+            if self.arming_left == 0 {
+                self.armed = self.armed.saturating_add(1);
+            }
+        }
+        let arming = u8::from(self.arming_left > 0);
+        if self.build_left == 0 && self.armed.saturating_add(arming) < spec.capacity {
+            self.build_left = spec.build_ticks;
+        }
+        if self.build_left > 0 {
+            self.build_left -= 1;
+            if self.build_left == 0 {
+                if spec.arming_ticks == 0 {
+                    self.armed = self.armed.saturating_add(1);
+                } else {
+                    self.arming_left = spec.arming_ticks;
+                }
+            }
+        }
+    }
+
+    /// Spends the charges of a release of `strikes` strikes and returns how many the release
+    /// carries: `min(armed, strikes)`.
+    pub fn spend(&mut self, strikes: u8) -> u8 {
+        let spent = self.armed.min(strikes);
+        self.armed -= spent;
+        spent
+    }
+}
+
 /// The strikes of an attack that land after its release tick (plan
 /// `2026-11-05-sc2-deviation-fixes` WP5, B-2).
 ///
@@ -705,6 +770,13 @@ pub struct Entity {
     pub(crate) hangar: Option<crate::hangar::HangarState>,
     /// On a launched hangar member, its hangar unit and whether it is returning (D-3); hashed.
     pub(crate) hangar_link: Option<crate::hangar::HangarLink>,
+    /// The unit's strike magazine, exactly on entities whose archetype has one (plan
+    /// `2026-11-28-broodlings` D-3); hashed.
+    pub(crate) strike_magazine: Option<StrikeMagazineState>,
+    /// Ticks of life left by the clock (`StarCraft` II's `TimedLife` behaviours; plan
+    /// `2026-11-28-broodlings` D-5): the upkeep counts it down and the unit dies, with no damage
+    /// source, on the tick it reaches 0. `None` for every unit without a clock; hashed.
+    pub(crate) timed_life: Option<u16>,
 }
 
 impl Entity {
@@ -835,6 +907,11 @@ impl Entity {
                 .hangar
                 .map(|spec| crate::hangar::HangarState::with_capacity(spec.max_count)),
             hangar_link: None,
+            strike_magazine: archetype
+                .capabilities
+                .strike_magazine
+                .map(StrikeMagazineState::stocked),
+            timed_life: None,
         }
     }
 
@@ -911,6 +988,28 @@ impl Entity {
     #[must_use]
     pub const fn hangar_link(&self) -> Option<crate::hangar::HangarLink> {
         self.hangar_link
+    }
+
+    /// The unit's strike magazine (plan `2026-11-28-broodlings` D-3); `None` for a unit whose
+    /// archetype has none.
+    #[must_use]
+    pub const fn strike_magazine(&self) -> Option<StrikeMagazineState> {
+        self.strike_magazine
+    }
+
+    /// Ticks of life the unit has left by the clock (plan `2026-11-28-broodlings` D-5); `None`
+    /// for a unit without a clock.
+    #[must_use]
+    pub const fn timed_life(&self) -> Option<u16> {
+        self.timed_life
+    }
+
+    /// Whether this unit's strike magazine has no armed charge, so its weapon may start no swing
+    /// (plan `2026-11-28-broodlings` D-3). False for a unit without a magazine.
+    #[must_use]
+    pub fn strike_magazine_empty(&self) -> bool {
+        self.strike_magazine
+            .is_some_and(|magazine| magazine.armed == 0)
     }
 
     /// Whether this actor is carried; derived solely from its authoritative carrier link.
@@ -2347,5 +2446,74 @@ mod last_seen_tests {
         assert_eq!(memory.last_seen.map(|seen| seen.target), Some(EntityId(8)));
         memory.restart();
         assert_eq!(memory.last_seen, None);
+    }
+}
+
+#[cfg(test)]
+mod strike_magazine_tests {
+    //! Plan `2026-11-28-broodlings` D-3: the magazine's upkeep and spending, tick by tick.
+    use super::StrikeMagazineState;
+    use sim_types::StrikeMagazineSpec;
+
+    const SPEC: StrikeMagazineSpec = StrikeMagazineSpec {
+        capacity: 2,
+        start: 2,
+        build_ticks: 45,
+        arming_ticks: 9,
+    };
+
+    /// The tick (counted from the release, the release's own tick 0) on which each charge arms
+    /// after both were spent, over `ticks` upkeeps.
+    fn arming_ticks(spec: StrikeMagazineSpec, ticks: u32) -> Vec<u32> {
+        let mut magazine = StrikeMagazineState::stocked(spec);
+        assert_eq!(magazine.spend(2), 2.min(spec.start));
+        let mut armed = Vec::new();
+        for tick in 1..=ticks {
+            let before = magazine.armed;
+            magazine.tick(spec);
+            if magazine.armed > before {
+                armed.push(tick);
+                // Spend at once, as a weapon held on the gate does on the tick a charge arms.
+                magazine.spend(1);
+            }
+        }
+        armed
+    }
+
+    /// A full magazine holds its charges and starts no build; spent, it builds one at a time,
+    /// the first finished 45 ticks after the release and armed 9 later (R + 54), the second
+    /// armed 45 ticks after that (§2.4's R + 99), then one per 45.
+    #[test]
+    fn spent_charges_rebuild_one_at_a_time_on_the_plan_ticks() {
+        let mut full = StrikeMagazineState::stocked(SPEC);
+        full.tick(SPEC);
+        assert_eq!(
+            full,
+            StrikeMagazineState {
+                armed: 2,
+                arming_left: 0,
+                build_left: 0
+            }
+        );
+        assert_eq!(arming_ticks(SPEC, 200), [54, 99, 144, 189]);
+    }
+
+    /// An arming of 0 arms the charge on the tick its build finishes; a release spends at most
+    /// what is armed.
+    #[test]
+    fn a_zero_arming_arms_at_the_build_and_a_release_spends_what_is_armed() {
+        let spec = StrikeMagazineSpec {
+            arming_ticks: 0,
+            ..SPEC
+        };
+        assert_eq!(arming_ticks(spec, 100), [45, 90]);
+        let mut magazine = StrikeMagazineState {
+            armed: 1,
+            arming_left: 0,
+            build_left: 0,
+        };
+        assert_eq!(magazine.spend(2), 1);
+        assert_eq!(magazine.spend(2), 0);
+        assert_eq!(magazine.armed, 0);
     }
 }

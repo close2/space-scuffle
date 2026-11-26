@@ -32,6 +32,23 @@
 // `Remaining(x)` once at most x is left to the impact (a negative `Outro`, its magnitude; plan
 // 2026-11-28-missile-movers-b52 D-2). With movers, `projectile_speed` is the missile's top speed.
 // Omitted: a constant `projectile_speed`.
+//
+// `capabilities.strike_magazine` (plan 2026-11-28-broodlings D-3): StarCraft II's CAbilArmMagazine
+// whose members are never units of their own (the Brood Lord's escorts), `(capacity, start,
+// build_ticks, arming_ticks)`: at most `capacity` charges armed, arming and building together,
+// `start` armed when the unit is created, one built at a time in `build_ticks` and armed
+// `arming_ticks` after its build. A release of the unit's weapon carries one armed charge per
+// strike, up to `attacks_count`; with none armed the weapon starts no swing. Omitted: none.
+//
+// `impact_spawn` (a missile weapon's field; plan 2026-11-28-broodlings D-4, D-5): StarCraft II's
+// `FinishEffect` CEffectCreateUnit, `(unit, per_strike, search_range, timed_life, order)`: where
+// the missile's flight finishes, hit or miss (at the target, or the last point if it was lost; a
+// missile that fizzles creates nothing), `per_strike` units of the slug `unit` per strike it
+// carried, placed within `search_range` world units, each with `timed_life: Some((ticks,
+// random_extra_ticks))` (dies after `ticks` plus 0 to `random_extra_ticks` at random, with no
+// damage source) or `None`, and the first order `AttackTargetOrPoint` (attack the target if it
+// can, else attack-move to the finish). The unit exists only by spawning: no structure trains
+// it, it costs no supply and spawns nothing in turn. Omitted: none.
 (
     attack_snapshot_cap_ticks: Some(25),
     units: [

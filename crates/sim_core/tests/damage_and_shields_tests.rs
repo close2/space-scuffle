@@ -158,6 +158,7 @@ fn dummy_weapon_spec(
         launch_visibility: sim_types::AttackVisibility::Snapshot,
         missile_movers: Vec::new(),
         magazine_launch: None,
+        impact_spawn: None,
     }
 }
 
@@ -807,6 +808,7 @@ fn test_friendly_fire_splash_damages_allies_vs_enemy_only_splash() {
         launch_visibility: sim_types::AttackVisibility::Snapshot,
         missile_movers: Vec::new(),
         magazine_launch: None,
+        impact_spawn: None,
     };
 
     // Case B: Weapon with friendly_fire: false

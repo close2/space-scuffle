@@ -9,7 +9,7 @@ use crate::effects::{
 };
 use crate::entity::{
     ActiveBuff, ActiveProjectile, BarrierState, Entity, LastSeen, MovementMemory, PendingLine,
-    PendingStrikes, SlotClaim, WeaponPhase,
+    PendingStrikes, SlotClaim, StrikeMagazineState, WeaponPhase,
 };
 use crate::entity::{Cargo, UnitTask};
 use crate::hangar::{DockedMember, HangarLink, HangarState, LaunchChannel};
@@ -26,13 +26,13 @@ use sim_map::{
 use sim_types::{AbilitySource, EffectContext, EffectId, EffectTarget, StatusId};
 use sim_types::{
     AllowedMovement, AnimState, ArmorClassId, AttackOrigin, AttackVisibility, AttributeBonuses,
-    AttributeFlags, EntityId, FollowKind, FootprintShape, MagazineLaunch, MatchResult,
+    AttributeFlags, EntityId, FollowKind, FootprintShape, ImpactSpawn, MagazineLaunch, MatchResult,
     MissileMover, MissilePhase, MissileValidation, MoverType, PerPlayer, PhaseEnd, PlayerId,
     PlayerUpgradeState, ProjectileTargetLossBehavior, RallyRoute, RallyTarget, ResourceNodeId,
-    SimAngle, SimScalar, SimVec2, SplashCliff, SplashImpact, SplashLine, SplashLineAxis,
-    SplashLineOrigin, SplashShape, SplashSpec, SplashZone, StructureStrike, Tick, TurretIdle,
-    UnitOrder, UnitStatDeltas, UnitTypeId, VisibilityState, WeaponClassId, WeaponSpec,
-    WeaponVisualKind,
+    SimAngle, SimScalar, SimVec2, SpawnOrder, SplashCliff, SplashImpact, SplashLine,
+    SplashLineAxis, SplashLineOrigin, SplashShape, SplashSpec, SplashZone, StructureStrike, Tick,
+    TimedLifeSpec, TurretIdle, UnitOrder, UnitStatDeltas, UnitTypeId, VisibilityState,
+    WeaponClassId, WeaponSpec, WeaponVisualKind,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use xxhash_rust::xxh64::Xxh64;
@@ -389,6 +389,10 @@ fields!(Entity {
     // then its fields.
     hangar,
     hangar_link,
+    // Plan `2026-11-28-broodlings` D-3, D-5, D-7: a unit's strike magazine (its armed count,
+    // arming and build countdowns) and its timed life, each an option tag then its fields.
+    strike_magazine,
+    timed_life,
 } unhashed {
     hull_turn_budget,
     status_modifiers,
@@ -411,6 +415,11 @@ fields!(LaunchChannel {
     next_try_in,
 });
 fields!(HangarLink { hangar, returning });
+fields!(StrikeMagazineState {
+    armed,
+    arming_left,
+    build_left
+});
 wrapper!(EffectId, StatusId);
 fields!(AbilitySource { unit_type, ability });
 impl Canonical for EffectTarget {
@@ -599,7 +608,29 @@ fields!(WeaponSpec {
     // Plan `2026-11-28-carrier-interceptors` D-4: a launch weapon's tries and interval, an
     // option tag first.
     magazine_launch,
+    // Plan `2026-11-28-broodlings` D-4, D-7: what a finishing missile creates, an option tag
+    // first, then its unit, count per strike, search range, timed life and order.
+    impact_spawn,
 });
+fields!(ImpactSpawn {
+    unit,
+    per_strike,
+    search_range,
+    timed_life,
+    order
+});
+fields!(TimedLifeSpec {
+    ticks,
+    random_extra_ticks
+});
+// Plan `2026-11-28-broodlings` D-7: the order's variant tag; one variant today.
+impl Canonical for SpawnOrder {
+    fn encode(&self, encoder: &mut Encoder) {
+        match self {
+            Self::AttackTargetOrPoint => 0_u8.encode(encoder),
+        }
+    }
+}
 fields!(MagazineLaunch {
     tries,
     interval_ticks
@@ -1114,7 +1145,7 @@ mod tests {
         // Domain length, UTF-8 domain, schema u32, u16, i32, option tags/payload,
         // then UTF-8 string byte length and its two encoded bytes.
         let bytes = [
-            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 60, 0, 0, 0, 0x34, 0x12, 0xfe, 0xff,
+            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 61, 0, 0, 0, 0x34, 0x12, 0xfe, 0xff,
             0xff, 0xff, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0xc3, 0xa9,
         ];
         assert_eq!(encoder.finish(), xxh64(&bytes, 0));
@@ -1190,7 +1221,7 @@ mod tests {
             let mut encoder = Encoder::new("test");
             7_u32.encode(&mut encoder);
             text.as_str().encode(&mut encoder);
-            let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 60, 0, 0, 0];
+            let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 61, 0, 0, 0];
             bytes.extend([7, 0, 0, 0]);
             bytes.extend((length as u64).to_le_bytes());
             bytes.extend(text.as_bytes());
@@ -1215,7 +1246,7 @@ mod tests {
         // then the full remaining duration u32 (0x0001_0001), total, supply, the started flag
         // and payments.
         let bytes = [
-            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 60, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 61, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
             0x34, 0x12, 1, 0, 1, 0, 2, 0, 0, 0, 0x78, 0x56, 0x34, 0x12, 1, 3, 0, 0, 0, 4, 0, 0, 0,
         ];
         assert_eq!(digest(&queue), xxh64(&bytes, 0));
@@ -1226,7 +1257,7 @@ mod tests {
     #[test]
     fn rally_targets_encode_their_tag_and_payload() {
         use sim_types::{EntityId, RallyTarget, ResourceNodeId, SimScalar, SimVec2};
-        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 60, 0, 0, 0];
+        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 61, 0, 0, 0];
         let point = SimVec2::new(SimScalar::from_raw(0x0102), SimScalar::from_raw(-1));
         let mut bytes = header.to_vec();
         bytes.push(0);
@@ -1253,7 +1284,7 @@ mod tests {
     #[test]
     fn rally_routes_encode_their_count_slot_and_waypoints() {
         use sim_types::{EntityId, RallyRoute, RallyTarget, ResourceNodeId};
-        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 60, 0, 0, 0];
+        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 61, 0, 0, 0];
         let count = |n: u64| n.to_le_bytes();
         // No route.
         let mut bytes = header.to_vec();
@@ -1288,12 +1319,62 @@ mod tests {
         assert_eq!(digest(&vec![first, route]), xxh64(&bytes, 0));
     }
 
-    /// Plan `2026-11-28-missile-movers-b52` D-5: the schema a missile phase's typed end is
-    /// hashed under, after the hangar (57, plan `2026-11-28-carrier-interceptors` §5); 58 and 59
-    /// are reserved for the Gated movement plan. The number is the next free at merge.
+    /// Plan `2026-11-28-broodlings` D-7: the schema the strike magazine, the timed life and the
+    /// impact spawn are hashed under, after a missile phase's typed end (60, plan
+    /// `2026-11-28-missile-movers-b52` D-5). The number is the next free at merge.
     #[test]
-    fn the_schema_is_60() {
-        assert_eq!(super::super::CHECKSUM_SCHEMA_VERSION, 60);
+    fn the_schema_is_61() {
+        assert_eq!(super::super::CHECKSUM_SCHEMA_VERSION, 61);
+    }
+
+    /// Plan `2026-11-28-broodlings` D-7: a strike magazine encodes its option tag, then its armed
+    /// byte and its arming and build countdowns' two bytes each; a timed life its option tag and
+    /// its two bytes.
+    #[test]
+    fn a_strike_magazine_and_a_timed_life_encode_their_tags_and_counts() {
+        use crate::entity::StrikeMagazineState;
+        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 61, 0, 0, 0];
+        let mut bytes = header.to_vec();
+        bytes.push(0);
+        assert_eq!(digest(&None::<StrikeMagazineState>), xxh64(&bytes, 0));
+        let magazine = StrikeMagazineState {
+            armed: 2,
+            arming_left: 0x0102,
+            build_left: 0x0304,
+        };
+        let mut bytes = header.to_vec();
+        bytes.extend([1, 2, 0x02, 0x01, 0x04, 0x03]);
+        assert_eq!(digest(&Some(magazine)), xxh64(&bytes, 0));
+        let mut bytes = header.to_vec();
+        bytes.extend([1, 89, 0]);
+        assert_eq!(digest(&Some(89_u16)), xxh64(&bytes, 0));
+    }
+
+    /// Plan `2026-11-28-broodlings` D-7: an impact spawn encodes its option tag, then its unit's
+    /// two bytes, its count byte, its search range's eight bytes, its timed life (an option tag,
+    /// then its ticks and random extra, two bytes each) and its order's variant tag.
+    #[test]
+    fn an_impact_spawn_encodes_its_unit_count_range_life_and_order() {
+        use sim_types::{ImpactSpawn, SimScalar, SpawnOrder, TimedLifeSpec, UnitTypeId};
+        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 61, 0, 0, 0];
+        let spawn = ImpactSpawn {
+            unit: UnitTypeId(48),
+            per_strike: 1,
+            search_range: SimScalar::from_i32(5),
+            timed_life: Some(TimedLifeSpec {
+                ticks: 89,
+                random_extra_ticks: 5,
+            }),
+            order: SpawnOrder::AttackTargetOrPoint,
+        };
+        let mut bytes = header.to_vec();
+        bytes.extend([1, 48, 0, 1]);
+        bytes.extend(SimScalar::from_i32(5).raw().to_le_bytes());
+        bytes.extend([1, 89, 0, 5, 0, 0]);
+        assert_eq!(digest(&Some(spawn)), xxh64(&bytes, 0));
+        let mut bytes = header.to_vec();
+        bytes.push(0);
+        assert_eq!(digest(&None::<ImpactSpawn>), xxh64(&bytes, 0));
     }
 
     /// Plan `2026-11-28-missile-movers-b52` D-5: a phase end encodes its option tag, then its
@@ -1301,7 +1382,7 @@ mod tests {
     #[test]
     fn a_phase_end_encodes_its_variant_tag_and_distance() {
         use sim_types::{PhaseEnd, SimScalar};
-        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 60, 0, 0, 0];
+        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 61, 0, 0, 0];
         let one = SimScalar::ONE.raw().to_le_bytes();
         for (end, tag) in [
             (PhaseEnd::Flown(SimScalar::ONE), 0),
@@ -1319,7 +1400,7 @@ mod tests {
     #[test]
     fn a_magazine_launch_encodes_its_tag_tries_and_interval() {
         use sim_types::MagazineLaunch;
-        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 60, 0, 0, 0];
+        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 61, 0, 0, 0];
         let mut bytes = header.to_vec();
         bytes.push(0);
         assert_eq!(digest(&None::<MagazineLaunch>), xxh64(&bytes, 0));
@@ -1337,7 +1418,7 @@ mod tests {
     #[test]
     fn a_follow_encodes_its_tag_target_and_kind() {
         use sim_types::{EntityId, FollowKind, UnitOrder};
-        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 60, 0, 0, 0];
+        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 61, 0, 0, 0];
         for (kind, byte) in [(FollowKind::Move, 0), (FollowKind::AcquireMove, 1)] {
             let order = UnitOrder::Follow {
                 target: EntityId(0x1234_5678),
@@ -1421,7 +1502,7 @@ mod tests {
 
     #[test]
     fn carrier_identity_has_explicit_option_tag_and_all_id_bytes() {
-        let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 60, 0, 0, 0];
+        let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 61, 0, 0, 0];
         bytes.push(0);
         assert_eq!(digest(&None::<sim_types::EntityId>), xxh64(&bytes, 0));
         bytes.pop();

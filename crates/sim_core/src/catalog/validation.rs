@@ -154,7 +154,7 @@ fn start_energy(definition: &str, start: f64, max: f64) -> SimResult<()> {
     Ok(())
 }
 
-fn nonnegative(definition: &str, field: &str, value: f64) -> SimResult<()> {
+pub(super) fn nonnegative(definition: &str, field: &str, value: f64) -> SimResult<()> {
     scalar(definition, field, value)?;
     if value < 0.0 {
         return Err(invalid(definition, field, "must be nonnegative"));
@@ -760,6 +760,7 @@ impl UnitArchetypeDef {
         self.validate_attack_dash()?;
         self.validate_overclock()?;
         self.validate_hangar()?;
+        self.validate_strike_magazine()?;
         ability_rates(&self.slug, "abilities", &self.abilities)?;
         ability_rates(
             &self.slug,
@@ -1129,7 +1130,8 @@ impl WeaponSpecDef {
             ));
         }
         self.validate_movers(definition, prefix)?;
-        self.validate_magazine_launch(definition, prefix)
+        self.validate_magazine_launch(definition, prefix)?;
+        self.validate_impact_spawn(definition, prefix)
     }
 
     /// The missile movers (plan `2026-11-27-weapon-delivery` D-4): only a missile weapon has

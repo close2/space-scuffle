@@ -776,7 +776,7 @@ fn step_ready_weapon(
         // CRITICAL COOLDOWN GUARD:
         // An entity may align with a target while its weapon is on cooldown,
         // but MUST NOT start a swing until cooldown has fully elapsed!
-        entity.weapon_cooldown_remaining == 0 && start_swing(entity, weapon, target)
+        may_start_swing(entity) && start_swing(entity, weapon, target)
     } else if !mandate.may_slew(weapon) {
         false
     } else {
@@ -807,12 +807,20 @@ fn slew_and_try_swing(
     let aim = weapon_aim(entity, weapon);
     let arc = swing_arc(entity, weapon, target);
     if is_within_firing_arc(aim, entity.position, target.position, arc) {
-        if entity.weapon_cooldown_remaining == 0 {
+        if may_start_swing(entity) {
             return start_swing(entity, weapon, target);
         }
         entity.weapon_phase = WeaponPhase::Ready;
     }
     false
+}
+
+/// Whether an aimed weapon may start its swing this tick: its cooldown has run out and, for a
+/// unit with a strike magazine, a charge is armed (plan `2026-11-28-broodlings` D-3). A weapon
+/// held by either waits as a weapon on cooldown does: it keeps its target and its place in its
+/// cycle, and swings on the first tick both allow.
+fn may_start_swing(entity: &Entity) -> bool {
+    entity.weapon_cooldown_remaining == 0 && !entity.strike_magazine_empty()
 }
 
 /// Steps a rotating weapon until it is aligned, or returns it to ready if the target left.

@@ -82,6 +82,7 @@ fn spines() -> WeaponSpec {
         launch_visibility: sim_types::AttackVisibility::Snapshot,
         missile_movers: Vec::new(),
         magazine_launch: None,
+        impact_spawn: None,
     }
 }
 

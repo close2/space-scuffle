@@ -54,6 +54,10 @@
 //!     the tick reads a lost swing; the weapon phase applies the same test
 //!     ([`SimWorld::swing_target_live`]) to a target lost during the tick's movement (plan
 //!     `2026-11-25-wind-up-and-hold-facing` D-1, B-207).
+//! 12. A unit with a strike magazine starts a swing only with a charge armed, and its release
+//!     carries one armed charge per strike, up to the weapon's `attacks_count` (plan
+//!     `2026-11-28-broodlings` D-3). A finishing missile whose weapon has an impact spawn creates
+//!     its units after the last impact of the tick, in impact order ([`impact_spawn`], D-4).
 
 use crate::catalog::UnitCatalog;
 use crate::catalog::{SplashSpec, UnitArchetype, WeaponSpec};
@@ -79,6 +83,7 @@ use sim_types::{
     SplashShape, StrikeEnds, Tick, UnitOrder, UnitTypeId, WeaponVisualKind,
 };
 
+mod impact_spawn;
 mod missile_flight;
 
 /// Lowest impact distance used for flight timing, so a point-blank launch still takes a tick.
@@ -237,6 +242,16 @@ pub(crate) struct CombatWorkspace {
     /// Units whose wind-up [`SimWorld::end_lost_swings`] ends this tick, in `EntityId` order.
     lost_swings: Vec<EntityId>,
     finished_projectiles: Vec<(usize, ProjectileStep)>,
+    // PERFORMANCE RATIONALE:
+    // Why: A Brood Lord analogue's missile finishes with a spawn every attack period, and the
+    // projectile phase must not allocate per finish.
+    // What: The spawns of this tick's finished missiles, committed after the last impact and
+    // cleared; the buffer keeps its high-water capacity.
+    // Trade-off: One more retained buffer, bounded by validation (`per_strike × attacks_count` at
+    // most 8 per missile).
+    /// Spawns of this tick's finished missiles, in impact order (plan `2026-11-28-broodlings`
+    /// D-4); empty between ticks.
+    pending_spawns: Vec<impact_spawn::PendingSpawn>,
 }
 
 impl CombatWorkspace {
@@ -735,6 +750,12 @@ impl SimWorld {
                 charge_random_delay(entity, &weapon, rng);
                 if let Some(target) = target_info {
                     let strikes = Self::begin_strikes(entity, &weapon, target.id, target_mover);
+                    // A strike magazine's release carries one armed charge per strike (plan
+                    // `2026-11-28-broodlings` D-3); the swing started only with one armed.
+                    let strikes = entity
+                        .strike_magazine
+                        .as_mut()
+                        .map_or(strikes, |magazine| magazine.spend(strikes));
                     if strikes > 0 {
                         combat.shots.push(PreparedShot {
                             attacker: *id,
@@ -1902,7 +1923,8 @@ impl SimWorld {
         self.pending_events.push(event);
     }
 
-    /// Advances every projectile one tick, then resolves the ones that finished.
+    /// Advances every projectile one tick, then resolves the ones that finished, then commits the
+    /// units their finishes create.
     fn advance_projectiles(&mut self) {
         let mut finished = std::mem::take(&mut self.combat.finished_projectiles);
         finished.clear();
@@ -1923,9 +1945,12 @@ impl SimWorld {
                 .unwrap_or_else(|| self.unrecorded_projectile_source(&projectile));
             if matches!(step, ProjectileStep::Impact) {
                 self.resolve_projectile_impact(&projectile, source);
+                self.collect_impact_spawn(&projectile);
             }
         }
         self.combat.finished_projectiles = finished;
+        // Created units appear after every impact of the tick (plan `2026-11-28-broodlings` D-4).
+        self.commit_impact_spawns();
     }
 
     /// Moves one projectile, handling lifetime, target loss and surface impact.
