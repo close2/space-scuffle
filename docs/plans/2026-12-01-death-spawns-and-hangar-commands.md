@@ -895,7 +895,7 @@ pointer; `## As built` (part B). Commit `docs: close B-230 (plan … WPB3)`.
 
 ---
 
-## 15. Owner question (draft, not filed)
+## 15. Owner question (filed as [Q0138](../questions/open/0138-hangar-cancel-auto-build.md))
 
 ```markdown
 # Q0138: Cancelling an interceptor build while auto-build is on: let auto-build queue it again?
