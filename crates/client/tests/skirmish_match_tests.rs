@@ -1328,10 +1328,9 @@ fn stance_frame(harness: &Harness, unit: EntityId) -> StanceFrame {
         .iter()
         .find(|bubble| bubble.entity_id == unit)
         .expect("the snapshot publishes the unit");
-    let entity = *world
+    let entity = world
         .resource::<RenderEntityMap>()
-        .0
-        .get(&unit)
+        .get(unit)
         .expect("the unit has a bubble");
     let track = world
         .get::<StanceTrack>(entity)

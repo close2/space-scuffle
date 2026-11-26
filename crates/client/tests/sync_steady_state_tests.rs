@@ -8,7 +8,12 @@
 //! material at all, even while bubbles bounce (plan `2026-11-04-battle-flipbook-animation`, D-9).
 //! A frame of steady combat
 //! modifies and removes no combat effect material, and adds one only while the pool of effect
-//! slots grows (C-17).
+//! slots grows (C-17). A battle in which units arrive and leave on their own clocks (Broodlings
+//! expiring) or at a test's cadence (air and ground units killed and spawned) creates and
+//! removes no asset and spawns no entity once the render pool has reached its regime (plan
+//! `2026-11-29-render-entity-pool` R-1, R-2), and so does one in which two Carriers cycle their
+//! interceptors through launch, attack, dock and relaunch (plan `2026-11-28-carrier-interceptors`
+//! H-20).
 //!
 //! # How it fits
 //! This is layers 1 and 2 of blueprint D-2 (`docs/plans/2026-11-03-close-phase-6-7-8-exits.md`).
@@ -100,6 +105,13 @@ use battle_harness::{Harness, LOCAL_PLAYER};
 )]
 #[path = "support/attack_snapshot_stage.rs"]
 mod attack_snapshot_stage;
+
+#[allow(
+    dead_code,
+    reason = "shared by several test binaries that each use a subset"
+)]
+#[path = "support/unit_cycling.rs"]
+mod unit_cycling;
 
 use client::battle_hud::attack_snapshots::{AttackSnapshotBubble, AttackSnapshotPool};
 
@@ -358,6 +370,9 @@ fn retained_buffers(world: &World) -> Vec<Buffer> {
     }
     if let Some(selection) = world.get_resource::<BattleSelection>() {
         found.extend(selection.retained_buffers());
+    }
+    if let Some(map) = world.get_resource::<client::RenderEntityMap>() {
+        found.extend(map.retained_buffers());
     }
     if let Some(session) = world.get_resource::<BattleSession>() {
         found.extend(session.frames.retained_buffers());
@@ -725,9 +740,8 @@ fn presented(harness: &Harness) -> Presented {
     let world = harness.app.world();
     let phases = world
         .resource::<client::RenderEntityMap>()
-        .0
         .iter()
-        .map(|(&id, &entity)| {
+        .map(|(id, entity)| {
             let phase = *world
                 .get::<FlipbookPhase>(entity)
                 .expect("a live bubble has a flipbook phase");
@@ -1044,14 +1058,22 @@ fn a_gas_trip_in_and_out_of_the_extractor_spawns_nothing() {
     let mut warm = Motion::default();
     through_a_gas_trip(&mut harness, worker, &mut warm);
     run_ticks(&mut harness, WARM_TICKS);
-    let render = harness.app.world().resource::<client::RenderEntityMap>().0[&worker];
+    let render = harness
+        .app
+        .world()
+        .resource::<client::RenderEntityMap>()
+        .get(worker);
     let entities = census(&harness);
     let buffers = retained_buffers(harness.app.world());
     reset(&mut harness);
     let mut motion = Motion::default();
     let presence_changes = through_a_gas_trip(&mut harness, worker, &mut motion);
     assert_eq!(
-        harness.app.world().resource::<client::RenderEntityMap>().0[&worker],
+        harness
+            .app
+            .world()
+            .resource::<client::RenderEntityMap>()
+            .get(worker),
         render,
         "one render entity through the trip"
     );
@@ -1683,4 +1705,274 @@ fn a_held_spell_image_changes_nothing_on_running_frames() {
         "the pulses refreshed nothing"
     );
     assert_held_image_is_steady(&mut harness);
+}
+
+// --- Units that come and go (plan 2026-11-29-render-entity-pool R-1, R-2) ----------------------
+
+/// How the render pool was used in the session.
+fn pool_stats(harness: &Harness) -> client::RenderPoolStats {
+    harness
+        .app
+        .world()
+        .resource::<client::RenderEntityMap>()
+        .stats()
+}
+
+/// Render entities the pool has spawned in the session.
+fn pool_spawned(harness: &Harness) -> u32 {
+    pool_stats(harness).spawned
+}
+
+/// What a cycling window saw, counted from consecutive presented snapshots.
+#[derive(Debug, Clone, Copy, Default)]
+struct Membership {
+    /// Records that entered the snapshot, of any kind.
+    arrivals: u64,
+    /// Records that left it, of any kind.
+    departures: u64,
+    /// Arrivals of the kind under test.
+    kind_arrivals: u64,
+    /// Departures of the kind under test.
+    kind_departures: u64,
+}
+
+/// Steps one frame, adding the frame's redrawn bubbles to `motion` and its arrivals and
+/// departures to `membership`; `kind` tells the records of the kind under test.
+fn step_membership(
+    harness: &mut Harness,
+    motion: &mut Motion,
+    membership: &mut Membership,
+    kind: &dyn Fn(&BubbleRenderInstance) -> bool,
+) {
+    let before = presented(harness);
+    harness.step(1);
+    let after = presented(harness);
+    let registry = harness.app.world().resource::<FlipbookRegistry>();
+    motion.turned += turned(&before, &after);
+    motion.redrawn += redrawn(&before, &after, registry);
+    let ids = |presented: &Presented| -> BTreeMap<EntityId, bool> {
+        presented
+            .snapshot
+            .bubbles
+            .iter()
+            .map(|bubble| (bubble.entity_id, kind(bubble)))
+            .collect()
+    };
+    let (was, is) = (ids(&before), ids(&after));
+    for (id, of_kind) in &is {
+        if !was.contains_key(id) {
+            membership.arrivals += 1;
+            membership.kind_arrivals += u64::from(*of_kind);
+        }
+    }
+    for (id, of_kind) in &was {
+        if !is.contains_key(id) {
+            membership.departures += 1;
+            membership.kind_departures += u64::from(*of_kind);
+        }
+    }
+}
+
+/// Runs the cycling battle until the pool's spawn count has not changed for `2 × period` ticks
+/// (the regime: every arrival finds a parked entity), failing after `10 × period` ticks (stop
+/// rule 6). `drive` runs before every frame.
+fn warm_to_regime(harness: &mut Harness, period: u32, drive: &mut dyn FnMut(&mut Harness)) {
+    let start = harness.world().current_tick;
+    let mut since = start;
+    let mut spawned = pool_spawned(harness);
+    loop {
+        drive(harness);
+        harness.step(1);
+        let tick = harness.world().current_tick;
+        let now = pool_spawned(harness);
+        if now != spawned {
+            spawned = now;
+            since = tick;
+        }
+        if tick - since >= 2 * period {
+            return;
+        }
+        assert!(
+            tick - start < 10 * period,
+            "the pool kept spawning for {} ticks (10 × {period}): {spawned} spawned",
+            tick - start
+        );
+    }
+}
+
+/// The window of a cycling test: `3 × period` ticks after [`warm_to_regime`], asserting R-1's
+/// rules (plan §6.1): no asset added or removed, only the bubble, ring and standard materials of
+/// redrawn or arriving units modified, no entity spawned or despawned, no retained buffer moved,
+/// and at least two arrivals and two departures of the kind under test.
+fn assert_cycling_window_is_steady(
+    harness: &mut Harness,
+    period: u32,
+    drive: &mut dyn FnMut(&mut Harness),
+    kind: &dyn Fn(&BubbleRenderInstance) -> bool,
+) {
+    let entities = census(harness);
+    let buffers = retained_buffers(harness.app.world());
+    let before = pool_stats(harness);
+    reset(harness);
+    let mut motion = Motion::default();
+    let mut membership = Membership::default();
+    let goal = harness.world().current_tick + 3 * period;
+    while harness.world().current_tick < goal {
+        drive(harness);
+        step_membership(harness, &mut motion, &mut membership, kind);
+    }
+    assert!(
+        membership.kind_arrivals >= 2 && membership.kind_departures >= 2,
+        "units of the kind came and went in the window: {membership:?}"
+    );
+    let tally = tallies(harness);
+    let bubbles = type_name::<Assets<BubbleDomeMaterial>>();
+    let rings = type_name::<Assets<SelectionRingMaterial>>();
+    let standard = type_name::<Assets<StandardMaterial>>();
+    assert_eq!(
+        tally.others(&[
+            (bubbles, EventKind::Modified),
+            (rings, EventKind::Modified),
+            (standard, EventKind::Modified),
+        ]),
+        Vec::new(),
+        "asset events other than modified bubble, ring and standard materials \
+         ({membership:?}, {motion:?})"
+    );
+    let arrivals = membership.arrivals;
+    let modified = tally.count(bubbles, EventKind::Modified);
+    assert!(
+        modified <= motion.redrawn + arrivals,
+        "{modified} bubble materials modified; (unit, frame) pairs: {motion:?}, {arrivals} \
+         arrivals"
+    );
+    for asset in [rings, standard] {
+        let modified = tally.count(asset, EventKind::Modified);
+        assert!(
+            modified <= arrivals,
+            "{modified} of {asset} modified for {arrivals} arrivals"
+        );
+    }
+    assert_eq!(census(harness), entities, "entities spawned or despawned");
+    assert_eq!(
+        moved(&buffers, &retained_buffers(harness.app.world())),
+        Vec::new(),
+        "retained buffers that moved or grew"
+    );
+    let after = pool_stats(harness);
+    assert_eq!(
+        (after.spawned, u64::from(after.reused - before.reused)),
+        (before.spawned, arrivals),
+        "every arrival of the window reused a parked entity ({before:?} then {after:?})"
+    );
+}
+
+/// R-1 = B-19 (plan `2026-11-28-broodlings` D-12 item 3, plan `2026-11-29-render-entity-pool`
+/// §6.1): a running battle in which the only fight is a Brood Lord analogue (found by its strike
+/// magazine) attacking a durable, unarmed enemy, so Broodlings are created and expire on their
+/// own clocks, creates and removes no asset and spawns no entity once the render pool has
+/// reached its regime: the render entities of the units that come and go are reused. Warm-up
+/// and window are multiples of the Broodling's longest life, read from the data.
+#[test]
+fn broodlings_cycling_create_and_remove_no_bubble_material() {
+    let mut harness = Harness::battle();
+    settle(&mut harness, true);
+    let stage = unit_cycling::stage_brood(harness.world_mut());
+    harness.resume();
+    let mut drive = |_: &mut Harness| {};
+    warm_to_regime(&mut harness, stage.lifetime, &mut drive);
+    let spawned = stage.spawned;
+    assert_cycling_window_is_steady(&mut harness, stage.lifetime, &mut drive, &|bubble| {
+        bubble.unit_type == spawned
+    });
+}
+
+/// R-2 (plan `2026-11-29-render-entity-pool` §6.1): an unarmed air unit with media of each
+/// player is killed and spawned again at a fixed cadence, and every other cycle a ground unit
+/// replaces it on the same tick, so render entities cycle through air and ground arrivals and
+/// across the two layouts; after the regime, the same rules as R-1 hold.
+#[test]
+fn air_units_cycling_create_and_remove_nothing() {
+    let mut harness = Harness::battle();
+    settle(&mut harness, true);
+    let assets = battle_harness::assets();
+    let mut cycle = unit_cycling::stage_air_cycle(harness.world_mut(), &assets);
+    harness.resume();
+    let mut last_tick = harness.world().current_tick;
+    let (air, ground) = (cycle.air, cycle.ground);
+    let mut drive = move |harness: &mut Harness| {
+        cycle.advance(harness.world_mut(), &mut last_tick);
+    };
+    let period = 2 * unit_cycling::AIR_CYCLE_TICKS;
+    warm_to_regime(&mut harness, period, &mut drive);
+    assert_cycling_window_is_steady(&mut harness, period, &mut drive, &|bubble| {
+        bubble.unit_type == air || bubble.unit_type == ground
+    });
+}
+
+/// Ticks a hangar test drives the battle to complete its warm-up cycles before giving up.
+const HANGAR_CYCLE_LIMIT_TICKS: u32 = 20_000;
+
+/// Least window of H-20, in ticks (plan `2026-11-28-carrier-interceptors` §6.4: 600 ticks).
+const HANGAR_WINDOW_TICKS: u32 = 600;
+
+/// H-20 (plan `2026-11-28-carrier-interceptors` §6.4, plan `2026-11-29-render-entity-pool`
+/// §6.5): two hangar units (the Carrier analogue, found by its hangar) of the local player cycle
+/// their members through launch, attack, dock and relaunch against a durable unarmed enemy, the
+/// cycle driven by the presented snapshot (every member launched, then the target gone until
+/// every member has docked, then a new target). After the render pool reaches its regime
+/// (warm-up and window are multiples of the time one cycle took, measured), a window of at least
+/// 600 ticks creates and removes no asset and spawns no entity, with R-1's rules.
+#[test]
+fn hangar_members_cycling_create_and_remove_nothing() {
+    let mut harness = Harness::battle();
+    settle(&mut harness, true);
+    let assets = battle_harness::assets();
+    let stage = unit_cycling::stage_hangars(harness.world_mut(), &assets);
+    let cycle = std::cell::Cell::new(stage);
+    harness.resume();
+    let mut drive = |harness: &mut Harness| {
+        let mut state = cycle.get();
+        let members = state.members_in(
+            &harness
+                .app
+                .world()
+                .resource::<BattleSession>()
+                .frames
+                .presented()
+                .bubbles,
+        );
+        state.advance(harness.world_mut(), members);
+        cycle.set(state);
+    };
+    let start = harness.world().current_tick;
+    while cycle.get().cycles < 2 {
+        drive(&mut harness);
+        harness.step(1);
+        assert!(
+            harness.world().current_tick - start < HANGAR_CYCLE_LIMIT_TICKS,
+            "two hangar cycles within {HANGAR_CYCLE_LIMIT_TICKS} ticks: {:?}",
+            cycle.get()
+        );
+    }
+    let period = cycle.get().last_cycle_ticks;
+    assert!(period > 0, "a cycle takes time");
+    warm_to_regime(&mut harness, period, &mut drive);
+    let (member, target) = (stage.member, stage.target_kind);
+    let window = period.max(HANGAR_WINDOW_TICKS.div_ceil(3));
+    assert_cycling_window_is_steady(&mut harness, window, &mut drive, &|bubble| {
+        bubble.unit_type == member || bubble.unit_type == target
+    });
+    assert!(
+        cycle.get().cycles >= 3,
+        "the window ran whole cycles: {:?}",
+        cycle.get()
+    );
+    eprintln!(
+        "H-20: one cycle took {period} ticks at warm-up; window {} ticks; {} cycles in all; \
+         pool {:?}",
+        3 * window,
+        cycle.get().cycles,
+        pool_stats(&harness)
+    );
 }

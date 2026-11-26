@@ -483,17 +483,14 @@ pub fn teardown_playtest_system(
     mut selection: ResMut<'_, BattleSelection>,
     mut lab: ResMut<'_, LabState>,
     mut session: ResMut<'_, BattleSession>,
-    bubble_query: Query<'_, '_, Entity, With<LiveBattleBubble>>,
     vfx_fx_query: Query<'_, '_, Entity, With<MeshMaterial3d<CombatFxMaterial>>>,
 ) {
-    for entity in &bubble_query {
-        commands.entity(entity).despawn_recursive();
-    }
+    // The render pool holds every live and parked bubble of the playtest (plan
+    // `2026-11-29-render-entity-pool` D-9).
+    render_entities.retire_all(&mut commands);
     for entity in &vfx_fx_query {
         commands.entity(entity).despawn_recursive();
     }
-
-    render_entities.0.clear();
     session.suspend();
     session.release_world();
     *lab = LabState {

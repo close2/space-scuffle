@@ -323,11 +323,11 @@ fn moving_no_tick_frames_interpolate_and_real_death_changes_membership() -> Test
         .bubbles
         .iter()
         .any(|bubble| bubble.entity_id == victim));
-    assert!(!app
+    assert!(app
         .world()
         .resource::<client::RenderEntityMap>()
-        .0
-        .contains_key(&victim));
+        .get(victim)
+        .is_none());
     Ok(())
 }
 
