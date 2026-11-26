@@ -60,5 +60,10 @@
         // docs/evidence/veo/2026-11-28-batch-broodlings.md).
         (slug: "spore_matriarch", tier: Expansion),
         (slug: "brood_mite", tier: Expansion),
+        // Carrier batch (plan 2026-11-28-carrier-interceptors WP5, 2026-11-26; owner answer Q0131:
+        // faint light shafts and imperfect loops accepted until the polish pass;
+        // docs/evidence/veo/2026-11-26-batch-carrier.md).
+        (slug: "mothership_carrier", tier: Expansion),
+        (slug: "saucer_interceptor", tier: Expansion),
     ],
 )
