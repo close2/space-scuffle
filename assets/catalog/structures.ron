@@ -534,7 +534,17 @@
                 backswing_ticks: 9,
                 random_delay_ticks: (-1.1161, 2.2321),
                 splash: None,
-                projectile_speed: Some(0.56),
+                // The top speed of the mover below: LongboltMissileWeapon MaxSpeed 20 x 0.056.
+                projectile_speed: Some(1.12),
+                // 5.0.14 LongboltMissileLM (liberty EffectData:1789-1794) names no Movers, so each missile
+                // flies its ammo unit's own mover LongboltMissileWeapon (UnitData:11605-11608, no Mover,
+                // the default ##id##; MoverData:589-600): Guidance at Speed 10, MaxSpeed 10 (0.56 per
+                // tick) until 4 is left to the target (Outro -4, a target-relative end), then the
+                // "kill phase" accelerating 200 (0.6272 per tick squared, one tick to its cap) to MaxSpeed
+                // 20 (1.12). Plan 2026-11-28-missile-movers-b52 D-1, D-2, S9, S10 (B-52).
+                missile_movers: [
+                    (up_to_range: None, phases: [(speed: Some(0.56), acceleration: 0.0, max_speed: 0.56, ends: Some(Remaining(4.0))), (speed: None, acceleration: 0.6272, max_speed: 1.12, ends: None)]),
+                ],
                 weapon_class: None,
                 upgrade_bonus_per_level: 0.0,
                 bonus_upgrade_per_level: 0.0,
@@ -1954,8 +1964,8 @@
                 // SpineCrawlerWeapon has no mover). A Normal speed v is 0.056 v per tick, an acceleration a is
                 // 0.003136 a per tick squared. Plan 2026-11-27-weapon-delivery D-2, D-3 (B-52).
                 missile_movers: [
-                    (up_to_range: Some(3.0), phases: [(speed: Some(0.056), acceleration: 0.03136, max_speed: 1.12, ends_after: Some(0.3)), (speed: None, acceleration: 0.43904, max_speed: 11.2, ends_after: None)]),
-                    (up_to_range: None, phases: [(speed: Some(0.672), acceleration: 0.43904, max_speed: 11.2, ends_after: None)]),
+                    (up_to_range: Some(3.0), phases: [(speed: Some(0.056), acceleration: 0.03136, max_speed: 1.12, ends: Some(Flown(0.3))), (speed: None, acceleration: 0.43904, max_speed: 11.2, ends: None)]),
+                    (up_to_range: None, phases: [(speed: Some(0.672), acceleration: 0.43904, max_speed: 11.2, ends: None)]),
                 ],
                 weapon_class: None,
                 upgrade_bonus_per_level: 0.0,

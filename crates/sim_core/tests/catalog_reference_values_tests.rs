@@ -23,7 +23,9 @@
 use sim_core::catalog::UnitArchetype;
 use sim_core::WeaponSpec;
 use sim_types::upgrades::UpgradeEffect;
-use sim_types::{AttackCommand, AttackVisibility, AttributeFlags, SimAngle, SimScalar, TurretIdle};
+use sim_types::{
+    AttackCommand, AttackVisibility, AttributeFlags, PhaseEnd, SimAngle, SimScalar, TurretIdle,
+};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -5530,11 +5532,100 @@ fn shipped_spell_visibility_follows_starcraft() -> TestResult {
     Ok(())
 }
 
+/// One constant missile row of M-8: analogue, weapon block, top speed per tick, source, and the
+/// open bug a row whose shipped speed is not the 5.0.14 mover's records (its value is then the
+/// shipped one, so the table never passes a mismatch silently).
+type ConstantMissileRow = (
+    &'static str,
+    &'static str,
+    f32,
+    &'static str,
+    Option<&'static str>,
+);
+
+/// M-8 (plan `2026-11-28-missile-movers-b52` S12, S14): the constant speed of every shipped unit
+/// missile weapon without movers, from the 5.0.14 mover its launch flies (the launch's `Movers`,
+/// else its ammo unit's `Mover`; `MaxSpeed × 0.056` per tick, 3200 accelerations instant).
+/// `MissileDefault` (`core` MoverData:13-25) and its children fly 18.75, 1.05 per tick.
+const SC2_UNIT_MISSILE_SPEEDS: [ConstantMissileRow; 17] = [
+    ("Roach", "weapon", 1.05, "AcidSalivaLM ammo AcidSalivaWeapon, liberty MoverData:670-679", None),
+    ("Marauder", "weapon", 1.12, "PunisherGrenadesLM Movers PunisherGrenadesWeapon, liberty MoverData:662-669 (MaxSpeed 20)", None),
+    ("Stalker", "weapon", 1.05, "ParticleDisruptors ammo StalkerWeapon, a MissileDefault child (liberty MoverData:601)", None),
+    ("Stalker", "air_weapon", 1.05, "ParticleDisruptors ammo StalkerWeapon, a MissileDefault child (liberty MoverData:601)", None),
+    ("Adept", "weapon", 1.05, "AdeptLM Movers AdeptWeapon, a MissileDefault child (void MoverData:370)", None),
+    ("High Templar", "weapon", 1.05, "HighTemplarWeaponLM Movers HighTemplarWeaponMover, a MissileDefault child (balancemulti EffectData:1404-1409, MoverData:47)", None),
+    ("Ravager", "weapon", 1.05, "RavagerWeaponLM ammo RavagerWeaponMissile, Mover MissileDefault (liberty UnitData:1124-1128)", None),
+    ("Hydralisk", "weapon", 2.24, "NeedleSpinesLaunchMissile ammo NeedleSpinesWeapon, liberty MoverData:602-609 (Speed 40)", None),
+    ("Hydralisk", "air_weapon", 2.24, "NeedleSpinesLaunchMissile ammo NeedleSpinesWeapon, liberty MoverData:602-609 (Speed 40)", None),
+    ("Mutalisk", "weapon", 1.05, "GlaiveWurm ammo GlaiveWurmWeapon (the default ##id##Weapon, core EffectData:104), Mover MissileDefault (liberty UnitData:9271-9275)", None),
+    ("Mutalisk", "air_weapon", 1.05, "GlaiveWurm ammo GlaiveWurmWeapon (the default ##id##Weapon, core EffectData:104), Mover MissileDefault (liberty UnitData:9271-9275)", None),
+    ("Corruptor", "air_weapon", 1.05, "ParasiteSporeLaunchMissile ammo ParasiteSporeWeapon, Mover MissileDefault (liberty UnitData:9296-9300)", None),
+    ("Brood Lord", "weapon", 0.9, "BroodlingEscortLaunchA Movers BroodLordWeaponRight/Left (liberty MoverData:44-69, :620-644): Throw then Guidance to 40, not a constant", Some("B-232")),
+    ("Brood Lord", "ground_weapon", 0.9, "BroodlingEscortLaunchA Movers BroodLordWeaponRight/Left (liberty MoverData:44-69, :620-644): Throw then Guidance to 40, not a constant", Some("B-232")),
+    ("Queen", "weapon", 2.24, "AcidSpinesLM Movers AcidSpinesWeapon, liberty MoverData:610-619 (Speed 40)", None),
+    ("Queen", "ground_weapon", 2.24, "AcidSpinesLM Movers AcidSpinesWeapon, liberty MoverData:610-619 (Speed 40)", None),
+    ("Queen", "air_weapon", 2.24, "TalonsLM ammo TalonsMissileWeapon, swarm MoverData:335-344 (Speed 40)", None),
+];
+
+/// M-8: the structures' constant missiles, as [`SC2_UNIT_MISSILE_SPEEDS`].
+const SC2_STRUCTURE_MISSILE_SPEEDS: [ConstantMissileRow; 3] = [
+    ("Photon Cannon", "ground_weapon", 1.008, "PhotonCannonLM ammo PhotonCannonWeapon, liberty MoverData:407-416 (MaxSpeed 18)", None),
+    ("Photon Cannon", "air_weapon", 1.008, "PhotonCannonLM ammo PhotonCannonWeapon, liberty MoverData:407-416 (MaxSpeed 18)", None),
+    ("Spore Crawler", "air_weapon", 1.05, "SporeCrawler ammo SporeCrawlerWeapon (the default ##id##Weapon), Mover MissileDefault (liberty UnitData:8868-8872)", None),
+];
+
+/// M-8: every shipped missile weapon without movers flies the constant of its 5.0.14 mover, or
+/// its row names the open bug that records the difference; every row names a shipped weapon.
+#[test]
+fn constant_missile_speeds_follow_starcraft() -> TestResult {
+    for (structures, rows) in [
+        (false, &SC2_UNIT_MISSILE_SPEEDS[..]),
+        (true, &SC2_STRUCTURE_MISSILE_SPEEDS[..]),
+    ] {
+        let weapon_rows: Vec<WeaponRow> = rows
+            .iter()
+            .map(|&(unit, block, speed, source, _)| (unit, block, speed, source))
+            .collect();
+        check_weapons(
+            "constant missile speed",
+            structures,
+            &weapon_rows,
+            &[],
+            |w| w.projectile_speed.is_some() && w.missile_movers.is_empty(),
+            |w| w.projectile_speed.map_or(0.0, f),
+        )?;
+    }
+    let design = include_str!("../../../DESIGN.md");
+    for (unit, block, _, _, bug) in SC2_UNIT_MISSILE_SPEEDS
+        .iter()
+        .chain(&SC2_STRUCTURE_MISSILE_SPEEDS)
+    {
+        if let Some(bug) = bug {
+            assert!(
+                design.contains(&format!("| {bug} |")),
+                "{unit} {block}: {bug} is a row of DESIGN.md §4"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Where a 5.0.14 missile phase ends, world units (`Outro` read by its sign, plan
+/// `2026-11-28-missile-movers-b52` D-2): after a path flown (a positive `Outro`'s midpoint), or
+/// once a path is left to the target (a negative `Outro`'s magnitude).
+#[derive(Debug, Clone, Copy)]
+enum End {
+    /// A path flown since the release.
+    Flown(f32),
+    /// A path left to the impact.
+    Remaining(f32),
+}
+
 /// One speed phase of a 5.0.14 missile mover in world units and ticks (`Speed`, `Acceleration`,
-/// `MaxSpeed`, `Outro`'s midpoint), converted as the catalog's speeds and accelerations are: a
-/// Normal speed `v` is `0.056 v` per tick, a Normal acceleration `a` is `0.003136 a` per tick
-/// squared (plan `2026-11-27-weapon-delivery` §2).
-type PhaseRow = (Option<f32>, f32, f32, Option<f32>);
+/// `MaxSpeed`, `Outro`), converted as the catalog's speeds and accelerations are: a Normal speed
+/// `v` is `0.056 v` per tick, a Normal acceleration `a` is `0.003136 a` per tick squared (plan
+/// `2026-11-27-weapon-delivery` §2).
+type PhaseRow = (Option<f32>, f32, f32, Option<End>);
 
 /// One mover of a launch effect's `Movers`: its `IfRangeLTE` bound (`None` on the last, which
 /// admits any distance) and its phases.
@@ -5542,7 +5633,7 @@ type MoverRow = (Option<f32>, &'static [PhaseRow]);
 
 /// W-18 (plan `2026-11-27-weapon-delivery` D-2): every shipped weapon with missile movers, by
 /// analogue and block, with the 5.0.14 movers of its launch effect.
-const SC2_MISSILE_MOVERS: [(&str, &str, &[MoverRow], f32, &str); 2] = [
+const SC2_MISSILE_MOVERS: [(&str, &str, &[MoverRow], f32, &str); 6] = [
     (
         "Phoenix",
         "air_weapon",
@@ -5556,7 +5647,7 @@ const SC2_MISSILE_MOVERS: [(&str, &str, &[MoverRow], f32, &str); 2] = [
             (
                 None,
                 &[
-                    (Some(0.336), 0.0, 0.336, Some(1.25)),
+                    (Some(0.336), 0.0, 0.336, Some(End::Flown(1.25))),
                     (None, 0.18816, 2.24, None),
                 ],
             ),
@@ -5574,7 +5665,7 @@ const SC2_MISSILE_MOVERS: [(&str, &str, &[MoverRow], f32, &str); 2] = [
             (
                 Some(3.0),
                 &[
-                    (Some(0.056), 0.03136, 1.12, Some(0.3)),
+                    (Some(0.056), 0.03136, 1.12, Some(End::Flown(0.3))),
                     (None, 0.43904, 11.2, None),
                 ],
             ),
@@ -5584,6 +5675,71 @@ const SC2_MISSILE_MOVERS: [(&str, &str, &[MoverRow], f32, &str); 2] = [
         ],
         11.2,
         "ImpalerTentacleLM, liberty EffectData:2151-2162 (S10, S11)",
+    ),
+    (
+        "Viking",
+        "air_weapon",
+        &[
+            // VikingFighterMissile (liberty MoverData:531-567), the ammo unit VikingFighterWeapon's
+            // mover (UnitData:6901-6905): two Throw phases at Speed 2 merged (rule 2), switched at
+            // phase 1's Outro 0.625,0.75 (midpoint 0.6875); then Guidance from Speed 2 accelerating
+            // 56 to MaxSpeed 28, phase 3 carrying the acceleration (S11), so phases 2 and 3 merge.
+            (
+                None,
+                &[
+                    (Some(0.112), 0.0, 0.112, Some(End::Flown(0.6875))),
+                    (Some(0.112), 0.175_616, 1.568, None),
+                ],
+            ),
+        ],
+        1.568,
+        "LanzerTorpedoesLM, liberty EffectData:1707-1712 (plan 2026-11-28-missile-movers-b52 S2, S3)",
+    ),
+    (
+        "Liberator",
+        "air_weapon",
+        &[
+            // LiberatorMissile (void MoverData:384-422), the ammo unit LiberatorDamageMissile's mover
+            // (UnitData:3411-3415): Throw reaching MaxSpeed 8 at Acceleration 3200 (instant, rule 4)
+            // to Outro 2.5,3.5 (midpoint 3); then Guidance at MaxSpeed 16, phase 2 carrying it on and
+            // phase 1's Outro -2.5,-1.5 changing no speed (rule 2).
+            (
+                None,
+                &[
+                    (Some(0.448), 0.0, 0.448, Some(End::Flown(3.0))),
+                    (Some(0.896), 0.0, 0.896, None),
+                ],
+            ),
+        ],
+        0.896,
+        "LiberatorDamageMissileLM, void EffectData:2979-2984 (plan 2026-11-28-missile-movers-b52 S5, S6)",
+    ),
+    (
+        "Banshee",
+        "ground_weapon",
+        // BacklashRocketsLMWeapon (liberty MoverData:485-510): Guidance from Speed 10 accelerating 20
+        // to MaxSpeed 50; phases 1 and 2 set no speed value and carry phase 0's on (rule 2).
+        &[(None, &[(Some(0.56), 0.06272, 2.8, None)])],
+        2.8,
+        "BacklashRocketsLM, liberty EffectData:2558-2563 (plan 2026-11-28-missile-movers-b52 S8)",
+    ),
+    (
+        "Missile Turret",
+        "air_weapon",
+        &[
+            // LongboltMissileWeapon (liberty MoverData:589-600), the ammo unit's own mover
+            // (UnitData:11605-11608): Guidance at Speed 10, MaxSpeed 10 until 4 from the target
+            // (Outro -4), then the "kill phase" accelerating 200 to MaxSpeed 20.
+            (
+                None,
+                &[
+                    (Some(0.56), 0.0, 0.56, Some(End::Remaining(4.0))),
+                    (None, 0.6272, 1.12, None),
+                ],
+            ),
+        ],
+        1.12,
+        "LongboltMissileLM, liberty EffectData:1789-1794 (plan 2026-11-28-missile-movers-b52 S9, S10)",
     ),
 ];
 
@@ -5631,11 +5787,19 @@ fn missile_movers_follow_starcraft() -> TestResult {
                         (None, None) => true,
                         _ => false,
                     };
+                    let same_end = match (phase.ends, ends) {
+                        (Some(PhaseEnd::Flown(got)), Some(End::Flown(want)))
+                        | (Some(PhaseEnd::Remaining(got)), Some(End::Remaining(want))) => {
+                            close(got, want)
+                        }
+                        (None, None) => true,
+                        _ => false,
+                    };
                     assert!(
                         same(phase.speed, start)
                             && close(phase.acceleration, acceleration)
                             && close(phase.max_speed, max)
-                            && same(phase.ends_after, ends),
+                            && same_end,
                         "{name} {block} mover {index}: {phase:?} ({source})"
                     );
                 }

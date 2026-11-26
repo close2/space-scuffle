@@ -1153,6 +1153,20 @@
         // pipeline misses the same way on seed 19. Every other run of the seeds of record and
         // seeds 1 to 20 leaves 1 to 3 colossi. Evidence: docs/evidence/2026-11-20-contact-solver.md
         // §13.14.
+        // Restated for plan 2026-11-28-missile-movers-b52 WP3 (AGENTS.md §8; a close battle, frozen
+        // list of its WP0): the vikings' torpedoes fly 5.0.14's VikingFighterMissile (liberty
+        // EffectData:1707-1712, UnitData:6901-6905, MoverData:531-567: 0.112 per tick for the first
+        // 0.6875 of path, then accelerating 0.175616 to 1.568), 9 to 17 ticks instead of 1 to 7. On
+        // the 20 matrix runs the vikings killed all six on 2 (the first seed of record, seed 4) and
+        // now on none: every one of those runs leaves 1 to 3 colossi, the expectation unchanged
+        // (held-out seeds 7001 to 7016 still kill all six on 2 of 16, other seeds than before). Traced on the
+        // first seed of record: the first difference is tick 6, where the torpedoes the eight front
+        // vikings released on tick 2 (the one unbounded band; the throw phase until the 7th step,
+        // tick 8, then the acceleration) no longer strike colossi 13, 15 and 17; they strike them
+        // on tick 16, after 15 ticks. Torpedoes in flight that long are lost on the last point more
+        // often when a colossus leaves the vikings' sight (31 on that seed instead of 4; 619 instead
+        // of 140 over the 20 runs), and two colossi survive there. Evidence:
+        // docs/evidence/2026-11-28-missile-movers-b52.md, WP3.
         expect: (blue: (12, 12), red: (0, 3)),
     ),
     // Plan 2026-11-10-spellcaster-mechanics §10.2, WP2b. The High Templar analogue stands behind six

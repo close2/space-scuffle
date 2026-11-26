@@ -527,8 +527,14 @@
 // schema 56 every checkpoint reproduced. Behaviour: none in these worlds (no hangar unit
 // appears). Proved on native debug and release and wasm32-wasip1 release and debug, each in a
 // fresh target directory.
+// Re-recorded for plan 2026-11-28-missile-movers-b52 (checksum schema 57 -> 60): each missile
+// phase's end is encoded as `MissilePhase::ends` with a variant tag; with the schema at 57 every
+// checkpoint reproduced on the final tree. Behaviour: none in these worlds (no weapon of the
+// plan fires). (60 is provisional, the next free at merge: 58 and 59 are reserved for the Gated
+// movement plan.) Proved on native debug and release and wasm32-wasip1 release and debug, each
+// in a fresh target directory.
 (
-    checksum_schema: 57,
+    checksum_schema: 60,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -554,25 +560,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0xaa67008cc990ec26,
-        0x7bb9573465d8d4b5,
-        0x9478c27ec8e4ace1,
-        0xfbbfd09fc35abb59,
-        0x08ed3b0e914a5373,
-        0xd28c01178dc6828d,
-        0xa2222d23946ff384,
-        0x4d1d80a9f6472c8e,
-        0x7b0414d601b75710,
-        0x755f67f3bd6dba5b,
-        0xe182402691b60e6b,
-        0x0a4954b4a5312505,
-        0x6c14f56bcfac2d40,
-        0x80db1a282d2d0b87,
-        0xef002bde3ab1b6a1,
-        0xaeb14fa892b430ce,
-        0x85473294a6a3dd32,
-        0x203836adb28258f4,
-        0x831fc463b06f4ed7,
-        0x5cfb41f0406ace9e,
+        0x5dbf62d8ef73c9e2,
+        0x2b3d10d447627d6f,
+        0xd66f3c3d5f8c569d,
+        0x1952769cc9b95358,
+        0x0f870abadef42603,
+        0xa285bbab3601f1de,
+        0x8d44179ac1190bdc,
+        0xa4a9a49110080361,
+        0x50df211f2fad616c,
+        0x2d607ef2b69314e4,
+        0xe85ad5273e9f717b,
+        0x3a37e911a90adf6e,
+        0x37b8dce582446b3b,
+        0xd1da4203944413d4,
+        0xbd9096a2967a6bad,
+        0xbf486830f4cc15a6,
+        0xbe56a745485bce11,
+        0x1f87d45705b4a704,
+        0xaa5c847f006e8dfe,
+        0xbcec92e5d5f6cc28,
     ],
 )

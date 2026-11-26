@@ -12,8 +12,8 @@ use super::placement_rules::{
 };
 use super::CatalogError;
 use super::{
-    MissilePhaseDef, PrimaryWeapon, SplashShapeDef, SplashSpecDef, StructureArchetypeDef,
-    TurretIdleDef, UnitArchetypeDef, UnitModeSpecDef, WeaponSpecDef,
+    MissilePhaseDef, PhaseEndDef, PrimaryWeapon, SplashShapeDef, SplashSpecDef,
+    StructureArchetypeDef, TurretIdleDef, UnitArchetypeDef, UnitModeSpecDef, WeaponSpecDef,
 };
 use crate::error::{SimCoreError, SimResult};
 use crate::movement::tuning::STALL_REPATH_TICKS;
@@ -32,9 +32,8 @@ const MAX_MISSILE_MOVERS: usize = 4;
 
 /// Checks one mover's phases (plan `2026-11-27-weapon-delivery` D-4) under `field`: at least one
 /// and at most [`MAX_MISSILE_MOVERS`]; each start speed not negative and not above its top speed,
-/// each acceleration not negative, each top speed positive; every phase but the last ends after
-/// a positive path longer than the previous phase's end, and the last does not end. Returns the
-/// mover's top speed.
+/// each acceleration not negative, each top speed positive; every phase but the last ends, and
+/// the last does not ([`validate_phase_end`]). Returns the mover's top speed.
 fn validate_mover_phases(
     definition: &str,
     field: &str,
@@ -44,7 +43,7 @@ fn validate_mover_phases(
     if phases.is_empty() || phases.len() > MAX_MISSILE_MOVERS {
         return Err(invalid(definition, &list, "one to four phases"));
     }
-    let mut previous_end: Option<f32> = None;
+    let mut previous_end: Option<PhaseEndDef> = None;
     let mut top = SimScalar::ZERO;
     for (index, phase) in phases.iter().enumerate() {
         let field = format!("{list}[{index}]");
@@ -64,30 +63,56 @@ fn validate_mover_phases(
                 ));
             }
         }
-        let end = format!("{field}.ends_after");
-        match (phase.ends_after, index + 1 == phases.len()) {
+        let end = format!("{field}.ends");
+        match (phase.ends, index + 1 == phases.len()) {
             (None, false) => {
                 return Err(invalid(definition, &end, "every phase but the last ends"));
             }
             (Some(_), true) => {
                 return Err(invalid(definition, &end, "the last phase does not end"))
             }
-            (Some(after), false) => {
-                positive(definition, &end, after)?;
-                if previous_end.is_some_and(|previous| after <= previous) {
-                    return Err(invalid(
-                        definition,
-                        &end,
-                        "must exceed the previous phase's end",
-                    ));
-                }
-                previous_end = Some(after);
+            (Some(ends), false) => {
+                validate_phase_end(definition, &end, previous_end, ends)?;
+                previous_end = Some(ends);
             }
             (None, true) => {}
         }
         top = top.max(SimScalar::from_f32_lossy(phase.max_speed));
     }
     Ok(top)
+}
+
+/// Checks one phase end under `field` against the previous phase's (plan
+/// `2026-11-28-missile-movers-b52` D-4): its distance positive; a `Flown` end beyond a previous
+/// `Flown` one, a `Remaining` end nearer the target than a previous `Remaining` one, and never a
+/// `Flown` end after a `Remaining` one, whose order would depend on the launch distance.
+fn validate_phase_end(
+    definition: &str,
+    field: &str,
+    previous: Option<PhaseEndDef>,
+    end: PhaseEndDef,
+) -> SimResult<()> {
+    positive(definition, field, end.distance())?;
+    match (previous, end) {
+        (Some(PhaseEndDef::Flown(before)), PhaseEndDef::Flown(after)) if after <= before => Err(
+            invalid(definition, field, "must exceed the previous phase's end"),
+        ),
+        (Some(PhaseEndDef::Remaining(before)), PhaseEndDef::Remaining(after))
+            if after >= before =>
+        {
+            Err(invalid(
+                definition,
+                field,
+                "must be nearer the target than the previous phase's end",
+            ))
+        }
+        (Some(PhaseEndDef::Remaining(_)), PhaseEndDef::Flown(_)) => Err(invalid(
+            definition,
+            field,
+            "the path flown cannot be ordered after a distance to the target",
+        )),
+        _ => Ok(()),
+    }
 }
 
 pub(super) fn invalid(definition: &str, field: &str, reason: &'static str) -> SimCoreError {
@@ -4988,15 +5013,19 @@ mod missile_mover_tests {
     //! W-5 of plan `2026-11-27-weapon-delivery` (D-4): every rule a weapon's missile movers
     //! must keep is refused with a typed error naming the field; a well-formed list is accepted
     //! on a missile weapon whose speed is its movers' top speed; an omitted list reads empty.
+    //! M-5 of plan `2026-11-28-missile-movers-b52` (D-4): the rules of target-relative ends, and
+    //! a stale `ends_after` or any other unknown field of a mover or phase refused.
     use super::strike_delay_tests::refused_field;
-    use crate::catalog::{CatalogFile, MissileMoverDef, MissilePhaseDef, WeaponSpecDef};
+    use crate::catalog::{
+        CatalogFile, MissileMoverDef, MissilePhaseDef, PhaseEndDef, WeaponSpecDef,
+    };
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
     /// One edit of the well-formed list.
     type Edit = fn(&mut Vec<MissileMoverDef>);
 
-    /// A phase with the given values.
+    /// A phase with the given values, its end (if any) a path flown.
     fn phase(
         speed: Option<f32>,
         acceleration: f32,
@@ -5007,7 +5036,15 @@ mod missile_mover_tests {
             speed,
             acceleration,
             max_speed: max,
-            ends_after: ends,
+            ends: ends.map(PhaseEndDef::Flown),
+        }
+    }
+
+    /// A phase without a start speed ending once `remaining` is left to the impact.
+    fn phase_remaining(acceleration: f32, max: f32, remaining: f32) -> MissilePhaseDef {
+        MissilePhaseDef {
+            ends: Some(PhaseEndDef::Remaining(remaining)),
+            ..phase(None, acceleration, max, None)
         }
     }
 
@@ -5088,16 +5125,16 @@ mod missile_mover_tests {
             (".missile_movers[1].phases[0].speed", |l| {
                 l[1].phases[0].speed = Some(0.5);
             }),
-            (".missile_movers[1].phases[0].ends_after", |l| {
-                l[1].phases[0].ends_after = None;
+            (".missile_movers[1].phases[0].ends", |l| {
+                l[1].phases[0].ends = None;
             }),
-            (".missile_movers[1].phases[1].ends_after", |l| {
-                l[1].phases[1].ends_after = Some(3.0);
+            (".missile_movers[1].phases[1].ends", |l| {
+                l[1].phases[1].ends = Some(PhaseEndDef::Flown(3.0));
             }),
-            (".missile_movers[1].phases[0].ends_after", |l| {
-                l[1].phases[0].ends_after = Some(0.0);
+            (".missile_movers[1].phases[0].ends", |l| {
+                l[1].phases[0].ends = Some(PhaseEndDef::Flown(0.0));
             }),
-            (".missile_movers[1].phases[1].ends_after", |l| {
+            (".missile_movers[1].phases[1].ends", |l| {
                 l[1].phases.insert(1, phase(None, 0.25, 2.0, Some(1.0)));
             }),
         ];
@@ -5106,6 +5143,82 @@ mod missile_mover_tests {
             assert!(field.ends_with(expected), "{expected}: {field}");
         }
         Ok(())
+    }
+
+    /// M-5 (D-4): a target-relative end is accepted alone, after a `Flown` end and before a
+    /// nearer one; each rule it must keep is refused under `….ends`, and an end on the last
+    /// phase is refused whichever its reference.
+    #[test]
+    fn every_target_relative_end_rule_names_its_field() -> TestResult {
+        let accepted: [Edit; 3] = [
+            |l| l[1].phases[0] = phase_remaining(0.0, 0.25, 4.0),
+            |l| l[1].phases.insert(1, phase_remaining(0.25, 2.0, 4.0)),
+            |l| {
+                l[1].phases[0] = phase_remaining(0.0, 0.25, 4.0);
+                l[1].phases.insert(1, phase_remaining(0.25, 2.0, 1.0));
+            },
+        ];
+        for edit in accepted {
+            assert_eq!(refused(edit)?, "accepted");
+        }
+        let cases: [(&str, Edit); 6] = [
+            (".missile_movers[1].phases[0].ends", |l| {
+                l[1].phases[0] = phase_remaining(0.0, 0.25, 0.0);
+            }),
+            (".missile_movers[1].phases[0].ends", |l| {
+                l[1].phases[0] = phase_remaining(0.0, 0.25, -1.0);
+            }),
+            (".missile_movers[1].phases[1].ends", |l| {
+                l[1].phases[1].ends = Some(PhaseEndDef::Remaining(1.0));
+            }),
+            // Consecutive `Remaining` ends must come nearer the target.
+            (".missile_movers[1].phases[1].ends", |l| {
+                l[1].phases[0] = phase_remaining(0.0, 0.25, 4.0);
+                l[1].phases.insert(1, phase_remaining(0.25, 2.0, 4.0));
+            }),
+            (".missile_movers[1].phases[1].ends", |l| {
+                l[1].phases[0] = phase_remaining(0.0, 0.25, 2.0);
+                l[1].phases.insert(1, phase_remaining(0.25, 2.0, 3.0));
+            }),
+            // A path flown cannot follow a distance to the target.
+            (".missile_movers[1].phases[1].ends", |l| {
+                l[1].phases[0] = phase_remaining(0.0, 0.25, 2.0);
+                l[1].phases.insert(1, phase(None, 0.25, 2.0, Some(5.0)));
+            }),
+        ];
+        for (expected, edit) in cases {
+            let field = refused(edit)?;
+            assert!(field.ends_with(expected), "{expected}: {field}");
+        }
+        Ok(())
+    }
+
+    /// M-5 (D-2): a mover or phase with a field it does not know, the stale `ends_after` among
+    /// them, is refused when read, never read as a default.
+    #[test]
+    fn a_stale_or_unknown_mover_field_is_refused() {
+        let phase = "(speed: Some(1.0), acceleration: 0.0, max_speed: 1.0, ends: None)";
+        assert!(
+            ron::from_str::<MissilePhaseDef>(phase).is_ok(),
+            "premise: {phase}"
+        );
+        for stale in [
+            "(speed: Some(1.0), acceleration: 0.0, max_speed: 1.0, ends_after: None)",
+            "(speed: Some(1.0), acceleration: 0.0, max_speed: 1.0, ends_after: Some(1.0))",
+            "(speed: Some(1.0), acceleration: 0.0, max_speed: 1.0, ends: None, blend: 1.0)",
+        ] {
+            assert!(ron::from_str::<MissilePhaseDef>(stale).is_err(), "{stale}");
+        }
+        let mover = format!("(up_to_range: None, phases: [{phase}])");
+        assert!(
+            ron::from_str::<MissileMoverDef>(&mover).is_ok(),
+            "premise: {mover}"
+        );
+        let unknown = format!("(up_to_range: None, if_range_lte: None, phases: [{phase}])");
+        assert!(
+            ron::from_str::<MissileMoverDef>(&unknown).is_err(),
+            "{unknown}"
+        );
     }
 
     #[test]

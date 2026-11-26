@@ -25,11 +25,13 @@
 // range bands of speed phases its missile may fly (plan 2026-11-27-weapon-delivery D-2). Each
 // mover is `(up_to_range, phases)`: chosen at the release when the edge-to-edge distance is at
 // most `up_to_range` (`IfRangeLTE`; `None` on the last mover, which admits any distance); each
-// phase `(speed, acceleration, max_speed, ends_after)` in world units per tick and per tick
-// squared (a Normal speed v is 0.056 v per tick, a Normal acceleration a is 0.003136 a), `speed`
-// `None` carrying the speed in and `ends_after` the path flown at which the next phase starts
-// (the midpoint of the phase's `Outro`; `None` on the last phase). With movers, `projectile_speed`
-// is the missile's top speed. Omitted: a constant `projectile_speed`.
+// phase `(speed, acceleration, max_speed, ends)` in world units per tick and per tick squared (a
+// Normal speed v is 0.056 v per tick, a Normal acceleration a is 0.003136 a), `speed` `None`
+// carrying the speed in and `ends` where the next phase starts (`None` on the last phase only):
+// `Flown(x)` once the path flown since the release reaches x (a positive `Outro`, its midpoint),
+// `Remaining(x)` once at most x is left to the impact (a negative `Outro`, its magnitude; plan
+// 2026-11-28-missile-movers-b52 D-2). With movers, `projectile_speed` is the missile's top speed.
+// Omitted: a constant `projectile_speed`.
 (
     attack_snapshot_cap_ticks: Some(25),
     units: [
@@ -687,8 +689,8 @@
                 // mover IonCannonsWeapon has the same phases, so the last band admits any distance.
                 // Plan 2026-11-27-weapon-delivery D-2, D-3 (B-52).
                 missile_movers: [
-                    (up_to_range: Some(1.0), phases: [(speed: Some(1.05), acceleration: 0.0, max_speed: 1.05, ends_after: None)]),
-                    (up_to_range: None, phases: [(speed: Some(0.336), acceleration: 0.0, max_speed: 0.336, ends_after: Some(1.25)), (speed: None, acceleration: 0.18816, max_speed: 2.24, ends_after: None)]),
+                    (up_to_range: Some(1.0), phases: [(speed: Some(1.05), acceleration: 0.0, max_speed: 1.05, ends: None)]),
+                    (up_to_range: None, phases: [(speed: Some(0.336), acceleration: 0.0, max_speed: 0.336, ends: Some(Flown(1.25))), (speed: None, acceleration: 0.18816, max_speed: 2.24, ends: None)]),
                 ],
                 weapon_class: Some("enclave_air_weapons"),
                 upgrade_bonus_per_level: 1.0,
@@ -1280,7 +1282,19 @@
                 backswing_ticks: 9,
                 random_delay_ticks: (-1.1161, 2.2321),
                 splash: None,
-                projectile_speed: Some(1.5),
+                // The top speed of the mover below: VikingFighterMissile MaxSpeed 28 x 0.056.
+                projectile_speed: Some(1.568),
+                // 5.0.14 LanzerTorpedoesLM (liberty EffectData:1707-1712) names no Movers, so each torpedo
+                // flies its ammo unit VikingFighterWeapon's mover VikingFighterMissile (UnitData:6901-6905;
+                // MoverData:531-567, defined in no other layer): two Throw phases at Speed 2, MaxSpeed 2
+                // (merged, plan rule 2), switched at phase 1's Outro 0.625,0.75 (midpoint 0.6875); then
+                // Guidance from Speed 2 accelerating 56 to MaxSpeed 28, phase 3 carrying the
+                // acceleration on (the editor's carry-over rule, S11), so phases 2 and 3 merge. Speed 2 is
+                // 0.112 per tick, Acceleration 56 is 0.175616 per tick squared. Throw direction and
+                // gravity are not modelled (B-231). Plan 2026-11-28-missile-movers-b52 D-1, S2, S3 (B-52).
+                missile_movers: [
+                    (up_to_range: None, phases: [(speed: Some(0.112), acceleration: 0.0, max_speed: 0.112, ends: Some(Flown(0.6875))), (speed: Some(0.112), acceleration: 0.175616, max_speed: 1.568, ends: None)]),
+                ],
                 weapon_class: Some("directorate_ship_weapons"),
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 0.0,
@@ -1434,7 +1448,18 @@
                     // LiberatorMissileDamage keeps to its level (SameCliff 1 from CEffectDamage, core EffectData:67; void EffectData:2932-2940): cliff Same by default.
                     offset_by_unit_radius: true,
                 )),
-                projectile_speed: Some(1.2),
+                // The top speed of the mover below: LiberatorMissile MaxSpeed 16 x 0.056.
+                projectile_speed: Some(0.896),
+                // 5.0.14 LiberatorDamageMissileLM (void EffectData:2979-2984) names no Movers, so each rocket
+                // flies its ammo unit LiberatorDamageMissile's mover LiberatorMissile (UnitData:3411-3415;
+                // MoverData:384-422): a Throw reaching MaxSpeed 8 at Acceleration 3200 (within a tenth of
+                // a tick, so a constant 0.448 per tick) to Outro 2.5,3.5 (midpoint 3); then Guidance at
+                // MaxSpeed 16 (0.896), phase 2 carrying it on, so phase 1's Outro -2.5,-1.5 changes no
+                // speed and is not authored (plan rule 2). The throw's direction (ThrowBandYaw 65 to 75
+                // degrees) is not modelled (B-231). Plan 2026-11-28-missile-movers-b52 D-1, S4 to S6 (B-52).
+                missile_movers: [
+                    (up_to_range: None, phases: [(speed: Some(0.448), acceleration: 0.0, max_speed: 0.448, ends: Some(Flown(3.0))), (speed: Some(0.896), acceleration: 0.0, max_speed: 0.896, ends: None)]),
+                ],
                 weapon_class: Some("directorate_ship_weapons"),
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 0.0,
@@ -1524,7 +1549,16 @@
                 backswing_ticks: 9,
                 random_delay_ticks: (-1.1161, 2.2321),
                 splash: None,
-                projectile_speed: Some(1.2),
+                // The top speed of the mover below: BacklashRocketsLMWeapon MaxSpeed 50 x 0.056.
+                projectile_speed: Some(2.8),
+                // 5.0.14 BacklashRocketsLM (liberty EffectData:2558-2563) flies its one Movers entry
+                // BacklashRocketsLMWeapon at any range (MoverData:485-510): Guidance from Speed 10 (0.56 per
+                // tick) accelerating 20 (0.06272 per tick squared) to MaxSpeed 50 (2.8); its phases 1 and 2
+                // set no speed value and carry phase 0's on, so the mover is one phase (plan rule 2).
+                // Plan 2026-11-28-missile-movers-b52 D-1, S7, S8 (B-52).
+                missile_movers: [
+                    (up_to_range: None, phases: [(speed: Some(0.56), acceleration: 0.06272, max_speed: 2.8, ends: None)]),
+                ],
                 weapon_class: Some("directorate_ship_weapons"),
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 0.0,
@@ -2040,7 +2074,12 @@
                 backswing_ticks: 9,
                 random_delay_ticks: (-1.1161, 2.2321),
                 splash: None,
-                projectile_speed: Some(1.0),
+                // 5.0.14 HighTemplarWeaponLM (balancemulti EffectData:1404-1409) flies its Movers entry
+                // HighTemplarWeaponMover, a MissileDefault child with no field of its own (balancemulti
+                // MoverData:47); MissileDefault (core MoverData:13-25) reaches MaxSpeed 18.75 within a
+                // tenth of a tick and its kill phase carries it on: a constant 18.75 x 0.056 = 1.05 per
+                // tick. Plan 2026-11-28-missile-movers-b52 D-1, S12 (B-52).
+                projectile_speed: Some(1.05),
                 weapon_class: Some("enclave_ground_weapons"),
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 0.0,

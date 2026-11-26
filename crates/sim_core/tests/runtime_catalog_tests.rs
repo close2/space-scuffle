@@ -4296,8 +4296,8 @@ fn edited_missile_movers_change_a_flight_without_recompiling() -> TestResult {
             bundle.finish()?;
             flight
         };
-    let long_band = "(up_to_range: None, phases: [(speed: Some(0.672), acceleration: 0.43904, max_speed: 11.2, ends_after: None)])";
-    let slower = "(up_to_range: None, phases: [(speed: Some(0.672), acceleration: 0.0, max_speed: 0.672, ends_after: None)])";
+    let long_band = "(up_to_range: None, phases: [(speed: Some(0.672), acceleration: 0.43904, max_speed: 11.2, ends: None)])";
+    let slower = "(up_to_range: None, phases: [(speed: Some(0.672), acceleration: 0.0, max_speed: 0.672, ends: None)])";
     let at_five = (
         shipped(5.0)?,
         edited("slow-long-band", long_band, slower, 5.0)?,
@@ -4306,11 +4306,172 @@ fn edited_missile_movers_change_a_flight_without_recompiling() -> TestResult {
         at_five.1 > at_five.0,
         "a slower long band flies longer: {at_five:?}"
     );
-    let short_band = "(up_to_range: Some(3.0), phases: [(speed: Some(0.056), acceleration: 0.03136, max_speed: 1.12, ends_after: Some(0.3)), (speed: None, acceleration: 0.43904, max_speed: 11.2, ends_after: None)]),";
+    let short_band = "(up_to_range: Some(3.0), phases: [(speed: Some(0.056), acceleration: 0.03136, max_speed: 1.12, ends: Some(Flown(0.3))), (speed: None, acceleration: 0.43904, max_speed: 11.2, ends: None)]),";
     let at_two = (shipped(2.0)?, edited("no-short-band", short_band, "", 2.0)?);
     assert!(
         at_two.1 < at_two.0,
         "without the short band it strikes sooner: {at_two:?}"
+    );
+    Ok(())
+}
+
+/// Plays the shipped attacker `is_attacker` selects (a structure when it has a dome) against an
+/// unarmed, held copy of the first mobile `victim_layer` unit without weapons, `edge` world units
+/// away edge to edge, on `catalogs`; returns the first strike's flight in ticks, the release tick
+/// counted (plan `2026-11-28-missile-movers-b52` M-17).
+fn mover_flight(
+    catalogs: RuntimeCatalogs,
+    is_attacker: impl Fn(&sim_core::catalog::UnitArchetype) -> bool,
+    victim_layer: sim_types::MoverType,
+    edge: f64,
+) -> Result<u32, Box<dyn std::error::Error>> {
+    let map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?;
+    let mut world = SimWorld::with_catalogs(map, 7, catalogs.units, catalogs.upgrades)?;
+    let attacker = world
+        .catalog
+        .archetypes()
+        .find(|archetype| is_attacker(archetype))
+        .ok_or("the attacker")?
+        .clone();
+    let victim = world
+        .catalog
+        .archetypes()
+        .find(|archetype| {
+            archetype.max_speed > SimScalar::ZERO
+                && archetype.mover_type == victim_layer
+                && archetype.weapon.is_none()
+                && archetype.ground_weapon.is_none()
+                && archetype.air_weapon.is_none()
+                && !matches!(archetype.shape, ShapeKind::BuildingDome { .. })
+        })
+        .ok_or("an unarmed mobile victim")?
+        .clone();
+    let shooter = if matches!(attacker.shape, ShapeKind::BuildingDome { .. }) {
+        world.spawn_structure(attacker.unit_type_id, PlayerId(0), 6, 15)?
+    } else {
+        world.spawn_unit(attacker.unit_type_id, PlayerId(0), SimVec2::from_i32(7, 16))?
+    };
+    let origin = world.entities[&shooter].position;
+    let at = SimVec2::new(
+        origin.x + attacker.collision_radius + victim.collision_radius + SimScalar::from_num(edge),
+        origin.y,
+    );
+    let target = world.spawn_unit(victim.unit_type_id, PlayerId(1), at)?;
+    let entity = world.entities.get_mut(&target).ok_or("target")?;
+    entity
+        .issue_order(sim_types::UnitOrder::HoldPosition, false)
+        .map_err(|error| format!("{error:?}"))?;
+    let full = entity.hp + entity.shields;
+    world
+        .entities
+        .get_mut(&shooter)
+        .ok_or("shooter")?
+        .issue_order(sim_types::UnitOrder::attack(target), false)
+        .map_err(|error| format!("{error:?}"))?;
+    let mut released = None;
+    for tick in 1..=120 {
+        world.step(&sim_types::TickBundle {
+            tick: sim_types::Tick(tick),
+            commands: Vec::new(),
+            state_checksum: None,
+        });
+        if released.is_none() && !world.projectiles.is_empty() {
+            released = Some(tick);
+        }
+        let now = world
+            .entities
+            .get(&target)
+            .map_or(SimScalar::ZERO, |e| e.hp + e.shields);
+        if now != full {
+            return Ok(tick - released.unwrap_or(tick) + 1);
+        }
+    }
+    Err("the missile landed within 120 ticks".into())
+}
+
+/// The Viking analogue: the mobile air unit whose air weapon flies movers and reaches 9.
+fn is_viking(archetype: &sim_core::catalog::UnitArchetype) -> bool {
+    archetype.mover_type == sim_types::MoverType::Air
+        && archetype.max_speed > SimScalar::ZERO
+        && archetype.air_weapon.as_ref().is_some_and(|weapon| {
+            !weapon.missile_movers.is_empty() && weapon.max_range == SimScalar::from_i32(9)
+        })
+}
+
+/// Plays `is_attacker`'s flight at `edge` on the shipped catalogs, and on a copy whose
+/// `file` (an index of [`FILES`]) has `from` replaced by `to` (authored once), in this binary.
+fn shipped_and_edited_flight(
+    label: &str,
+    file: usize,
+    (from, to): (&str, &str),
+    is_attacker: fn(&sim_core::catalog::UnitArchetype) -> bool,
+    victim_layer: sim_types::MoverType,
+    edge: f64,
+) -> Result<(u32, u32), Box<dyn std::error::Error>> {
+    let shipped = mover_flight(
+        RuntimeCatalogs::load_from_directory(catalog_directory())?,
+        is_attacker,
+        victim_layer,
+        edge,
+    )?;
+    let bundle = Bundle::new(label)?;
+    let text = std::fs::read_to_string(bundle.directory.join(FILES[file]))?;
+    assert_eq!(
+        text.matches(from).count(),
+        1,
+        "premise: {from:?} is authored once"
+    );
+    std::fs::write(bundle.directory.join(FILES[file]), text.replace(from, to))?;
+    let edited = mover_flight(bundle.load()?, is_attacker, victim_layer, edge);
+    bundle.finish()?;
+    Ok((shipped, edited?))
+}
+
+/// M-17 (plan `2026-11-28-missile-movers-b52`): the Viking analogue's first `Flown` end is catalog
+/// data read at run time: in a copied `units.ron`, a later end keeps the torpedo in its slow throw
+/// longer and lengthens its flight at edge 6, in the same binary.
+#[test]
+fn an_edited_flown_end_changes_the_viking_flight_without_recompiling() -> TestResult {
+    let (shipped, edited) = shipped_and_edited_flight(
+        "viking-later-throw-end",
+        0,
+        ("ends: Some(Flown(0.6875))", "ends: Some(Flown(3.0))"),
+        is_viking,
+        sim_types::MoverType::Air,
+        6.0,
+    )?;
+    assert!(
+        edited > shipped,
+        "a later end flies longer: {shipped} -> {edited}"
+    );
+    Ok(())
+}
+
+/// The Missile Turret analogue: the structure whose air weapon flies movers.
+fn is_missile_turret(archetype: &sim_core::catalog::UnitArchetype) -> bool {
+    matches!(archetype.shape, ShapeKind::BuildingDome { .. })
+        && archetype
+            .air_weapon
+            .as_ref()
+            .is_some_and(|weapon| !weapon.missile_movers.is_empty())
+}
+
+/// M-17: the Missile Turret analogue's `Remaining` end is catalog data read at run time: in a
+/// copied `structures.ron`, a kill phase that starts 1 from the target instead of 4 lengthens the
+/// flight at edge 6, in the same binary.
+#[test]
+fn an_edited_remaining_end_changes_the_turret_flight_without_recompiling() -> TestResult {
+    let (shipped, edited) = shipped_and_edited_flight(
+        "turret-later-kill-phase",
+        1,
+        ("ends: Some(Remaining(4.0))", "ends: Some(Remaining(1.0))"),
+        is_missile_turret,
+        sim_types::MoverType::Air,
+        6.0,
+    )?;
+    assert!(
+        edited > shipped,
+        "a later kill phase flies longer: {shipped} -> {edited}"
     );
     Ok(())
 }
