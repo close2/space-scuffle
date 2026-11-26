@@ -49,5 +49,11 @@
         // property) attack-moving with the first army; 250 warm ticks bring the armies together,
         // and the measured ticks include releases, spawns, clocks and expiries.
         (map_cells: 64, units: 200, warm_ticks: 250, spawner_units: 12),
+        // Razed (plan 2026-12-01-death-spawns-and-hangar-commands §5): the 64x64 battle of 200
+        // units with 12 structures of the second player that leave the most timed units when
+        // they die (found by property: 9 Broodlings each) standing in the first army's path; 250
+        // warm ticks bring the first army to them, and the measured ticks include their deaths,
+        // the bursts of created units, their fights, clocks and expiries.
+        (map_cells: 64, units: 200, warm_ticks: 250, razed_structures: 12),
     ],
 )
