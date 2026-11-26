@@ -226,6 +226,16 @@
                 Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the aircraft flies in place, keeping the same size, pose and place in frame. Thrusters flare in steady bursts, exhaust streams backward, a slight rhythmic bob, no ground contact. Seamless loop: the last frame matches the first.",
             },
         },
+        // Exact catalog slug -> plain nouns appended after its kind's negative terms, for one
+        // identity whose clips keep drawing something its kind's clips need not avoid (owner
+        // answers Q0131 (a), Q0133; plan 2026-11-28-broodlings WP6). A slug that is not in the
+        // catalog, or blank terms, is refused.
+        // spore_matriarch: its first four seeds drew light shafts from above and flapped their
+        // wings; brood_mite: its pinned Idles nodded their heads and flushed in colour.
+        negative_overrides: {
+            "spore_matriarch": "light shafts, tractor beam, beam of light from above, volumetric light, haze, flapping wings",
+            "brood_mite": "head turning, nodding, twitching, colour change",
+        },
     ),
 
     // Longest composed prompt accepted, in characters. The model's own limit is not published
@@ -409,10 +419,15 @@
         // end to the Idle picture, as batch 5's aircraft.
         // spore_matriarch, brood_mite (broodlings batch, 2026-11-26): Attack pinned at its end to
         // the Idle picture; the Broodling's Walk keeps no scale lock and no cross-fade from the
-        // first attempt, as the scorpion's (a stride reads as an uneven zoom).
+        // first attempt, as the scorpion's (a stride reads as an uneven zoom). The Brood Lord
+        // analogue's Idle and Walk keep no scale lock either: every clip of it beats its wings,
+        // which reads as an uneven zoom; its accepted loops are a temporary exception under the
+        // owner's answer to Q0133 (a polish pass redoes them).
         overrides: {
             "spore_matriarch": {
                 Attack: (pin_end: true, seam: None),
+                Idle: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 2))),
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 2))),
             },
             "brood_mite": {
                 Attack: (pin_end: true, seam: None),

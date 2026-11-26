@@ -1,0 +1,72 @@
+(
+    format_version: 1,
+    name: "spore_matriarch",
+    atlas_sha256: "22ac54293e6985f505a2152c4a95d7c313b185ef218246987653e61d87580f7e",
+    manifest_sha256: "fe03bba29dd9c7f48fe22d983a83efd85700132ab0d0a0f2c4da5a481e896882",
+    bake: (
+        frame_size: 512,
+        fps: 15,
+        max_frames_per_state: 10,
+        ffmpeg_version: "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+        framing: Letterbox(
+            feather_permille: 30,
+        ),
+    ),
+    states: {
+        Idle: (
+            clip: "spore_matriarch_idle.mp4",
+            clip_sha256: "a18bc0edec759248331bb29932c19732379c77d3e000432c2ee90d33feeb529e",
+            start_frame: 0,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/2db3d6ab-de1b-4e3e-b19c-4dcc1410bed2",
+                prompt_sha256: "336ef61e3c683a591ae53bc810685c2d7010d51b0b4f38d538baaed303f5484a",
+                keyframe_sha256: Some("473270ff7fca0c03bbf990c777934f4995f7bc7447e2cfd775fb16494a0313a9"),
+                last_frame_sha256: Some("473270ff7fca0c03bbf990c777934f4995f7bc7447e2cfd775fb16494a0313a9"),
+                ledger_line: 1520,
+            ),
+            bar_rgb: Some((40, 44, 62)),
+            seam: Some((
+                sampling: Loop,
+                scale_permille: 0,
+                crossfade_frames: 2,
+            )),
+        ),
+        Walk: (
+            clip: "spore_matriarch_walk.mp4",
+            clip_sha256: "82563d03c4aae21220b96d296a9421465f8b2f039aecc1e095b9b1344579e7db",
+            start_frame: 10,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/3eb844b5-a7f3-4d1f-a7aa-4c5dc6723dd5",
+                prompt_sha256: "c902d9c4fbed7424a5b99aad7841fbf0733beacc4963b208898a9306ddf20837",
+                keyframe_sha256: Some("473270ff7fca0c03bbf990c777934f4995f7bc7447e2cfd775fb16494a0313a9"),
+                last_frame_sha256: Some("473270ff7fca0c03bbf990c777934f4995f7bc7447e2cfd775fb16494a0313a9"),
+                ledger_line: 1524,
+            ),
+            bar_rgb: Some((40, 44, 62)),
+            seam: Some((
+                sampling: Loop,
+                scale_permille: 0,
+                crossfade_frames: 2,
+            )),
+        ),
+        Attack: (
+            clip: "spore_matriarch_attack.mp4",
+            clip_sha256: "9c40f57d531768ce21cbbf5df600b80eb45100bce17c12afa166e3278fc2db70",
+            start_frame: 20,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/8d7bb6cb-bc2b-4a94-b190-038654b97b1c",
+                prompt_sha256: "9fde072c8b68fa09cada7b2a2620cd1ec738db59f181f7b35faa950f9e28a35c",
+                keyframe_sha256: Some("473270ff7fca0c03bbf990c777934f4995f7bc7447e2cfd775fb16494a0313a9"),
+                last_frame_sha256: Some("473270ff7fca0c03bbf990c777934f4995f7bc7447e2cfd775fb16494a0313a9"),
+                ledger_line: 1528,
+            ),
+            bar_rgb: Some((40, 44, 62)),
+        ),
+    },
+)

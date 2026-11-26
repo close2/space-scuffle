@@ -7,6 +7,7 @@
     catalog_units: [
         "aerospace_hangar_dome",
         "assembly_bay_dome",
+        "brood_mite",
         "burrow_scorpion",
         "capacitor_dome",
         "cloak_gunship",
@@ -33,6 +34,7 @@
         "shock_golem",
         "sky_bastion",
         "specter_android",
+        "spore_matriarch",
         "tech_module_pod",
         "vector_interceptor",
         "weapons_arsenal_dome",
