@@ -1,0 +1,72 @@
+(
+    format_version: 1,
+    name: "mothership_carrier",
+    atlas_sha256: "fd3b7e30b27465027adf80780de3640bd79b964949d6a58922a858859f670d69",
+    manifest_sha256: "53e3e1218a27f5a43dac21a18584e4679f90f8f9516a548a42bd7b50507d96a9",
+    bake: (
+        frame_size: 512,
+        fps: 15,
+        max_frames_per_state: 10,
+        ffmpeg_version: "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+        framing: Letterbox(
+            feather_permille: 30,
+        ),
+    ),
+    states: {
+        Idle: (
+            clip: "mothership_carrier_idle.mp4",
+            clip_sha256: "17ca3ffc54c9b47e08a9f4d793b84acf8f328a3e7d56cbcd23d8ec452ac99e0b",
+            start_frame: 0,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/727f5501-227e-4a51-a6df-cef140da4e83",
+                prompt_sha256: "4ba8db05ff56cbd6377b1502f036d6b66d455bc57262be7312551b37e69b2d25",
+                keyframe_sha256: Some("106e64bb32c8845e42bcb748a88305b0d68ae46db04227d82f05d36cae8848e0"),
+                last_frame_sha256: Some("106e64bb32c8845e42bcb748a88305b0d68ae46db04227d82f05d36cae8848e0"),
+                ledger_line: 1591,
+            ),
+            bar_rgb: Some((30, 37, 48)),
+            seam: Some((
+                sampling: Loop,
+                scale_permille: 0,
+                crossfade_frames: 2,
+            )),
+        ),
+        Walk: (
+            clip: "mothership_carrier_walk.mp4",
+            clip_sha256: "3ed57646f74f1d220ab7da593280109a266f2720ab657a92153f98567c8392d6",
+            start_frame: 10,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/36b3207c-9abc-42fc-8469-dccb510dbe11",
+                prompt_sha256: "df006cefaca96a4b2945c8817e7de875979312e0e82bbee60a6386ac5744beff",
+                keyframe_sha256: Some("106e64bb32c8845e42bcb748a88305b0d68ae46db04227d82f05d36cae8848e0"),
+                last_frame_sha256: Some("106e64bb32c8845e42bcb748a88305b0d68ae46db04227d82f05d36cae8848e0"),
+                ledger_line: 1595,
+            ),
+            bar_rgb: Some((30, 37, 48)),
+            seam: Some((
+                sampling: Loop,
+                scale_permille: 0,
+                crossfade_frames: 2,
+            )),
+        ),
+        Attack: (
+            clip: "mothership_carrier_attack.mp4",
+            clip_sha256: "ee5b3f63747899a2c4d46f6d5a66235aa58a48444f05bed61d777c9bd8ac1477",
+            start_frame: 20,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/25a9e6ce-9f72-48c3-b875-0b5ce87b6ab1",
+                prompt_sha256: "b5ab939a28aefd475c75e0d7800c84d52db11bea8eb2dc9f32157cb768094662",
+                keyframe_sha256: Some("106e64bb32c8845e42bcb748a88305b0d68ae46db04227d82f05d36cae8848e0"),
+                last_frame_sha256: Some("106e64bb32c8845e42bcb748a88305b0d68ae46db04227d82f05d36cae8848e0"),
+                ledger_line: 1599,
+            ),
+            bar_rgb: Some((31, 37, 48)),
+        ),
+    },
+)
