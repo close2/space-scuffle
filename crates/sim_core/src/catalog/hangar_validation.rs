@@ -100,14 +100,19 @@ impl WeaponSpecDef {
 }
 
 impl UnitArchetypeDef {
-    /// D-2, D-4: a hangar's counts and leash in range, a hangar unit with exactly one launch
-    /// weapon and no mode weapon, and a launch weapon only on a hangar unit.
+    /// D-2, D-4: a hangar's counts and leash in range, a hangar unit whose every weapon is a
+    /// launch weapon (one, or one per plane as the catalog authors a weapon of both planes) and
+    /// no mode weapon, and a launch weapon only on a hangar unit.
     pub(super) fn validate_hangar(&self) -> SimResult<()> {
-        let launches = [&self.weapon, &self.ground_weapon, &self.air_weapon]
+        let weapons = [&self.weapon, &self.ground_weapon, &self.air_weapon]
             .into_iter()
-            .flatten()
-            .filter(|weapon| weapon.magazine_launch.is_some())
-            .count();
+            .flatten();
+        let (armed, launches) = weapons.fold((0, 0), |(armed, launches), weapon| {
+            (
+                armed + 1,
+                launches + usize::from(weapon.magazine_launch.is_some()),
+            )
+        });
         let mode_weapons = self
             .modes
             .iter()
@@ -148,8 +153,8 @@ impl UnitArchetypeDef {
             ),
             (
                 "weapon",
-                launches == 1,
-                "a hangar unit has exactly one launch weapon",
+                launches >= 1 && launches == armed,
+                "every weapon of a hangar unit is a launch weapon",
             ),
             (
                 "modes",
@@ -267,10 +272,9 @@ mod tests {
         file.units
     }
 
-    /// The first shipped air unit with an instant weapon, made a well-formed hangar unit: its
-    /// weapon a launch weapon, its other weapons removed, a hangar of member `member`.
-    fn hangar_row(member: &str) -> UnitArchetypeDef {
-        let mut row = rows()
+    /// The first shipped air unit with an instant weapon.
+    fn first_instant_air_row() -> UnitArchetypeDef {
+        rows()
             .into_iter()
             .find(|row| {
                 row.mover_type == MoverType::Air
@@ -281,7 +285,18 @@ mod tests {
                         .as_ref()
                         .is_some_and(|w| w.projectile_speed.is_none())
             })
-            .expect("a shipped air unit with an instant weapon");
+            .expect("a shipped air unit with an instant weapon")
+    }
+
+    /// That row's own weapon, which strikes.
+    fn striking_weapon() -> Option<super::super::WeaponSpecDef> {
+        first_instant_air_row().weapon
+    }
+
+    /// The first shipped air unit with an instant weapon, made a well-formed hangar unit: its
+    /// weapon a launch weapon, its other weapons removed, a hangar of member `member`.
+    fn hangar_row(member: &str) -> UnitArchetypeDef {
+        let mut row = first_instant_air_row();
         let mut weapon = row.weapon.take().expect("armed");
         weapon.magazine_launch = Some(MagazineLaunch {
             tries: 8,
@@ -338,7 +353,7 @@ mod tests {
                 |r| r.capabilities.hangar.as_mut().expect("h").leash = 0.0,
                 "capabilities.hangar.leash",
             ),
-            (|r| r.ground_weapon = hangar_row("x").weapon, "weapon"),
+            (|r| r.ground_weapon = striking_weapon(), "weapon"),
             (
                 |r| {
                     let weapon = r.weapon.as_mut().expect("w");

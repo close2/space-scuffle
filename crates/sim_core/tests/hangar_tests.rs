@@ -399,12 +399,20 @@ fn members_return_and_dock_when_the_target_is_gone() -> TestResult {
     bay.steps(40);
     assert_eq!(bay.members(host).len(), 4);
     bay.world.entities.get_mut(&target).ok_or("target")?.hp = SimScalar::ZERO;
+    // The target's own death shatters; a dock never does (D-11 item 3: docking is not dying).
+    let mut shatters = 0;
     for _ in 0..200 {
-        bay.step();
+        let out = bay.step();
+        shatters += out
+            .combat_events
+            .iter()
+            .filter(|event| matches!(event, CombatEventVisual::BubbleShatter { .. }))
+            .count();
         if bay.members(host).is_empty() {
             break;
         }
     }
+    assert_eq!(shatters, 1, "only the target shatters");
     assert!(bay.members(host).is_empty(), "every member docked");
     let state = bay.world.entities[&host].hangar().ok_or("hangar")?;
     assert_eq!((state.docked.len(), state.launched), (4, 0));
@@ -598,5 +606,214 @@ fn a_hangar_fight_is_deterministic() -> TestResult {
         Ok(sums)
     };
     assert_eq!(run()?, run()?);
+    Ok(())
+}
+
+/// The shipped hangar unit and its member (found by property: the archetype with a hangar).
+fn shipped_hangar(world: &SimWorld) -> Result<(UnitTypeId, HangarSpec), Box<dyn Error>> {
+    world
+        .catalog
+        .archetypes()
+        .find_map(|arch| {
+            arch.capabilities
+                .hangar
+                .map(|spec| (arch.unit_type_id, spec))
+        })
+        .ok_or_else(|| "the shipped catalog has a hangar unit".into())
+}
+
+/// A shipped world with a passive air target: the first plain armed air unit, by id, that is
+/// neither the hangar unit nor its member, disarmed and given life enough to outlast the test.
+fn shipped_fight(
+    catalogs: sim_core::catalog::RuntimeCatalogs,
+) -> Result<(SimWorld, EntityId, EntityId), Box<dyn Error>> {
+    let map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0)))?;
+    let mut world =
+        SimWorld::with_catalogs(map.into(), 0x0B_A7, catalogs.units, catalogs.upgrades)?;
+    let (host, spec) = shipped_hangar(&world)?;
+    let mut air: Vec<&UnitArchetype> = world
+        .catalog
+        .archetypes()
+        .filter(|a| is_plain_unit(a) && a.mover_type == MoverType::Air)
+        // An armed one, so no permanently cloaked detector-only unit is picked.
+        .filter(|a| a.weapon.is_some() || a.air_weapon.is_some())
+        .filter(|a| a.unit_type_id != host && a.unit_type_id != spec.member)
+        .collect();
+    air.sort_by_key(|a| a.unit_type_id);
+    let target_type = air.first().ok_or("a plain air unit")?.unit_type_id;
+    let target_arch = world.catalog.get_mut(target_type)?;
+    target_arch.weapon = None;
+    target_arch.ground_weapon = None;
+    target_arch.air_weapon = None;
+    target_arch.max_hp = SimScalar::from_i32(5000);
+    let slot = ME.slot().ok_or("slot")?;
+    world.player_resources[slot].minerals = 60;
+    let carrier = world.spawn_unit(host, ME, at(10, 32))?;
+    // In the Carrier's sight (12) and out of its launch range (8, edge to edge).
+    let target = world.spawn_unit(target_type, FOE, at(21, 32))?;
+    world
+        .entities
+        .get_mut(&carrier)
+        .ok_or("carrier")?
+        .issue_order(UnitOrder::attack(target), false)?;
+    Ok((world, carrier, target))
+}
+
+/// Launch and build ticks of a shipped fight over `ticks` ticks: the tick of every new member
+/// and of every member docked by a completed build.
+fn launches_and_builds(
+    world: &mut SimWorld,
+    carrier: EntityId,
+    target: EntityId,
+    ticks: u32,
+) -> (Vec<(u32, SimScalar)>, Vec<u32>) {
+    let mut launches = Vec::new();
+    let mut builds = Vec::new();
+    for tick in 1..=ticks {
+        let before: Vec<EntityId> = linked(world, carrier);
+        let (built_before, queued_before) = world.entities[&carrier].hangar().map_or((0, 0), |s| {
+            (s.docked.len() + usize::from(s.launched), s.queued)
+        });
+        let mut out = RenderSnapshot::default();
+        world.step_into(
+            &TickBundle {
+                tick: Tick(tick),
+                commands: Vec::new(),
+                state_checksum: None,
+            },
+            &mut out,
+        );
+        let home = &world.entities[&carrier];
+        let edge = home.position.distance(world.entities[&target].position);
+        for _ in linked(world, carrier)
+            .iter()
+            .filter(|id| !before.contains(id))
+        {
+            launches.push((tick, edge));
+        }
+        if let Some(state) = home.hangar() {
+            if state.queued < queued_before
+                && state.docked.len() + usize::from(state.launched) > built_before
+            {
+                builds.push(tick);
+            }
+        }
+    }
+    (launches, builds)
+}
+
+fn linked(world: &SimWorld, carrier: EntityId) -> Vec<EntityId> {
+    world
+        .entities
+        .values()
+        .filter(|e| e.hangar_link().is_some_and(|l| l.hangar == carrier))
+        .map(|e| e.id)
+        .collect()
+}
+
+/// H-14: the shipped Carrier closes on an air target to its launch range 8, launches its four
+/// start members 7 ticks apart, and builds the other four, 214 ticks and 15 minerals each.
+#[test]
+fn the_shipped_carrier_launches_four_and_builds_four() -> TestResult {
+    let (mut world, carrier, target) = shipped_fight(sim_fixtures::shipped_catalogs())?;
+    let (launches, builds) = launches_and_builds(&mut world, carrier, target, 1000);
+    let radii = {
+        let arch = |id: EntityId| world.catalog.get(world.entities[&id].unit_type_id);
+        arch(carrier)?.collision_radius + arch(target)?.collision_radius
+    };
+    let (first, centre) = *launches.first().ok_or("a launch")?;
+    assert!(
+        centre - radii <= SimScalar::from_num(8.5),
+        "launched within range 8 (plus the release slop): edge {:?}",
+        centre - radii
+    );
+    let ticks: Vec<u32> = launches.iter().take(4).map(|(t, _)| *t).collect();
+    assert_eq!(ticks, vec![first, first + 7, first + 14, first + 21]);
+    assert_eq!(builds.len(), 4, "the other four are built: {builds:?}");
+    assert!(builds.windows(2).all(|w| w[1] - w[0] == 214), "{builds:?}");
+    let slot = ME.slot().ok_or("slot")?;
+    assert_eq!(
+        world.player_resources[slot].minerals, 0,
+        "4 x 15 minerals spent"
+    );
+    Ok(())
+}
+
+/// H-15: changing the shipped hangar in a catalog directory copy changes the fight in the same
+/// binary: `max_count: 4` builds nothing; `leash: 6.0` recalls members earlier; a Carrier
+/// without its hangar is refused, since its launch weapon has nothing to launch.
+#[test]
+fn the_hangar_is_data_changed_without_recompiling() -> TestResult {
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog");
+    let copy = std::env::temp_dir().join(format!("space-scuffle-hangar-{}", std::process::id()));
+    std::fs::create_dir_all(&copy)?;
+    for entry in std::fs::read_dir(&source)? {
+        let path = entry?.path();
+        if path.extension().is_some_and(|e| e == "ron") {
+            std::fs::copy(&path, copy.join(path.file_name().ok_or("name")?))?;
+        }
+    }
+    let units = std::fs::read_to_string(source.join("units.ron"))?;
+    let load = |text: String| -> Result<sim_core::catalog::RuntimeCatalogs, Box<dyn Error>> {
+        std::fs::write(copy.join("units.ron"), text)?;
+        Ok(sim_core::catalog::RuntimeCatalogs::load_from_directory(
+            &copy,
+        )?)
+    };
+    let four = load(units.replacen("max_count: 8,", "max_count: 4,", 1))?;
+    let (mut world, carrier, target) = shipped_fight(four)?;
+    let (launches, builds) = launches_and_builds(&mut world, carrier, target, 600);
+    assert_eq!((launches.len(), builds.len()), (4, 0));
+
+    let recall = |catalogs| -> Result<u32, Box<dyn Error>> {
+        let (mut world, carrier, target) = shipped_fight(catalogs)?;
+        launches_and_builds(&mut world, carrier, target, 60);
+        let mut out = RenderSnapshot::default();
+        let away = SimVec2::from_i32(2, 60);
+        for tick in 61..600 {
+            let commands = if tick == 61 {
+                vec![command(ME, vec![carrier], UnitOrder::Move { target: away })]
+            } else {
+                Vec::new()
+            };
+            world.step_into(
+                &TickBundle {
+                    tick: Tick(tick),
+                    commands,
+                    state_checksum: None,
+                },
+                &mut out,
+            );
+            let returning = linked(&world, carrier).iter().any(|id| {
+                world.entities[id]
+                    .hangar_link()
+                    .is_some_and(|link| link.returning)
+            });
+            if returning {
+                return Ok(tick);
+            }
+        }
+        Err("no member returned".into())
+    };
+    let twelve = recall(load(units.clone())?)?;
+    let six = recall(load(units.replacen("leash: 12.0,", "leash: 6.0,", 1))?)?;
+    assert!(
+        six < twelve,
+        "leash 6 recalls at {six}, leash 12 at {twelve}"
+    );
+
+    let start = units.find("hangar: Some((").ok_or("the shipped hangar")?;
+    let end = start
+        + units[start..]
+            .find("on_death: KillMembers)),")
+            .ok_or("its end")?
+        + "on_death: KillMembers)),".len();
+    let mut without = units.clone();
+    without.replace_range(start..end, "");
+    assert!(
+        load(without).is_err(),
+        "a launch weapon without a hangar is refused"
+    );
+    std::fs::remove_dir_all(&copy)?;
     Ok(())
 }

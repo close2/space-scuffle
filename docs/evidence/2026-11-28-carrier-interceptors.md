@@ -93,3 +93,38 @@ run under `perf stat -e instructions:u` (load average 8.8 to 4.9, another agent'
 3140 ticks/s, 100 units 800, 400 units 108; 128x128 400 units 177; 256x256 0 units 195; `showcase_canyon` 400 units 81;
 67 casters 199. Every scenario is above 50 ticks/s. User-space instructions of the whole run: 270,018,499,441. WP6
 compares the final tree against this binary, interleaved.
+
+## WP1: the Carrier's vitals
+
+Red first (`~/scratch/carrier/red/wp1-red.log`): on WP0's tree with WP1's test edits, `catalog_reference_values_tests`
+fails 9 tests (the label `"Carrier"` names no archetype while the row still reads "Carrier / Mothership", and the new
+separation test finds no Carrier). Green after D-1 (life and shields 300/150, radius and separation 1.25, the analogue
+"Carrier"): `catalog_reference_values_tests` 52, `weapon_catalog_rules_tests` 45, `runtime_catalog_tests` 53,
+`collision_class_tests` 9 passed (`~/scratch/carrier/logs/wp1-green.log`).
+
+**Worlds.** WP1's worlds (binaries and assets of `57864951`) against WP0's: `compare.sh` finds 490 files, none
+differing (`~/scratch/carrier/compare-wp1.txt`). The commit was later amended to `b04f4247` for a clippy fix in a test
+file only (`the_carrier_separation_radius_follows_starcraft` returns nothing); its assets and code are those
+measured. No world carries the Carrier (census), so no class V difference arises; stop rules 2 and 4 hold.
+
+## WP2: the hangar mechanism, latent
+
+Red first (`~/scratch/carrier/red/wp2-red.log`): a `git archive` copy of WP1 with `hangar_tests.rs` added fails to
+compile (no `HangarSpec`, `HangarDeath`, `MagazineLaunch`, no `hangar`/`hangar_link` accessors, no
+`magazine_launch` field, no `UnselectableRecipient`/`UntargetableTarget`, no `selectable`/`order_targetable`). Green
+after the change: `hangar_tests` 13 (H-2 to H-9, H-11's determinism), the `hangar` unit tests (a release restarts
+the channel only on a new target; every field of the hangar state, a docked record, the channel and the link is
+hashed; a corrupted count is reported and leaves the hangar alone), the validation tests of H-10
+(`catalog/hangar_validation.rs`: every D-2, D-4 rule refused naming its field; every member rule refused on the
+complete catalog; omitted fields read their defaults), the encoding test of a magazine launch and `the_schema_is_57`.
+
+**Worlds.** WP2's worlds against WP1's: 490 files, none differing (`~/scratch/carrier/compare-wp2.txt`). The shipped
+catalog has no hangar yet, so the hangar phase is skipped.
+
+**Latent proof (§5, stop rule 1).** A `git archive` copy of `268a437e` whose encoding leaves `Entity::hangar`,
+`Entity::hangar_link` and `WeaponSpec::magazine_launch` unhashed with the schema at `main`'s 56
+(`~/scratch/carrier/scripts/unhash.py`), built in a fresh target directory with every file touched
+(`proofcopy.sh wp2-latent 268a437e unhash.py`, `wasmtime --dir=<copy>`): both goldens' every checkpoint and
+`DEFAULT_SANDBOX_CHECKSUM` reproduce on native debug and release and `wasm32-wasip1` release and debug
+(`~/scratch/carrier/proof-wp2-latent/status`). The goldens of the tree itself fail by the schema alone (57) until
+WP6's re-record.

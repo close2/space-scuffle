@@ -1498,7 +1498,7 @@ fn b87_advanced_ballistics_leaves_the_anti_air_range() -> TestResult {
 
 /// Unit attributes as `AttributeFlags` bits (`CUnit` `Attributes`, every layer; the citation is the
 /// unit's element). Attributes the catalog does not model (Robotic, Hover, Summoned) are not listed.
-const SC2_UNIT_ATTRIBUTES: [(&str, [f32; 1], &str); 41] = [
+const SC2_UNIT_ATTRIBUTES: [(&str, [f32; 1], &str); 42] = [
     (
         "SCV",
         [13.0],
@@ -1636,6 +1636,11 @@ const SC2_UNIT_ATTRIBUTES: [(&str, [f32; 1], &str); 41] = [
         [6.0],
         "Armored+Biological, liberty UnitData:7354",
     ),
+    (
+        "Interceptor",
+        [9.0],
+        "Light+Mechanical, liberty UnitData:3592-3593",
+    ),
 ];
 
 #[test]
@@ -1651,7 +1656,7 @@ fn b47_unit_attributes_follow_starcraft() -> TestResult {
 
 /// Damage per strike of every armed unit (the weapon's first `CEffectDamage` `Amount`). The Brood
 /// Lord deals its damage through Broodlings (B-21) and has no row.
-const SC2_UNIT_DAMAGE: [WeaponRow; 41] = [
+const SC2_UNIT_DAMAGE: [WeaponRow; 45] = [
     (
         "SCV",
         "weapon",
@@ -1883,6 +1888,30 @@ const SC2_UNIT_DAMAGE: [WeaponRow; 41] = [
         9.0,
         "AcidSpines, liberty EffectData:2849",
     ),
+    (
+        "Carrier",
+        "weapon",
+        0.0,
+        "InterceptorLaunch deals none: CarrierInterceptor, a CEffectUseMagazine, liberty EffectData:1940",
+    ),
+    (
+        "Interceptor",
+        "weapon",
+        5.0,
+        "InterceptorBeamDamage Amount 5, liberty EffectData:1953-1958",
+    ),
+    (
+        "Carrier",
+        "air_weapon",
+        0.0,
+        "InterceptorLaunch deals none: CarrierInterceptor, a CEffectUseMagazine, liberty EffectData:1940",
+    ),
+    (
+        "Interceptor",
+        "air_weapon",
+        5.0,
+        "InterceptorBeamDamage Amount 5, liberty EffectData:1953-1958",
+    ),
 ];
 
 /// Damage per upgrade level the audit corrected or resolved through an indexed upgrade override:
@@ -1906,7 +1935,7 @@ fn b47_unit_weapon_damage_follows_starcraft() -> TestResult {
         "damage",
         false,
         &SC2_UNIT_DAMAGE,
-        &["Phoenix", "Carrier", "Brood Lord"],
+        &["Phoenix", "Brood Lord"],
         |_| true,
         |w| f(w.base_damage),
     )?;
@@ -2033,7 +2062,7 @@ fn b47_bonus_damage_per_level_follows_starcraft() -> TestResult {
         "bonus per level",
         false,
         &SC2_BONUS_PER_LEVEL,
-        &["Phoenix", "Carrier"],
+        &["Phoenix"],
         |w| {
             w.attribute_bonuses
                 .entries()
@@ -2067,7 +2096,7 @@ fn b47_bonus_damage_per_level_follows_starcraft() -> TestResult {
 /// Unit life, shields and life armour (`CUnit` `LifeMax`, `ShieldsMax`, `LifeArmor`). The
 /// saucer without one analogue is class E (evidence §10.1); the Carrier takes the Carrier's
 /// (Q0129 (a); plan `2026-11-28-carrier-interceptors` D-1, B-228).
-const SC2_UNIT_VITALS: [(&str, [f32; 3], &str); 41] = [
+const SC2_UNIT_VITALS: [(&str, [f32; 3], &str); 42] = [
     ("SCV", [45.0, 0.0, 0.0], "liberty UnitData:4729; default 0"),
     (
         "Thor",
@@ -2265,6 +2294,11 @@ const SC2_UNIT_VITALS: [(&str, [f32; 3], &str); 41] = [
         [300.0, 150.0, 2.0],
         "liberty UnitData:3474; liberty UnitData:3478; liberty UnitData:3475",
     ),
+    (
+        "Interceptor",
+        [40.0, 40.0, 0.0],
+        "liberty UnitData:3550; liberty UnitData:3553; default 0",
+    ),
 ];
 
 #[test]
@@ -2279,7 +2313,7 @@ fn b47_unit_vitals_follow_starcraft() -> TestResult {
 }
 
 /// Unit sight (`CUnit` `Sight`).
-const SC2_UNIT_SIGHT: [(&str, [f32; 1], &str); 41] = [
+const SC2_UNIT_SIGHT: [(&str, [f32; 1], &str); 42] = [
     ("SCV", [8.0], "liberty UnitData:4759"),
     ("Marine", [9.0], "liberty UnitData:4850"),
     ("Roach", [9.0], "liberty UnitData:7210"),
@@ -2321,6 +2355,7 @@ const SC2_UNIT_SIGHT: [(&str, [f32; 1], &str); 41] = [
     ("Infestor", [10.0], "liberty UnitData:10092"),
     ("Viper", [11.0], "swarm UnitData:2343"),
     ("Overlord", [11.0], "liberty UnitData:7390"),
+    ("Interceptor", [7.0], "liberty UnitData:3581"),
 ];
 
 #[test]
@@ -2332,7 +2367,7 @@ fn b47_unit_sight_follows_starcraft() -> TestResult {
 
 /// Maximum range of every armed unit's weapon (`CWeapon` `Range`; `core` WeaponData:12 is the class
 /// default 5).
-const SC2_UNIT_RANGE: [WeaponRow; 43] = [
+const SC2_UNIT_RANGE: [WeaponRow; 47] = [
     ("SCV", "weapon", 0.2, "voidmulti WeaponData:105"),
     ("Marine", "weapon", 5.0, "core WeaponData:12"),
     ("Marine", "air_weapon", 5.0, "core WeaponData:12"),
@@ -2381,6 +2416,30 @@ const SC2_UNIT_RANGE: [WeaponRow; 43] = [
     ("Queen", "weapon", 5.0, "core WeaponData:12"),
     ("Queen", "ground_weapon", 5.0, "core WeaponData:12"),
     ("Queen", "air_weapon", 7.0, "liberty WeaponData:105"),
+    (
+        "Carrier",
+        "weapon",
+        8.0,
+        "InterceptorLaunch Range 8, liberty WeaponData:601-614",
+    ),
+    (
+        "Interceptor",
+        "weapon",
+        2.0,
+        "InterceptorBeam Range 2, liberty WeaponData:626-637",
+    ),
+    (
+        "Carrier",
+        "air_weapon",
+        8.0,
+        "InterceptorLaunch Range 8, liberty WeaponData:601-614",
+    ),
+    (
+        "Interceptor",
+        "air_weapon",
+        2.0,
+        "InterceptorBeam Range 2, liberty WeaponData:626-637",
+    ),
 ];
 
 #[test]
@@ -2389,14 +2448,14 @@ fn b47_unit_weapon_ranges_follow_starcraft() -> TestResult {
         "range",
         false,
         &SC2_UNIT_RANGE,
-        &["Phoenix", "Carrier"],
+        &["Phoenix"],
         |_| true,
         |w| f(w.max_range),
     )
 }
 
 /// Unit collision radius (`CUnit` `Radius`; `core` UnitData:41 is the class default 0.5).
-const SC2_UNIT_RADIUS: [(&str, [f32; 1], &str); 41] = [
+const SC2_UNIT_RADIUS: [(&str, [f32; 1], &str); 42] = [
     ("SCV", [0.375], "liberty UnitData:4743"),
     ("Marine", [0.375], "liberty UnitData:4837"),
     ("Roach", [0.5], "class default, core UnitData:41"),
@@ -2438,6 +2497,7 @@ const SC2_UNIT_RADIUS: [(&str, [f32; 1], &str); 41] = [
     ("Viper", [1.0], "swarm UnitData:2370"),
     ("Overlord", [1.0], "liberty UnitData:7376"),
     ("Carrier", [1.25], "liberty UnitData:3491"),
+    ("Interceptor", [0.25], "liberty UnitData:3565"),
 ];
 
 #[test]
@@ -2696,7 +2756,7 @@ const ARC_UNSET: &str = "Arc not set: engine 0 (core WeaponData:3-31)";
 /// in binary angle units (65 536 a turn; 32 768 is 180°, every direction). Plan
 /// `2026-11-05-sc2-deviation-fixes` WP10, B-29; weapons per catalog-time audit §10.3. The row
 /// with block `siege_mode` is the Siege Tank's Siege Mode cannon, checked through its mode.
-const SC2_UNIT_ACQUIRE_ARC: [WeaponRow; 41] = [
+const SC2_UNIT_ACQUIRE_ARC: [WeaponRow; 43] = [
     ("SCV", "weapon", 0.0, ARC_UNSET),
     ("Marine", "weapon", 0.0, ARC_UNSET),
     ("Marine", "air_weapon", 0.0, ARC_UNSET),
@@ -2753,6 +2813,18 @@ const SC2_UNIT_ACQUIRE_ARC: [WeaponRow; 41] = [
     ("Queen", "weapon", 0.0, ARC_UNSET),
     ("Queen", "ground_weapon", 0.0, ARC_UNSET),
     ("Queen", "air_weapon", 0.0, ARC_UNSET),
+    (
+        "Interceptor",
+        "weapon",
+        1_792.0,
+        "InterceptorBeam Arc 19.6875, liberty WeaponData:626-637",
+    ),
+    (
+        "Interceptor",
+        "air_weapon",
+        1_792.0,
+        "InterceptorBeam Arc 19.6875, liberty WeaponData:626-637",
+    ),
 ];
 
 /// Acquisition arc of every structure weapon: `Arc` ÷ 2, binary angle units.
@@ -3411,7 +3483,7 @@ fn the_a_command_is_derived_for_every_archetype_but_the_lurker_analogue() {
 
 /// Unit `Acceleration` (`CUnit`, Normal units per second squared) at 5.0.14, plan
 /// `2026-11-05-sc2-deviation-fixes` WP12 (B-39). `1000` is instant.
-const SC2_ACCELERATION: [(&str, f32, &str); 42] = [
+const SC2_ACCELERATION: [(&str, f32, &str); 43] = [
     ("SCV", 2.5, "liberty UnitData:4732"),
     ("Marine", 1000.0, "liberty UnitData:4822"),
     ("Roach", 1000.0, "liberty UnitData:7188"),
@@ -3454,6 +3526,11 @@ const SC2_ACCELERATION: [(&str, f32, &str); 42] = [
     ("Infestor", 1000.0, "liberty UnitData:10062"),
     ("Viper", 3.0, "void UnitData:1417"),
     ("Overlord", 1.0625, "liberty UnitData:7366"),
+    (
+        "Interceptor",
+        1000.0,
+        "liberty UnitData:3559 (Acceleration 1000, instant)",
+    ),
 ];
 
 /// Normal units per second squared to world units per tick per tick: one tick is 1.4 ÷ 25
