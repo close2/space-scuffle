@@ -959,7 +959,7 @@ and 5 hold; B-21, B-232, B-233 fixed. Commit `docs: close B-21, B-232 and B-233 
 
 ---
 
-## 15. Owner question (draft, not filed; provisional number)
+## 15. Owner question (filed on main as [Q0132](../questions/open/0132-brood-lord-damage-rate.md))
 
 ```markdown
 # Q0132: The Brood Lord throws its two escort Broodlings, then one at a time; accept the data's damage rate?
