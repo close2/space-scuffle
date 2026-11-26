@@ -3934,6 +3934,12 @@
                 overclock: None,
                 harvester: None,
                 is_resource_dropoff: false,
+                // 5.0.14 BroodLordHangar (CAbilArmMagazine, External): liberty AbilData:3808-3824
+                // (CountStart 2, Ammo1 Time 2.5 = 45 ticks, AutoBuild), BroodLordQueue2 QueueSize 2
+                // (:2077-2082), BroodlingAttackDelay 0.5 = 9 ticks (liberty BehaviorData:1361-1368);
+                // two at most (Liquipedia, Brood Lord); attacks_count 2 is "up to two escorts, 20
+                // each"; plan 2026-11-28-broodlings D-3 (B-233; Q0132 default (a)).
+                strike_magazine: Some((capacity: 2, start: 2, build_ticks: 45, arming_ticks: 9)),
             ),
             // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
             effects: (

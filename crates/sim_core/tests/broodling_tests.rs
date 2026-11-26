@@ -809,3 +809,118 @@ fn b9_a_fizzled_missile_creates_nothing() -> TestResult {
     );
     Ok(())
 }
+
+// ---------------------------------------------------------------------------------------------
+// The shipped rows (plan `2026-11-28-broodlings` §6.2, WP3 and WP4)
+// ---------------------------------------------------------------------------------------------
+
+/// The one shipped archetype with a strike magazine: the Brood Lord analogue, found by property.
+fn shipped_lord(world: &SimWorld) -> Result<UnitTypeId, Box<dyn Error>> {
+    let lords: Vec<UnitTypeId> = world
+        .catalog
+        .archetypes()
+        .filter(|arch| arch.capabilities.strike_magazine.is_some())
+        .map(|arch| arch.unit_type_id)
+        .collect();
+    match lords.as_slice() {
+        [lord] => Ok(*lord),
+        _ => Err(format!("one shipped unit with a strike magazine, found {lords:?}").into()),
+    }
+}
+
+/// A world of the shipped catalog: its Brood Lord analogue unchanged, the unarmed durable dummy
+/// of [`nest_with`], and the shipped spawned unit (the dummy's type while none is shipped).
+fn shipped_nest(seed: u64) -> Result<Nest, Box<dyn Error>> {
+    let mut nest = nest_with(None, false, seed)?;
+    let map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0)))?;
+    let mut world = sim_fixtures::world(map, seed);
+    let dummy_arch = world.catalog.get_mut(nest.dummy)?;
+    dummy_arch.weapon = None;
+    dummy_arch.ground_weapon = None;
+    dummy_arch.air_weapon = None;
+    dummy_arch.max_hp = SimScalar::from_i32(100_000);
+    nest.lord = shipped_lord(&world)?;
+    nest.mite = world
+        .catalog
+        .get(nest.lord)?
+        .ground_weapon
+        .as_ref()
+        .and_then(|w| w.impact_spawn)
+        .map_or(nest.dummy, |spawn| spawn.unit);
+    nest.world = world;
+    Ok(nest)
+}
+
+/// B-12 (WP3): the shipped Brood Lord analogue's magazine is 5.0.14's `BroodLordHangar` (S3:
+/// `CountStart 2`, `Ammo1 Time 2.5` = 45 ticks; S4: `QueueSize 2`, one at a time; S6:
+/// `BroodlingAttackDelay 0.5` = 9 ticks; S20: two at most), and the shipped unit reproduces B-1
+/// to B-3: two strikes on its first release, then one at R + 57, R + 102, … over 20 strikes (each
+/// at most 3 ticks late, by the weapon's random delay), no swing while nothing is armed, and two
+/// again after an idle spell.
+#[test]
+fn b12_the_shipped_brood_lord_throws_its_escorts_on_the_plan_ticks() -> TestResult {
+    let mut nest = shipped_nest(0xB12)?;
+    assert_eq!(
+        nest.world
+            .catalog
+            .get(nest.lord)?
+            .capabilities
+            .strike_magazine,
+        Some(MAGAZINE),
+        "BroodLordHangar, liberty AbilData:3808-3824; BroodLordQueue2 :2077-2082; \
+         BroodlingAttackDelay, liberty BehaviorData:1361-1368"
+    );
+    let (lord, target) = nest.engaged(at(20, 32), at(25, 32))?;
+    let first = nest.until_release(lord, 60)?;
+    let mut releases = vec![first];
+    for _ in first.tick + 1..first.tick + 54 {
+        nest.step();
+        releases.extend(nest.releases(lord));
+        assert!(
+            !matches!(
+                nest.world.entities[&lord].weapon_phase,
+                WeaponPhase::Windup { .. }
+            ),
+            "no swing while nothing is armed"
+        );
+    }
+    releases.extend(nest.run(lord, 790));
+    releases.truncate(19);
+    let plan = schedule(first.tick, 20);
+    assert_eq!(releases.len(), plan.len(), "20 strikes: {releases:?}");
+    // The shipped weapon draws its random delay (-1.1161 to 2.2321 ticks, B-3) into the cooldown
+    // of each release, so a swing may wait for its cooldown past the tick its escort arms; the
+    // magazine still paces the releases, so the lag never accumulates.
+    for (got, want) in releases.iter().zip(&plan) {
+        assert_eq!(got.strikes, want.strikes, "{got:?} against {want:?}");
+        assert!(
+            (want.tick..=want.tick + 3).contains(&got.tick),
+            "{got:?} within the random delay of {want:?}"
+        );
+    }
+    assert_eq!(
+        &releases[..2],
+        &plan[..2],
+        "the first two releases are the magazine's alone"
+    );
+    // B-3: an idle spell refills both escorts.
+    nest.world
+        .entities
+        .get_mut(&target)
+        .ok_or("target")?
+        .is_cloaked = true;
+    nest.world
+        .entities
+        .get_mut(&lord)
+        .ok_or("lord")?
+        .issue_order(UnitOrder::Stop, false)?;
+    nest.run(lord, 120);
+    nest.world
+        .entities
+        .get_mut(&target)
+        .ok_or("target")?
+        .is_cloaked = false;
+    nest.attack(lord, target)?;
+    assert_eq!(nest.until_release(lord, 60)?.strikes, 2, "refilled");
+    Ok(())
+}
