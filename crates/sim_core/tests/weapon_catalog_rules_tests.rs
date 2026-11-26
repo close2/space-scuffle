@@ -448,7 +448,7 @@ const fn row(
 }
 
 /// Every shipped weapon, unit and structure, mode overrides included (W-10).
-const DELIVERY_CENSUS: [DeliveryRow; 45] = [
+const DELIVERY_CENSUS: [DeliveryRow; 46] = [
     row("welder_drone", "Drill Slash", "FusionCutter, liberty WeaponData:195", Delivery::Instant),
     row("pulse_bot", "Pulse Carbine", "GuassRifle, liberty WeaponData:203", Delivery::Instant),
     row("rhino_beetle", "Acid Saliva", "AcidSaliva -> AcidSalivaLM, liberty EffectData:2136", Delivery::Missile),
@@ -505,6 +505,7 @@ const DELIVERY_CENSUS: [DeliveryRow; 45] = [
     ),
     row("nectar_worker", "Mandible Bite", "Spines, liberty WeaponData:349", Delivery::Instant),
     row("razor_mantis", "Scythe Slash", "Claws, liberty WeaponData:357", Delivery::Instant),
+    row("brood_mite", "Needle Claws", "NeedleClaws, liberty WeaponData:109", Delivery::Instant),
     row("volatile_tick", "Volatile Burst", "VolatileBurst, liberty WeaponData:463", Delivery::Instant),
     row("mortar_stag", "Corrosive Bile", "RavagerWeapon -> RavagerWeaponLM, void EffectData:1605", Delivery::Missile),
     row("thorn_viper", "Needle Spines", "NeedleSpines -> NeedleSpinesLaunchMissile, liberty EffectData:565", Delivery::Missile),
@@ -1251,7 +1252,7 @@ type BonusRow = (
 /// the catalog weapon a row is for when the analogue's weapons differ (plan
 /// `2026-11-05-sc2-deviation-fixes` WP6, B-14; evidence §6.1). A row whose source says "none" is
 /// an analogue whose damage effects set no `AttributeBonus` anywhere in the layer chain.
-const SC2_ATTRIBUTE_BONUSES: [BonusRow; 42] = [
+const SC2_ATTRIBUTE_BONUSES: [BonusRow; 43] = [
     ("SCV", None, &[], "none"),
     ("Marine", None, &[], "none"),
     ("Roach", None, &[], "none"),
@@ -1345,6 +1346,7 @@ const SC2_ATTRIBUTE_BONUSES: [BonusRow; 42] = [
     ("Interceptor", None, &[], "none"),
     ("Drone", None, &[], "none"),
     ("Zergling", None, &[], "none"),
+    ("Broodling", None, &[], "NeedleClaws, liberty EffectData:1413-1416: none"),
     (
         "Baneling",
         None,

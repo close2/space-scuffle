@@ -55,5 +55,10 @@
         // (docs/evidence/veo/2026-11-09-batch-5b.md).
         (slug: "napalm_wheeler", tier: Expansion),
         (slug: "burrow_scorpion", tier: Expansion),
+        // Broodlings batch (plan 2026-11-28-broodlings WP6, 2026-11-26; owner answer Q0133: faint
+        // light shafts and imperfect loops accepted until the polish pass;
+        // docs/evidence/veo/2026-11-28-batch-broodlings.md).
+        (slug: "spore_matriarch", tier: Expansion),
+        (slug: "brood_mite", tier: Expansion),
     ],
 )

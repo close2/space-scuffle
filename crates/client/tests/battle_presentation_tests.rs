@@ -445,3 +445,87 @@ fn a_docking_member_draws_no_death_and_a_killed_one_does() -> TestResult {
     assert!(!world.entities.contains_key(&victim));
     Ok(())
 }
+
+/// B-18 (plan `2026-11-28-broodlings` D-12 item 2): a unit a missile creates is an ordinary
+/// unit in the snapshot, and its timed life's expiry draws its death as any death does. The
+/// shipped unit whose weapon has an impact spawn, found by property, attacks a passive ground
+/// enemy; its spawned units appear in the snapshot and each draws its death when its clock ends.
+#[test]
+fn a_spawned_units_expiry_draws_its_death() -> TestResult {
+    use sim_map::{CliffLevel, GameMap, MapCell};
+    use sim_types::{MoverType, SimScalar, SimVec2, UnitOrder};
+    let root = client::ResolvedAssetsRoot::from_directory(
+        &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets"),
+    )?;
+    let effects = client::effects::catalog::EffectCatalog::load(
+        &root
+            .as_path()
+            .join(client::effects::catalog::EFFECTS_CATALOG_PATH),
+        root.as_path(),
+    )?;
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let tables = client::effects::catalog::UnitEffectTables::build(&catalogs.units, &effects)?;
+    let map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0)))?;
+    let mut world =
+        sim_core::SimWorld::with_catalogs(map, 0x18, catalogs.units, catalogs.upgrades)?;
+    let (lord, spawned) = world
+        .catalog
+        .archetypes()
+        .find_map(|arch| {
+            arch.ground_weapon
+                .as_ref()
+                .and_then(|w| w.impact_spawn)
+                .map(|spawn| (arch.unit_type_id, spawn.unit))
+        })
+        .ok_or("the shipped catalog has a spawning unit")?;
+    let mut ground: Vec<_> = world
+        .catalog
+        .archetypes()
+        .filter(|arch| arch.mover_type == MoverType::Ground && arch.max_speed > SimScalar::ZERO)
+        .filter(|arch| arch.unit_type_id != spawned && arch.weapon.is_some())
+        .map(|arch| arch.unit_type_id)
+        .collect();
+    ground.sort();
+    let target_kind = *ground.first().ok_or("a plain ground unit")?;
+    {
+        let arch = world.catalog.get_mut(target_kind)?;
+        arch.weapon = None;
+        arch.ground_weapon = None;
+        arch.air_weapon = None;
+        arch.max_hp = SimScalar::from_i32(100_000);
+    }
+    let (me, foe) = (PlayerId(0), PlayerId(1));
+    let attacker = world.spawn_unit(lord, me, SimVec2::from_i32(20, 32))?;
+    let target = world.spawn_unit(target_kind, foe, SimVec2::from_i32(25, 32))?;
+    world
+        .entities
+        .get_mut(&attacker)
+        .ok_or("attacker")?
+        .issue_order(UnitOrder::attack(target), false)?;
+    let mut now = 0;
+    let mut created = std::collections::BTreeSet::new();
+    let mut drawn_in_snapshot = false;
+    let mut deaths = 0;
+    for _ in 0..400 {
+        let out = tick(&mut world, &mut now);
+        for entity in world.entities.values() {
+            if entity.unit_type_id == spawned {
+                created.insert(entity.id);
+            }
+        }
+        drawn_in_snapshot |= out
+            .bubbles
+            .iter()
+            .any(|bubble| created.contains(&bubble.entity_id));
+        deaths += deaths_drawn(&out, spawned, &tables, &effects);
+    }
+    assert!(created.len() >= 4, "units were created: {}", created.len());
+    assert!(drawn_in_snapshot, "created units are drawn as units");
+    let gone = created
+        .iter()
+        .filter(|id| !world.entities.contains_key(id))
+        .count();
+    assert!(gone >= 2, "clocks ran out: {gone}");
+    assert_eq!(deaths, gone, "every expiry draws its death");
+    Ok(())
+}

@@ -788,3 +788,92 @@ fn actions_a_denied_or_unfinished_negative_text_is_a_problem() {
         "{problems:?}"
     );
 }
+
+// --- Per-identity negative terms ---------------------------------------------------------------
+// Plan `2026-11-28-broodlings` WP6 (owner answers Q0131 (a), Q0133): `actions.negative_overrides`.
+
+/// The shipped style text with its `negative_overrides` map replaced by `map` (RON).
+fn with_negative_overrides(text: &str, map: &str) -> String {
+    let start = text.find("    actions: (").expect("actions");
+    let mut text = text.to_string();
+    if let Some(offset) = text[start..].find("        negative_overrides: {") {
+        let from = start + offset;
+        let to = from
+            + text[from..].find("\n        },\n").expect("map closes")
+            + "\n        },\n".len();
+        text.replace_range(from..to, "");
+    }
+    let at = start
+        + text[start..]
+            .find("        overrides: {")
+            .expect("overrides");
+    text.insert_str(at, &format!("        negative_overrides: {map},\n"));
+    text
+}
+
+/// An identity's negative terms follow its kind's in every clip of it, and no other identity's
+/// clips take them.
+#[test]
+fn negative_overrides_append_to_one_identitys_clips() {
+    let catalog = catalog();
+    let mut units: Vec<_> = catalog
+        .archetypes()
+        .filter(|a| !is_dome(a))
+        .filter(|a| !style().actions.negative_overrides.contains_key(&a.slug))
+        .collect();
+    units.sort_by_key(|a| a.unit_type_id);
+    let (unit, other) = (units[0], units[1]);
+    let style = load_edited(|text| {
+        with_negative_overrides(
+            &text,
+            &format!("{{ \"{}\": \"light shafts, tractor beam\" }}", unit.slug),
+        )
+    })
+    .expect("a valid negative override");
+    for state in [AnimState::Idle, AnimState::Walk] {
+        let own = style
+            .actions
+            .text_for(&unit.slug, &unit.shape, state)
+            .expect("text");
+        assert_eq!(
+            own.identity_negative_terms,
+            Some("light shafts, tractor beam")
+        );
+        let kind = style.actions.unit_sphere.negative_terms.as_deref();
+        let joined = own.clip_negative_terms().expect("terms");
+        assert!(joined.ends_with("light shafts, tractor beam"), "{joined}");
+        if let Some(kind) = kind {
+            assert!(joined.starts_with(kind), "{joined}");
+        }
+        let theirs = style
+            .actions
+            .text_for(&other.slug, &other.shape, state)
+            .expect("text");
+        assert_eq!(theirs.identity_negative_terms, None);
+        assert_eq!(theirs.clip_negative_terms().as_deref(), kind);
+    }
+}
+
+/// A negative override of a slug outside the catalog, or a blank one, is refused at load.
+#[test]
+fn invalid_negative_overrides_are_refused_at_load() {
+    let unknown = load_edited(|text| {
+        with_negative_overrides(&text, "{ \"no_such_unit\": \"light shafts\" }")
+    });
+    assert!(
+        matches!(unknown, Err(BakerError::UnknownActionOverride { ref slug, .. }) if slug == "no_such_unit"),
+        "{unknown:?}"
+    );
+    let slug = catalog()
+        .archetypes()
+        .find(|a| !is_dome(a))
+        .expect("a unit")
+        .slug
+        .clone();
+    let blank =
+        load_edited(|text| with_negative_overrides(&text, &format!("{{ \"{slug}\": \" \" }}")));
+    assert!(
+        matches!(blank, Err(BakerError::DataFile { .. })),
+        "{blank:?}"
+    );
+}

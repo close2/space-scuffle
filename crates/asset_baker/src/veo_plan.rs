@@ -455,7 +455,7 @@ pub fn plan_run(
                 action_source: action.source,
                 negative_prompt: compose_negative_prompt(
                     parameters.negative_prompt.as_deref(),
-                    action.negative_terms,
+                    action.clip_negative_terms().as_deref(),
                 ),
             });
         }

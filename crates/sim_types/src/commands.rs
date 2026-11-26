@@ -533,6 +533,29 @@ pub struct ArchetypeCapabilities {
     /// for every unit without one.
     #[serde(default)]
     pub hangar: Option<HangarSpec>,
+    /// Armed charges that each strike of this unit's weapons spends, rebuilt one at a time
+    /// (`StarCraft` II's `CAbilArmMagazine` with `External` members: the Brood Lord's escorts;
+    /// plan `2026-11-28-broodlings` D-3). `None` for every unit whose strikes need nothing.
+    #[serde(default)]
+    pub strike_magazine: Option<StrikeMagazineSpec>,
+}
+
+/// A strike magazine's authored rules (plan `2026-11-28-broodlings` D-3): `StarCraft` II's
+/// `CAbilArmMagazine` whose members never become units of their own, so only their count, their
+/// build and their arming decide anything. A release of the unit's weapon spends one armed
+/// charge per strike, up to the weapon's `attacks_count`; with none armed the weapon starts no
+/// swing. Catalog validation keeps `arming_ticks` below `build_ticks`, so at most one charge
+/// arms at a time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StrikeMagazineSpec {
+    /// Charges held at most, armed, arming and building together (`StarCraft` II's two escorts).
+    pub capacity: u8,
+    /// Charges armed when the unit is created (`CountStart`).
+    pub start: u8,
+    /// Ticks to build one charge; one builds at a time (`InfoArray Ammo1 Time`).
+    pub build_ticks: u16,
+    /// Ticks from a charge's build to its arming (`BroodlingAttackDelay`); 0 arms it at once.
+    pub arming_ticks: u16,
 }
 
 /// A hangar: a magazine of up to `max_count` members of one other archetype, built one at a time
@@ -655,5 +678,32 @@ mod tests {
         let decoded: TickInputBundle =
             ron::from_str(&ron_str).expect("invariant: valid ron deserialization");
         assert_eq!(bundle, decoded);
+    }
+
+    /// Plan `2026-11-28-broodlings` D-3: capabilities that leave the strike magazine out have
+    /// none; an authored magazine reads its capacity, start, build and arming ticks.
+    #[test]
+    fn strike_magazine_defaults_to_none_and_reads_its_fields(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let text = ron::to_string(&ArchetypeCapabilities::default())?;
+        let field = "strike_magazine:None";
+        assert!(text.contains(field), "premise: the field is written");
+        let omitted: ArchetypeCapabilities =
+            ron::from_str(&text.replace(&format!(",{field}"), ""))?;
+        assert_eq!(omitted.strike_magazine, None);
+        let read: ArchetypeCapabilities = ron::from_str(&text.replace(
+            field,
+            "strike_magazine:Some((capacity:2,start:2,build_ticks:45,arming_ticks:9))",
+        ))?;
+        assert_eq!(
+            read.strike_magazine,
+            Some(StrikeMagazineSpec {
+                capacity: 2,
+                start: 2,
+                build_ticks: 45,
+                arming_ticks: 9,
+            })
+        );
+        Ok(())
     }
 }

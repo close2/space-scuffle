@@ -623,6 +623,12 @@
         ),
         expect: (blue: (1, 1), red: (0, 0), blue_lead_hp: Some((135.0, 135.0))),
     ),
+    // Battle 20: the Brood Lord analogue attacks through its two escorts (5.0.14 BroodLordHangar,
+    // liberty AbilData:3808-3824: two at the start, one rebuilt per 45 ticks), thrown along
+    // BroodLordWeaponRight (MoverData:44-69, 13 ticks of flight here), each landing as a
+    // Broodling that turns the held roach (BroodlingEscortImpactA, EffectData:2684-2692); plan
+    // 2026-11-28-broodlings WP2 to WP4 (B-21, B-232, B-233). The roach dies on tick 163 to 167 of
+    // 400 (evidence docs/evidence/2026-11-28-broodlings.md); the outcome never moved.
     (
         name: "20_brood_lord_vs_roach",
         claim: "A ground-only roach cannot answer a brood lord",

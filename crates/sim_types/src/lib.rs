@@ -40,8 +40,8 @@ pub mod weapon;
 pub use commands::{
     AbilityEffectSpec, AbilitySpec, AbilityTargetKind, ArchetypeCapabilities, AttackCommand,
     AttackDashSpec, AttackOrigin, AutoRallySpec, BarrierSpec, FollowKind, HangarDeath, HangarSpec,
-    HarvesterSpec, OverclockSpec, PlayerCommand, StanceOrders, TickBundle, TickInputBundle,
-    UnitModeSpec, UnitOrder,
+    HarvesterSpec, OverclockSpec, PlayerCommand, StanceOrders, StrikeMagazineSpec, TickBundle,
+    TickInputBundle, UnitModeSpec, UnitOrder,
 };
 pub use effects::{
     CancelOrdersDef, DamageDef, DamageResponses, DisplaceDef, DisplaceDestination, EffectAnchor,
@@ -85,10 +85,10 @@ pub use upgrades::{
 };
 pub use weapon::{
     default_projectile_lifetime_ticks, AllowedMovement, AttackVisibility, Attribute,
-    AttributeBonuses, MagazineLaunch, MissileMover, MissilePhase, MissileValidation, PhaseEnd,
-    ProjectileTargetLossBehavior, SplashCliff, SplashImpact, SplashLine, SplashLineAxis,
-    SplashLineOrigin, SplashShape, SplashSpec, SplashZone, StructureStrike, TurretIdle, WeaponSpec,
-    DEFAULT_PROJECTILE_LIFETIME_TICKS,
+    AttributeBonuses, ImpactSpawn, MagazineLaunch, MissileMover, MissilePhase, MissileValidation,
+    PhaseEnd, ProjectileTargetLossBehavior, SpawnOrder, SplashCliff, SplashImpact, SplashLine,
+    SplashLineAxis, SplashLineOrigin, SplashShape, SplashSpec, SplashZone, StructureStrike,
+    TimedLifeSpec, TurretIdle, WeaponSpec, DEFAULT_PROJECTILE_LIFETIME_TICKS,
 };
 
 /// Simulation ticks per second of game time: the one fixed tick rate of every match (25 Hz,

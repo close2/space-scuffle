@@ -1500,7 +1500,7 @@ fn b87_advanced_ballistics_leaves_the_anti_air_range() -> TestResult {
 
 /// Unit attributes as `AttributeFlags` bits (`CUnit` `Attributes`, every layer; the citation is the
 /// unit's element). Attributes the catalog does not model (Robotic, Hover, Summoned) are not listed.
-const SC2_UNIT_ATTRIBUTES: [(&str, [f32; 1], &str); 42] = [
+const SC2_UNIT_ATTRIBUTES: [(&str, [f32; 1], &str); 43] = [
     (
         "SCV",
         [13.0],
@@ -1643,6 +1643,11 @@ const SC2_UNIT_ATTRIBUTES: [(&str, [f32; 1], &str); 42] = [
         [9.0],
         "Light+Mechanical, liberty UnitData:3592-3593",
     ),
+    (
+        "Broodling",
+        [5.0],
+        "Light+Biological, BroodlingDefault, liberty UnitData:87-88",
+    ),
 ];
 
 #[test]
@@ -1658,7 +1663,7 @@ fn b47_unit_attributes_follow_starcraft() -> TestResult {
 
 /// Damage per strike of every armed unit (the weapon's first `CEffectDamage` `Amount`). The Brood
 /// Lord deals its damage through Broodlings (B-21) and has no row.
-const SC2_UNIT_DAMAGE: [WeaponRow; 45] = [
+const SC2_UNIT_DAMAGE: [WeaponRow; 46] = [
     (
         "SCV",
         "weapon",
@@ -1914,6 +1919,7 @@ const SC2_UNIT_DAMAGE: [WeaponRow; 45] = [
         5.0,
         "InterceptorBeamDamage Amount 5, liberty EffectData:1953-1958",
     ),
+    ("Broodling", "weapon", 4.0, "NeedleClaws Amount 4, liberty EffectData:1413-1416"),
 ];
 
 /// Damage per upgrade level the audit corrected or resolved through an indexed upgrade override:
@@ -2098,7 +2104,7 @@ fn b47_bonus_damage_per_level_follows_starcraft() -> TestResult {
 /// Unit life, shields and life armour (`CUnit` `LifeMax`, `ShieldsMax`, `LifeArmor`). The
 /// saucer without one analogue is class E (evidence §10.1); the Carrier takes the Carrier's
 /// (Q0129 (a); plan `2026-11-28-carrier-interceptors` D-1, B-228).
-const SC2_UNIT_VITALS: [(&str, [f32; 3], &str); 42] = [
+const SC2_UNIT_VITALS: [(&str, [f32; 3], &str); 43] = [
     ("SCV", [45.0, 0.0, 0.0], "liberty UnitData:4729; default 0"),
     (
         "Thor",
@@ -2301,6 +2307,11 @@ const SC2_UNIT_VITALS: [(&str, [f32; 3], &str); 42] = [
         [40.0, 40.0, 0.0],
         "liberty UnitData:3550; liberty UnitData:3553; default 0",
     ),
+    (
+        "Broodling",
+        [20.0, 0.0, 0.0],
+        "voidmulti UnitData:154; default 0; default 0",
+    ),
 ];
 
 #[test]
@@ -2315,7 +2326,7 @@ fn b47_unit_vitals_follow_starcraft() -> TestResult {
 }
 
 /// Unit sight (`CUnit` `Sight`).
-const SC2_UNIT_SIGHT: [(&str, [f32; 1], &str); 42] = [
+const SC2_UNIT_SIGHT: [(&str, [f32; 1], &str); 43] = [
     ("SCV", [8.0], "liberty UnitData:4759"),
     ("Marine", [9.0], "liberty UnitData:4850"),
     ("Roach", [9.0], "liberty UnitData:7210"),
@@ -2358,6 +2369,7 @@ const SC2_UNIT_SIGHT: [(&str, [f32; 1], &str); 42] = [
     ("Viper", [11.0], "swarm UnitData:2343"),
     ("Overlord", [11.0], "liberty UnitData:7390"),
     ("Interceptor", [7.0], "liberty UnitData:3581"),
+    ("Broodling", [7.0], "BroodlingDefault, liberty UnitData:93"),
 ];
 
 #[test]
@@ -2369,7 +2381,7 @@ fn b47_unit_sight_follows_starcraft() -> TestResult {
 
 /// Maximum range of every armed unit's weapon (`CWeapon` `Range`; `core` WeaponData:12 is the class
 /// default 5).
-const SC2_UNIT_RANGE: [WeaponRow; 47] = [
+const SC2_UNIT_RANGE: [WeaponRow; 48] = [
     ("SCV", "weapon", 0.2, "voidmulti WeaponData:105"),
     ("Marine", "weapon", 5.0, "core WeaponData:12"),
     ("Marine", "air_weapon", 5.0, "core WeaponData:12"),
@@ -2442,6 +2454,12 @@ const SC2_UNIT_RANGE: [WeaponRow; 47] = [
         2.0,
         "InterceptorBeam Range 2, liberty WeaponData:626-637",
     ),
+    (
+        "Broodling",
+        "weapon",
+        0.1,
+        "NeedleClaws, liberty WeaponData:115",
+    ),
 ];
 
 #[test]
@@ -2457,7 +2475,7 @@ fn b47_unit_weapon_ranges_follow_starcraft() -> TestResult {
 }
 
 /// Unit collision radius (`CUnit` `Radius`; `core` UnitData:41 is the class default 0.5).
-const SC2_UNIT_RADIUS: [(&str, [f32; 1], &str); 42] = [
+const SC2_UNIT_RADIUS: [(&str, [f32; 1], &str); 43] = [
     ("SCV", [0.375], "liberty UnitData:4743"),
     ("Marine", [0.375], "liberty UnitData:4837"),
     ("Roach", [0.5], "class default, core UnitData:41"),
@@ -2500,6 +2518,11 @@ const SC2_UNIT_RADIUS: [(&str, [f32; 1], &str); 42] = [
     ("Overlord", [1.0], "liberty UnitData:7376"),
     ("Carrier", [1.25], "liberty UnitData:3491"),
     ("Interceptor", [0.25], "liberty UnitData:3565"),
+    (
+        "Broodling",
+        [0.375],
+        "BroodlingDefault, liberty UnitData:98",
+    ),
 ];
 
 #[test]
@@ -2512,7 +2535,7 @@ fn b47_unit_radii_follow_starcraft() -> TestResult {
 /// B-116: the radius of every ground unit's disc against terrain and structures, `StarCraft` II's
 /// `min(InnerRadius, Radius)` (plan `2026-11-18-inner-radius` §2.2; 5.0.14, `5444e12f13`). Rows
 /// name analogues, never archetypes (charter §3.3).
-const SC2_UNIT_TERRAIN_RADIUS: [(&str, [f32; 1], &str); 27] = [
+const SC2_UNIT_TERRAIN_RADIUS: [(&str, [f32; 1], &str); 28] = [
     ("SCV", [0.3125], "voidmulti UnitData:1528; 5.0.13 notes"),
     ("Probe", [0.3125], "voidmulti UnitData:1287; 5.0.13 notes"),
     ("Drone", [0.3125], "voidmulti UnitData:523; 5.0.13 notes"),
@@ -2579,6 +2602,11 @@ const SC2_UNIT_TERRAIN_RADIUS: [(&str, [f32; 1], &str); 27] = [
         "Zergling",
         [0.375],
         "InnerRadius unset (liberty UnitData:7563): read as Radius, plan D-4, Q0087",
+    ),
+    (
+        "Broodling",
+        [0.375],
+        "BroodlingDefault InnerRadius, liberty UnitData:100",
     ),
 ];
 
@@ -2706,7 +2734,7 @@ fn b82_only_the_baneling_has_its_structure_strike() {
 /// Roach's and Hydralisk's melee weapons, `liberty` WeaponData:86-89 and :46-49, the
 /// Ultralisk's `Ram`, :441-451) have no catalog counterpart; the analogues' ranged weapons are
 /// not melee.
-const SC2_MELEE_WEAPONS: [(&str, &str); 8] = [
+const SC2_MELEE_WEAPONS: [(&str, &str); 9] = [
     ("SCV", "FusionCutter, liberty WeaponData:201"),
     ("Probe", "ParticleBeam, liberty WeaponData:148"),
     ("Zealot", "PsiBlades, liberty WeaponData:158"),
@@ -2715,6 +2743,7 @@ const SC2_MELEE_WEAPONS: [(&str, &str); 8] = [
     ("Zergling", "Claws, liberty WeaponData:363"),
     ("Baneling", "VolatileBurst, liberty WeaponData:472"),
     ("Ultralisk", "KaiserBlades, liberty WeaponData:439"),
+    ("Broodling", "NeedleClaws, liberty WeaponData:111"),
 ];
 
 #[test]
@@ -2758,7 +2787,7 @@ const ARC_UNSET: &str = "Arc not set: engine 0 (core WeaponData:3-31)";
 /// in binary angle units (65 536 a turn; 32 768 is 180°, every direction). Plan
 /// `2026-11-05-sc2-deviation-fixes` WP10, B-29; weapons per catalog-time audit §10.3. The row
 /// with block `siege_mode` is the Siege Tank's Siege Mode cannon, checked through its mode.
-const SC2_UNIT_ACQUIRE_ARC: [WeaponRow; 43] = [
+const SC2_UNIT_ACQUIRE_ARC: [WeaponRow; 44] = [
     ("SCV", "weapon", 0.0, ARC_UNSET),
     ("Marine", "weapon", 0.0, ARC_UNSET),
     ("Marine", "air_weapon", 0.0, ARC_UNSET),
@@ -2827,6 +2856,7 @@ const SC2_UNIT_ACQUIRE_ARC: [WeaponRow; 43] = [
         1_792.0,
         "InterceptorBeam Arc 19.6875, liberty WeaponData:626-637",
     ),
+    ("Broodling", "weapon", 0.0, ARC_UNSET),
 ];
 
 /// Acquisition arc of every structure weapon: `Arc` ÷ 2, binary angle units.
@@ -3485,7 +3515,7 @@ fn the_a_command_is_derived_for_every_archetype_but_the_lurker_analogue() {
 
 /// Unit `Acceleration` (`CUnit`, Normal units per second squared) at 5.0.14, plan
 /// `2026-11-05-sc2-deviation-fixes` WP12 (B-39). `1000` is instant.
-const SC2_ACCELERATION: [(&str, f32, &str); 43] = [
+const SC2_ACCELERATION: [(&str, f32, &str); 44] = [
     ("SCV", 2.5, "liberty UnitData:4732"),
     ("Marine", 1000.0, "liberty UnitData:4822"),
     ("Roach", 1000.0, "liberty UnitData:7188"),
@@ -3532,6 +3562,11 @@ const SC2_ACCELERATION: [(&str, f32, &str); 43] = [
         "Interceptor",
         1000.0,
         "liberty UnitData:3559 (Acceleration 1000, instant)",
+    ),
+    (
+        "Broodling",
+        1000.0,
+        "liberty UnitData:11173 (Acceleration 1000, instant)",
     ),
 ];
 
@@ -5547,7 +5582,7 @@ type ConstantMissileRow = (
 /// missile weapon without movers, from the 5.0.14 mover its launch flies (the launch's `Movers`,
 /// else its ammo unit's `Mover`; `MaxSpeed × 0.056` per tick, 3200 accelerations instant).
 /// `MissileDefault` (`core` MoverData:13-25) and its children fly 18.75, 1.05 per tick.
-const SC2_UNIT_MISSILE_SPEEDS: [ConstantMissileRow; 17] = [
+const SC2_UNIT_MISSILE_SPEEDS: [ConstantMissileRow; 15] = [
     ("Roach", "weapon", 1.05, "AcidSalivaLM ammo AcidSalivaWeapon, liberty MoverData:670-679", None),
     ("Marauder", "weapon", 1.12, "PunisherGrenadesLM Movers PunisherGrenadesWeapon, liberty MoverData:662-669 (MaxSpeed 20)", None),
     ("Stalker", "weapon", 1.05, "ParticleDisruptors ammo StalkerWeapon, a MissileDefault child (liberty MoverData:601)", None),
@@ -5560,8 +5595,6 @@ const SC2_UNIT_MISSILE_SPEEDS: [ConstantMissileRow; 17] = [
     ("Mutalisk", "weapon", 1.05, "GlaiveWurm ammo GlaiveWurmWeapon (the default ##id##Weapon, core EffectData:104), Mover MissileDefault (liberty UnitData:9271-9275)", None),
     ("Mutalisk", "air_weapon", 1.05, "GlaiveWurm ammo GlaiveWurmWeapon (the default ##id##Weapon, core EffectData:104), Mover MissileDefault (liberty UnitData:9271-9275)", None),
     ("Corruptor", "air_weapon", 1.05, "ParasiteSporeLaunchMissile ammo ParasiteSporeWeapon, Mover MissileDefault (liberty UnitData:9296-9300)", None),
-    ("Brood Lord", "weapon", 0.9, "BroodlingEscortLaunchA Movers BroodLordWeaponRight/Left (liberty MoverData:44-69, :620-644): Throw then Guidance to 40, not a constant", Some("B-232")),
-    ("Brood Lord", "ground_weapon", 0.9, "BroodlingEscortLaunchA Movers BroodLordWeaponRight/Left (liberty MoverData:44-69, :620-644): Throw then Guidance to 40, not a constant", Some("B-232")),
     ("Queen", "weapon", 2.24, "AcidSpinesLM Movers AcidSpinesWeapon, liberty MoverData:610-619 (Speed 40)", None),
     ("Queen", "ground_weapon", 2.24, "AcidSpinesLM Movers AcidSpinesWeapon, liberty MoverData:610-619 (Speed 40)", None),
     ("Queen", "air_weapon", 2.24, "TalonsLM ammo TalonsMissileWeapon, swarm MoverData:335-344 (Speed 40)", None),
@@ -5633,7 +5666,7 @@ type MoverRow = (Option<f32>, &'static [PhaseRow]);
 
 /// W-18 (plan `2026-11-27-weapon-delivery` D-2): every shipped weapon with missile movers, by
 /// analogue and block, with the 5.0.14 movers of its launch effect.
-const SC2_MISSILE_MOVERS: [(&str, &str, &[MoverRow], f32, &str); 6] = [
+const SC2_MISSILE_MOVERS: [(&str, &str, &[MoverRow], f32, &str); 7] = [
     (
         "Phoenix",
         "air_weapon",
@@ -5740,6 +5773,25 @@ const SC2_MISSILE_MOVERS: [(&str, &str, &[MoverRow], f32, &str); 6] = [
         ],
         1.12,
         "LongboltMissileLM, liberty EffectData:1789-1794 (plan 2026-11-28-missile-movers-b52 S9, S10)",
+    ),
+    (
+        "Brood Lord",
+        "ground_weapon",
+        &[
+            // BroodLordWeaponRight (liberty MoverData:44-69; Left, :620-644, its mirror): Throw from
+            // Speed 5 accelerating 3 to MaxSpeed 8 until Outro 1.5,4.5 (midpoint 3); then Guidance
+            // accelerating 20 to MaxSpeed 40 with no Speed, carrying the speed in. Both bands are
+            // IfRangeLTE 500, so one unbounded mover.
+            (
+                None,
+                &[
+                    (Some(0.28), 0.009_408, 0.448, Some(End::Flown(3.0))),
+                    (None, 0.062_72, 2.24, None),
+                ],
+            ),
+        ],
+        2.24,
+        "BroodlingEscortLaunchA, liberty EffectData:2664-2672 (plan 2026-11-28-broodlings S9, S19, D-2)",
     ),
 ];
 
