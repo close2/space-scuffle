@@ -1288,3 +1288,37 @@ rule to any pipeline.
   zergling analogue 13.4 to 15.7 %, 2,624 to 3,824. M1 6.5 to 8.8 (`pulse_bot`) and 0.5 to 1.3; H-1 held-moved
   unit-ticks 267 to 525 and 2,502 to 2,917 per side. Probe counters 0 everywhere.
 - Every new-family scene played without a simulation diagnostic.
+
+## Amendment 2 (implementation, 2026-11-25): `WP0b`'s correction of the `lanes` known answer
+
+**What changed.** The `lanes` answer (§5.2, A1.2) no longer judges "both gaps used (each passes at least a quarter of
+the group)". The walkers through each gap are still metered and written in the `lanes` column, and the clump part
+(final hull within 2× the packed area) is still judged. Commit `fc5d07b5`, `crates/sim_fixtures/src/harness/answers.rs`;
+W0-T7 becomes `lanes_answer_reports_the_gaps_and_judges_the_clump` (red on the previous answer, where a group through
+one gap failed).
+
+**Why: an impossible bound the family's text did not foresee** (§7 `WP0b`, the last point at which a known answer may
+change). The scene gives the group one `Move` through a wall with two gaps symmetric about its route. Group-consistent
+routing (`group_routing.lane_tolerance_permille: 75`; plan `2026-11-10-group-routing` D-7, the owner's Q0079 option 2,
+sanctioned deviation S-7) gives every member the **leader's lane** whenever that route is at most 7.5 % longer than the
+member's own. Two symmetric gaps are within that tolerance for every member, so the shipped rules send the whole group
+through one gap; a member takes the other only when its own route is more than 7.5 % shorter (the widest groups). The
+design's R-12 itself reads "a group move keeps its lanes (group routing)"; its scene text "both lanes used" contradicts
+that rule. The global layer is out of this plan's scope (§12.2), so no package of the plan could ever meet the old
+answer.
+
+**The trace** (development seeds 1 to 1,000, first run, `~/scratch/gated-movement/worlds/<arm>/harness/lanes-first.csv`):
+
+| Arm | Answer held (old) | Scenes failing "lanes" | Scenes with one gap only | Walkers through the minority gap | First gap carries the majority |
+|---|---|---|---|---|---|
+| S | 2.0 % | 957 | 574 | 1,922 of 29,360 | 790 of 1,000 |
+| R | 2.2 % | 958 | 576 | 1,893 of 29,361 | 790 of 1,000 |
+| L | 1.8 % | 977 | 604 | 1,658 of 29,441 | 790 of 1,000 |
+
+Every arm fails the part in the same way, which is what group routing prescribes. It is not a movement defect.
+
+**Made after seeing figures.** This correction was decided after reading the three arms' first-run figures, as the
+plan's `WP0b` rule provides for, and before any `Gated` code exists. No constant, tolerance or threshold was chosen: a
+part was removed, not re-tuned. **Only the verdict columns of the `lanes` rows change** (`answer`, `hard`,
+`answer_failed`); every world, every metered column and every other family's CSV is unchanged (the lanes worlds of the
+first and corrected runs are compared column by column in the evidence, §2).
