@@ -3830,11 +3830,17 @@
             attack_target_priority: 20,
             primary_weapon: Either,
             acquire_tie_break: Closest,
-            mineral_cost: 150,
-            gas_cost: 150,
-            supply_cost: 2,
+            // 5.0.14 morphs the Brood Lord from the Corruptor; this analogue is trained whole, so it
+            // carries the morphed unit's total (B-239): CostResource 300 minerals, 250 gas (liberty
+            // UnitData:11155-11156; the Corruptor's 150/100 at :11266-11267 plus the morph's 150/150)
+            // and Food -4 (:11115). Its time is the Corruptor's LarvaTrain Train12 40 Normal s
+            // (liberty AbilData:2518) plus the MorphToBroodLord Stats delay 33.8332 (:2548):
+            // 73.8332 x 25 / 1.4 = 1318.4 ticks, rounded half up to 1318.
+            mineral_cost: 300,
+            gas_cost: 250,
+            supply_cost: 4,
             supply_provided: 0,
-            build_time_ticks: 604,
+            build_time_ticks: 1318,
             armor_class: Some("swarm_flyer_carapace"),
             ground_weapon: Some((
                 name: "Broodling Swarm",

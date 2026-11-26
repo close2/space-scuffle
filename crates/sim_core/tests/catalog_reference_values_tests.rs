@@ -1234,6 +1234,35 @@ fn b47_corrected_costs_follow_starcraft() -> TestResult {
     Ok(())
 }
 
+/// B-239: the Brood Lord morphs from the Corruptor in the game, but its analogue is trained whole,
+/// so it carries the morphed unit's total, never the morph's increment. 5.0.14 values: the
+/// Brood Lord's `CostResource` 300 minerals and 250 gas (`liberty` UnitData:11155, :11156) and
+/// `Food` -4 (`liberty` UnitData:11115). Its time is the Corruptor's `LarvaTrain` `Train12` 40
+/// Normal s (`liberty` AbilData:2518) plus the `MorphToBroodLord` Stats delay 33.8332 Normal s
+/// (`liberty` AbilData:2548): 73.8332 x 25 / 1.4 = 1318.4 ticks, rounded half up to 1318. No
+/// later layer overrides any of these.
+#[test]
+fn b239_the_brood_lord_carries_its_whole_cost_supply_and_time() -> TestResult {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let archetype = catalogs
+        .units
+        .archetypes()
+        .find(|archetype| analogue(archetype) == "Brood Lord")
+        .ok_or("an archetype with the analogue Brood Lord")?;
+    assert_eq!(
+        [
+            archetype.mineral_cost,
+            archetype.gas_cost,
+            archetype.supply_cost,
+            archetype.build_time_ticks
+        ],
+        [300, 250, 4, 1318],
+        "{}: minerals, gas, supply and build ticks as StarCraft II's Corruptor plus its morph",
+        archetype.slug
+    );
+    Ok(())
+}
+
 #[test]
 fn b47_research_costs_follow_starcraft() -> TestResult {
     let catalogs = sim_fixtures::shipped_catalogs();
