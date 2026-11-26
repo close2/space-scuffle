@@ -45,9 +45,10 @@ R-9 and R-10 were written with the module they test (WP1); against WP0 they fail
 
 ## The pool's tests (WP1 to WP3)
 
-R-8 renders the production client offscreen: the battle harness with a renderer (`Harness::boot_on_gpu`; the window
-has no surface), the RTS camera pointed at an `OffscreenCanvas`, captures taken with virtual time paused. Captures of
-the run of record are kept under `~/scratch/render-pool/final/keep/radv/`.
+R-8 renders the production client offscreen, booted as the battle harness boots it but with a renderer
+(`render_pool_gpu_tests::boot_on_gpu`; the window has no surface), the RTS camera pointed at an `OffscreenCanvas`,
+captures taken with virtual time paused. Captures of the run of record are kept under
+`~/scratch/render-pool/r8b/keep/radv/`.
 
 All on the final tree of the branch, debug builds in `CARGO_TARGET_DIR=/home/spacescuffle/cargo-target/render-pool`,
 each target run on its own (never a workspace `cargo test`):

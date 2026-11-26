@@ -17,7 +17,8 @@
 //!
 //! # How it fits
 //! The children re-execute this binary through `support/gpu_run.rs` (charter §7): radv with the
-//! shared lock locally, lavapipe in CI. They render into an offscreen canvas
+//! shared lock locally, lavapipe in CI. Each boots the production client as the battle harness
+//! does but with a real renderer ([`boot_on_gpu`]), and renders into an offscreen canvas
 //! (`client::offscreen`), the window having no surface. The headless half, field by field, is
 //! `render_pool_tests.rs` (R-3).
 //!
@@ -63,10 +64,14 @@ mod reuse_stage;
 mod unit_cycling;
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use battle_harness::Harness;
 use bevy::prelude::*;
+use bevy::render::settings::{RenderCreation, WgpuSettings};
 use bevy::render::view::screenshot::save_to_disk;
+use bevy::render::RenderPlugin;
+use bevy::time::TimeUpdateStrategy;
 use client::battle_selection::BattleSelection;
 use client::offscreen::{CaptureTarget, OffscreenCanvas};
 use client::scene_controller::RenderEntityMap;
@@ -131,6 +136,60 @@ fn ready(harness: &mut Harness) {
         harness.step(1);
     }
     panic!("the battle never became ready");
+}
+
+/// Boots the production client on `scenario` as the battle harness does, but with a real
+/// renderer on the adapter the GPU harness selected for this child (`WGPU_BACKEND`,
+/// `VK_ICD_FILENAMES`) and logging kept, so the harness can read which adapter rendered. The
+/// window has no surface (there is no winit), so the camera draws only into an image target.
+/// Only this binary's `#[ignore]`d children, launched through `gpu_run`, call it.
+fn boot_on_gpu(mode: ClientMode, scenario: &str) -> Harness {
+    let root =
+        client::ResolvedAssetsRoot::from_directory(&battle_harness::assets()).expect("assets root");
+    let definition =
+        client::runtime_battle::BattleDefinition::load(root.as_path(), scenario.as_ref())
+            .expect("battle scenario");
+    let mut app = App::new();
+    app.insert_resource(client::CatalogResource(definition.catalogs.units.clone()))
+        .insert_resource(definition.palette.clone())
+        .insert_resource(definition)
+        .insert_resource(root.clone())
+        .add_plugins(
+            client::presentation::GamePresentationPlugins
+                .set(RenderPlugin {
+                    render_creation: RenderCreation::Automatic(WgpuSettings::default()),
+                    ..default()
+                })
+                .set(AssetPlugin {
+                    file_path: root.bevy_file_path().expect("asset path").into(),
+                    ..default()
+                })
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        resolution: (SIZE.x as f32, SIZE.y as f32).into(),
+                        ..default()
+                    }),
+                    ..default()
+                })
+                .disable::<bevy::winit::WinitPlugin>(),
+        )
+        .add_plugins(bevy_egui::EguiPlugin)
+        .add_plugins(client::ClientAppPlugin {
+            mode,
+            max_frames: None,
+            screenshot_out: None,
+        })
+        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+            40,
+        )));
+    app.finish();
+    app.cleanup();
+    app.world_mut()
+        .resource_mut::<client::LabState>()
+        .battle_paused = true;
+    let mut harness = Harness { app };
+    harness.step(4);
+    harness
 }
 
 /// Runs `ticks` ticks, one a frame, and pauses.
@@ -247,7 +306,7 @@ fn run_child(fresh: bool) {
         println!("{OUT_VAR} is not set: this child runs only under its parent");
         return;
     };
-    let mut harness = Harness::boot_on_gpu(
+    let mut harness = boot_on_gpu(
         ClientMode::LiveBattle,
         client::runtime_battle::DEFAULT_BATTLE_SCENARIO,
     );

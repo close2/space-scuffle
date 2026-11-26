@@ -677,9 +677,10 @@ Decisions and deviations, each recorded:
   `prismatic_saucer`, `saucer_interceptor`, `tripod_annihilator`) has no media, so it waits for H-20, whose
   interceptors hold `prism_beam`. R-11's playtest exit is `editor_app_tests::escape_after_a_death_retires_the_render_pool`.
   R-7's capture-verifier half is checked through the mechanism the verifier reads (every parked entity and child has
-  `InheritedVisibility` false), not by running the verifier. R-8 runs the production client offscreen through the
-  battle harness with a renderer (`Harness::boot_on_gpu`): the window has no surface, the RTS camera renders into an
-  `OffscreenCanvas`, and captures are taken with virtual time paused.
+  `InheritedVisibility` false), not by running the verifier. R-8 runs the production client offscreen, booted as
+  the battle harness boots it but with a renderer (`render_pool_gpu_tests::boot_on_gpu`, in the GPU test's own file,
+  so charter check C21 sees it run only in a launched child): the window has no surface, the RTS camera renders
+  into an `OffscreenCanvas`, and captures are taken with virtual time paused.
 - **Frame budget (§7.4).** The pool's `stats()` at the end of a run are not reported: `frame_budget`'s report has no
   field for them, and adding one would change `client_diagnostics`, which §11 does not list. The A/B itself is in
   the evidence file.
