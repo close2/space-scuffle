@@ -655,11 +655,15 @@ fn achieved_step(world: &SimWorld, unit: EntityId) -> (f64, f64) {
 }
 
 /// WP1 red (case D, B-240): a walker resting on the face at rounding depth beside the corner
-/// keeps its arc: after the tick, its next aim is a point of the arc whose leg the step rule lets
-/// it walk, not the goal through the corner, and over the next 40 ticks no step reverses the one
-/// before.
+/// keeps its arc: after the tick, its next aim is a point of the arc, not the goal through the
+/// corner, because the step rule refuses it the leg past that point; and over the next 40 ticks
+/// no step reverses the one before (plan §8 WP1).
+///
+/// The leg to the kept arc point itself is not asked of the step rule: the funnel places that
+/// point at the radius plus the corner margin from the vertex, 0.0023 below the face's tangent
+/// line, so from a body tangent to the face its leg dips about 6 × 10⁻⁴ into the radius and the
+/// step slides along the face until the point is in its view (B-242's grazing, WP3's subject).
 #[test]
-#[ignore = "red until plan 2026-11-29-wall-clearance WP1 (B-240), window W"]
 fn a_body_resting_on_a_wall_at_rounding_depth_keeps_the_arc_round_the_corner() -> TestResult {
     use sim_fixtures::trace::blocking::is_reversal;
     let mut world = corner_world()?;
@@ -673,9 +677,11 @@ fn a_body_resting_on_a_wall_at_rounding_depth_keeps_the_arc_round_the_corner() -
         "the arc {held:?} was handed off: route {now:?}"
     );
     let position = world.entities[&unit].position;
+    let past = *now.get(1).ok_or("a point past the kept one")?;
     assert!(
-        step_rule_permits(&mut world, SMALL_RADIUS, position, next),
-        "the leg from {position:?} to {next:?} cuts the corner"
+        !step_rule_permits(&mut world, SMALL_RADIUS, position, past),
+        "the arc point {next:?} is kept though the leg from {position:?} past it to {past:?} is \
+         walkable"
     );
     let mut last = achieved_step(&world, unit);
     for _ in 0..40 {
@@ -695,7 +701,6 @@ fn a_body_resting_on_a_wall_at_rounding_depth_keeps_the_arc_round_the_corner() -
 /// WP1 red (B-240, plan D-1): a walker really wedged in the face beside the corner, its disc 0.1
 /// inside it, hands its arc off only along a leg the disc that fits where it stands can walk.
 #[test]
-#[ignore = "red until plan 2026-11-29-wall-clearance WP1 (B-240), window W"]
 fn a_wedged_body_hands_off_only_along_a_leg_its_fitting_disc_can_walk() -> TestResult {
     let mut world = corner_world()?;
     let goal = at(COLUMN_GOAL.0, COLUMN_GOAL.1);

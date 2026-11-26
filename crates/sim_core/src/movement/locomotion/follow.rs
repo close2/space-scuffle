@@ -363,14 +363,8 @@ impl MotionDraft<'_> {
         scene.gather_neighbours(self.entry, self.actor.position, neighbours);
         self.brake_for_rests(neighbours, target)?;
         let context = self.step_context(scene.map, neighbours, scene.intent());
-        drop_passed_waypoints(
-            &context,
-            scene.pathfinder,
-            &self.request,
-            self.actor,
-            &mut self.proposal,
-        )
-        .map_err(self.fault())?;
+        drop_passed_waypoints(&context, scene.pathfinder, self.actor, &mut self.proposal)
+            .map_err(self.fault())?;
         let (next, gap) = self.follow_waypoint(&context, scene.pathfinder, touch)?;
         // A walk queued behind a friend that holds its ground is not stalled (crowd-edge D-4);
         // under the solver the stall rule reads no class of another body.

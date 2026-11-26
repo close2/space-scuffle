@@ -536,6 +536,12 @@
 // Re-recorded for plan 2026-11-28-broodlings (checksum schema 60 -> 61): entity strike magazine
 // and timed life, weapon impact spawn encoded; with the schema at 60 and the fields unhashed every
 // checkpoint reproduced. Behaviour: none in these worlds (no Brood Lord analogue).
+// Re-recorded for plan 2026-11-29-wall-clearance WP1 (B-240): a corner is handed off only along a
+// leg the step rule (`probe_permits`) lets the body walk, and the wedged escape is gone. The first
+// changed checkpoint is index 3 (ticks 151 to 200): on tick 151 rhino beetle 15 at (30.24, 29.71),
+// at the foot of the ramp, keeps its corner (30.42, 29.96), which the base handed off on the wedged
+// escape. Proof: a scratch build of WP1 with the rule off reproduces the previous checksums at every
+// checkpoint.
 (
     checksum_schema: 61,
     seed: 0x5EED_0F_5CAFF1E,
@@ -566,22 +572,22 @@
         0x4e5050bbad56f6b0,
         0x3f54ea013d3cbe90,
         0x09bc16ab321759da,
-        0x61d30f57616d70c4,
-        0xf847c268b5128598,
-        0xdd3b5076d5f90735,
-        0x900ee1252b1c1675,
-        0x6db04eaf77ed2c54,
-        0x74aca82129279349,
-        0xebfd04212ed1a260,
-        0x2ce0fe03d75554d9,
-        0xb9c4540e772f3e7e,
-        0x91918330585a74bd,
-        0x5a2541be9d742e53,
-        0x6a7f28373ecb8418,
-        0x7cdb41eca4a6bf7a,
-        0x695caee4571a8aba,
-        0x0b26d05a600ca100,
-        0x114553610cafd6d9,
-        0xffe51e665ac652ba,
+        0x667fb36817d70816,
+        0xd62a2abce550b34b,
+        0xdefda500650e6367,
+        0x17072565ed980fcc,
+        0x4a64caa1514902f1,
+        0x3ed57b1d63ea8032,
+        0xd26303611ab2528e,
+        0x2fb6639791f14c26,
+        0x41d8140d299cd7cb,
+        0x699b0f4d13b633bf,
+        0xca4493c66a01e35b,
+        0xe9aae70705939630,
+        0x49ab96d94cb787e6,
+        0xd12decb634ff1393,
+        0x032ed257262bdb34,
+        0x502974e48069c73b,
+        0xd9329e7adb43d1fd,
     ],
 )

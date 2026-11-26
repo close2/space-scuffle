@@ -281,3 +281,141 @@ L leaves fewer units short but more M-2 and M-4 at the corner, hairpin and stair
 - **Moved worlds since `Gated`'s last re-base** (plan §5.3 item 1, §8 WP0 "Base figures"): not measured here. It
   needs `Gated`'s WP0b scripts and arms, and `Gated` WP1 was running its own heavy measurements; whether `Gated`
   recorded the Broodlings merge `0f0608cd` is to be verified with its orchestrator first.
+
+## Window W: the base re-checked
+
+**Tree.** Branch `wall-clearance-plan` at `c46b080d`: WP0 plus `main` `a5a3df79` (`Gated` WP1 merged latent; schema
+61). Before any change of window W, the base binaries were built from a clean export of `c46b080d`
+(`~/scratch/wall-clearance/trees/wcb`) and the meter re-run exactly as WP0 ran it (both showcase scenarios, default
+seed and seeds 1 to 32, 3,000 ticks; crowd scenes under S, R and L, seeds 1 to 8). Against WP0's outputs on
+`c49082af`: **726 of 726** meter and trace files byte-identical (the 66 standard outputs differ only in the output
+path they print) and the three crowd tables identical. `Gated` WP1 moved no world the meter reads, so WP0's base
+figures stand for window W (`window/base_recheck.txt`).
+
+**Instruments for the window** (`~/scratch/wall-clearance/scripts/`):
+- `build_tree.sh`: exports a tree and builds it with `Gated`'s own `build.sh` (by path), plus `crowd_trace`;
+- `meter.sh`: the meter runs above; `compare.py`, `crowd_compare.py`, `matrix_diff.py`: the tables below;
+- `measure_wc.sh`: the command lines of `Gated`'s WP0b `measure.sh`, parameterised by binary tag and output
+  directory, which that script hard-codes (arm assets `~/scratch/gated-movement/assets/{S,R,L,G}-wc`, edited as
+  `Gated`'s are);
+- `trace_patch.py`: a scratch build of the base (`trees/wctr`, never committed) that keeps the base rules, prints
+  one `WCTRACE` line wherever WP1's or WP2's rule would decide otherwise, and with `WCTRACE_APPLY=1` (WP1) or `=2`
+  (WP1 and WP2) applies the new rules instead. It is the first-difference trace and the wiring proof (H-W4) in
+  one: with the flag off it reproduces the base byte for byte, with it on the package's tree.
+
+## WP1: the hand-off's view is the step's view (B-240)
+
+**Code** (`crates/sim_core/src/movement/locomotion.rs`). `drop_passed_waypoints` passes a corner only when
+`probe_permits` lets the body walk the leg to the next point (plan D-1). The wedged escape
+`!segment_is_passable(p, p)` and its comment are gone; the function's doc cites the plan, contact D-3 and
+`WALL_PROBE_SLACK` (§4.6). The function's route request parameter, which only the removed test read, is removed,
+so its three callers lose one argument (one of them in `locomotion/follow.rs`; see "Deviations").
+
+**Red runs** (`~/scratch/wall-clearance/red/window-base-c46b080d.log`, `cargo test -p sim_core --test
+route_following_tests -- --include-ignored` on the unchanged `c46b080d`): both WP1 tests fail as WP0 recorded (case
+D: the arc handed off on the first tick, line 671; the wedged body: a deeper leg on tick 2, line 714), both WP2
+red tests fail, the two guard tests pass. With WP1 both WP1 tests pass, and
+`a_unit_pushed_past_its_corner_drops_it_whoever_stands_on_the_next_leg` and `a_column_rounds_a_shared_corner_directly`
+pass unchanged.
+
+**One test assertion aligned with the plan.** WP0's case-D test also asked that the leg from the body to the kept
+arc point pass the step rule. It does not, and should not be asked to: the funnel places that point 0.425 from the
+vertex, 0.0023 below the face's tangent line, so from a body tangent to the face the leg dips about 6 × 10⁻⁴ into
+the radius; the step then slides along the face (achieved step (0.126, 0)) and from tick 3 the leg is walkable, the
+corner is rounded and no step reverses in 40 ticks. Plan §8 WP1 specifies the test as "the arc is not handed off;
+the unit's next aim is the arc point; over the following ticks no step reverses". The assertion now checks that
+the step rule refuses the leg *past* the kept point, which is why it is kept, and the doc says why the leg to the
+point itself is not asked.
+
+**Goldens** (§6.5). `golden_replay` first differs at checkpoint index 3 (ticks 151 to 200): on tick 151 rhino beetle
+15 at (30.24, 29.71), at the foot of the default arena's ramp, keeps its corner (30.42, 29.96), which the base
+handed off on the wedged escape. `golden_replay_orders` (16-unit script) first differs at checkpoint 46 (ticks 461 to 470): on tick
+469 rhino beetle 26 at (33.98, 34.50), tangent to the lip at y = 34, keeps its arc (33.47, 34.15); in the 26-unit
+script below, the rule first acts on tick 474 (pulse bot 30 at (33.80, 34.31)).
+- **The orders fixture lost its mid-route repath.** Its only remaining one on the base (tick 515, rhino 27) was B-240
+  itself: rhino 27, tangent to the lip, handed its arc off on the wedged escape (tick 512), was refused, dropped the
+  route and was re-searched. With WP1 no unit's route empties mid-order, and the test's evidence check fails. The
+  script's `blue_column` was raised from 16 to 26 pulse bots (four rows of eight, the same origin), chosen from a
+  scripted search of eleven variants (`trace/orders_grid.log`) as the one in which a mid-route repath occurs under
+  the base rules, WP1 and WP1 with WP2 (base: tick 511, entity 14; WP1: the same; WP2: tick 525, entity 37). Both
+  situations of the fixture are found again; the phase-order mutation runs of WP5 were not repeated.
+- **Proof.** The scratch build with the rule off (`WCTRACE_APPLY=0`) reproduces the previous checksums of both
+  fixtures at every checkpoint (`trace/golden-apply0.log`); with the rule on it reproduces the re-recorded ones
+  (`wp1/golden-proof-apply1.txt`). `DEFAULT_SANDBOX_CHECKSUM` does not move (`fixture_tests` green).
+
+**First differences on the showcase** (the scratch build, rule off; `trace/sc/`). `showcase.ron`: default seed tick
+688, pulse bot 21 at (25.94, 35.37) keeps its arc round the block's corner (26, 35) (predicted 686; the evidence's
+route update at 687 is the same hand-off, read by the meter after the tick); seed 1 tick 718, unit 25 (predicted
+717); seed 6 tick 631, unit 23 (predicted 630); and, not predicted, seed 3 tick 640 (unit 23, the same corner) and
+seed 5 tick 1012: pulse bot 3 at (7.48, 5.69), touching the spawn exit's wall, is handed its corner (8.0, 5.64) along
+the wall, which the base refused because its disc at the full radius did not fit (D-1's "a pushed-past body that
+touches the wall is tested with its own disc less the slack"). Seeds 2, 4, 7 and 8 do not move. `showcase_effects.ron`:
+tick 192 on every seed, pulse bot 18 at the ramp E foot corner (35, 52), tangent, keeps its arc.
+
+**Showcase figures** (`wp1/compare.md`; base `window/wcb`, WP1 `wp1/meter`). Nine seeds of `showcase.ron`:
+
+| Seed | M-5a | M-5b walk ticks (longest) | M-5b chase ticks (longest) | M-1 whole | M-2 whole | M-4 whole | Longest episode | Give-ups | Outcome |
+|---|---|---|---|---|---|---|---|---|---|
+| default | 4 → 1 | 213 (122) → 213 (122) | 14 (9) → 1 (1) | 245 → 324 | 1,066 → 1,068 | 220.0 → 205.9 | 92 → 81 | 0 → 0 | P1, 2228 → 2228 |
+| 1 | 3 → 1 | 213 (122) → 213 (122) | 12 (8) → 4 (4) | 449 → 451 | 1,204 → 1,205 | 361.3 → 356.2 | 90 → 90 | 0 → 0 | P1, 2505 → 2504 |
+| 2 | 1 → 1 | unchanged | 3 (3) → 3 (3) | unchanged | | | | 0 → 0 | 3000 |
+| 3 | 2 → 1 | 213 (122) → 213 (122) | 1 (1) → 0 | 523 → 511 | 1,236 → 1,222 | 376.7 → 375.0 | 145 → 145 | 0 → 0 | P1, 1875 → 1874 |
+| 4, 5, 7, 8 | 1 → 1 | unchanged | | unchanged | | | | 0 → 0 | unchanged |
+| 6 | 3 → 2 | 213 (122) → 213 (122) | 8 (8) → 1 (1) | 511 → 495 | 1,242 → 1,257 | 380.9 → 375.1 | 92 → 92 | 0 → 0 | P1, 1943 → 1941 |
+
+Seed 5's trajectory moves only after tick 1012 and none of its figures changes. `showcase_effects.ron`, every seed:
+M-5a 7 → 2, M-5b walk 152 (118) → 139 (118), M-1 whole ≈ 186 → 168, M-2 1,256 → 1,261, M-4 65.0 → 62.7, longest
+episode 88 → 81. H-W1: the deepest body 2.1 × 10⁻⁶ (unchanged). H-W2: the overlap meter's deeper unit-ticks equal
+the base's on every seed (1 on the default and seed 2, from tick 363 before any difference; 0 elsewhere). H-W6: no
+give-up on any seed.
+
+**Target M-5a = 0: not met as counted.** Every cutting route update of case D (the 0.31-deep legs) is gone, and no
+hand-off any more yields a leg that cuts: the scratch build counts, at decision time, hand-offs whose leg fails the
+disc at `r − 2⁻¹⁴`, and finds **0** on all 18 showcase runs. M-5a still counts 1 per seed of `showcase.ron` (2 on seed 6)
+and 2 per seed of `showcase_effects.ron`, each traced (`trace/r/`):
+- `showcase.ron` tick 10, pulse bot 22 (every seed; sampled depth 0.0048): handed off on tick 11 from (57.38, 53.05),
+  clearance 0.16, along a leg its full disc fits; the meter reads the leg from the position after the tick's step
+  (57.27, 53.02), from which it dips 0.0048;
+- seed 6 tick 631, pulse bot 23 (a chase; depth 0.0010): not a hand-off by view but `pass_reached_waypoint`, the step
+  landing exactly on the arc point, after which the next arc leg dips 0.0010 from the tangent body;
+- `showcase_effects.ron` tick 204, pulse bot 19 (depth below the sampling step) and tick 371, pulse bot 21 (clearance
+  0.43, depth 0.0024): hand-offs whose leg was walkable from where the body stood, read after the step.
+
+The plan set the target when the base was thought to hold only case D's pairs (2 on the default seed and seeds 1
+and 6); WP0 found M-5a also counts these shallow updates (4, 3, 3 and the tick-10 one on every seed). They are not
+B-240: no body at rounding depth hands off a cutting leg. Reported for the orchestrator's judgement against plan §7
+rule 2; no rule was changed for it.
+
+**33 paired seeds** (§6.4, "not worse beyond noise"): on `showcase.ron` every region's M-1 to M-4 and longest
+episode lie within the base's 95 % interval. `showcase_effects.ron` is seed-insensitive (WP0's finding), so its
+intervals have zero width and any change is "beyond noise": ramp W M-1 13.1 → 14.0, M-2 228 → 231, M-4 22.7 →
+28.5, longest episode 32 → 41 (railgun crawler 24's 41-tick episode at ticks 584 to 624, a knock-on of the order
+in which player 1's column reaches the ramp after the tick-192 difference), block M-2 774 → 780; better: ramp E
+M-1, M-2, M-4, block M-1 104 → 87, M-4 17.8 → 11.5, whole-map M-1, M-4, longest episode.
+
+**Route boxes** (default seed): unchanged except ramp W foot, owner 1: ratio 1.510 / 1.517 → 1.510 / 1.516, turn
+110° / 115° → 112° / 117°. Reversals per owner on the default seed: [64, 121] → [64, 120].
+
+**Crowd scenes** (`wp1/crowd_compare.md`; Amendment 1). Both known answers hold in 144 of 144 scenes under each arm
+(every move ends, none given up; deepest 8.8 × 10⁻⁷). M-5a falls in every geometry and size (S: choke2 30 / 51 /
+101 → 12 / 24 / 40, corner90 13 / 28 / 71 → 0 / 10 / 14, hairpin 40 / 102 / 176 → 15 / 20 / 51, staircase45 8 / 71 /
+121 → 6 / 14 / 43; R and L alike). **Cutting hand-offs from rounding depth are gone**: the scratch build counts, over
+the 144 scenes, 1,586 (S), 1,563 (R) and 1,138 (L) hand-offs on the base whose leg fails the disc at `r − 2⁻¹⁴` from
+where the body stands (1,278, 1,261 and 435 of them by a body within 2⁻¹⁴ of the wall), and **0** under WP1 in
+every arm (`trace/crowd*/`). The remaining M-5a are of the kinds traced on the showcase (fresh routes, group lane
+joins, landing passes, legs read after the step). M-5b walk ticks fall in 16 of 18 cells (S). "Not worse beyond
+noise" per geometry and size (8 seeds, the base's 95 % interval of the mean): under S nine of 108 cell-figures lie
+above it (M-3 at corner90 12 and 24 and hairpin 12, 0.0 → 0.2 to 1.1 → 2.1 reversals a scene; M-2 at choke3 48 and
+hairpin 24; M-4 at hairpin 48 and staircase45 24) and five below; under R eight above and three below; under L
+eight above (M-3 at choke2 24, corner90 24, hairpin 12 and 48; hairpin 48 stopped short 13.4 → 15.5) and eight
+below. Reported for the orchestrator's judgement (many comparisons; most moves are fractions of a reversal a scene).
+
+**Matrix** (S, 24 seeds, `wp1/matrix_S.md`). One battle moved: **40** (sieged tanks above a ramp, Class D), 7 of 24
+seeds, no winner flipped (red wins every one), give-ups 14 → 14, expectation failures 2 / 32 → 2 / 32. First
+difference (seed of record 3,203,386,110): tick 43, unit 8 at (43.51, 47.08) on the ramp keeps its corner (43.85,
+46.47); the battle ends at tick 296 instead of 350, red with 3 survivors instead of 2.
+
+**H-W4.** The scratch build with WP1's rule on reproduces WP1's tree byte for byte on the 18 showcase runs and the
+three crowd tables (`trace/r/`, `trace/crowd/`), and with the rule off the base's (`trace/sc/`, `trace/crowd0/`).
+
+**Cost** (prediction, §6.7): none beyond noise; measured with window W's throughput below.
