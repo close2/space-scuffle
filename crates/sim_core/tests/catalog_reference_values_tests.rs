@@ -5547,7 +5547,7 @@ type ConstantMissileRow = (
 /// missile weapon without movers, from the 5.0.14 mover its launch flies (the launch's `Movers`,
 /// else its ammo unit's `Mover`; `MaxSpeed × 0.056` per tick, 3200 accelerations instant).
 /// `MissileDefault` (`core` MoverData:13-25) and its children fly 18.75, 1.05 per tick.
-const SC2_UNIT_MISSILE_SPEEDS: [ConstantMissileRow; 17] = [
+const SC2_UNIT_MISSILE_SPEEDS: [ConstantMissileRow; 15] = [
     ("Roach", "weapon", 1.05, "AcidSalivaLM ammo AcidSalivaWeapon, liberty MoverData:670-679", None),
     ("Marauder", "weapon", 1.12, "PunisherGrenadesLM Movers PunisherGrenadesWeapon, liberty MoverData:662-669 (MaxSpeed 20)", None),
     ("Stalker", "weapon", 1.05, "ParticleDisruptors ammo StalkerWeapon, a MissileDefault child (liberty MoverData:601)", None),
@@ -5560,8 +5560,6 @@ const SC2_UNIT_MISSILE_SPEEDS: [ConstantMissileRow; 17] = [
     ("Mutalisk", "weapon", 1.05, "GlaiveWurm ammo GlaiveWurmWeapon (the default ##id##Weapon, core EffectData:104), Mover MissileDefault (liberty UnitData:9271-9275)", None),
     ("Mutalisk", "air_weapon", 1.05, "GlaiveWurm ammo GlaiveWurmWeapon (the default ##id##Weapon, core EffectData:104), Mover MissileDefault (liberty UnitData:9271-9275)", None),
     ("Corruptor", "air_weapon", 1.05, "ParasiteSporeLaunchMissile ammo ParasiteSporeWeapon, Mover MissileDefault (liberty UnitData:9296-9300)", None),
-    ("Brood Lord", "weapon", 0.9, "BroodlingEscortLaunchA Movers BroodLordWeaponRight/Left (liberty MoverData:44-69, :620-644): Throw then Guidance to 40, not a constant", Some("B-232")),
-    ("Brood Lord", "ground_weapon", 0.9, "BroodlingEscortLaunchA Movers BroodLordWeaponRight/Left (liberty MoverData:44-69, :620-644): Throw then Guidance to 40, not a constant", Some("B-232")),
     ("Queen", "weapon", 2.24, "AcidSpinesLM Movers AcidSpinesWeapon, liberty MoverData:610-619 (Speed 40)", None),
     ("Queen", "ground_weapon", 2.24, "AcidSpinesLM Movers AcidSpinesWeapon, liberty MoverData:610-619 (Speed 40)", None),
     ("Queen", "air_weapon", 2.24, "TalonsLM ammo TalonsMissileWeapon, swarm MoverData:335-344 (Speed 40)", None),
@@ -5633,7 +5631,7 @@ type MoverRow = (Option<f32>, &'static [PhaseRow]);
 
 /// W-18 (plan `2026-11-27-weapon-delivery` D-2): every shipped weapon with missile movers, by
 /// analogue and block, with the 5.0.14 movers of its launch effect.
-const SC2_MISSILE_MOVERS: [(&str, &str, &[MoverRow], f32, &str); 6] = [
+const SC2_MISSILE_MOVERS: [(&str, &str, &[MoverRow], f32, &str); 7] = [
     (
         "Phoenix",
         "air_weapon",
@@ -5740,6 +5738,25 @@ const SC2_MISSILE_MOVERS: [(&str, &str, &[MoverRow], f32, &str); 6] = [
         ],
         1.12,
         "LongboltMissileLM, liberty EffectData:1789-1794 (plan 2026-11-28-missile-movers-b52 S9, S10)",
+    ),
+    (
+        "Brood Lord",
+        "ground_weapon",
+        &[
+            // BroodLordWeaponRight (liberty MoverData:44-69; Left, :620-644, its mirror): Throw from
+            // Speed 5 accelerating 3 to MaxSpeed 8 until Outro 1.5,4.5 (midpoint 3); then Guidance
+            // accelerating 20 to MaxSpeed 40 with no Speed, carrying the speed in. Both bands are
+            // IfRangeLTE 500, so one unbounded mover.
+            (
+                None,
+                &[
+                    (Some(0.28), 0.009_408, 0.448, Some(End::Flown(3.0))),
+                    (None, 0.062_72, 2.24, None),
+                ],
+            ),
+        ],
+        2.24,
+        "BroodlingEscortLaunchA, liberty EffectData:2664-2672 (plan 2026-11-28-broodlings S9, S19, D-2)",
     ),
 ];
 

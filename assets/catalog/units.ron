@@ -3868,7 +3868,17 @@
                 backswing_ticks: 9,
                 random_delay_ticks: (-1.1161, 2.2321),
                 splash: None,
-                projectile_speed: Some(0.9),
+                // 5.0.14 BroodlingEscortLaunchA Movers BroodLordWeaponRight/Left, IfRangeLTE 500 (liberty
+                // EffectData:2664-2672), mirror images (MoverData:44-69, :620-644): Throw from Speed 5
+                // accelerating 3 to MaxSpeed 8 until Outro 1.5,4.5 (midpoint 3), then Guidance
+                // accelerating 20 to MaxSpeed 40, carrying the speed in; the top speed is 40 x 0.056.
+                // The throw's direction, gravity and wave are not modelled (B-231). Plan
+                // 2026-11-28-broodlings D-2 (B-232).
+                projectile_speed: Some(2.24),
+                missile_movers: [(up_to_range: None, phases: [
+                    (speed: Some(0.28), acceleration: 0.009408, max_speed: 0.448, ends: Some(Flown(3.0))),
+                    (speed: None, acceleration: 0.06272, max_speed: 2.24, ends: None),
+                ])],
                 weapon_class: Some("swarm_flyer_attacks"),
                 upgrade_bonus_per_level: 2.0,
                 bonus_upgrade_per_level: 0.0,
@@ -3905,7 +3915,17 @@
                 backswing_ticks: 9,
                 random_delay_ticks: (-1.1161, 2.2321),
                 splash: None,
-                projectile_speed: Some(0.9),
+                // 5.0.14 BroodlingEscortLaunchA Movers BroodLordWeaponRight/Left, IfRangeLTE 500 (liberty
+                // EffectData:2664-2672), mirror images (MoverData:44-69, :620-644): Throw from Speed 5
+                // accelerating 3 to MaxSpeed 8 until Outro 1.5,4.5 (midpoint 3), then Guidance
+                // accelerating 20 to MaxSpeed 40, carrying the speed in; the top speed is 40 x 0.056.
+                // The throw's direction, gravity and wave are not modelled (B-231). Plan
+                // 2026-11-28-broodlings D-2 (B-232).
+                projectile_speed: Some(2.24),
+                missile_movers: [(up_to_range: None, phases: [
+                    (speed: Some(0.28), acceleration: 0.009408, max_speed: 0.448, ends: Some(Flown(3.0))),
+                    (speed: None, acceleration: 0.06272, max_speed: 2.24, ends: None),
+                ])],
                 weapon_class: Some("swarm_flyer_attacks"),
                 upgrade_bonus_per_level: 2.0,
                 bonus_upgrade_per_level: 0.0,

@@ -1306,11 +1306,16 @@ fn liberator(world: &SimWorld) -> Result<UnitArchetype, String> {
     })
 }
 
-/// The shipped unit, not a structure, whose primary `weapon` flies movers: the Banshee analogue.
+/// The shipped unit, not a structure, whose primary `weapon` flies movers and spaces its two
+/// strikes: the Banshee analogue.
 fn banshee(world: &SimWorld) -> Result<UnitArchetype, String> {
     one_archetype(world, "the Banshee analogue", |arch| {
         !matches!(arch.shape, ShapeKind::BuildingDome { .. })
             && !movers_of(arch.weapon.as_ref()).is_empty()
+            && arch
+                .weapon
+                .as_ref()
+                .is_some_and(|w| w.strike_interval_ticks > 0)
     })
 }
 
@@ -1682,10 +1687,66 @@ fn every_finder_matches_exactly_one_shipped_archetype() -> TestResult {
         liberator(&world)?,
         banshee(&world)?,
         missile_turret(&world)?,
+        brood_lord(&world)?,
     ];
     let mut slugs: Vec<&str> = found.iter().map(|arch| arch.slug.as_str()).collect();
     slugs.sort_unstable();
     slugs.dedup();
     assert_eq!(slugs.len(), found.len(), "each finder names its own unit");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------------------------
+// The Brood Lord analogue's escort missile (plan `2026-11-28-broodlings` B-11, WP2)
+// ---------------------------------------------------------------------------------------------
+
+/// The shipped mobile air unit whose ground weapon flies movers and reaches 10 world units: the
+/// Brood Lord analogue.
+fn brood_lord(world: &SimWorld) -> Result<UnitArchetype, String> {
+    one_archetype(world, "the Brood Lord analogue", |arch| {
+        arch.mover_type == MoverType::Air
+            && arch.max_speed > SimScalar::ZERO
+            && arch.ground_weapon.as_ref().is_some_and(|w| {
+                !w.missile_movers.is_empty() && w.max_range == SimScalar::from_i32(10)
+            })
+    })
+}
+
+/// B-11 (plan `2026-11-28-broodlings` D-2, §2.4): the Brood Lord analogue's missile flies
+/// `BroodLordWeaponRight` (S19: thrown from 0.28 accelerating 0.009408 to 0.448 for 3.0 of path,
+/// then accelerating 0.06272 to 2.24) and lands on §2.4's tick after its release over its radius
+/// 1.0, the release tick counted, at every edge distance of the table.
+#[test]
+fn the_brood_lord_escorts_land_after_their_flight() -> TestResult {
+    let world = sim_fixtures::world(
+        GameMap::new(8, 8, MapCell::default_ground(CliffLevel(0)))?,
+        1,
+    );
+    let lord = brood_lord(&world)?;
+    assert_eq!(lord.collision_radius, scalar(1.0), "§2.4's attacker radius");
+    let victim = missile_archetype(&world)?;
+    let table = [
+        (0.5, 5),
+        (1.0, 7),
+        (2.0, 10),
+        (3.0, 12),
+        (4.0, 14),
+        (5.0, 16),
+        (6.0, 17),
+        (7.0, 18),
+        (8.0, 19),
+        (9.0, 20),
+        (10.0, 21),
+    ];
+    for (seed, (edge, expected)) in (0x760_u64..).zip(table) {
+        let mut bench = shipped_duel(seed, &lord, &victim, scalar(12.0), scalar(edge), seeing(12))?;
+        let seen = volley(&mut bench, 1)?;
+        let first = seen.releases[0];
+        assert_eq!(
+            seen.strikes,
+            vec![first + expected - 1],
+            "edge {edge}: the escorts after their {expected}-tick flight"
+        );
+    }
     Ok(())
 }
