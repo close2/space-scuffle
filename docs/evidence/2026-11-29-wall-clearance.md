@@ -189,11 +189,95 @@ height 4.50), and the largest towards the high side 0.0599. The jitter is symmet
 (2h − 1)` says. So a body the simulation holds tangent to a cliff is drawn up to 0.06 inside the cliff's face.
 B-243 is filed in `DESIGN.md` §4 as a deferred client follow-up, outside this plan (§11.1, §13).
 
+### Crowd scenes (Amendment 1, the owner's answer to Q0134)
+
+`sim_fixtures::trace::crowd`, run with `crowd_trace` (release) on seeds 1 to 8: 6 geometries × 3 group sizes × 8 seeds
+= 144 scenes per arm, about 30 s an arm. Arms as `Gated` §6.1: **S** the shipped rules, **R** `--pipeline solver
+--crowd-iterations 151`, **L** `--pipeline legacy`. Outputs `~/scratch/wall-clearance/crowd/<arm>/crowd.csv` (one row
+per scene) and `crowd.md`. Each line below sums its 8 scenes; "Longest episode", the M-5b longest and "Deepest" are
+the largest over them. Reported, not judged.
+
+Known answers, every arm: **every move ends by the bound, none given up**, in 144 of 144 scenes; **no body deeper
+than 2.4 × 10⁻⁵**, 144 of 144 (deepest 3.6 × 10⁻⁶, S, choke 2, 48 units). The first draft's answer "every unit ends
+within 0.5 of its goal" did not hold and was withdrawn before the runs of record: every unit that ends outside 0.5 has
+no order left, its move ended against friends resting at or near its goal (the arrival rule), so those are counted as
+"stopped short", a figure.
+
+Findings: held cutting walk legs (M-5b) last far beyond WP2's 19-tick bound in every geometry with 24 or more units
+(up to 130 ticks); cutting route updates (M-5a) occur in every geometry; S and R differ only in the larger groups;
+L leaves fewer units short but more M-2 and M-4 at the corner, hairpin and staircase.
+
+**S**
+
+| Geometry | Size | Scenes | Every move ends | Depth ok | Arrived (stopped short) | Walking | M-1 | M-2 | Longest episode | M-3 (proposal) | M-4 | M-5a | M-5b walk ticks (longest) | Deepest |
+|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---|---:|---:|---|---|
+| choke2 | 12 | 8 | 8 | 8 | 91 (5) | 20110 | 823 | 2390 | 71 | 28 (2) | 296.6 | 30 | 693 (44) | 3.6e-9 |
+| choke2 | 24 | 8 | 8 | 8 | 136 (56) | 43648 | 2391 | 5362 | 126 | 172 (2) | 1201.8 | 51 | 2007 (88) | 4.5e-9 |
+| choke2 | 48 | 8 | 8 | 8 | 208 (176) | 98344 | 7743 | 12579 | 130 | 539 (10) | 3674.1 | 101 | 5120 (110) | 3.6e-6 |
+| choke3 | 12 | 8 | 8 | 8 | 96 (0) | 19307 | 260 | 1699 | 34 | 0 (0) | 21.2 | 8 | 145 (92) | 7.4e-10 |
+| choke3 | 24 | 8 | 8 | 8 | 176 (16) | 40057 | 1345 | 3407 | 66 | 47 (1) | 458.1 | 25 | 686 (43) | 3.8e-9 |
+| choke3 | 48 | 8 | 8 | 8 | 273 (111) | 87111 | 4418 | 7431 | 109 | 213 (1) | 1753.7 | 75 | 2885 (72) | 6.3e-7 |
+| choke5 | 12 | 8 | 8 | 8 | 96 (0) | 19272 | 0 | 414 | 30 | 0 (0) | 0.1 | 1 | 91 (91) | 0.0e0 |
+| choke5 | 24 | 8 | 8 | 8 | 192 (0) | 38704 | 636 | 2274 | 38 | 0 (0) | 71.1 | 34 | 207 (24) | 1.5e-9 |
+| choke5 | 48 | 8 | 8 | 8 | 347 (37) | 80168 | 2553 | 4425 | 70 | 59 (1) | 712.0 | 48 | 1024 (37) | 3.4e-9 |
+| corner90 | 12 | 8 | 8 | 8 | 96 (0) | 22251 | 245 | 433 | 20 | 0 (0) | 66.9 | 13 | 292 (19) | 6.3e-10 |
+| corner90 | 24 | 8 | 8 | 8 | 171 (21) | 46259 | 795 | 1108 | 45 | 9 (0) | 336.2 | 28 | 979 (39) | 2.1e-9 |
+| corner90 | 48 | 8 | 8 | 8 | 326 (58) | 96172 | 2094 | 2673 | 95 | 31 (0) | 997.0 | 71 | 1762 (83) | 3.6e-9 |
+| hairpin | 12 | 8 | 8 | 8 | 59 (37) | 24473 | 719 | 1457 | 48 | 0 (0) | 317.8 | 40 | 421 (28) | 1.5e-9 |
+| hairpin | 24 | 8 | 8 | 8 | 98 (94) | 52120 | 1707 | 2593 | 83 | 20 (4) | 783.0 | 102 | 1169 (58) | 9.1e-7 |
+| hairpin | 48 | 8 | 8 | 8 | 187 (197) | 112707 | 4121 | 5410 | 118 | 45 (1) | 2142.8 | 176 | 2435 (106) | 3.2e-7 |
+| staircase45 | 12 | 8 | 8 | 8 | 95 (1) | 23973 | 86 | 1043 | 28 | 0 (0) | 82.7 | 8 | 88 (9) | 4.5e-10 |
+| staircase45 | 24 | 8 | 8 | 8 | 180 (12) | 48509 | 911 | 1822 | 28 | 11 (0) | 410.2 | 71 | 704 (21) | 2.0e-9 |
+| staircase45 | 48 | 8 | 8 | 8 | 276 (108) | 101158 | 2377 | 3855 | 72 | 108 (1) | 1539.1 | 121 | 2085 (62) | 3.2e-9 |
+
+**R**
+
+| Geometry | Size | Scenes | Every move ends | Depth ok | Arrived (stopped short) | Walking | M-1 | M-2 | Longest episode | M-3 (proposal) | M-4 | M-5a | M-5b walk ticks (longest) | Deepest |
+|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---|---:|---:|---|---|
+| choke2 | 12 | 8 | 8 | 8 | 91 (5) | 20110 | 823 | 2390 | 71 | 28 (2) | 296.6 | 30 | 693 (44) | 3.6e-9 |
+| choke2 | 24 | 8 | 8 | 8 | 137 (55) | 43360 | 2324 | 5290 | 103 | 193 (4) | 1158.4 | 44 | 2023 (66) | 4.5e-9 |
+| choke2 | 48 | 8 | 8 | 8 | 231 (153) | 100773 | 7706 | 12911 | 164 | 630 (16) | 4176.2 | 95 | 5911 (130) | 2.5e-6 |
+| choke3 | 12 | 8 | 8 | 8 | 96 (0) | 19307 | 260 | 1699 | 34 | 0 (0) | 21.2 | 8 | 145 (92) | 7.4e-10 |
+| choke3 | 24 | 8 | 8 | 8 | 176 (16) | 40055 | 1315 | 3399 | 66 | 51 (1) | 454.4 | 24 | 695 (43) | 4.1e-9 |
+| choke3 | 48 | 8 | 8 | 8 | 279 (105) | 86967 | 4623 | 7589 | 105 | 242 (6) | 1798.6 | 76 | 2999 (77) | 7.3e-7 |
+| choke5 | 12 | 8 | 8 | 8 | 96 (0) | 19272 | 0 | 414 | 30 | 0 (0) | 0.1 | 1 | 91 (91) | 0.0e0 |
+| choke5 | 24 | 8 | 8 | 8 | 192 (0) | 38704 | 636 | 2274 | 38 | 0 (0) | 71.1 | 34 | 207 (24) | 1.5e-9 |
+| choke5 | 48 | 8 | 8 | 8 | 347 (37) | 80168 | 2553 | 4425 | 70 | 59 (1) | 712.0 | 48 | 1024 (37) | 3.4e-9 |
+| corner90 | 12 | 8 | 8 | 8 | 96 (0) | 22251 | 245 | 433 | 20 | 0 (0) | 66.9 | 13 | 292 (19) | 6.3e-10 |
+| corner90 | 24 | 8 | 8 | 8 | 172 (20) | 46270 | 797 | 1101 | 49 | 15 (2) | 339.3 | 26 | 954 (44) | 2.1e-9 |
+| corner90 | 48 | 8 | 8 | 8 | 321 (63) | 96474 | 2039 | 2648 | 107 | 29 (0) | 987.6 | 66 | 1716 (84) | 3.6e-9 |
+| hairpin | 12 | 8 | 8 | 8 | 59 (37) | 24473 | 719 | 1457 | 48 | 0 (0) | 317.8 | 40 | 421 (28) | 1.5e-9 |
+| hairpin | 24 | 8 | 8 | 8 | 102 (90) | 51997 | 1717 | 2695 | 77 | 17 (2) | 819.2 | 101 | 1197 (53) | 9.1e-7 |
+| hairpin | 48 | 8 | 8 | 8 | 179 (205) | 114011 | 4109 | 5542 | 129 | 52 (1) | 2304.7 | 187 | 2482 (113) | 1.3e-6 |
+| staircase45 | 12 | 8 | 8 | 8 | 95 (1) | 23973 | 86 | 1043 | 28 | 0 (0) | 82.7 | 8 | 88 (9) | 4.5e-10 |
+| staircase45 | 24 | 8 | 8 | 8 | 180 (12) | 48509 | 911 | 1822 | 28 | 11 (0) | 410.2 | 71 | 704 (21) | 2.0e-9 |
+| staircase45 | 48 | 8 | 8 | 8 | 276 (108) | 101124 | 2383 | 3855 | 72 | 116 (1) | 1533.2 | 119 | 2054 (62) | 3.2e-9 |
+
+**L**
+
+| Geometry | Size | Scenes | Every move ends | Depth ok | Arrived (stopped short) | Walking | M-1 | M-2 | Longest episode | M-3 (proposal) | M-4 | M-5a | M-5b walk ticks (longest) | Deepest |
+|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---|---:|---:|---|---|
+| choke2 | 12 | 8 | 8 | 8 | 96 (0) | 19990 | 840 | 2389 | 47 | 2 (1) | 185.1 | 17 | 542 (25) | 8.3e-7 |
+| choke2 | 24 | 8 | 8 | 8 | 189 (3) | 44395 | 2013 | 5450 | 62 | 28 (5) | 920.4 | 39 | 2595 (58) | 2.7e-10 |
+| choke2 | 48 | 8 | 8 | 8 | 370 (14) | 104932 | 5850 | 11503 | 71 | 136 (8) | 3087.5 | 84 | 9589 (75) | 5.9e-7 |
+| choke3 | 12 | 8 | 8 | 8 | 96 (0) | 19413 | 432 | 1719 | 37 | 0 (0) | 53.2 | 4 | 114 (12) | 1.6e-10 |
+| choke3 | 24 | 8 | 8 | 8 | 192 (0) | 41123 | 880 | 3335 | 64 | 10 (0) | 395.3 | 22 | 1001 (53) | 7.1e-8 |
+| choke3 | 48 | 8 | 8 | 8 | 381 (3) | 92304 | 2796 | 6859 | 73 | 48 (1) | 1488.4 | 39 | 3665 (77) | 3.1e-10 |
+| choke5 | 12 | 8 | 8 | 8 | 96 (0) | 19200 | 0 | 397 | 29 | 0 (0) | 0.0 | 0 | 0 (0) | 0.0e0 |
+| choke5 | 24 | 8 | 8 | 8 | 192 (0) | 39075 | 682 | 2387 | 40 | 0 (0) | 101.5 | 8 | 242 (24) | 1.8e-10 |
+| choke5 | 48 | 8 | 8 | 8 | 378 (6) | 83198 | 2069 | 4966 | 67 | 27 (0) | 810.3 | 31 | 1682 (59) | 2.4e-10 |
+| corner90 | 12 | 8 | 8 | 8 | 96 (0) | 23256 | 304 | 642 | 33 | 0 (0) | 273.8 | 9 | 524 (39) | 1.1e-10 |
+| corner90 | 24 | 8 | 8 | 8 | 188 (4) | 51262 | 1009 | 1654 | 65 | 0 (0) | 821.9 | 27 | 1440 (73) | 2.3e-10 |
+| corner90 | 48 | 8 | 8 | 8 | 352 (32) | 114397 | 2993 | 4406 | 98 | 16 (0) | 2290.7 | 58 | 3365 (75) | 1.2e-7 |
+| hairpin | 12 | 8 | 8 | 8 | 85 (11) | 26642 | 527 | 1777 | 56 | 4 (1) | 561.1 | 13 | 581 (53) | 2.5e-10 |
+| hairpin | 24 | 8 | 8 | 8 | 145 (47) | 61869 | 1899 | 3974 | 85 | 32 (3) | 1815.2 | 31 | 1972 (76) | 6.3e-7 |
+| hairpin | 48 | 8 | 8 | 8 | 277 (107) | 141084 | 5932 | 9728 | 90 | 142 (1) | 5227.0 | 107 | 4729 (93) | 3.7e-7 |
+| staircase45 | 12 | 8 | 8 | 8 | 96 (0) | 24458 | 115 | 1159 | 28 | 3 (0) | 191.2 | 3 | 217 (25) | 2.2e-10 |
+| staircase45 | 24 | 8 | 8 | 8 | 171 (21) | 52651 | 812 | 2486 | 46 | 14 (2) | 913.2 | 48 | 1238 (47) | 2.6e-10 |
+| staircase45 | 48 | 8 | 8 | 8 | 327 (57) | 113508 | 2528 | 5455 | 77 | 64 (11) | 2526.8 | 78 | 3179 (72) | 3.9e-10 |
+
 ### Left to the orchestrator
 
 - **Moved worlds since `Gated`'s last re-base** (plan §5.3 item 1, §8 WP0 "Base figures"): not measured here. It
   needs `Gated`'s WP0b scripts and arms, and `Gated` WP1 was running its own heavy measurements; whether `Gated`
   recorded the Broodlings merge `0f0608cd` is to be verified with its orchestrator first.
-- **The owner's Q0134 answer** asks for dedicated tests of large groups through narrow sections and round corners,
-  against which any later clearance change is judged. The plan predates the answer and WP0 does not build them; they
-  need an amendment that places them (the meter of this package measures them as it measures the showcase).

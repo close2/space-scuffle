@@ -4,7 +4,7 @@ This plan fixes the three route-following defects that the wall-grazing diagnosi
 2026-11-29 observation of the showcase video: units run against the ramp's border and against the central block
 (evidence [`2026-11-29-wall-grazing`](../evidence/2026-11-29-wall-grazing.md), bugs **B-240**, **B-241** and
 **B-242** in `DESIGN.md` §4). It follows owner question
-[Q0134](../questions/open/0134-wall-clearance.md) on its default, **(a): fix the defects only, no deviation from
+[Q0134](../questions/closed/0134-wall-clearance.md) on its default, **(a): fix the defects only, no deviation from
 StarCraft II**. It does not redraft Q0134.
 
 **Status of this document.** A Stage 1 blueprint under charter §6, written on branch `wall-clearance-plan`, cut from
@@ -32,7 +32,7 @@ Q0134 (b).
 
 | Question | State | Where |
 |---|---|---|
-| [Q0134](../questions/open/0134-wall-clearance.md): how much room from walls | Open; default (a) followed | All; WP4 only under (b) |
+| [Q0134](../questions/closed/0134-wall-clearance.md): how much room from walls | Answered: (a), plus dedicated crowd tests; closed (Amendment 1) | All; WP4 not built under (a) |
 | [Q0051](../questions/closed/0051-sc2-mechanics-standing-rule.md): follow StarCraft II 5.0.14; an unnamed difference is a bug | Standing | §3, §4 |
 | [Q0052](../questions/closed/0052-sanctioned-sc2-deviations.md): sanctioned deviations | None touches route following. Under (a) none is added | §11 |
 | [Q0103](../questions/closed/0103-solver-matrix-claims.md): natural movement outweighs a close battle's winner (charter §8) | Standing | §6.6 |
@@ -747,3 +747,48 @@ instead of `r + 0.05`".
 `~/scratch/wall-clearance/`: `base/`, `wp1/`, `wp2/` (the window's measurement, all arms), `wp3/`, `wp4/`,
 `heldout/`, `red/`, `cost/` (callgrind), `scripts/` (the paired-seed analysis; `Gated`'s scripts are reused by path,
 not copied). The original probe stays at `~/scratch/wall-grazing/probe/`.
+
+---
+
+## Amendment 1 (implementation agent, from the owner's answer to Q0134, 2026-11-26): crowd tests judge with the showcase
+
+**The answer.** The owner answered [Q0134](../questions/closed/0134-wall-clearance.md) (`main` `48ac2ff6`): option
+**(a) now**, the three defects only; and the showcase is only one example, so it must not alone decide whether a wider
+clearance (b) or wall-aware steering (c) is needed later. Dedicated tests are to be added in which large groups travel
+through narrow sections and chokepoints and round corners, and wall grazing, corner bumping and any later clearance
+change are judged against them. Q0134 is closed with a resolution that points here.
+
+**What changes.**
+1. **The crowd scenes** (built in WP0): `sim_fixtures::trace::crowd`, run by `crates/sim_core/examples/crowd_trace.rs`.
+   - Geometries: chokepoints of 2, 3 and 5 cells (a wall four cells thick), a convex 90° corner, a hairpin round a
+     thin wall's end, and a 45° wall of one-cell steps.
+   - Groups of 12, 24 and 48 scratch units of radii 0.375, 0.5 and 0.625 (cycled), one owner, each unit moving to its
+     own goal: its start translated across the obstacle, so the formation's spacing is kept.
+   - Every scene is watched by this plan's route-clearance meter (§6.1), so M-1 to M-5b and the depth check are read
+     on them as on the showcase.
+   - Known answers: every move ends by the scene's tick bound with none given up (`NoProgress`), and no body lies
+     deeper than 2.4 × 10⁻⁵ (H-W1). Arrival within 0.5 of the goal and units that stop short (against friends resting
+     at or near their goals) are figures, not answers: the arrival rule ends a crowded move short by design.
+   - Seeds: development 1 to 8 (the base of WP0 is measured on them under the arms S, R and L of `Gated` §6.1:
+     shipped rules, `Solver` with crowd cap 151, `Legacy`). Held-out sets, registered now and run once per package
+     like §6.4's: **HA-crowd** seeds 1,001 to 1,008 (window W) and **HB-crowd** 1,009 to 1,016 (WP3).
+2. **Acceptance (§6.3) is read on the crowd scenes together with the showcase seeds, never on the showcase alone.**
+   - WP1's target M-5a = 0 holds on the showcases' nine seeds; on the crowd scenes, cutting route updates caused by a
+     rounding-depth hand-off must be gone (each remaining one traced and explained).
+   - WP2's 19-tick bound on held cutting walk legs applies to the crowd scenes as well.
+   - WP3's directional claims (M-2 and the longest episode fall, M-1 does not rise) must hold on the crowd scenes'
+     development seeds, per geometry, by §6.4's paired rule (per scene, seeds paired), as well as on the showcase's
+     33 paired seeds. A fall on the showcase with a rise on the crowd scenes beyond noise fails the claim.
+   - "Not worse than base beyond noise" (§6.3, last column) includes the crowd scenes' M-1 to M-4, every-move-ends
+     and the depth check, under S, R and L.
+3. **Q0134 (b) and (c).** Any later proposal for a wider margin or wall-aware steering is judged first on the crowd
+   scenes (and their held-out set), then on the showcase; the showcase alone never decides it (§7 rule 8's addendum
+   to the owner carries both).
+4. **Out of scope here.** The crowd scenes are reporting instruments; they add no rule to the simulation and no
+   per-scene switch (§7 rule 10). New geometries may be added by a later amendment before a package's base is
+   measured, never after a trace.
+
+**Base (WP0).** Evidence [`2026-11-29-wall-clearance`](../evidence/2026-11-29-wall-clearance.md), WP0, "Crowd
+scenes": both known answers hold in all 144 scenes under each arm; up to half the units of a 48-unit group stop short
+(the hairpin); held cutting walk legs run up to 130 ticks; reported, not judged.
+

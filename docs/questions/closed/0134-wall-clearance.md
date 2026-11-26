@@ -30,3 +30,18 @@ Recommendation: (a) first, then decide (b) on the measured result.
 - **Option (a) now:** Fix the three defects only (`B-240` rounding-wedge corner cutting, `B-241` re-checking the current leg after a push, and `B-242` following the route line back to the `0.05` margin).
 
 **Testing & follow-up guidance:** Do **not** use the showcase alone as the deciding factor for whether wider wall clearance (`(b)`) or active wall avoidance (`(c)`) is needed later — the showcase is only one example. Add dedicated tests where **large groups of units travel through narrow sections/chokepoints and around corners**, and judge wall grazing, corner bumping, and any follow-up clearance change against those broader crowd tests.
+
+## Resolution
+
+Followed as answered, on branch `wall-clearance-plan`:
+- **(a) now.** Plan [`2026-11-29-wall-clearance`](../../plans/2026-11-29-wall-clearance.md) fixes the three defects
+  only: WP1 (B-240), WP2 (B-241), WP3 (B-242). WP4, the larger margin of (b), is not built, and (c) stays out of
+  scope; either needs a new owner decision.
+- **Crowd tests.** WP0 added dedicated crowd scenes (`sim_fixtures::trace::crowd`, runner
+  `crates/sim_core/examples/crowd_trace.rs`, commit `fa9dc3f3`): groups of 12, 24 and 48 units of three radii through
+  chokepoints of 2, 3 and 5 cells, round a convex 90° corner, a hairpin round a thin wall's end and a 45° stepped
+  wall, all measured by the route-clearance meter (wall grazing, episodes, reversals at walls, ticks lost, corner
+  cutting). Their base figures under the arms S, R and L are in evidence
+  [`2026-11-29-wall-clearance`](../../evidence/2026-11-29-wall-clearance.md) WP0.
+- **Judged on both.** The plan's Amendment 1 makes these crowd scenes, together with the showcase seeds, the basis
+  of WP1 to WP3's acceptance and of any later (b) or (c) decision; the showcase alone never decides.
