@@ -9,7 +9,7 @@ binaries, assets per arm, worlds, scripts, logs and the analysis tables.
 
 - **Tree.** Branch `gated-wp0b`, cut from `main` `2f922a50`, with friend-crowd's latent C-3′ and the follow order
   (schema 50) on it. Its code commits are `5681882d` (the crowd-cap selector, §1.1) and `fc5d07b5` (the `lanes`
-  correction, plan Amendment 2). `main` moved three times while the base was measured: `c3c372c6` (launch and spell visibility, schema 53), `b1dbb43f` (weapon delivery, schema 56) and `4ff8402f` (Carrier interceptors, schema 57). Each is merged (`a8a4f6e2`, `724a0420`, `3d15509b`). §6 shows that no world measured here moved, so the base stands for the final tree; the throughput of §7 is measured on it.
+  correction, plan Amendment 2). `main` moved four times while the base was measured: `c3c372c6` (launch and spell visibility, schema 53), `b1dbb43f` (weapon delivery, schema 56), `4ff8402f` (Carrier interceptors, schema 57) and `156721c2` (missile movers, B-52, schema 60). Each is merged, the last one as the final tree. §6 shows which worlds moved: only the missile movers moved any, battles 12c, 19, 35 and 36b and the mirror, and those were re-measured on the final tree. The rest of the base is byte-identical there. The throughput of §7 is measured on the final tree.
 - **Arms** (§6.1). All three are played from one binary per tree, selected by data:
   - **L** is `Legacy`;
   - **S** is `Solver` as shipped (`crowd_iterations: 21`, C-3′ off);
@@ -100,7 +100,7 @@ moving, and the largest overlap. "Hard failures" counts scenes in which H-1, H-2
 | T6 | — | gap: η 0.786, 5th percentile 0.381, no drops |
 | T7 | arc (max 0.497), corner (0.520), gap (0.958), deep-queue, enemy-press, hold-line, lanes, surround-moving, wedge | corridor, cross, hallway, stutter |
 | T8 | — | gap, arc, cross, corridor, corner (relabel p ≥ 0.18). The new families have no relabelled twins: T8 is not defined for them, and the tool's "fails, p NaN" lines for them are not verdicts |
-| T9 | — | mirror 0.483 [0.395, 0.572], 882 draws |
+| T9 | — | mirror 0.487 [0.398, 0.577], 883 draws (the final tree; the missile movers moved the mirror, §6) |
 | K (known answers, ≥ 99.5 %) | hold-line 4.5 %, enemy-press 12.5 % (hard part failed in 345: enemies moved, B-193), deep-queue 49.0 %, wedge 0 %, surround-moving 0 %, lanes 93.1 % | hallway 100 %, stutter 100 % |
 
 The R arm (C-3′ on) leaves every harness verdict of S as it is. Its differences are small:
@@ -129,6 +129,8 @@ wedge, surround-moving and (before Amendment 2) lanes:
 ## 3. WP0b: the battle base
 
 ### 3.1 The matrix (24 seeds)
+
+The matrix, the mirror and the battle tables are measured on the final tree (`main` `156721c2` merged). Main's missile movers moved battles 12c, 19, 35 and 36b of this matrix (flight times), so these tables replace the first measurement on `2f922a50`. Every other row is byte-identical between the two (§6).
 
 Expectation failures on the four seeds of record, then over all 24 seeds:
 
@@ -181,7 +183,7 @@ Expectation failures on the four seeds of record, then over all 24 seeds:
 | 11b | 0 / 24 | 0.0 | 0.3 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 0.000 / 4.251 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
 | 12a | 24 / 0 | 0.0 | 1.0 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 1.120 / 1.744 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
 | 12b | 0 / 24 | 0.0 | 1.0 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 0.970 / 1.012 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
-| 12c | 24 / 0 | 0.0 | 0.0 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 0.729 / 0.000 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
+| 12c | 24 / 0 | 0.0 | 0.0 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 0.714 / 0.000 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
 | 13 | 24 / 0 | 0.0 | 0.0 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 1.136 / 0.000 | 9.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
 | 14 | 6 / 18 | 0.0 | 0.0 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 1.063 / 1.670 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
 | 15 | 24 / 0 | 0.0 | 1.0 % | 0.00 % | 1.2 / 0.0 | 0.2 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 2.179 / 1.807 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
@@ -189,7 +191,7 @@ Expectation failures on the four seeds of record, then over all 24 seeds:
 | 16b | 0 / 24 | 0.0 | 0.0 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 0.970 / 1.730 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
 | 17 | 24 / 0 | 0.0 | 0.0 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 2.711 / 0.980 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
 | 18 | 24 / 0 | 0.0 | 0.0 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 2.694 / 0.759 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
-| 19 | 24 / 0 | 0.0 | 0.0 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 0.750 / 0.000 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
+| 19 | 24 / 0 | 0.0 | 0.0 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 0.726 / 0.000 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
 | 20 | 24 / 0 | 0.0 | 0.0 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 0.698 / 0.000 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
 | 21 | 11 / 0 | 0.0 | 1.0 % | 0.00 % | 0.0 / 0.0 | 0.4 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 0.750 / 0.365 | 0.0 / 0.0 | 0.0 / 3.9 (0.151) | 0.00 / 0.50 | 0.00 / 0.17 | 0.0 |
 | 22a | 0 / 0 | 0.0 | 0.9 % | 0.00 % | 0.0 / 0.0 | 0.0 / 6.2 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 1.262 / 0.997 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
@@ -209,7 +211,7 @@ Expectation failures on the four seeds of record, then over all 24 seeds:
 | 32 | 17 / 2 | 0.0 | 1.0 % | 0.00 % | 0.0 / 1.6 | 0.0 / 2.1 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 2.151 / 0.000 | 0.0 / 0.0 | 2.0 / 0.0 (0.080) | 11.57 / 0.48 | 10.28 / 0.36 | 0.0 |
 | 33 | 24 / 0 | 0.4 | 6.0 % | 0.00 % | 0.0 / 479.1 | 2.7 / 459.3 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 1.687 / 1.457 | 0.0 / 0.0 | 29.1 / 21.3 (0.115) | 3.53 / 0.11 | 0.97 / 0.06 | 0.0 |
 | 34 | 24 / 0 | 3.4 | 9.8 % | 0.00 % | 11.0 / 26.2 | 108.3 / 178.1 | 0.0 / 0.0 | 0.12 / 0.00 | 0.00 | 1.729 / 1.151 | 0.0 / 0.0 | 15.0 / 0.1 (0.085) | 10.15 / 2.91 | 4.08 / 2.12 | 0.0 |
-| 35 | 2 / 0 | 0.2 | 5.7 % | 0.00 % | 0.0 / 0.0 | 35.8 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 0.766 / 0.000 | 93.3 / 0.0 | 5.2 / 0.0 (0.192) | 1.50 / 0.82 | 0.62 / 0.32 | 0.0 |
+| 35 | 0 / 0 | 1.5 | 25.3 % | 0.00 % | 0.0 / 0.0 | 37.6 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 0.755 / 0.000 | 137.2 / 0.0 | 5.3 / 0.0 (0.182) | 1.24 / 0.95 | 0.58 / 0.48 | 0.0 |
 | 36a | 24 / 0 | 0.0 | 5.5 % | 0.00 % | 94.0 / 0.0 | 56.0 / 1.2 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 1.484 / 1.733 | 0.0 / 0.0 | 21.8 / 15.2 (0.096) | 0.17 / 2.57 | 0.17 / 0.85 | 0.0 |
 | 36b | 0 / 24 | 0.0 | 5.5 % | 0.00 % | 99.4 / 0.0 | 97.2 / 7.4 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 1.216 / 1.730 | 0.0 / 0.0 | 4.8 / 15.0 (0.080) | 0.00 / 3.18 | 0.00 / 0.92 | 0.0 |
 | 37a | 0 / 0 | 0.0 | 2.3 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.2 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 2.130 / 2.132 | 0.0 / 19.3 | 4.0 / 18.0 (1.291) | 0.54 / 0.00 | 0.34 / 0.00 | 0.0 |
@@ -247,7 +249,7 @@ Expectation failures on the four seeds of record, then over all 24 seeds:
 | 11b | 0 / 24 | 0.0 | 0.3 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 0.000 / 4.251 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
 | 12a | 24 / 0 | 0.0 | 1.0 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 1.120 / 1.744 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
 | 12b | 0 / 24 | 0.0 | 1.0 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 0.970 / 1.012 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
-| 12c | 24 / 0 | 0.0 | 0.0 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 0.729 / 0.000 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
+| 12c | 24 / 0 | 0.0 | 0.0 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 0.714 / 0.000 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
 | 13 | 24 / 0 | 0.0 | 0.0 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 1.136 / 0.000 | 9.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
 | 14 | 6 / 18 | 0.0 | 0.0 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 1.063 / 1.670 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
 | 15 | 24 / 0 | 0.0 | 1.0 % | 0.00 % | 1.2 / 0.0 | 0.2 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 2.179 / 1.807 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
@@ -255,7 +257,7 @@ Expectation failures on the four seeds of record, then over all 24 seeds:
 | 16b | 0 / 24 | 0.0 | 0.0 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 0.970 / 1.730 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
 | 17 | 24 / 0 | 0.0 | 0.0 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 2.711 / 0.980 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
 | 18 | 24 / 0 | 0.0 | 0.0 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 2.694 / 0.759 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
-| 19 | 24 / 0 | 0.0 | 0.0 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 0.750 / 0.000 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
+| 19 | 24 / 0 | 0.0 | 0.0 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 0.726 / 0.000 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
 | 20 | 24 / 0 | 0.0 | 0.0 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 0.698 / 0.000 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
 | 21 | 11 / 0 | 0.0 | 1.0 % | 0.00 % | 0.0 / 0.0 | 0.4 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 0.750 / 0.365 | 0.0 / 0.0 | 0.0 / 3.9 (0.151) | 0.00 / 0.50 | 0.00 / 0.17 | 0.0 |
 | 22a | 0 / 0 | 0.0 | 0.9 % | 0.00 % | 0.0 / 0.0 | 0.0 / 6.2 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 1.262 / 0.997 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
@@ -275,7 +277,7 @@ Expectation failures on the four seeds of record, then over all 24 seeds:
 | 32 | 17 / 2 | 0.0 | 1.0 % | 0.00 % | 0.0 / 1.6 | 0.0 / 2.1 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 2.151 / 0.000 | 0.0 / 0.0 | 2.0 / 0.0 (0.080) | 11.57 / 0.48 | 10.28 / 0.36 | 0.0 |
 | 33 | 24 / 0 | 0.0 | 5.0 % | 0.00 % | 0.0 / 476.4 | 2.5 / 457.7 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 1.688 / 1.460 | 0.0 / 0.0 | 29.8 / 20.9 (0.115) | 3.60 / 0.11 | 0.92 / 0.06 | 0.4 |
 | 34 | 24 / 0 | 0.0 | 5.0 % | 0.00 % | 6.3 / 33.2 | 113.6 / 169.9 | 0.0 / 0.0 | 0.08 / 0.00 | 0.00 | 1.720 / 1.148 | 0.0 / 0.0 | 13.3 / 0.2 (0.086) | 8.65 / 4.95 | 2.57 / 3.79 | 1.0 |
-| 35 | 2 / 0 | 0.0 | 5.1 % | 0.00 % | 0.0 / 0.0 | 35.9 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 0.766 / 0.000 | 93.3 / 0.0 | 5.2 / 0.0 (0.182) | 1.42 / 0.82 | 0.58 / 0.32 | 0.1 |
+| 35 | 0 / 0 | 1.0 | 25.3 % | 0.00 % | 0.0 / 0.0 | 37.6 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 0.755 / 0.000 | 159.4 / 0.0 | 5.3 / 0.0 (0.182) | 1.20 / 0.95 | 0.54 / 0.48 | 0.2 |
 | 36a | 24 / 0 | 0.0 | 5.5 % | 0.00 % | 94.0 / 0.0 | 56.0 / 1.2 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 1.484 / 1.733 | 0.0 / 0.0 | 21.8 / 15.2 (0.096) | 0.17 / 2.57 | 0.17 / 0.85 | 0.0 |
 | 36b | 0 / 24 | 0.0 | 5.5 % | 0.00 % | 99.4 / 0.0 | 97.2 / 7.4 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 1.216 / 1.730 | 0.0 / 0.0 | 4.8 / 15.0 (0.080) | 0.00 / 3.18 | 0.00 / 0.92 | 0.0 |
 | 37a | 0 / 0 | 0.0 | 2.3 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.2 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 2.130 / 2.132 | 0.0 / 19.3 | 4.0 / 18.0 (1.291) | 0.54 / 0.00 | 0.34 / 0.00 | 0.0 |
@@ -313,7 +315,7 @@ Expectation failures on the four seeds of record, then over all 24 seeds:
 | 11b | 0 / 24 | 5.4 | 47.8 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 0.000 / 4.489 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
 | 12a | 24 / 0 | 16.7 | 32.5 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.3 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 1.119 / 1.749 | 0.0 / 0.0 | 0.0 / 156.5 (0.041) | 0.00 / 0.75 | 0.00 / 0.75 | 0.0 |
 | 12b | 0 / 24 | 5.4 | 20.1 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 0.970 / 1.012 | 0.0 / 0.0 | 0.0 / 130.8 (0.040) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
-| 12c | 24 / 0 | 0.0 | 0.0 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 0.729 / 0.000 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
+| 12c | 24 / 0 | 0.0 | 0.0 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 0.714 / 0.000 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
 | 13 | 24 / 0 | 0.0 | 0.0 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 1.136 / 0.000 | 9.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
 | 14 | 6 / 18 | 0.0 | 0.0 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 1.063 / 1.670 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
 | 15 | 24 / 0 | 70.5 | 35.1 % | 0.00 % | 0.8 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 2.103 / 1.827 | 0.0 / 0.0 | 0.0 / 346.0 (0.049) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
@@ -321,7 +323,7 @@ Expectation failures on the four seeds of record, then over all 24 seeds:
 | 16b | 0 / 24 | 0.5 | 14.5 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 0.970 / 1.730 | 0.0 / 0.0 | 0.0 / 11.1 (0.019) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
 | 17 | 24 / 0 | 0.0 | 0.0 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 2.711 / 0.980 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
 | 18 | 24 / 0 | 0.0 | 0.0 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 2.694 / 0.759 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
-| 19 | 24 / 0 | 0.0 | 0.0 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 0.750 / 0.000 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
+| 19 | 24 / 0 | 0.0 | 0.0 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 0.726 / 0.000 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
 | 20 | 24 / 0 | 0.0 | 0.0 % | 0.00 % | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 0.698 / 0.000 | 0.0 / 0.0 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
 | 21 | 4 / 0 | 42.3 | 32.5 % | 0.00 % | 0.0 / 0.0 | 0.8 / 0.2 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 0.735 / 0.394 | 0.0 / 0.0 | 0.0 / 304.9 (0.112) | 0.00 / 1.26 | 0.00 / 0.16 | 0.0 |
 | 22a | 0 / 0 | 0.0 | 2.7 % | 0.00 % | 0.0 / 0.0 | 0.0 / 6.8 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 1.262 / 1.002 | 0.0 / 0.0 | 0.0 / 0.3 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
@@ -341,9 +343,9 @@ Expectation failures on the four seeds of record, then over all 24 seeds:
 | 32 | 18 / 2 | 18.3 | 18.3 % | 0.00 % | 0.2 / 1.4 | 0.4 / 1.8 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 2.189 / 0.000 | 0.0 / 0.0 | 421.7 / 0.0 (0.021) | 46.85 / 0.35 | 32.43 / 0.12 | 0.0 |
 | 33 | 13 / 7 | 110.2 | 31.0 % | 0.92 % | 2.7 / 9.3 | 10.5 / 33.6 | 0.0 / 0.0 | 0.00 / 4.96 | 0.00 | 1.678 / 1.402 | 0.0 / 0.0 | 1042.5 / 90.4 (0.017) | 4.29 / 6.83 | 2.57 / 5.57 | 0.0 |
 | 34 | 24 / 0 | 354.0 | 31.5 % | 0.00 % | 11.6 / 7.9 | 71.2 / 110.9 | 0.0 / 0.0 | 0.21 / 0.00 | 0.00 | 1.723 / 1.173 | 0.0 / 0.0 | 661.8 / 75.5 (0.033) | 9.62 / 1.85 | 7.08 / 0.22 | 0.0 |
-| 35 | 1 / 0 | 157.3 | 34.7 % | 0.00 % | 0.0 / 0.0 | 31.4 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.04 | 0.790 / 0.000 | 43.8 / 0.0 | 380.5 / 0.0 (0.027) | 7.70 / 1.06 | 0.81 / 0.68 | 0.0 |
+| 35 | 3 / 0 | 179.9 | 30.6 % | 0.00 % | 0.0 / 0.0 | 26.9 / 0.0 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 0.765 / 0.000 | 51.2 / 0.0 | 386.5 / 0.0 (0.027) | 7.85 / 1.88 | 0.94 / 0.98 | 0.0 |
 | 36a | 24 / 0 | 50.5 | 29.4 % | 0.53 % | 1.0 / 5.9 | 9.5 / 4.2 | 0.0 / 0.0 | 0.29 / 0.00 | 0.00 | 1.597 / 1.745 | 0.0 / 0.0 | 11.8 / 309.3 (0.014) | 4.73 / 2.13 | 4.16 / 1.42 | 0.0 |
-| 36b | 0 / 24 | 63.0 | 29.4 % | 0.53 % | 1.0 / 5.9 | 9.4 / 4.8 | 0.0 / 0.0 | 0.54 / 0.00 | 0.00 | 1.257 / 1.734 | 0.0 / 0.0 | 10.2 / 338.2 (0.015) | 4.53 / 2.77 | 3.81 / 1.74 | 0.0 |
+| 36b | 0 / 24 | 63.0 | 29.4 % | 0.53 % | 1.0 / 5.9 | 9.4 / 4.8 | 0.0 / 0.0 | 0.54 / 0.00 | 0.00 | 1.257 / 1.734 | 0.0 / 0.0 | 10.2 / 338.3 (0.015) | 4.53 / 2.77 | 3.81 / 1.74 | 0.0 |
 | 37a | 0 / 0 | 20.1 | 98.2 % | 5.32 % | 0.0 / 0.0 | 0.8 / 0.2 | 0.1 / 0.0 | 0.00 / 0.00 | 0.00 | 2.179 / 1.589 | 0.0 / 19.5 | 106.4 / 18.0 (1.100) | 0.63 / 0.00 | 0.44 / 0.00 | 0.0 |
 | 37b | 0 / 0 | 0.2 | 9.5 % | 0.66 % | 0.0 / 0.0 | 0.0 / 0.2 | 0.0 / 0.0 | 0.00 / 0.00 | 0.00 | 1.653 / 1.409 | 0.0 / 17.4 | 0.0 / 0.0 (0.000) | 0.00 / 0.00 | 0.00 / 0.00 | 0.0 |
 | 38a | 24 / 0 | 146.9 | 37.4 % | 2.04 % | 10.5 / 0.0 | 26.0 / 0.0 | 0.0 / 0.0 | 1.29 / 0.00 | 0.00 | 2.478 / 1.804 | 0.0 / 0.0 | 50.2 / 0.0 (0.021) | 6.77 / 0.00 | 4.74 / 0.00 | 0.0 |
@@ -381,7 +383,7 @@ this table, and against R's (`~/scratch/gated-movement/analysis/bounds-R.md`) wh
 | 11b | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | — | 4.251 ≥ 4.072 |
 | 12a | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1.120 ≥ 1.113 | 1.744 ≥ 1.732 |
 | 12b | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0.970 ≥ 0.943 | 1.012 ≥ 1.000 |
-| 12c | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0.729 ≥ 0.727 | — |
+| 12c | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0.714 ≥ 0.712 | — |
 | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 9.00 ≤ 9.00 | 0 | 0 | 0 | 1.136 ≥ 1.136 | — |
 | 14 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1.063 ≥ 1.045 | 1.670 ≥ 1.638 |
 | 15 | 0 | 1.21 ≤ 3.08 | 0 | 0.21 ≤ 0.38 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2.179 ≥ 2.142 | 1.807 ≥ 1.780 |
@@ -389,7 +391,7 @@ this table, and against R's (`~/scratch/gated-movement/analysis/bounds-R.md`) wh
 | 16b | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0.970 ≥ 0.956 | 1.730 ≥ 1.716 |
 | 17 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2.711 ≥ 2.687 | 0.980 ≥ 0.970 |
 | 18 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2.694 ≥ 2.672 | 0.759 ≥ 0.744 |
-| 19 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0.750 ≥ 0.748 | — |
+| 19 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0.726 ≥ 0.724 | — |
 | 20 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0.698 ≥ 0.695 | — |
 | 21 | 0 | 0 | 0 | 0.42 ≤ 0.62 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3.88 ≤ 4.83 | 0.750 ≥ 0.737 | 0.365 ≥ 0.341 |
 | 22a | 0 | 0 | 0 | 0 | 6.17 ≤ 6.33 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1.262 ≥ 1.256 | 0.997 ≥ 0.992 |
@@ -409,7 +411,7 @@ this table, and against R's (`~/scratch/gated-movement/analysis/bounds-R.md`) wh
 | 32 | 0 | 0 | 1.62 ≤ 2.75 | 0 | 2.08 ≤ 3.21 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2.00 ≤ 2.83 | 0 | 2.151 ≥ 2.114 | — |
 | 33 | 0.42 ≤ 0.79 | 0 | 479.08 ≤ 505.33 | 2.67 ≤ 3.58 | 459.29 ≤ 486.17 | 0.00 ≤ 0.01 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 29.08 ≤ 33.29 | 21.33 ≤ 27.29 | 1.687 ≥ 1.683 | 1.457 ≥ 1.443 |
 | 34 | 3.42 ≤ 3.79 | 10.96 ≤ 20.17 | 26.17 ≤ 45.79 | 108.33 ≤ 133.92 | 178.12 ≤ 199.54 | 0 | 0 | 0 | 0.12 ≤ 0.29 | 0 | 0 | 0 | 0 | 14.96 ≤ 17.42 | 0.08 ≤ 0.21 | 1.729 ≥ 1.720 | 1.151 ≥ 1.136 |
-| 35 | 0.17 ≤ 0.42 | 0 | 0 | 35.75 ≤ 46.12 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 93.29 ≤ 186.17 | 0 | 5.25 ≤ 6.38 | 0 | 0.766 ≥ 0.758 | — |
+| 35 | 1.54 ≤ 3.58 | 0 | 0 | 37.62 ≤ 48.04 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 137.25 ≤ 310.67 | 0 | 5.29 ≤ 7.00 | 0 | 0.755 ≥ 0.749 | — |
 | 36a | 0.04 ≤ 0.12 | 94.00 ≤ 110.58 | 0.04 ≤ 0.12 | 56.00 ≤ 65.75 | 1.17 ≤ 1.67 | 0.00 ≤ 0.01 | 0.00 ≤ 0.00 | 0 | 0 | 0 | 0 | 0 | 0 | 21.75 ≤ 29.58 | 15.25 ≤ 17.92 | 1.484 ≥ 1.438 | 1.733 ≥ 1.723 |
 | 36b | 0.04 ≤ 0.12 | 99.42 ≤ 117.54 | 0.04 ≤ 0.12 | 97.25 ≤ 113.38 | 7.38 ≤ 13.79 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4.83 ≤ 7.38 | 14.96 ≤ 17.38 | 1.216 ≥ 1.196 | 1.730 ≥ 1.724 |
 | 37a | 0 | 0 | 0 | 0 | 0.17 ≤ 0.33 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 19.29 ≤ 20.96 | 3.96 ≤ 5.21 | 18.00 ≤ 18.00 | 2.130 ≥ 2.102 | 2.132 ≥ 1.518 |
@@ -434,7 +436,7 @@ this table, and against R's (`~/scratch/gated-movement/analysis/bounds-R.md`) wh
 
 6 figures beyond S's noise on the worse side.
 
-L passes S's bounds in 181 figures; the list is in
+L passes S's bounds in 180 figures; the list is in
 `analysis/cmp-L.md`. That is expected of the older pipeline and not judged.
 
 ### 3.2 Battles 31 and 33, the clashes, the showcases
@@ -481,14 +483,14 @@ The list is computed from S's 24-seed base by the rule of §6.5 (`scripts/close_
 | 31_15_marauders_vs_15_stalkers | 20 / 4 | minority wins 4 of 24; fixture names it (lines 999); friend-crowd list |
 | 32_30_marines_vs_15_banelings | 17 / 2 | friend-crowd list |
 | 33_24_marines_vs_12_zealots | 24 / 0 | fixture names it (lines 1040, 1047, 1048, 1074, 1084); friend-crowd list |
-| 35_12_vikings_vs_6_colossi | 2 / 0 | fixture names it (lines 1120, 1132, 1147, 1148); friend-crowd list |
+| 35_12_vikings_vs_6_colossi | 0 / 0 | fixture names it (lines 1120, 1132, 1147, 1148, 1156); friend-crowd list |
 | 36a_storm_turns_marines | 24 / 0 | friend-crowd list |
-| 36b_marines_beat_zealots_without_storm | 0 / 24 | fixture names it (lines 1189, 1193); friend-crowd list |
+| 36b_marines_beat_zealots_without_storm | 0 / 24 | fixture names it (lines 1203, 1207); friend-crowd list |
 | 37a_abduct_sieged_tank | 0 / 0 | friend-crowd list |
 | 37b_sieged_tank_survives_without_abduct | 0 / 0 | friend-crowd list |
 | 38a_fungal_turns_zerglings | 24 / 0 | friend-crowd list |
-| 38b_marines_beat_zerglings_without_fungal | 0 / 7 | fixture names it (lines 1303); friend-crowd list |
-| 39a_cloud_on_tanks | 24 / 0 | fixture names it (lines 1331); friend-crowd list |
+| 38b_marines_beat_zerglings_without_fungal | 0 / 7 | fixture names it (lines 1317); friend-crowd list |
+| 39a_cloud_on_tanks | 24 / 0 | fixture names it (lines 1345); friend-crowd list |
 | 39b_tanks_beat_roaches_without_cloud | 0 / 0 | friend-crowd list |
 | 42_sieged_tank_vs_fleeing_workers | 0 / 0 | friend-crowd list |
 
@@ -512,7 +514,7 @@ package's figure is read beside them. Sources are §2, §3 and §7 of this file.
 | K-4 | B7′ battles 31 and 34, blue shots per engaged second (S's lower bound) | −0.0013, −0.0003 | 0.984 (≥ 0.979); 1.729 (≥ 1.720) | **0.978; 1.720** | 1.000; 1.723 |
 | K-5 | Class D battles 29, 30, 34: wins and blue survivors (24 seeds) | moved | 24/0, 60–68; 0/24, 0; 24/0, 18–20 | 24/0, 61–68; 0/24, 0; 24/0, 17–20 | 24/0, 66–71; 0/24, 0; 24/0, 19–20 |
 | K-6 | corner deadlocks and give-ups; T7 maxima of arc and corner | 7 → 9; 49.7 → 51.8 %, 52.0 → 69.1 % | 7; 49.7 %, 52.0 % | **9; 51.8 %, 69.1 %** | 0; 59.7 %, 55.4 % |
-| K-7 | cost: 64 × 64 and canyon instructions (ratio to S); canyon ticks/s (§7, load < 6) | +47.2 %, +42.9 %; canyon ≈ 56 | 16.472 G, 27.414 G; 81 | **24.055 G (+46.0 %), 39.043 G (+42.4 %); 55** | 9.858 G, 17.480 G; 128 |
+| K-7 | cost: 64 × 64 and canyon instructions (ratio to S); canyon ticks/s (§7, load < 6) | +47.2 %, +42.9 %; canyon ≈ 56 | 16.473 G, 27.414 G; 82 | **24.056 G (+46.0 %), 39.044 G (+42.4 %); 55** | 9.858 G, 17.481 G; 124 |
 | K-8 | battle 26 largest corrected friend overlap (B6-max); battle 27 largest friend overlap | 37.06 → 40.44 %; 59.9 % (E-2 alone) | 43.6 %; 28.9 % | 7.9 %; 11.0 % | 47.5 %; 76.0 % |
 | K-9 | largest enemy overlap, battle 26 (and over the whole matrix) | 2.6 → 12.7 % | 1.96 % (2.12 %) | 0.87 % (1.66 %) | 2.25 % (7.00 %) |
 | K-10 | battle 28's claim (zerglings win): seeds of record; 24 seeds | 33 failed; 21 of 24 held-out | 2 of 4; 6 of 24 | 3 of 4; 8 of 24 | 4 of 4; 24 of 24 |
@@ -529,7 +531,7 @@ run measured. `Gated` is judged against S and R by §6.3, and these failures are
 Each row is filed only if `WP0b` measures its condition under S.
 
 **B-224 (order dependence): not met, not filed.** The permutation mode (offset 7) played all 13 families and the
-mirror on seeds 1 to 1,000 under S and R: **28,000 scenes, all `identical`**. Under L, 15 enemy-press scenes and 892
+mirror on seeds 1 to 1,000 under S and R: **28,000 scenes, all `identical`**. The mirror's half was re-played on the final tree after the missile movers moved the mirror, with the same result. Under L, 15 enemy-press scenes and 892
 mirror battles differ (`unexplained`; first differences at ticks 191 to 778 and 35 to 1,535). That is `Legacy`'s reads of live state, which
 the row does not concern; the figure is reported for the record and `Legacy` is not judged on H-3.
 
@@ -577,49 +579,53 @@ asset, golden or sandbox checksum is touched. The runs prove it as follows (`wor
 | reproducibility (§7 `WP0b` acceptance): a second run of arc under S and of hold-line under R, 1,000 seeds each | **byte-identical** |
 | the tree merged with `main` `b1dbb43f` (launch and spell visibility, weapon delivery; schema 56) against the base: harness S seeds 1 to 200 of every family and the mirror, deep-queue under R, the whole 24-seed matrix under S, both clashes under S | **byte-identical**: 15 CSVs, 1,464 matrix rows (meter columns included), both clash tables |
 | the same on the final tree, merged with `main` `4ff8402f` (Carrier interceptors; schema 57, the hangar phase) | **byte-identical**, as above |
+| the final tree, merged with `main` `156721c2` (missile movers, B-52; schema 60), against the base: harness S seeds 1 to 200 of the 13 scene families; battles 31 and 33, both clashes and the 18 showcase runs, all three arms; the whole matrix, all three arms | harness, battles 31 and 33, clashes and showcases **byte-identical**. The matrix differs in battles **12c, 19, 35 and 36b** only (the Viking and High Templar missiles' flight times), and the mirror moved too: both were **re-measured on this tree** for S, R and L and are the base (§2, §3) |
 
-The base of §2 to §4 therefore stands for the final tree as it is. The goldens and `DEFAULT_SANDBOX_CHECKSUM` are
-`main`'s (schema 57), untouched by this package. `cargo gate quick` runs `fixture_tests` (§8).
+The base of §2 to §4 therefore stands for the final tree. The goldens and `DEFAULT_SANDBOX_CHECKSUM` are
+`main`'s (schema 60), untouched by this package. `cargo gate quick` runs `fixture_tests` (§8).
 
 ## 7. WP0b: throughput (§9)
 
-These are release single-scenario benchmark binaries of the final tree (`main` `4ff8402f` merged), 400 `pulse_bot`
+These are release single-scenario benchmark binaries of the final tree (`main` `156721c2` merged), 400 `pulse_bot`
 for 300 ticks. "Casters" is the benchmark's 67-caster battle. "Hangar" is the new scenario of the Carrier plan: 200
 units and 12 hangar units, 250 warm ticks. Each run is `perf stat -e instructions:u`, three runs per scenario and
 arm, under the gate lock. The 1-minute load average was read just before and just after each run.
 
-| Scenario | Arm | Instructions (mean of 3) | Spread | Against S | Ticks/s (3 runs) | Load before–after |
-|---|---|---|---|---|---|---|
-| 64 × 64, armies meet | S | 16.472 G | 1 k | +0.0% | 110, 109, 110 (median 110) | 3.8–3.8, 3.8–3.7, 3.7–3.5 |
-| 64 × 64, armies meet | R | 24.055 G | 1 k | +46.0% | 78, 78, 78 (median 78) | 3.5–3.5, 3.5–3.4, 3.4–3.3 |
-| 64 × 64, armies meet | L | 9.858 G | 0 k | -40.2% | 171, 174, 173 (median 173) | 3.3–3.3, 3.3–3.4, 3.4–3.4 |
-| 128 × 128, armies apart | S | 11.023 G | 1 k | +0.0% | 180, 178, 179 (median 179) | 3.4–3.4, 3.4–3.2, 3.2–3.2 |
-| 128 × 128, armies apart | R | 11.023 G | 1 k | +0.0% | 180, 181, 179 (median 180) | 3.2–3.2, 3.2–3.1, 3.1–3.1 |
-| 128 × 128, armies apart | L | 10.238 G | 0 k | -7.1% | 189, 191, 192 (median 191) | 3.1–3.1, 3.1–3.0, 3.0–3.0 |
-| showcase canyon | S | 27.414 G | 0 k | +0.0% | 81, 81, 81 (median 81) | 3.0–3.0, 3.0–3.0, 3.0–2.9 |
-| showcase canyon | R | 39.043 G | 0 k | +42.4% | 55, 55, 55 (median 55) | 2.9–2.8, 2.8–2.8, 2.8–2.9 |
-| showcase canyon | L | 17.480 G | 1 k | -36.2% | 124, 129, 128 (median 128) | 2.9–3.0, 3.0–3.8, 3.8–3.8 |
-| 64 × 64, 67 casters | S | 21.958 G | 1 k | +0.0% | 198, 197, 200 (median 198) | 5.4–5.3, 5.3–5.3, 5.3–5.4 |
-| 64 × 64, 67 casters | R | 26.164 G | 1 k | +19.2% | 180, 176, 179 (median 179) | 5.4–5.4, 5.4–5.2, 5.2–5.0 |
-| 64 × 64, 67 casters | L | 15.363 G | 1 k | -30.0% | 238, 235, 237 (median 237) | 5.0–4.9, 4.9–4.9, 4.9–4.7 |
-| 64 × 64, 12 hangar units (200 units) | S | 9.249 G | 1 k | +0.0% | 390, 387, 388 (median 388) | 4.7–4.7, 4.7–4.7, 4.7–4.7 |
-| 64 × 64, 12 hangar units (200 units) | R | 9.860 G | 1 k | +6.6% | 365, 356, 359 (median 359) | 4.7–4.7, 4.7–5.5, 5.5–5.5 |
-| 64 × 64, 12 hangar units (200 units) | L | 6.958 G | 1 k | -24.8% | 500, 460, 505 (median 500) | 5.5–5.5, 5.5–5.5, 5.5–5.4 |
+| Scenario | Arm | Instructions (mean of 3) | Spread | Against S | Ticks/s (3 runs) | Load before–after | Ticks/s of record (median of runs below load 8) |
+|---|---|---|---|---|---|---|---|
+| 64 × 64, armies meet | S | 16.473 G | 0 k | +0.0 % | 105, 107, 108 | 4.0–4.0, 4.0–4.2, 4.2–4.2 | 107 (3 of 3 runs) |
+| 64 × 64, armies meet | R | 24.056 G | 1 k | +46.0 % | 77, 77, 78 | 4.2–4.8, 4.8–5.2, 5.2–5.2 | 77 (3 of 3 runs) |
+| 64 × 64, armies meet | L | 9.858 G | 1 k | -40.2 % | 166, 169, 166 | 5.2–5.2, 5.2–5.2, 5.2–5.2 | 166 (3 of 3 runs) |
+| 128 × 128, armies apart | S | 11.023 G | 0 k | +0.0 % | 178, 175, 178 | 5.2–5.2, 5.2–5.2, 5.2–5.2 | 178 (3 of 3 runs) |
+| 128 × 128, armies apart | R | 11.023 G | 0 k | -0.0 % | 177, 177, 177 | 5.2–5.2, 5.2–5.3, 5.3–5.3 | 177 (3 of 3 runs) |
+| 128 × 128, armies apart | L | 10.238 G | 0 k | -7.1 % | 191, 185, 189 | 5.3–5.3, 5.3–5.1, 5.1–5.1 | 189 (3 of 3 runs) |
+| showcase canyon | S | 27.414 G | 0 k | +0.0 % | 81, 82, 82 | 5.1–5.1, 5.1–5.1, 5.1–4.9 | 82 (3 of 3 runs) |
+| showcase canyon | R | 39.044 G | 1 k | +42.4 % | 56, 55, 53 | 4.9–4.8, 4.8–4.6, 4.6–4.9 | 55 (3 of 3 runs) |
+| showcase canyon | L | 17.481 G | 2 k | -36.2 % | 127, 99, 124 | 4.9–5.1, 5.1–6.3, 6.3–6.3 | 124 (3 of 3 runs) |
+| 64 × 64, 67 casters | S | 21.958 G | 1 k | +0.0 % | 201, 200, 199 | 6.3–6.2, 6.2–6.3, 6.3–6.4 | 200 (3 of 3 runs) |
+| 64 × 64, 67 casters | R | 26.165 G | 1 k | +19.2 % | 174, 181, 181 | 6.4–6.4, 6.4–6.5, 6.5–6.5 | 181 (3 of 3 runs) |
+| 64 × 64, 67 casters | L | 15.363 G | 0 k | -30.0 % | 240, 226, 231 | 6.5–6.6, 6.6–6.6, 6.6–8.0 | 240 (2 of 3 runs) |
+| 64 × 64, 12 hangar units (200 units) | S | 9.249 G | 1 k | +0.0 % | 386, 366, 375 | 8.0–8.0, 8.0–8.5, 8.5–8.5 | not of record |
+| 64 × 64, 12 hangar units (200 units) | R | 9.861 G | 1 k | +6.6 % | 369, 309, 326 | 8.5–8.5, 8.5–8.9, 8.9–8.9 | not of record |
+| 64 × 64, 12 hangar units (200 units) | L | 6.959 G | 1 k | -24.8 % | 519, 522, 494 | 8.9–8.9, 8.9–9.4, 9.4–9.4 | not of record |
 
 **Instructions are the cost of record** (C-1's reference is R, C-2's is S and L). R costs S +46.0 % on 64 × 64,
 +42.4 % on the canyon, +19.2 % with casters, +6.6 % in the hangar battle, and nothing on 128 × 128,
 where the armies never meet. These are the figures friend-crowd's K-7 measured (+47.2 %, +42.9 %), on the newer
 tree.
 
-**Ticks per second** are of record where the load stayed below 8 at both readings of every run (C-0's condition),
-which held for every run (load 2.8 to 5.5, on 2026-11-26 between 02:04 and 03:15 UTC). A first pass of casters and hangar used a defective casters binary, which also held the hangar scenario; it was discarded, and its hangar figures equal these to within 1 k instructions. So C-0 is measured for every arm: every scenario runs at 55 ticks/s or more under every arm, and S, the shipped pipeline, at 81 or more. Under R the canyon runs at **55 ticks/s**, above Q0124's 50 with little margin
+**Ticks per second** are of record only for runs whose load stayed below 8 at both readings (C-0's condition). That held for every run but the hangar scenario's (load 8.0 to 9.4) and one L casters run. The hangar scenario was measured quietly on the tree merged with `4ff8402f` (load 4.7 to 5.5), whose instruction counts equal these to within 0.01 %: S 388, R 359, L 500 ticks/s (medians). C-0 is therefore measured for every arm and scenario: S, the shipped pipeline, runs at 81 ticks/s or more, and every arm at 55 or more. Under R the canyon runs at **55 ticks/s** (median of 56, 55, 53), above Q0124's 50 with little margin
 (friend-crowd's projection was about 56).
 
 ## 8. WP0b: records and checks
 
 - **Plan Amendment 2**: the `lanes` correction (§2), with its trace.
 - **`DESIGN.md` §4**: B-225, provisional (§5). B-224 and B-226 are not filed.
-- **Schema numbers.** The plan's provisional 51 and 52 were overtaken while it waited: `main` is at schema 57.
-  `WP2`'s `gate_side` and `WP3b`'s `ring_retarget` take the next free number at their merges, 58 or later.
-- **Checks on the final tree:** `cargo gate quick` __GATE__ and `cargo clippy --workspace --all-targets -- -D
-  warnings` __CLIPPY__.
+- **Schema numbers.** The plan's provisional 51 and 52 were overtaken while it waited: `main` is at schema 60 (58
+  and 59 unused). `WP2`'s `gate_side` and `WP3b`'s `ring_retarget` take the next free number at their merges, 61
+  or later.
+- **Checks:**
+  - `cargo gate quick` (green) and `cargo clippy --workspace --all-targets -- -D warnings` (clean) on the tree merged
+    with `4ff8402f`;
+  - `sim_fixtures`' `harness_tests`: 26 passed;
+  - repeated on the final tree before the hand-back.
