@@ -15,10 +15,15 @@
 //! - `SelectionRingUniformGpu` memory layout is strictly 32 bytes and 16-byte aligned matching `selection_ring.wgsl`.
 //! - Tactical reticle mesh is a flat ground quad plane pre-allocated once and shared across all entities.
 //! - Every bubble has the same children: ring, bar root (background, HP and shield bars), air
-//!   shadow and tether; the shadow and tether are hidden on a bubble that is not airborne when it
-//!   arrives. [`IndicatorPose::of`] is the only source of their values, for a fresh spawn
+//!   shadow and tether; the shadow and tether are hidden on a bubble that is not airborne.
+//!   [`IndicatorPose::of`] is the only source of their values, for a fresh spawn
 //!   ([`attach_bubble_indicators`]) and for a reused render entity ([`IndicatorWriter`]), so a
 //!   reused bubble's children are a fresh bubble's (plan `2026-11-29-render-entity-pool` D-5, D-6).
+//! - The shadow and tether follow the record's ground every frame: [`update_indicators_system`]
+//!   writes [`AirPose::of`] (which [`IndicatorPose::of`] uses too) into them, compared first, so a
+//!   steady frame writes nothing. The shadow lies [`SHADOW_LIFT`] above the record's `ground_z`
+//!   for every radius, and the tether runs from the bubble's centre to it (plan
+//!   `2026-11-30-terrain-and-air-indicators` D-5, D-6).
 //! - A parked render entity ([`ParkedBattleBubble`]) is never written by
 //!   [`update_indicators_system`].
 
@@ -242,6 +247,59 @@ const SHIELD_BAR_REST: Transform = Transform::from_xyz(0.0, -0.035, 0.01);
 /// Breathing pulse of the selection reticle.
 const RING_PULSE_SPEED: f32 = 5.0;
 
+/// Where the air shadow and tether of one bubble are drawn, and whether: a pure function of its
+/// record, written at arrival ([`IndicatorPose::of`]) and every frame after
+/// ([`update_indicators_system`]). Transforms are relative to the bubble, whose transform the live
+/// synchroniser writes: translation `(x, altitude + lift, y)` with `lift` the radius for a sphere
+/// and 0 for a dome, scale the radius, no rotation.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AirPose {
+    /// The shadow disc: centred [`SHADOW_LIFT`] world units above the record's ground.
+    pub shadow: Transform,
+    /// The tether line: from the bubble's centre down to the shadow.
+    pub tether: Transform,
+    /// Shown while the record is more than `AIRBORNE_HEIGHT` above its ground.
+    pub air: Visibility,
+}
+
+impl AirPose {
+    /// The air pose of `instance`. Pure.
+    ///
+    /// With `r` the drawn radius, `lift` the bubble centre's height above the record's altitude
+    /// and `h` that altitude above `ground_z` (world units), the shadow lies
+    /// `span = h + lift − SHADOW_LIFT` below the centre, which the bubble's scale `r` turns into
+    /// `−span / r` local units: its world height is `ground_z + SHADOW_LIFT` for every radius.
+    /// The tether is centred halfway and `span` long. Sizes (the disc's width, the line's
+    /// thickness) keep their scale against `max(r, MIN_INDICATOR_RADIUS)`. A tether shorter than
+    /// `SHADOW_LIFT` (a dome on the ground, whose air indicators are hidden) keeps that length, so
+    /// no scale collapses to zero.
+    #[must_use]
+    pub fn of(instance: &BubbleRenderInstance) -> Self {
+        let is_dome = matches!(instance.shape, ShapeKind::BuildingDome { .. });
+        let radius = instance.radius.max(f32::MIN_POSITIVE);
+        let lift = if is_dome { 0.0 } else { radius };
+        let height = instance.world_pos[2] - instance.ground_z;
+        let span = height + lift - SHADOW_LIFT;
+        let tether_span = if span.abs() < SHADOW_LIFT {
+            SHADOW_LIFT.copysign(span)
+        } else {
+            span
+        };
+        let size = 1.0 / radius.max(MIN_INDICATOR_RADIUS);
+        Self {
+            shadow: Transform::from_xyz(0.0, -span / radius, 0.0)
+                .with_scale(Vec3::new(size, 1.0, size)),
+            tether: Transform::from_xyz(0.0, -tether_span / (2.0 * radius), 0.0)
+                .with_scale(Vec3::new(size, tether_span / radius, size)),
+            air: if height > AIRBORNE_HEIGHT {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            },
+        }
+    }
+}
+
 /// Where and how every indicator child of one bubble is drawn when the bubble arrives: the one
 /// source of child values for a fresh spawn and for a reused render entity (plan
 /// `2026-11-29-render-entity-pool` D-5, D-6). Transforms are relative to the bubble, whose scale
@@ -260,11 +318,11 @@ pub struct IndicatorPose {
     pub hp_bar: Transform,
     /// The shield bar, full.
     pub shield_bar: Transform,
-    /// The air shadow disc.
+    /// The air shadow disc ([`AirPose::shadow`]).
     pub shadow: Transform,
-    /// The air tether line.
+    /// The air tether line ([`AirPose::tether`]).
     pub tether: Transform,
-    /// Visibility of the air shadow and tether: shown when airborne at arrival.
+    /// Visibility of the air shadow and tether ([`AirPose::air`]).
     pub air: Visibility,
     /// The owner's colour, of the tether's team material.
     pub team_color: Color,
@@ -284,11 +342,7 @@ impl IndicatorPose {
         } else {
             Visibility::Hidden
         };
-        let height = instance.world_pos[2] - instance.ground_z;
-        let airborne = height > AIRBORNE_HEIGHT;
-        // A bubble on the ground keeps hidden air indicators of the least airborne height, so
-        // its transforms never collapse to a zero scale.
-        let height = height.max(AIRBORNE_HEIGHT);
+        let air = AirPose::of(instance);
         let inv_r = 1.0 / instance.radius.max(MIN_INDICATOR_RADIUS);
         Self {
             ring: Transform::from_xyz(0.0, ground_y_offset, 0.0)
@@ -304,18 +358,9 @@ impl IndicatorPose {
             bar_root: Transform::from_xyz(0.0, BAR_HEIGHT, 0.0).with_scale(Vec3::splat(inv_r)),
             hp_bar: HP_BAR_REST,
             shield_bar: SHIELD_BAR_REST,
-            shadow: Transform::from_xyz(0.0, -height * inv_r, 0.0)
-                .with_scale(Vec3::new(inv_r, 1.0, inv_r)),
-            tether: Transform::from_xyz(0.0, -height * 0.5 * inv_r, 0.0).with_scale(Vec3::new(
-                inv_r,
-                height * inv_r,
-                inv_r,
-            )),
-            air: if airborne {
-                Visibility::Inherited
-            } else {
-                Visibility::Hidden
-            },
+            shadow: air.shadow,
+            tether: air.tether,
+            air: air.air,
             team_color: style.color(),
         }
     }
@@ -551,11 +596,152 @@ fn write_team_colour(
     }
 }
 
-/// Updates visibility, uniform parameters, and scales of selection reticle and overhead bars.
+/// The overhead bar parts [`update_indicators_system`] writes: the bar roots' visibility, the HP
+/// bar's scale and material, the shield bar's scale, and the bar roots' children.
+#[derive(SystemParam)]
 #[expect(
     clippy::type_complexity,
     reason = "a Bevy query declares its whole data access in one type"
 )]
+pub struct OverheadBarParts<'w, 's> {
+    /// Bar roots.
+    roots: Query<
+        'w,
+        's,
+        &'static mut Visibility,
+        (With<OverheadBarRootMarker>, Without<GroundRingMarker>),
+    >,
+    /// HP bars.
+    hp: Query<
+        'w,
+        's,
+        (
+            &'static mut Transform,
+            &'static mut MeshMaterial3d<StandardMaterial>,
+        ),
+        (
+            With<OverheadHpBarMarker>,
+            Without<GroundRingMarker>,
+            Without<OverheadBarRootMarker>,
+        ),
+    >,
+    /// Shield bars.
+    shield: Query<
+        'w,
+        's,
+        &'static mut Transform,
+        (
+            With<OverheadShieldBarMarker>,
+            Without<GroundRingMarker>,
+            Without<OverheadBarRootMarker>,
+            Without<OverheadHpBarMarker>,
+        ),
+    >,
+    /// The children of a bar root.
+    children: Query<'w, 's, &'static Children>,
+}
+
+/// The air shadows and tethers [`update_indicators_system`] writes: transform, visibility and
+/// which of the two it is. Disjoint from every other indicator query of the system by its
+/// filters.
+type AirParts<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static mut Transform,
+        &'static mut Visibility,
+        Has<AirShadowMarker>,
+    ),
+    (
+        Or<(With<AirShadowMarker>, With<AirTetherMarker>)>,
+        Without<GroundRingMarker>,
+        Without<OverheadBarRootMarker>,
+        Without<OverheadHpBarMarker>,
+        Without<OverheadShieldBarMarker>,
+    ),
+>;
+
+/// Writes [`AirPose::of`] `instance` into the air shadow and tether among `children`, each value
+/// only if it differs, so a steady frame flags no change (plan
+/// `2026-11-30-terrain-and-air-indicators` D-6).
+// PERFORMANCE RATIONALE:
+// Why: It runs every frame for every bubble, and the steady-state tests require that a frame
+// with nothing new neither allocates nor flags changes.
+// What: Query lookups by entity, `Copy` values and compare-first writes; no collection, handle or
+// asset is touched.
+// Trade-off: The bubble's children are walked once more per frame, in exchange for indicators
+// that follow the record with no change-detection noise.
+fn follow_air_pose(
+    instance: &BubbleRenderInstance,
+    children: &Children,
+    air: &mut AirParts<'_, '_>,
+) {
+    let pose = AirPose::of(instance);
+    for &child in children {
+        if let Ok((mut transform, mut visibility, is_shadow)) = air.get_mut(child) {
+            let target = if is_shadow { pose.shadow } else { pose.tether };
+            set_if_neq(&mut transform, target);
+            set_if_neq(&mut visibility, pose.air);
+        }
+    }
+}
+
+/// Shows or hides the overhead bar root `child` with the selection, and while it is shown scales
+/// its HP and shield bars to `instance`'s ratios and picks the HP bar's material by threshold.
+fn update_overhead_bar(
+    bars: &mut OverheadBarParts<'_, '_>,
+    assets: &IndicatorAssets,
+    instance: &BubbleRenderInstance,
+    child: Entity,
+    selection_vis: Visibility,
+) {
+    let Ok(mut bar_vis) = bars.roots.get_mut(child) else {
+        return;
+    };
+    if *bar_vis != selection_vis {
+        *bar_vis = selection_vis;
+    }
+    if selection_vis == Visibility::Hidden {
+        return;
+    }
+    let Ok(bar_children) = bars.children.get(child) else {
+        return;
+    };
+    for &grandchild in bar_children {
+        // Update Health Bar Scale & Dynamic Material Threshold
+        if let Ok((mut hp_tf, mut hp_mat)) = bars.hp.get_mut(grandchild) {
+            let clamped_hp = instance.hp_ratio.clamp(0.0, 1.0);
+            if (hp_tf.scale.x - clamped_hp).abs() > 1e-4 {
+                hp_tf.scale.x = clamped_hp;
+                hp_tf.translation.x = (clamped_hp - 1.0) * 0.5;
+            }
+
+            let target_mat = if clamped_hp > 0.50 {
+                &assets.hp_green_mat
+            } else if clamped_hp > 0.25 {
+                &assets.hp_yellow_mat
+            } else {
+                &assets.hp_red_mat
+            };
+            if hp_mat.0 != *target_mat {
+                hp_mat.0.clone_from(target_mat);
+            }
+        }
+
+        // Update Shield Bar Scale
+        if let Ok(mut shield_tf) = bars.shield.get_mut(grandchild) {
+            let clamped_shield = instance.shield_ratio.clamp(0.0, 1.0);
+            if (shield_tf.scale.x - clamped_shield).abs() > 1e-4 {
+                shield_tf.scale.x = clamped_shield;
+                shield_tf.translation.x = (clamped_shield - 1.0) * 0.5;
+            }
+        }
+    }
+}
+
+/// Updates, every frame and for every bubble that is not parked: the selection reticle's
+/// visibility and uniform, the overhead bar ([`update_overhead_bar`]), the tether's team colour,
+/// and the air shadow's and tether's pose ([`follow_air_pose`]).
 #[expect(
     clippy::needless_pass_by_value,
     reason = "Bevy passes system parameters by value"
@@ -577,7 +763,6 @@ pub fn update_indicators_system(
     lab_state: Option<Res<'_, LabState>>,
     assets: Res<'_, IndicatorAssets>,
     instance_query: Query<'_, '_, (&BubbleInstance, &Children), Without<ParkedBattleBubble>>,
-    children_query: Query<'_, '_, &Children>,
     mut ring_materials: ResMut<'_, Assets<SelectionRingMaterial>>,
     mut ring_query: Query<
         '_,
@@ -585,33 +770,8 @@ pub fn update_indicators_system(
         (&MeshMaterial3d<SelectionRingMaterial>, &mut Visibility),
         With<GroundRingMarker>,
     >,
-    mut overhead_query: Query<
-        '_,
-        '_,
-        &mut Visibility,
-        (With<OverheadBarRootMarker>, Without<GroundRingMarker>),
-    >,
-    mut hp_bar_query: Query<
-        '_,
-        '_,
-        (&mut Transform, &mut MeshMaterial3d<StandardMaterial>),
-        (
-            With<OverheadHpBarMarker>,
-            Without<GroundRingMarker>,
-            Without<OverheadBarRootMarker>,
-        ),
-    >,
-    mut shield_bar_query: Query<
-        '_,
-        '_,
-        &mut Transform,
-        (
-            With<OverheadShieldBarMarker>,
-            Without<GroundRingMarker>,
-            Without<OverheadBarRootMarker>,
-            Without<OverheadHpBarMarker>,
-        ),
-    >,
+    mut bars: OverheadBarParts<'_, '_>,
+    mut air: AirParts<'_, '_>,
 ) {
     let opt_brackets = lab_state.as_ref().is_none_or(|s| s.opt_selection_brackets);
 
@@ -661,47 +821,11 @@ pub fn update_indicators_system(
             }
 
             // 2. Update Floating Overhead Health & Shield Bar Root and its Children
-            if let Ok(mut bar_vis) = overhead_query.get_mut(child) {
-                if *bar_vis != selection_vis {
-                    *bar_vis = selection_vis;
-                }
-
-                if is_selected {
-                    if let Ok(bar_children) = children_query.get(child) {
-                        for &grandchild in bar_children {
-                            // Update Health Bar Scale & Dynamic Material Threshold
-                            if let Ok((mut hp_tf, mut hp_mat)) = hp_bar_query.get_mut(grandchild) {
-                                let clamped_hp = instance.hp_ratio.clamp(0.0, 1.0);
-                                if (hp_tf.scale.x - clamped_hp).abs() > 1e-4 {
-                                    hp_tf.scale.x = clamped_hp;
-                                    hp_tf.translation.x = (clamped_hp - 1.0) * 0.5;
-                                }
-
-                                let target_mat = if clamped_hp > 0.50 {
-                                    assets.hp_green_mat.clone()
-                                } else if clamped_hp > 0.25 {
-                                    assets.hp_yellow_mat.clone()
-                                } else {
-                                    assets.hp_red_mat.clone()
-                                };
-                                if hp_mat.0 != target_mat {
-                                    *hp_mat = MeshMaterial3d(target_mat);
-                                }
-                            }
-
-                            // Update Shield Bar Scale
-                            if let Ok(mut shield_tf) = shield_bar_query.get_mut(grandchild) {
-                                let clamped_shield = instance.shield_ratio.clamp(0.0, 1.0);
-                                if (shield_tf.scale.x - clamped_shield).abs() > 1e-4 {
-                                    shield_tf.scale.x = clamped_shield;
-                                    shield_tf.translation.x = (clamped_shield - 1.0) * 0.5;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            update_overhead_bar(&mut bars, &assets, instance, child, selection_vis);
         }
+
+        // 3. The air shadow and tether follow the record's ground and altitude.
+        follow_air_pose(instance, children, &mut air);
     }
 }
 
