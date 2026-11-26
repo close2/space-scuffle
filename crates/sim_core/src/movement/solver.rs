@@ -17,8 +17,10 @@
 //! **The `Gated` pipeline's contact layer C′** (plan `2026-11-27-gated-movement` §3.1), chosen by
 //! [`SolverSettings::gated`], adds three rules to the same iterations, and nothing else:
 //! - **C′-1:** no ally nudges an attacking unit along its ring (D-δ is never applied, whatever
-//!   [`ContactParty::nudge`] holds; owner answer Q0121 (a)), so attacking and holding units are
-//!   moved by no friend that is not itself attacking.
+//!   [`ContactParty::nudge`] holds; owner answer Q0121 (a)), and two anchored friends (attacking
+//!   or holding) take no correction from each other (plan Amendment 3, item 2), so attacking and
+//!   holding units are moved by no friend. "Attacking" is the caller's: under `Gated` the
+//!   collision phase reads it from the tick-start snapshot (Amendment 3, item 1).
 //! - **C′-2, enemies block (E-2, plan `2026-11-25-enemy-contact-and-ring-retarget` §4.2,
 //!   B-193):** no step a body takes in the tick closes on an enemy by more than the body's share
 //!   of the gap between them: its committed walk (application zero: the bodies enter at the start
@@ -31,6 +33,10 @@
 //!   neither did share it evenly, and a body that cannot move in the pair gives the other the
 //!   whole gap. So enemies are never moved by an enemy's press; an overlap that exists already
 //!   (a spawn, an unload, a terrain residual) is still split evenly (C-8). It has no switch.
+//!   Before every application the list is checked to hold every enemy pair the application's
+//!   steps can bring into contact, and rebuilt with the steps' reach when it may not
+//!   (Amendment 3, item 3; [`ContactSolver::gated_application`]). The enemy pairs' part of each
+//!   body's steps is kept as H-2's probe ([`ContactSolver::enemy_push`]).
 //! - **C′-3, the terrain transfer (B-220):** a body whose own correction terrain refused in an
 //!   application (the terrain step returned another target and the body moved less than half
 //!   its correction) counts as fixed in every later application of the solve, until a step of
@@ -165,7 +171,8 @@ pub struct ShareRules {
 /// | friends, otherwise | ½ | ½ |
 ///
 /// An engaged unit with a [`ContactParty::nudge`] counts as not engaged against friends under
-/// `Solver` (D-δ); under `Gated` it is anchored like any engaged unit.
+/// `Solver` (D-δ); under `Gated` it is anchored like any engaged unit, and two anchored friends
+/// (attacking or holding) take no correction from each other (Amendment 3, item 2).
 #[must_use]
 pub fn contact_shares(a: &ContactParty, b: &ContactParty, rules: ShareRules) -> PairShares {
     let (zero, half, one) = (SimScalar::ZERO, SimScalar::HALF, SimScalar::ONE);
@@ -183,6 +190,11 @@ pub fn contact_shares(a: &ContactParty, b: &ContactParty, rules: ShareRules) -> 
             (false, true) => weights(one, zero),
             (false, false) => weights(half, half),
         };
+    }
+    // C′ (plan `2026-11-27-gated-movement` Amendment 3, item 2): under `Gated` two anchored
+    // friends (attacking or holding) never correct each other.
+    if rules.gated && a.anchored() && b.anchored() {
+        return PairShares::None;
     }
     match (a.holding, b.holding) {
         (true, true) => return PairShares::None,
@@ -273,22 +285,35 @@ pub(crate) struct SolverBody {
     /// Where the body stands now, world units: its committed proposal, then each iteration's
     /// result.
     pub position: SimVec2,
-    /// Its committed proposal for this tick, world units: where it enters the solve.
-    pub committed: SimVec2,
-    /// Where its own committed walk began this tick, world units (E-2, `Gated` only): `start`
-    /// when the movement phase committed a walk for it, otherwise `committed`, as for a body a
-    /// cast placed (a teleport is no step it takes, and E-2 does not bound it). Read by no other
-    /// pipeline.
-    pub walk_from: SimVec2,
     /// Passes through other bodies (mineral walking, suppressed collision): in no pair.
     pub ghost: bool,
 }
 
-impl SolverBody {
-    /// Its committed walk this tick, `committed − walk_from`, world units.
-    fn walk(&self) -> Result<SimVec2, MovementMathError> {
-        checked_vec_sub(self.committed, self.walk_from)
+/// One body's committed walk this tick (E-2, `Gated` only), kept beside [`SolverBody`] in
+/// [`ContactSolver::walks`] so that the `Solver` pipeline's bodies stay as they were.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Walk {
+    /// Its committed proposal for this tick, world units: where it enters the solve.
+    pub committed: SimVec2,
+    /// Where its own committed walk began this tick, world units: the body's `start` when the
+    /// movement phase committed a walk for it, otherwise `committed`, as for a body a cast
+    /// placed (a teleport is no step it takes, and E-2 does not bound it).
+    pub from: SimVec2,
+}
+
+impl Walk {
+    /// The walk itself, `committed − from`, world units.
+    fn step(self) -> Result<SimVec2, MovementMathError> {
+        checked_vec_sub(self.committed, self.from)
     }
+}
+
+/// An enemy pair of the list (`Gated` only): its index in the pair list and E-2's shares of the
+/// gap between its bodies, frozen for the tick ([`enemy_weights`]).
+#[derive(Debug, Clone, Copy)]
+struct EnemyPair {
+    pair: u32,
+    gap_shares: (SimScalar, SimScalar),
 }
 
 /// What one pair's geometry gives in an iteration: both bodies' corrections, shares applied,
@@ -318,9 +343,6 @@ struct Pair {
     hard: bool,
     /// Enemies, or a fixed body: the hard constraints applied last (plan Amendment 7, item 4).
     last: bool,
-    /// E-2 (`Gated`): the first and second body's shares of the gap between them, frozen for the
-    /// tick ([`enemy_weights`]); zero for a friend pair and under `Solver`.
-    gap_shares: (SimScalar, SimScalar),
     /// D-δ: in a friend pair, the radial direction of a body that may only be nudged along its
     /// ring; its correction keeps only the part perpendicular to it.
     nudge_a: Option<SimVec2>,
@@ -374,16 +396,6 @@ pub(crate) struct SolverSettings {
     pub gated: bool,
 }
 
-impl SolverSettings {
-    /// The share table's switches of these settings.
-    const fn share_rules(self) -> ShareRules {
-        ShareRules {
-            moving_friends_push: self.moving_friends_push,
-            gated: self.gated,
-        }
-    }
-}
-
 /// What one solve did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) struct SolveReport {
@@ -394,9 +406,6 @@ pub(crate) struct SolveReport {
     pub pairs: usize,
     /// Times the pair list was rebuilt within the solve (Verlet rule).
     pub rebuilds: u8,
-    /// C′-3 (`Gated`): friend pairs, summed over the solve's applications, in which a body held
-    /// by terrain counted as fixed; 0 under `Solver`.
-    pub terrain_transfers: u32,
 }
 
 /// Extra reach beyond the radius sum within which a pair is listed, world units (C-1: 1/4).
@@ -415,6 +424,11 @@ const PAIR_SLACK: SimScalar = SimScalar::from_raw(1 << 30);
 /// step at or inside its allowance, so the guard acts only where two enemies' projections
 /// interact and never stops a body sliding along one enemy.
 const PROJECTION_SLACK: SimScalar = SimScalar::from_raw(8);
+
+/// The most lists one `Gated` application builds to cover its own steps
+/// ([`ContactSolver::gated_application`]): a rebuild with the steps' reach covers them unless the
+/// rebuilt list's E-2 bound lengthens a step by more than half the slack.
+const REACH_ROUNDS: usize = 4;
 
 /// Which pairs a pair-list build lists and how far it reaches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -478,8 +492,27 @@ pub(crate) struct ContactSolver {
     scales: Vec<SimScalar>,
     /// Per body: the state of its last terrain step, for the active set.
     steps: Vec<BodyStep>,
-    /// The indices in `pairs` of the enemy pairs, for E-2 (`Gated` only).
-    enemy_pairs: Vec<u32>,
+    /// `Gated` only: each body's committed walk, parallel to [`Self::bodies`], filled by the
+    /// caller (E-2's application zero and its frozen gap shares).
+    pub walks: Vec<Walk>,
+    /// The enemy pairs of the list with E-2's gap shares (`Gated` only).
+    enemy_pairs: Vec<EnemyPair>,
+    /// Per body (`Gated` only): C′-3's flag, terrain refused the body's latest correction of
+    /// this solve (another target, and less than half of it travelled), so it counts as fixed in
+    /// its friend pairs until a step of its own is admitted.
+    held_by_terrain: Vec<bool>,
+    /// Per body (`Gated` only): the part of the current application's sum that enemy pairs
+    /// contributed, world units.
+    enemy_sums: Vec<SimVec2>,
+    /// Per body (`Gated` only): the L1 length, world units, of the enemy pairs' part of every
+    /// step the body took in this solve, the probe of H-2 (plan `2026-11-27-gated-movement`
+    /// Amendment 3, item 4). Derived output, never read by the solve.
+    pub enemy_push: Vec<SimScalar>,
+    /// `Gated` only: friend pairs, over the solve's applications, in which a body held by
+    /// terrain counted as fixed (C′-3), the probe `terrain_transfers`.
+    pub transfers: u32,
+    /// `Gated` only: the reach beyond [`PAIR_SLACK`] the list was last built with, world units.
+    list_extra: SimScalar,
     /// Per body: the step of the current application (`Gated` only).
     planned: Vec<Planned>,
     /// Per body: E-2's projection of the current application.
@@ -501,18 +534,14 @@ struct BodyStep {
     /// The target of the body's latest terrain step when that step left it where it was
     /// without a fault, world units; `None` after a step that moved it or faulted.
     held: Option<SimVec2>,
-    /// C′-3 (`Gated` only): terrain refused the body's latest correction of this solve (the
-    /// terrain step returned another target, and the body moved less than half the correction),
-    /// so it counts as fixed in its friend pairs until a step of its own is admitted.
-    held_by_terrain: bool,
 }
 
 impl ContactSolver {
     /// Builds the pairs that may touch this tick: same class, neither a ghost, within the radius
-    /// sum plus [`PAIR_SLACK`] (and `reach.extra`) of each other, `connected` (ground on both
-    /// sides, as the caller judges it), with shares from [`contact_shares`]; only enemy pairs
-    /// when `reach.enemies_only`. Each pair is stored lower id first. `G` is the `Gated`
-    /// pipeline: its enemy pairs carry E-2's gap shares and are indexed.
+    /// sum plus [`PAIR_SLACK`] of each other, `connected` (ground on both sides, as the caller
+    /// judges it), with shares from [`contact_shares`]. Each pair is stored lower id first.
+    /// Under `G` (`Gated`) the reach grows by `reach.extra`, only enemy pairs are listed when
+    /// `reach.enemies_only`, and the enemy pairs are indexed with E-2's gap shares.
     fn build_pairs<const G: bool>(
         &mut self,
         (map_size, settings, reach): ((u32, u32), SolverSettings, Reach),
@@ -520,9 +549,12 @@ impl ContactSolver {
         report: &mut impl FnMut(MovementInvariant),
     ) {
         self.pairs.clear();
-        self.enemy_pairs.clear();
         self.anchors.clear();
         self.anchors.extend(self.bodies.iter().map(|b| b.position));
+        if G {
+            self.enemy_pairs.clear();
+            self.list_extra = reach.extra;
+        }
         super::largest_by_class(
             &mut self.largest,
             self.bodies
@@ -534,7 +566,11 @@ impl ContactSolver {
             map_size.1,
             self.bodies.iter().map(|b| b.position),
         );
-        let slack = PAIR_SLACK.saturating_add(reach.extra);
+        let slack = if G {
+            PAIR_SLACK.saturating_add(reach.extra)
+        } else {
+            PAIR_SLACK
+        };
         let mut near = std::mem::take(&mut self.near);
         for index in 0..self.bodies.len() {
             let a = self.bodies[index];
@@ -542,11 +578,11 @@ impl ContactSolver {
                 continue;
             }
             let class = a.policy.class;
-            let radius = a.policy.radius.saturating_add(self.largest[class.index()]);
+            let radius = a.policy.radius + self.largest[class.index()];
             near.clear();
             let bodies = &self.bodies;
             self.grid
-                .for_each_near(a.position, radius.saturating_add(slack), |other| {
+                .for_each_near(a.position, radius + slack, |other| {
                     let b = &bodies[other];
                     let limit = i128::from(a.policy.radius.raw())
                         + i128::from(b.policy.radius.raw())
@@ -554,7 +590,7 @@ impl ContactSolver {
                     if other > index
                         && !b.ghost
                         && b.policy.class.touches(class)
-                        && (!reach.enemies_only || b.party.owner != a.party.owner)
+                        && (!G || !reach.enemies_only || b.party.owner != a.party.owner)
                         && super::math::within_distance(a.position, b.position, limit)
                     {
                         near.push(other);
@@ -570,9 +606,9 @@ impl ContactSolver {
         self.near = near;
     }
 
-    /// Adds the pair of slots `first` and `second` with its shares, lower id first; under `G`
-    /// (`Gated`) an enemy pair also takes E-2's frozen gap shares and joins the enemy index, and
-    /// no pair carries D-δ's nudge (C′-1).
+    /// Adds the pair of slots `first` and `second` with its shares, lower id first. Under `G`
+    /// (`Gated`) the shares are C′'s (no D-δ nudge, anchored friends uncorrected) and an enemy
+    /// pair joins the enemy index with E-2's frozen gap shares.
     fn add_pair<const G: bool>(
         &mut self,
         first: usize,
@@ -592,7 +628,11 @@ impl ContactSolver {
             source,
         };
         let friends = a.party.owner == b.party.owner;
-        let (share_a, share_b) = match contact_shares(&a.party, &b.party, settings.share_rules()) {
+        let rules = ShareRules {
+            moving_friends_push: settings.moving_friends_push,
+            gated: G,
+        };
+        let (share_a, share_b) = match contact_shares(&a.party, &b.party, rules) {
             PairShares::None => return,
             PairShares::Weights(x, y) => (x, y),
             PairShares::ByApproach => {
@@ -621,16 +661,20 @@ impl ContactSolver {
         let moving = i128::from(radius_sum.raw()) * i128::from(settings.moving_overlap_permille);
         let moving_bound =
             friends.then(|| SimScalar::from_raw(i64::try_from(moving / 1000).unwrap_or(i64::MAX)));
-        let mut gap_shares = (SimScalar::ZERO, SimScalar::ZERO);
         if G && !friends {
-            gap_shares = match enemy_weights(&a, &b, (share_a, share_b)) {
+            let walks = (self.walks.get(low), self.walks.get(high));
+            let (Some(&walk_a), Some(&walk_b)) = walks else {
+                return report(fault(MovementMathError::Unrepresentable));
+            };
+            let gap_shares = match enemy_weights((walk_a, walk_b), (share_a, share_b)) {
                 Ok(weights) => weights,
                 Err(source) => return report(fault(source)),
             };
-            self.enemy_pairs
-                .push(u32::try_from(self.pairs.len()).unwrap_or(u32::MAX));
+            self.enemy_pairs.push(EnemyPair {
+                pair: u32::try_from(self.pairs.len()).unwrap_or(u32::MAX),
+                gap_shares,
+            });
         }
-        let nudged = |party: &ContactParty| party.nudge.filter(|_| friends && !G);
         self.pairs.push(Pair {
             a: u32::try_from(low).unwrap_or(u32::MAX),
             b: u32::try_from(high).unwrap_or(u32::MAX),
@@ -640,9 +684,8 @@ impl ContactSolver {
                 || share_a == SimScalar::ZERO
                 || share_b == SimScalar::ZERO,
             last: a.party.owner != b.party.owner || a.party.fixed || b.party.fixed,
-            gap_shares,
-            nudge_a: nudged(&a.party),
-            nudge_b: nudged(&b.party),
+            nudge_a: a.party.nudge.filter(|_| friends && !G),
+            nudge_b: b.party.nudge.filter(|_| friends && !G),
             radius_sum,
             dead_band,
             moving_bound,
@@ -660,15 +703,17 @@ impl ContactSolver {
     /// Builds the pair list over [`Self::bodies`] and runs the K averaged iterations, C-3′'s
     /// extension past them, and the hard pass (C-1, C-1b), rebuilding the list by the Verlet rule
     /// ([`PAIR_SLACK`]); under [`SolverSettings::gated`] with C′'s rules (the module
-    /// documentation). `connected` says whether two bodies may touch across the terrain between
-    /// them; `terrain` takes a body, its current position and the averaged target, and returns
-    /// where the body may go: the target, a slide along a wall, or `None` to stay (C-6).
+    /// documentation), for which the caller fills [`Self::walks`]. `connected` says whether two
+    /// bodies may touch across the terrain between them; `terrain` takes a body, its current
+    /// position and the averaged target, and returns where the body may go: the target, a slide
+    /// along a wall, or `None` to stay (C-6).
     // PERFORMANCE RATIONALE:
     // Why: The `Solver` pipeline must cost what it cost before C′ existed (plan
     // `2026-11-27-gated-movement` §9 C-2), and C′'s tests sit in its hottest loops: every pair of
     // every iteration and every body of every application.
     // What: The solve is generic over a `const G: bool`, the pipeline, chosen once per tick here;
-    // `Solver` runs the `false` copy, in which every C′ branch is compiled away.
+    // `Solver` runs the `false` copy, in which every C′ branch is compiled away, and C′'s data
+    // lives in buffers of its own, so `Solver`'s bodies and pairs keep their layout.
     // Trade-off: Two copies of the solve's functions in the binary.
     pub(crate) fn solve(
         &mut self,
@@ -704,6 +749,7 @@ impl ContactSolver {
         report: &mut impl FnMut(MovementInvariant),
     ) -> SolveReport {
         if G {
+            self.start_gated();
             self.place_committed((map_size, settings), &mut connected, &mut terrain, report);
         }
         let contact = (map_size, settings, Reach::CONTACT);
@@ -714,7 +760,7 @@ impl ContactSolver {
         let fixed = u16::from(settings.iterations);
         let mut last_excess: Option<i128> = None;
         for iteration in 1..=settings.crowd_iterations.max(fixed) {
-            let excess = self.accumulate::<G>(Pass::Averaged, &mut done, report);
+            let excess = self.accumulate::<G>(Pass::Averaged, report);
             // C-3′: past K, only while a friend pair is above the moving bound (a positive
             // excess) and the last iteration reduced the excess.
             if iteration > fixed && !(excess > 0 && last_excess.is_some_and(|last| excess < last)) {
@@ -722,10 +768,16 @@ impl ContactSolver {
             }
             last_excess = Some(excess);
             done.iterations += 1;
-            if !self.apply::<G>(true, &mut terrain, report) {
+            let moved = if G {
+                let context = (map_size, settings, &mut done);
+                self.gated_application(true, context, (&mut connected, &mut terrain), report)
+            } else {
+                self.apply(true, &mut terrain, report)
+            };
+            if !moved {
                 break;
             }
-            if self.list_is_stale() {
+            if self.list_is_stale::<G>() {
                 self.build_pairs::<G>(contact, &mut connected, report);
                 done.rebuilds = done.rebuilds.saturating_add(1);
             }
@@ -733,20 +785,46 @@ impl ContactSolver {
         // C-1b, prioritised (plan Amendment 7, item 4): the hard friendly pairs first, then the
         // enemy and fixed constraints, so that no friend's correction is the last word against
         // an enemy or a fixed body.
-        self.accumulate::<G>(Pass::HardFriends, &mut done, report);
+        self.accumulate::<G>(Pass::HardFriends, report);
         self.bound_summed_steps(report);
-        self.apply::<G>(false, &mut terrain, report);
+        if G {
+            let context = (map_size, settings, &mut done);
+            self.gated_application(false, context, (&mut connected, &mut terrain), report);
+        } else {
+            self.apply(false, &mut terrain, report);
+        }
         // The enemy and fixed constraints keep the last word unbounded: D-α never relaxes them,
         // and a body may close on a friend to clear an enemy.
-        self.accumulate::<G>(Pass::EnemyAndFixed, &mut done, report);
-        self.apply::<G>(false, &mut terrain, report);
+        self.accumulate::<G>(Pass::EnemyAndFixed, report);
+        if G {
+            let context = (map_size, settings, &mut done);
+            self.gated_application(false, context, (&mut connected, &mut terrain), report);
+        } else {
+            self.apply(false, &mut terrain, report);
+        }
         done.pairs = self.pairs.len();
         done
     }
 
-    /// Whether any body has moved more than half [`PAIR_SLACK`] since the list was built.
-    fn list_is_stale(&self) -> bool {
-        let half = i128::from(PAIR_SLACK.raw()) / 2;
+    /// Clears `Gated`'s per-solve buffers: no body is held by terrain, nothing pushed yet.
+    fn start_gated(&mut self) {
+        self.transfers = 0;
+        self.list_extra = SimScalar::ZERO;
+        self.held_by_terrain.clear();
+        self.held_by_terrain.resize(self.bodies.len(), false);
+        self.enemy_push.clear();
+        self.enemy_push.resize(self.bodies.len(), SimScalar::ZERO);
+    }
+
+    /// Whether any body has moved more than half the list's slack ([`PAIR_SLACK`], and under `G`
+    /// its extra reach) since the list was built.
+    fn list_is_stale<const G: bool>(&self) -> bool {
+        let slack = if G {
+            i128::from(PAIR_SLACK.raw()) + i128::from(self.list_extra.raw())
+        } else {
+            i128::from(PAIR_SLACK.raw())
+        };
+        let half = slack / 2;
         self.bodies
             .iter()
             .zip(&self.anchors)
@@ -757,18 +835,22 @@ impl ContactSolver {
     /// bodies moved since its correction was computed reuses it (K-1: by the bodies' move counts,
     /// so a summed pass never reads a correction from positions before an earlier application).
     /// Under `G` (`Gated`) a friend pair with a body terrain holds takes C′-3's shares
-    /// ([`transferred_shares`]), each such pair counted in `done.terrain_transfers`. Returns
-    /// C-3′'s friend excess of those pairs at the current positions: the exact sum, in raw Q32.32
-    /// units, of every friend pair's overlap beyond the moving bound.
+    /// ([`transferred_shares`], counted in [`Self::transfers`]), and the enemy pairs' part of
+    /// each body's sum is kept in [`Self::enemy_sums`]. Returns C-3′'s friend excess of those
+    /// pairs at the current positions: the exact sum, in raw Q32.32 units, of every friend pair's
+    /// overlap beyond the moving bound.
     fn accumulate<const G: bool>(
         &mut self,
         pass: Pass,
-        done: &mut SolveReport,
         report: &mut impl FnMut(MovementInvariant),
     ) -> i128 {
         let mut excess = 0_i128;
         self.sums.clear();
         self.sums.resize(self.bodies.len(), Accumulator::default());
+        if G {
+            self.enemy_sums.clear();
+            self.enemy_sums.resize(self.bodies.len(), SimVec2::ZERO);
+        }
         for pair in &mut self.pairs {
             let included = match pass {
                 Pass::Averaged => true,
@@ -783,18 +865,25 @@ impl ContactSolver {
             let counts = (self.steps[ia].moves, self.steps[ib].moves);
             let mut shares = (pair.share_a, pair.share_b);
             if G {
-                let held = (
-                    self.steps[ia].held_by_terrain,
-                    self.steps[ib].held_by_terrain,
-                );
+                let held = (self.held_by_terrain[ia], self.held_by_terrain[ib]);
                 if let Some(transfer) = transferred_shares(pair, (a, b), held) {
                     shares = transfer;
-                    done.terrain_transfers = done.terrain_transfers.saturating_add(1);
+                    self.transfers = self.transfers.saturating_add(1);
                 }
             }
+            // A flag change counts as a move (`gated_application`), so a cached correction was
+            // computed with the shares of the current flags.
             let correction = match pair.cached {
                 Some(cached) if pair.cached_at == counts => cached,
-                _ => pair_correction(pair, shares, a, b),
+                _ if G => {
+                    let shared = Pair {
+                        share_a: shares.0,
+                        share_b: shares.1,
+                        ..*pair
+                    };
+                    pair_correction(&shared, a, b)
+                }
+                _ => pair_correction(pair, a, b),
             };
             pair.cached = Some(correction);
             pair.cached_at = counts;
@@ -804,6 +893,16 @@ impl ContactSolver {
                     excess += i128::from(corrected.excess.raw());
                     let added = add_to(&mut self.sums, ia, corrected.delta_a, shares.0)
                         .and_then(|()| add_to(&mut self.sums, ib, corrected.delta_b, shares.1));
+                    if G && pair.moving_bound.is_none() {
+                        let enemy = enemy_part(&mut self.enemy_sums, (ia, ib), corrected, shares);
+                        if let Err(source) = enemy {
+                            report(MovementInvariant::Arithmetic {
+                                entity: a.id,
+                                operation: "contact solver enemy probe",
+                                source,
+                            });
+                        }
+                    }
                     if let Err(source) = added {
                         report(MovementInvariant::Arithmetic {
                             entity: a.id,
@@ -876,16 +975,14 @@ impl ContactSolver {
     }
 
     /// Moves every body with corrections: by their mean when `average`, else by their sum, through
-    /// `terrain`; under `G` (`Gated`) by [`Self::apply_gated`]. Returns whether any body moved.
-    fn apply<const G: bool>(
+    /// `terrain`. Returns whether any body moved. The `Solver` pipeline's application; `Gated`
+    /// takes [`Self::gated_application`].
+    fn apply(
         &mut self,
         average: bool,
         terrain: &mut impl FnMut(&SolverBody, SimVec2) -> Result<Option<SimVec2>, MovementMathError>,
         report: &mut impl FnMut(MovementInvariant),
     ) -> bool {
-        if G {
-            return self.apply_gated(average, terrain, report);
-        }
         let mut moved = false;
         for ((body, acc), last) in self.bodies.iter_mut().zip(&self.sums).zip(&mut self.steps) {
             if acc.count == 0 || body.party.fixed {
@@ -922,22 +1019,62 @@ impl ContactSolver {
         moved
     }
 
-    /// [`Self::apply`] under `Gated`: each body's step is bounded by E-2 against the enemies of
-    /// the application ([`Self::bound_enemy_steps`]); a terrain slide that turns a bounded step
-    /// back into an enemy is refused ([`closes_too_far`]); and each terrain step records whether
-    /// terrain refused the body's correction (C′-3, [`refused_by_terrain`]). A change of that
-    /// flag counts as a move, for the pair cache and the early stop, since it changes the shares
-    /// of the next application.
-    fn apply_gated(
+    /// One application under `Gated`: plans each body's step (the mean of its corrections when
+    /// `average`, else their sum), bounds it by E-2 against the enemies of the list
+    /// ([`Self::bound_enemy_steps`]) after making sure the list holds every enemy pair the steps
+    /// can bring into contact ([`Self::reach_is_short`]: when it does not, the list is rebuilt
+    /// with the steps' reach and the steps are planned again), then moves the bodies as
+    /// [`Self::apply`] does, with three additions: a terrain slide that turns a bounded step back
+    /// into an enemy is refused ([`closes_too_far`]); each terrain step records C′-3's flag
+    /// ([`refused_by_terrain`]), a change of which counts as a move, for the pair cache and the
+    /// early stop, since it changes the shares of the next application; and the enemy pairs'
+    /// part of each step taken is added to [`Self::enemy_push`]. Returns whether any body moved
+    /// or changed its flag.
+    fn gated_application(
+        &mut self,
+        average: bool,
+        (map_size, settings, done): ((u32, u32), SolverSettings, &mut SolveReport),
+        (connected, terrain): (
+            &mut impl FnMut(&SolverBody, &SolverBody) -> bool,
+            &mut impl FnMut(&SolverBody, SimVec2) -> Result<Option<SimVec2>, MovementMathError>,
+        ),
+        report: &mut impl FnMut(MovementInvariant),
+    ) -> bool {
+        let mut reached = false;
+        for _ in 0..REACH_ROUNDS {
+            self.plan_steps(average);
+            if !self.enemy_pairs.is_empty() {
+                self.bound_enemy_steps(report);
+            }
+            let longest = self.planned.iter().map(|&p| l1_raw(planned_step(p))).max();
+            let longest = longest.unwrap_or(0);
+            if !self.reach_is_short(longest) {
+                reached = true;
+                break;
+            }
+            let extra = SimScalar::from_raw(i64::try_from(2 * longest).unwrap_or(i64::MAX));
+            let reach = Reach {
+                extra,
+                enemies_only: false,
+            };
+            self.build_pairs::<true>((map_size, settings, reach), connected, report);
+            done.rebuilds = done.rebuilds.saturating_add(1);
+        }
+        if !reached {
+            // No list within the rounds covered the steps: no body moves in this application,
+            // which keeps E-2's bound (it never ended a solve on the plan's scenes).
+            return false;
+        }
+        self.move_planned(average, terrain, report)
+    }
+
+    /// The moves of [`Self::gated_application`], once the steps are planned and bounded.
+    fn move_planned(
         &mut self,
         average: bool,
         terrain: &mut impl FnMut(&SolverBody, SimVec2) -> Result<Option<SimVec2>, MovementMathError>,
         report: &mut impl FnMut(MovementInvariant),
     ) -> bool {
-        self.plan_steps(average);
-        if !self.enemy_pairs.is_empty() {
-            self.bound_enemy_steps(report);
-        }
         let mut moved = false;
         let limits = &self.limits[..];
         for (slot, ((body, planned), last)) in self
@@ -968,8 +1105,8 @@ impl ContactSolver {
                 }
             };
             let refused = refused_by_terrain(body.position, attempted, next);
-            if refused != last.held_by_terrain {
-                last.held_by_terrain = refused;
+            if refused != self.held_by_terrain[slot] {
+                self.held_by_terrain[slot] = refused;
                 last.moves = last.moves.wrapping_add(1);
                 moved = true;
             }
@@ -982,11 +1119,39 @@ impl ContactSolver {
                     body.position = next;
                     last.moves = last.moves.wrapping_add(1);
                     moved = true;
+                    let count = self.sums[slot].count;
+                    let part = self.enemy_sums[slot];
+                    let pushed = if average && count > 1 {
+                        l1_raw(part) / i128::from(count)
+                    } else {
+                        l1_raw(part)
+                    };
+                    let pushed = SimScalar::from_raw(i64::try_from(pushed).unwrap_or(i64::MAX));
+                    self.enemy_push[slot] = self.enemy_push[slot].saturating_add(pushed);
                 }
                 _ => last.held = attempted,
             }
         }
         moved
+    }
+
+    /// Whether the list may miss an enemy pair that this application's steps, each at most
+    /// `longest` raw units long (L1, an upper bound of its length), can bring into contact.
+    ///
+    /// A pair left out of the list stood more than `r_a + r_b + s` apart at the build, `s` the
+    /// list's slack (`PAIR_SLACK` and its extra reach). If every body stands within
+    /// `s / 2 − longest` of where the build found it, each ends the application within `s / 2`
+    /// of it, so the pair is still more than `r_a + r_b` apart: it cannot touch. When some body
+    /// stands farther (or `longest` exceeds `s / 2`), the list may be short.
+    fn reach_is_short(&self, longest: i128) -> bool {
+        let slack = i128::from(PAIR_SLACK.raw()) + i128::from(self.list_extra.raw());
+        let margin = slack / 2 - longest;
+        margin < 0
+            || self
+                .bodies
+                .iter()
+                .zip(&self.anchors)
+                .any(|(body, &anchor)| !super::math::within_distance(body.position, anchor, margin))
     }
 
     /// Fills [`Self::planned`] with each body's step of this application: none for a body without
@@ -1010,12 +1175,12 @@ impl ContactSolver {
     }
 
     /// E-2's application zero (`Gated`): every body enters at the start of its own committed walk
-    /// ([`SolverBody::walk_from`]) and takes the walk as a first, summed application, bounded
-    /// against the enemies within reach ([`Self::bound_enemy_steps`]). A body whose walk the bound
-    /// leaves whole is placed at its committed position exactly, without a terrain step (its
-    /// proposal was admitted by locomotion); a shortened one takes the terrain step (C-6) to its
-    /// bounded target, and stays where its walk began if terrain refuses it or slides it back into
-    /// an enemy beyond its allowance ([`closes_too_far`]). A scene with one owner, or in which
+    /// ([`Walk::from`]) and takes the walk as a first, summed application, bounded against the
+    /// enemies within reach ([`Self::bound_enemy_steps`]). A body whose walk the bound leaves
+    /// whole is placed at its committed position exactly, without a terrain step (its proposal
+    /// was admitted by locomotion); a shortened one takes the terrain step (C-6) to its bounded
+    /// target, and stays where its walk began if terrain refuses it or slides it back into an
+    /// enemy beyond its allowance ([`closes_too_far`]). A scene with one owner, or in which
     /// nothing walked, is left at the committed positions untouched.
     // PERFORMANCE RATIONALE:
     // Why: The walks are bounded against the enemies at the start of the tick, which needs a pair
@@ -1033,9 +1198,12 @@ impl ContactSolver {
         report: &mut impl FnMut(MovementInvariant),
     ) {
         self.limits.clear();
-        let movers = || self.bodies.iter().filter(|b| !b.ghost && !b.party.fixed);
-        let longest = movers()
-            .filter_map(|b| b.walk().ok())
+        let longest = self
+            .bodies
+            .iter()
+            .zip(&self.walks)
+            .filter(|(b, _)| !b.ghost && !b.party.fixed)
+            .filter_map(|(_, walk)| walk.step().ok())
             .map(l1_raw)
             .max()
             .unwrap_or(0);
@@ -1049,8 +1217,10 @@ impl ContactSolver {
             return;
         }
         let extra = SimScalar::from_raw(i64::try_from(2 * longest).unwrap_or(i64::MAX));
-        for body in self.bodies.iter_mut().filter(|b| !b.party.fixed) {
-            body.position = body.walk_from;
+        for (body, walk) in self.bodies.iter_mut().zip(&self.walks) {
+            if !body.party.fixed {
+                body.position = walk.from;
+            }
         }
         let reach = Reach {
             extra,
@@ -1058,29 +1228,36 @@ impl ContactSolver {
         };
         self.build_pairs::<true>((map_size, settings, reach), connected, report);
         self.planned.clear();
-        for body in &self.bodies {
-            let walk = body.walk();
-            let still = walk.is_ok_and(|walk| walk == SimVec2::ZERO);
+        for (body, walk) in self.bodies.iter().zip(&self.walks) {
+            let step = walk.step();
+            let still = step.is_ok_and(|step| step == SimVec2::ZERO);
             self.planned
-                .push((!body.ghost && !body.party.fixed && !still).then_some(walk));
+                .push((!body.ghost && !body.party.fixed && !still).then_some(step));
         }
         if !self.enemy_pairs.is_empty() {
             self.bound_enemy_steps(report);
         }
-        for (slot, (body, planned)) in self.bodies.iter_mut().zip(&self.planned).enumerate() {
+        let limits = &self.limits[..];
+        for (slot, ((body, planned), walk)) in self
+            .bodies
+            .iter_mut()
+            .zip(&self.planned)
+            .zip(&self.walks)
+            .enumerate()
+        {
             let bounded = match *planned {
-                Some(Ok(step)) if body.walk().is_ok_and(|walk| walk != step) => step,
+                Some(Ok(step)) if walk.step().is_ok_and(|whole| whole != step) => step,
                 _ => {
-                    body.position = body.committed;
+                    body.position = walk.committed;
                     continue;
                 }
             };
-            let target = checked_vec_add(body.walk_from, bounded);
+            let target = checked_vec_add(walk.from, bounded);
             let next = target.and_then(|target| terrain(body, target));
             match next {
                 Ok(Some(next))
                     if Some(next) != target.ok()
-                        && closes_too_far(&self.limits, slot, body.position, next) => {}
+                        && closes_too_far(limits, slot, body.position, next) => {}
                 Ok(Some(next)) => body.position = next,
                 Ok(None) => {}
                 Err(source) => report(MovementInvariant::Arithmetic {
@@ -1115,8 +1292,8 @@ impl ContactSolver {
         self.adjust.clear();
         self.adjust.resize(self.bodies.len(), SimVec2::ZERO);
         self.limits.clear();
-        for &index in &self.enemy_pairs {
-            let pair = &self.pairs[index as usize];
+        for enemy in &self.enemy_pairs {
+            let pair = &self.pairs[enemy.pair as usize];
             let (ia, ib) = (pair.a as usize, pair.b as usize);
             let steps = (
                 planned_step(self.planned[ia]),
@@ -1126,7 +1303,7 @@ impl ContactSolver {
                 continue;
             }
             let (a, b) = (&self.bodies[ia], &self.bodies[ib]);
-            let projected = enemy_limit(pair, (a, b), steps).and_then(|limit| {
+            let projected = enemy_limit(pair, enemy.gap_shares, (a, b), steps).and_then(|limit| {
                 let Some(limit) = limit else {
                     return Ok(());
                 };
@@ -1278,6 +1455,24 @@ fn closes_too_far(limits: &[Limit], slot: usize, from: SimVec2, to: SimVec2) -> 
     })
 }
 
+/// Adds an enemy pair's corrections (`corrected`, shares applied) to its bodies' enemy sums, for
+/// the H-2 probe ([`ContactSolver::enemy_push`]): a body takes its delta when its share is
+/// positive, as [`add_to`] counts it.
+fn enemy_part(
+    sums: &mut [SimVec2],
+    (ia, ib): (usize, usize),
+    corrected: Corrected,
+    (share_a, share_b): (SimScalar, SimScalar),
+) -> Result<(), MovementMathError> {
+    if share_a > SimScalar::ZERO {
+        sums[ia] = checked_vec_add(sums[ia], corrected.delta_a)?;
+    }
+    if share_b > SimScalar::ZERO {
+        sums[ib] = checked_vec_add(sums[ib], corrected.delta_b)?;
+    }
+    Ok(())
+}
+
 /// The step `planned` holds, or zero.
 fn planned_step(planned: Planned) -> SimVec2 {
     match planned {
@@ -1306,13 +1501,15 @@ fn excess(step: SimVec2, toward: SimVec2, allow: SimScalar) -> Result<SimVec2, M
     checked_vec_scale(toward, amount)
 }
 
-/// E-2's limit of the enemy pair `(a, b)` in this application, with their planned `steps`:
+/// E-2's limit of the enemy pair `(a, b)` with its frozen `gap_shares` in this application, with
+/// their planned `steps`:
 /// `None` when they cannot reach each other (`|x_b − x_a| > r_a + r_b + |v_a|₁ + |v_b|₁`, no
 /// root); otherwise the unit vector from `a` towards `b` (`+x` for coincident centres, as
 /// [`pair_normal`] orders them), and each body's allowance, its frozen share of the gap
 /// `max(0, |x_b − x_a| − (r_a + r_b))`.
 fn enemy_limit(
     pair: &Pair,
+    gap_shares: (SimScalar, SimScalar),
     (a, b): (&SolverBody, &SolverBody),
     steps: (SimVec2, SimVec2),
 ) -> Result<Option<Limit>, MovementMathError> {
@@ -1345,20 +1542,19 @@ fn enemy_limit(
         a: pair.a,
         b: pair.b,
         toward_b,
-        allow_a: gap.saturating_mul(pair.gap_shares.0),
-        allow_b: gap.saturating_mul(pair.gap_shares.1),
+        allow_a: gap.saturating_mul(gap_shares.0),
+        allow_b: gap.saturating_mul(gap_shares.1),
     }))
 }
 
-/// E-2's shares of the gap for the enemy pair `(a, b)` with C-2 shares `shares`, frozen for the
+/// E-2's shares of the gap for the enemy pair of walks `(walk_a, walk_b)` with C-2 shares `shares`, frozen for the
 /// tick: a body that cannot move in the pair (share 0) gives the other the whole gap; otherwise
 /// each body's committed closing along the line of centres at the start of the walks,
 /// `κ_a = max(0, walk_a · n)` and `κ_b = max(0, −walk_b · n)` with `n` from `a` towards `b`, as a
 /// share of their sum, and ½ each when neither closed. `n` need not be a unit vector, since only
 /// the ratio counts, so no root is taken; coincident starts take `n = +x`.
 fn enemy_weights(
-    a: &SolverBody,
-    b: &SolverBody,
+    (walk_a, walk_b): (Walk, Walk),
     (share_a, share_b): (SimScalar, SimScalar),
 ) -> Result<(SimScalar, SimScalar), MovementMathError> {
     let (zero, one) = (SimScalar::ZERO, SimScalar::ONE);
@@ -1369,8 +1565,8 @@ fn enemy_weights(
         return Ok((one, zero));
     }
     let mut normal = (
-        i128::from(b.walk_from.x.raw()) - i128::from(a.walk_from.x.raw()),
-        i128::from(b.walk_from.y.raw()) - i128::from(a.walk_from.y.raw()),
+        i128::from(walk_b.from.x.raw()) - i128::from(walk_a.from.x.raw()),
+        i128::from(walk_b.from.y.raw()) - i128::from(walk_a.from.y.raw()),
     );
     if normal == (0, 0) {
         normal = (1, 0);
@@ -1382,8 +1578,8 @@ fn enemy_weights(
             .and_then(|(x, y)| x.checked_add(y))
             .ok_or(MovementMathError::Unrepresentable)
     };
-    let closing_a = along(a.walk()?)?.max(0);
-    let closing_b = along(b.walk()?)?
+    let closing_a = along(walk_a.step()?)?.max(0);
+    let closing_b = along(walk_b.step()?)?
         .checked_neg()
         .ok_or(MovementMathError::Unrepresentable)?
         .max(0);
@@ -1532,8 +1728,8 @@ fn pair_normal(a: &SolverBody, b: &SolverBody) -> Result<SimVec2, MovementMathEr
     })
 }
 
-/// The pair's corrections for `a` and `b`, the shares `(share_a, share_b)` applied (the pair's own,
-/// or C′-3's), and its friend excess (C-3′), or `None` within the dead band.
+/// The pair's corrections for `a` and `b`, shares applied, and its friend excess (C-3′), or `None`
+/// within the dead band.
 // PERFORMANCE RATIONALE:
 // Why: This runs for every listed pair in every iteration; a root for the distance and another
 // for the normal, each with 128-bit divisions, were most of the solver's cost (evidence §5.3).
@@ -1542,12 +1738,7 @@ fn pair_normal(a: &SolverBody, b: &SolverBody) -> Result<SimVec2, MovementMathEr
 // beyond it takes one root, shared by its distance and its normal ([`unit_components`]).
 // Trade-off: The distance and the normal are not computed by the general helpers, so the
 // equivalence is stated here: the same floor root and the same truncated quotients.
-fn pair_correction(
-    pair: &Pair,
-    (share_a, share_b): (SimScalar, SimScalar),
-    a: &SolverBody,
-    b: &SolverBody,
-) -> Correction {
+fn pair_correction(pair: &Pair, a: &SolverBody, b: &SolverBody) -> Correction {
     let x = i128::from(a.position.x.raw()) - i128::from(b.position.x.raw());
     let y = i128::from(a.position.y.raw()) - i128::from(b.position.y.raw());
     let (ux, uy) = (x.unsigned_abs(), y.unsigned_abs());
@@ -1582,8 +1773,11 @@ fn pair_correction(
             .ok_or(MovementMathError::Unrepresentable)
             .and_then(|amount| checked_vec_scale(normal, amount))
     };
-    let delta_a = along_ring(push(share_a)?, pair.nudge_a)?;
-    let delta_b = along_ring(super::math::checked_vec_neg(push(share_b)?)?, pair.nudge_b)?;
+    let delta_a = along_ring(push(pair.share_a)?, pair.nudge_a)?;
+    let delta_b = along_ring(
+        super::math::checked_vec_neg(push(pair.share_b)?)?,
+        pair.nudge_b,
+    )?;
     let excess = pair.moving_bound.map_or(SimScalar::ZERO, |bound| {
         overlap.saturating_sub(bound).max(SimScalar::ZERO)
     });
@@ -1759,8 +1953,6 @@ mod tests {
             policy: ground(SimScalar::from_num(radius)),
             start,
             position,
-            committed: position,
-            walk_from: start,
             ghost: false,
         }
     }
@@ -1800,8 +1992,26 @@ mod tests {
         bodies: &[SolverBody],
         settings: SolverSettings,
     ) -> (ContactSolver, SolveReport, Vec<MovementInvariant>) {
+        solve_walking(world, bodies, None, settings)
+    }
+
+    /// [`solve_reporting`] with `Gated`'s walks `walks`, or, when `None`, every body walking
+    /// from its start to its position, as the collision phase fills them for a body that stepped.
+    fn solve_walking(
+        world: &mut crate::SimWorld,
+        bodies: &[SolverBody],
+        walks: Option<&[Walk]>,
+        settings: SolverSettings,
+    ) -> (ContactSolver, SolveReport, Vec<MovementInvariant>) {
         let mut solver = ContactSolver::default();
         solver.bodies.extend_from_slice(bodies);
+        match walks {
+            Some(walks) => solver.walks.extend_from_slice(walks),
+            None => solver.walks.extend(bodies.iter().map(|b| Walk {
+                committed: b.position,
+                from: b.start,
+            })),
+        }
         let mut errors = Vec::new();
         let mut report = |e| errors.push(e);
         let map = &world.map;
@@ -2448,7 +2658,7 @@ mod tests {
             .ok_or("the enemy pair")?;
         let Some(Corrected {
             delta_a, delta_b, ..
-        }) = pair_correction(pair, (pair.share_a, pair.share_b), a, b)?
+        }) = pair_correction(pair, a, b)?
         else {
             return Err("the enemy pair still overlaps after the averaged iteration".into());
         };
@@ -3058,7 +3268,8 @@ mod tests {
     /// E2-T9, under `Gated`: a crowd of one owner that touches no wall gives bit-identical
     /// positions under `Gated` and `Solver`, and so does the same crowd with an enemy beyond the
     /// reach of every walk (application zero then places every body at its committed position
-    /// exactly), its engaged bodies carrying no nudge.
+    /// exactly). No body of the crowd is engaged: two anchored friends are C′'s own rule
+    /// (Amendment 3, item 2, `anchored_friends_never_correct_each_other_under_gated`).
     #[test]
     fn a_scene_without_enemies_is_unchanged() -> Result<(), Box<dyn std::error::Error>> {
         let mut world = flat_world(Some(30))?;
@@ -3067,16 +3278,17 @@ mod tests {
                 .into_iter()
                 .map(|mut body| {
                     body.party.owner = PlayerId(0);
+                    body.party.engaged = false;
                     body
                 })
                 .collect();
             let mut far = friends.clone();
             far.push(solver_body(99, party(1), 0.5, at(5.0, 5.0), at(5.0, 5.0)));
             for bodies in [friends, far] {
-                let (on, r1, e1) = solve_reporting(&mut world, &bodies, GATED);
+                let (on, _, e1) = solve_reporting(&mut world, &bodies, GATED);
                 let (off, _, e2) = solve_reporting(&mut world, &bodies, SETTINGS);
                 assert_eq!((e1, e2), (vec![], vec![]));
-                assert_eq!(r1.terrain_transfers, 0, "seed {seed}");
+                assert_eq!(on.transfers, 0, "seed {seed}");
                 let on: Vec<_> = on.bodies.iter().map(|b| b.position).collect();
                 let off: Vec<_> = off.bodies.iter().map(|b| b.position).collect();
                 assert_eq!(on, off, "seed {seed}");
@@ -3093,9 +3305,18 @@ mod tests {
     fn a_placed_body_is_not_bounded() -> Result<(), Box<dyn std::error::Error>> {
         let mut world = flat_world(None)?;
         let enemy = solver_body(1, party(1), 0.5, at(20.0, 20.0), at(20.0, 20.0));
-        let mut placed = solver_body(2, party(0), 0.5, at(16.0, 20.0), at(22.0, 20.0));
-        placed.walk_from = placed.committed;
-        let (on, errors) = solve_on(&mut world, &[enemy, placed], GATED);
+        let placed = solver_body(2, party(0), 0.5, at(16.0, 20.0), at(22.0, 20.0));
+        let walks = [
+            Walk {
+                committed: enemy.position,
+                from: enemy.start,
+            },
+            Walk {
+                committed: placed.position,
+                from: placed.position,
+            },
+        ];
+        let (on, _, errors) = solve_walking(&mut world, &[enemy, placed], Some(&walks), GATED);
         assert_eq!(errors, []);
         let (off, _) = solve_on(&mut world, &[enemy, placed], SETTINGS);
         assert_eq!(on.bodies[1].position, off.bodies[1].position);
@@ -3171,14 +3392,14 @@ mod tests {
             solver_body(1, idle, 0.5, at(20.5, 20.0), at(20.5, 20.0)),
             solver_body(2, walker, 0.5, at(19.0, 20.0), at(19.9, 20.0)),
         ];
-        let (gated, report, errors) = solve_reporting(&mut world, &bodies, GATED);
+        let (gated, _, errors) = solve_reporting(&mut world, &bodies, GATED);
         assert_eq!(errors, []);
-        assert!(report.terrain_transfers > 0);
+        assert!(gated.transfers > 0);
         assert!(gated.bodies[0].position.x <= at(20.5, 0.0).x);
         let left = exact_overlap_share(&gated.bodies[0], &gated.bodies[1]);
         assert!(left <= 0.05, "Gated leaves {left}");
-        let (solver, report, _) = solve_reporting(&mut world, &bodies, SETTINGS);
-        assert_eq!(report.terrain_transfers, 0);
+        let (solver, _, _) = solve_reporting(&mut world, &bodies, SETTINGS);
+        assert_eq!(solver.transfers, 0);
         let left = exact_overlap_share(&solver.bodies[0], &solver.bodies[1]);
         assert!(left > 0.05, "Solver leaves {left}");
         Ok(())
@@ -3200,8 +3421,8 @@ mod tests {
                     b.position.x + b.policy.radius <= wall && b.start.x + b.policy.radius <= wall
                 })
                 .collect();
-            let (one, report, e1) = solve_reporting(&mut world, &bodies, GATED);
-            transferred += u32::from(report.terrain_transfers > 0);
+            let (one, _, e1) = solve_reporting(&mut world, &bodies, GATED);
+            transferred += u32::from(one.transfers > 0);
             let mut expected: Vec<_> = one.bodies.iter().map(|b| (b.id, b.position)).collect();
             expected.sort_by_key(|p| p.0);
             assert_eq!(e1, vec![]);
@@ -3274,10 +3495,10 @@ mod tests {
                     SimVec2::new(south.x, south.y + press),
                 ),
             ];
-            let (solved, report, errors) = solve_reporting(&mut world, &bodies, settings);
+            let (solved, _, errors) = solve_reporting(&mut world, &bodies, settings);
             assert_eq!(errors, []);
             assert_eq!(solved.bodies[0].position, corner, "tick {tick}");
-            assert!(tick == 0 || report.terrain_transfers > 0, "tick {tick}");
+            assert!(tick == 0 || solved.transfers > 0, "tick {tick}");
             let now = (
                 exact_overlap_share(&solved.bodies[0], &solved.bodies[1]),
                 exact_overlap_share(&solved.bodies[0], &solved.bodies[2]),
@@ -3291,6 +3512,80 @@ mod tests {
             west = solved.bodies[1].position;
             south = solved.bodies[2].position;
         }
+        Ok(())
+    }
+
+    /// A3-T2 (plan `2026-11-27-gated-movement` Amendment 3, item 2): under `Gated` two attacking
+    /// friends, or an attacking and a holding one, that overlap take no correction from each other;
+    /// under `Solver` two attacking friends share it ½ / ½.
+    #[test]
+    fn anchored_friends_never_correct_each_other_under_gated(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut world = flat_world(None)?;
+        let engaged = ContactParty {
+            engaged: true,
+            ..party(0)
+        };
+        let holding = ContactParty {
+            holding: true,
+            ..party(0)
+        };
+        for other in [engaged, holding] {
+            let bodies = [
+                solver_body(1, engaged, 0.5, at(20.0, 20.0), at(20.0, 20.0)),
+                solver_body(2, other, 0.5, at(20.8, 20.0), at(20.8, 20.0)),
+            ];
+            let (gated, errors) = solve_on(&mut world, &bodies, GATED);
+            assert_eq!(errors, []);
+            assert_eq!(gated.bodies[0].position, bodies[0].position, "{other:?}");
+            assert_eq!(gated.bodies[1].position, bodies[1].position, "{other:?}");
+        }
+        let gated = ShareRules {
+            moving_friends_push: true,
+            gated: true,
+        };
+        assert_eq!(contact_shares(&engaged, &engaged, gated), PairShares::None);
+        assert_eq!(contact_shares(&engaged, &holding, gated), PairShares::None);
+        assert_eq!(
+            contact_shares(&engaged, &engaged, rules(true)),
+            PairShares::Weights(HALF, HALF)
+        );
+        let bodies = [
+            solver_body(1, engaged, 0.5, at(20.0, 20.0), at(20.0, 20.0)),
+            solver_body(2, engaged, 0.5, at(20.8, 20.0), at(20.8, 20.0)),
+        ];
+        let (solver, _) = solve_on(&mut world, &bodies, SETTINGS);
+        assert_ne!(solver.bodies[0].position, bodies[0].position);
+        Ok(())
+    }
+
+    /// A3-T3 at the solver (Amendment 3, item 3): two standing enemies 0.4 apart, beyond the list's
+    /// reach (`r_a + r_b + 1/4`), are each pressed toward the other by a walking friend that
+    /// overlaps it deeply (a summed pass's large step). Under `Gated` they never overlap and
+    /// neither is moved into the other: the list is rebuilt with the steps' reach before the
+    /// application that would bring them into contact.
+    #[test]
+    fn an_enemy_pair_beyond_the_lists_reach_is_bounded_under_gated(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut world = flat_world(None)?;
+        let walker = |owner| ContactParty {
+            moving: true,
+            ..party(owner)
+        };
+        let idle = |owner| ContactParty {
+            idle: true,
+            ..party(owner)
+        };
+        let bodies = [
+            solver_body(1, idle(0), 0.5, at(19.3, 20.0), at(19.3, 20.0)),
+            solver_body(2, idle(1), 0.5, at(20.7, 20.0), at(20.7, 20.0)),
+            solver_body(3, walker(0), 0.5, at(18.0, 20.0), at(18.6, 20.0)),
+            solver_body(4, walker(1), 0.5, at(22.0, 20.0), at(21.4, 20.0)),
+        ];
+        let (solved, _, errors) = solve_reporting(&mut world, &bodies, GATED);
+        assert_eq!(errors, []);
+        assert!(worst_enemy_overlap(&solved.bodies) <= ROUNDING_SHARE);
+        assert!(solved.enemy_push.iter().all(|&p| p == SimScalar::ZERO));
         Ok(())
     }
 }

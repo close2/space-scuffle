@@ -1099,3 +1099,113 @@ fn the_gated_section_ships_with_the_derived_cap_and_stays_latent() {
     assert_eq!(rules.gated.map(|g| g.crowd_iterations), Some(151));
     assert_eq!(rules.solver_crowd_iterations(), rules.crowd_iterations);
 }
+
+/// A3-T1 (plan `2026-11-27-gated-movement` Amendment 3, item 1): under `Gated` a melee attacker
+/// whose target walks away is never moved by a friend pressing into it on a tick that began with
+/// the target in its band, though the target leaves the band during that tick (the solver judges
+/// "attacking" from the tick-start snapshot, as H-1's meter does). The scene does reach such
+/// ticks: some tick begins with the attacker in band while its target steps out of it.
+#[test]
+fn an_attacker_whose_target_steps_away_is_not_moved_under_gated() -> TestResult {
+    use sim_fixtures::trace::contact_checks::standing_of;
+    let mut world = scratch_world(gated_rules()?, 0x0A3_0001)?;
+    let r = world_units(SMALL);
+    let target = world.spawn_unit(UnitTypeId(WALKER), RED, at(CENTRE.0, CENTRE.1))?;
+    let x = CENTRE.0 - 2.0 * r - MELEE / 2.0;
+    let attacker = world.spawn_unit(UnitTypeId(ATTACKER), BLUE, at(x, CENTRE.1))?;
+    let pressers: Vec<EntityId> = (0..3)
+        .map(|k| {
+            let p = at(x - 2.0 * r - 0.01 - 0.8 * f64::from(k), CENTRE.1);
+            world.spawn_unit(UnitTypeId(WALKER), BLUE, p)
+        })
+        .collect::<Result<_, _>>()?;
+    step(
+        &mut world,
+        vec![
+            order(
+                BLUE,
+                &[attacker],
+                UnitOrder::AttackTarget {
+                    target,
+                    origin: AttackOrigin::Explicit,
+                },
+            ),
+            order(
+                BLUE,
+                &pressers,
+                UnitOrder::Move {
+                    target: at(CENTRE.0 + 12.0, CENTRE.1),
+                },
+            ),
+        ],
+    );
+    let mut stepped_out = 0_u32;
+    for tick in 0..120 {
+        if tick == 10 {
+            let away = at(CENTRE.0 + 20.0, CENTRE.1);
+            step(
+                &mut world,
+                vec![order(RED, &[target], UnitOrder::Move { target: away })],
+            );
+            continue;
+        }
+        let arch = world
+            .catalog
+            .get(UnitTypeId(ATTACKER))
+            .map_err(|e| e.to_string())?
+            .clone();
+        let unit = world.entities.get(&attacker).ok_or("the attacker")?;
+        let held = standing_of(&world, unit, &arch).held;
+        let before = unit.position;
+        step(&mut world, vec![]);
+        let unit = world.entities.get(&attacker).ok_or("the attacker")?;
+        let proposed = world.proposed_step(attacker).unwrap_or(SimVec2::ZERO);
+        if held && proposed == SimVec2::ZERO {
+            assert_eq!(unit.position, before, "tick {tick}: the attacker was moved");
+            stepped_out += u32::from(!standing_of(&world, unit, &arch).held);
+        }
+    }
+    assert!(stepped_out > 0, "no tick began in band and ended out of it");
+    Ok(())
+}
+
+/// A3-T3 (Amendment 3, item 3): the `enemy-press` scene of the movement harness, seed 606 (an idle
+/// enemy line pressed by melee attackers), played under `Gated`: no two bodies of different
+/// owners ever overlap by more than 0.5 % of their radius sum (H-2's bound). On the tree before
+/// the amendment two bodies pushed together by their friends overlapped 19.6 % at tick 667: the
+/// pair stood beyond the list's reach, and the summed passes moved them into contact.
+#[test]
+fn enemies_pushed_together_by_friends_never_overlap_under_gated() -> TestResult {
+    use sim_fixtures::harness::{corpus, Family, RunOptions, ScenePlay};
+    let scenario = corpus::generate(Family::EnemyPress, 606, false);
+    let options = RunOptions::with_pipeline(MovementPipeline::Gated)?;
+    let mut play = ScenePlay::new(&scenario, &options)?;
+    let mut worst = 0.0_f64;
+    for _ in 0..scenario.ticks {
+        play.step();
+        let alive: Vec<_> = play
+            .world
+            .entities
+            .values()
+            .filter(|e| e.is_alive())
+            .collect();
+        for (i, a) in alive.iter().enumerate() {
+            for b in &alive[i + 1..] {
+                if a.owner == b.owner {
+                    continue;
+                }
+                let (Ok(ra), Ok(rb)) = (
+                    play.world.catalog.get(a.unit_type_id),
+                    play.world.catalog.get(b.unit_type_id),
+                ) else {
+                    continue;
+                };
+                let sum = f64::from(ra.collision_radius.to_f32() + rb.collision_radius.to_f32());
+                let share = (sum - exact_distance(a.position, b.position)) / sum;
+                worst = worst.max(share);
+            }
+        }
+    }
+    assert!(worst <= 0.005, "enemy overlap {worst}");
+    Ok(())
+}

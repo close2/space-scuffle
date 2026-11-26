@@ -423,8 +423,11 @@ impl SimWorld {
             super::rotated(entries, self.movement.order_rotation).filter(|entry| !entry.foundation)
         {
             if let Some(actor) = self.entities.get(&entry.id) {
-                solver.bodies.push(self.solver_body(*entry, actor, gated));
+                solver.bodies.push(self.solver_body(*entry, actor));
             }
+        }
+        if gated {
+            self.gated_bodies(&mut solver);
         }
         let settings = SolverSettings {
             iterations: contact.iterations,
@@ -455,7 +458,9 @@ impl SimWorld {
         );
         self.movement.contact_iterations = solved.iterations;
         self.movement.contact_rebuilds = solved.rebuilds;
-        self.movement.probes.terrain_transfers = solved.terrain_transfers;
+        if gated {
+            self.record_gated_probes(&solver);
+        }
         for body in &solver.bodies {
             if let Some(actor) = self.entities.get_mut(&body.id) {
                 actor.position = body.position;
@@ -467,11 +472,47 @@ impl SimWorld {
         self.movement.solver = solver;
     }
 
-    /// One body as the contact solver sees it (C-2's parties). Under `gated` (plan
-    /// `2026-11-27-gated-movement` C′) the body also carries where its own committed walk began,
-    /// for E-2: its tick-start position when the movement phase recorded a step for it this tick,
-    /// its committed position otherwise (a body a cast placed: a teleport is no walk).
-    fn solver_body(&self, entry: MotionEntry, actor: &Entity, gated: bool) -> SolverBody {
+    /// The `Gated` pipeline's additions to the solver's bodies (plan `2026-11-27-gated-movement`
+    /// C′, Amendment 3): each body's walk for E-2 (where its committed walk began: its tick-start
+    /// position when the movement phase recorded a step for it this tick, its committed position
+    /// otherwise, as for a body a cast placed), and "attacking" read from the tick-start snapshot
+    /// ([`SimWorld::attacking_at_tick_start`]) instead of the committed positions, so a unit whose
+    /// target stepped out of its band during the tick is still never moved by others.
+    fn gated_bodies(&self, solver: &mut super::solver::ContactSolver) {
+        solver.walks.clear();
+        for body in &mut solver.bodies {
+            let from = if self.proposed_step(body.id).is_some() {
+                body.start
+            } else {
+                body.position
+            };
+            solver.walks.push(super::solver::Walk {
+                committed: body.position,
+                from,
+            });
+            body.party.engaged = self.attacking_at_tick_start(body.id);
+        }
+    }
+
+    /// Records the `Gated` solve's probes: C′-3's transfers, and each body's push by enemy pairs
+    /// (H-2's probe, [`SimWorld::enemy_pair_push`]), by entity id.
+    fn record_gated_probes(&mut self, solver: &super::solver::ContactSolver) {
+        self.movement.probes.terrain_transfers = solver.transfers;
+        let pushes = &mut self.movement.enemy_pushes;
+        pushes.clear();
+        pushes.extend(
+            solver
+                .bodies
+                .iter()
+                .zip(&solver.enemy_push)
+                .filter(|(_, &push)| push > SimScalar::ZERO)
+                .map(|(body, &push)| (body.id, push)),
+        );
+        pushes.sort_unstable_by_key(|&(id, _)| id);
+    }
+
+    /// One body as the contact solver sees it (C-2's parties).
+    fn solver_body(&self, entry: MotionEntry, actor: &Entity) -> SolverBody {
         let step = i128::from(STANDING_DRIFT.raw());
         SolverBody {
             id: entry.id,
@@ -488,12 +529,6 @@ impl SimWorld {
             policy: entry.policy,
             start: actor.pos_at_tick_start,
             position: actor.position,
-            committed: actor.position,
-            walk_from: if gated && self.proposed_step(entry.id).is_some() {
-                actor.pos_at_tick_start
-            } else {
-                actor.position
-            },
             ghost: actor.passes_through_units(),
         }
     }

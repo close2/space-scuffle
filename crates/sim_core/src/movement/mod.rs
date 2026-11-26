@@ -312,6 +312,15 @@ pub(crate) struct MovementWorkspace {
     order_rotation: u32,
     /// The cost probes of the latest movement and collision phases ([`MovementProbes`]).
     probes: MovementProbes,
+    /// `Gated` only (plan `2026-11-27-gated-movement` Amendment 3, item 1): the units attacking at
+    /// the tick's start, whose attack target stood in their weapon band in the tick-start
+    /// snapshot, sorted by id; built once per tick by the movement phase before any body moves.
+    /// The contact solver never lets another body move them. Empty under every other pipeline.
+    attacking_at_start: Vec<EntityId>,
+    /// `Gated` only: H-2's probe of the latest collision phase, each body's push by enemy pairs
+    /// (the L1 length of the enemy pairs' part of its steps, world units), by entity id, for the
+    /// bodies with one ([`SimWorld::enemy_pair_push`]). Never hashed, snapshotted or replayed.
+    enemy_pushes: Vec<(EntityId, SimScalar)>,
 }
 
 /// Cost probes of plan `2026-11-27-gated-movement` (§5.2, `WP0a`), counted over the latest
@@ -558,6 +567,26 @@ impl SimWorld {
     #[must_use]
     pub fn movement_probes(&self) -> MovementProbes {
         self.movement.probes
+    }
+
+    /// H-2's probe (plan `2026-11-27-gated-movement` Amendment 3, item 4): how far, world units
+    /// (L1), enemy pairs' corrections moved `id` in the latest collision phase under the `Gated`
+    /// pipeline; zero for a body no enemy pair moved, and under every other pipeline. Derived
+    /// output for the measurement tools, excluded from checksums and never consulted by the
+    /// simulation.
+    #[must_use]
+    pub fn enemy_pair_push(&self, id: EntityId) -> SimScalar {
+        let pushes = &self.movement.enemy_pushes;
+        pushes
+            .binary_search_by_key(&id, |&(entity, _)| entity)
+            .map_or(SimScalar::ZERO, |index| pushes[index].1)
+    }
+
+    /// Whether `id` was attacking at the tick's start under the `Gated` pipeline: its attack
+    /// target stood in its weapon band in the tick-start snapshot (C′-1 as Amendment 3 of plan
+    /// `2026-11-27-gated-movement` reads it). False under every other pipeline.
+    pub(crate) fn attacking_at_tick_start(&self, id: EntityId) -> bool {
+        self.movement.attacking_at_start.binary_search(&id).is_ok()
     }
 
     /// Returns command-level movement results since the latest tick clear/drain.

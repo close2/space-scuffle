@@ -900,6 +900,8 @@ impl SimWorld {
         }
         // `ids` follow the entity table's order, so the record is sorted by id.
         self.movement.tick_start.clear();
+        self.movement.attacking_at_start.clear();
+        let gated = self.catalog.movement_rules().contact().pipeline == MovementPipeline::Gated;
         self.movement.ring_cache_used = 0;
         self.movement.ring_tagged.clear();
         for &id in &ids {
@@ -919,6 +921,11 @@ impl SimWorld {
                         .filter(|a| !entry.foundation && !a.passes_through_units())
                     {
                         let obstacle = self.obstacle_of(entry, actor);
+                        // C′-1 (Amendment 3, item 1): under `Gated`, "attacking" is read here,
+                        // from the snapshot, once per tick, before any body moves.
+                        if gated && obstacle.anchored && !actor.cannot_be_pushed() {
+                            self.movement.attacking_at_start.push(id);
+                        }
                         let class = entry.policy.class.index();
                         self.movement.obstacles[class].push(obstacle);
                         self.movement.largest_radius[class] =
@@ -960,6 +967,7 @@ impl SimWorld {
         self.prepare_movement_snapshot(&mut entries);
         self.movement.proposed_steps.clear();
         self.movement.probes = super::MovementProbes::default();
+        self.movement.enemy_pushes.clear();
         // The determinism probe (`set_movement_order_rotation`): the visit starts `offset` places
         // in and wraps round; offset 0 visits in entity order, as shipped.
         for &entry in super::rotated(&entries, self.movement.order_rotation) {
