@@ -30,6 +30,11 @@
 //!   footprints are gone and ramp cells wall their own edges. The synthetic mesh hash was
 //!   re-recorded again at `ef26242`, plan `2026-11-09-ramp-geometry` WP2: flank walls beside
 //!   higher ground and walls between ramps of different height. The pick hashes did not change.
+//! - The three mesh hashes and the three ramp-free chunk hashes were re-recorded at `aaa5d450`, plan
+//!   `2026-11-30-terrain-and-air-indicators` WP1: cliff profiles set back by `FOOT_WIDTH` where the
+//!   low side is ground, toe on the edge, and by `WALL_JITTER_AMPLITUDE` where it is void (B-243,
+//!   W1); review capture `~/scratch/terrain-indicators/review/wp1/`. The pick hashes and hit
+//!   counts did not change.
 //! - A golden may only change together with a deliberate, documented change in terrain output.
 
 #![allow(
@@ -237,7 +242,7 @@ fn default_arena_mesh_and_picking_are_bit_exact() {
         "default_arena",
         mesh_hash(&map),
         pick_hash(&map),
-        (0x0f0d_39ef_7f97_58db, 0x0d13_089f_628a_56b8, 2321),
+        (0x8b6b_69ce_ed8b_cf97, 0x0d13_089f_628a_56b8, 2321),
     );
 }
 
@@ -248,7 +253,7 @@ fn showcase_canyon_mesh_and_picking_are_bit_exact() {
         "showcase_canyon",
         mesh_hash(&map),
         pick_hash(&map),
-        (0x771c_cfc1_98c0_befd, 0xd059_17a4_edfe_bf3a, 2262),
+        (0x6f77_f6d8_bb8b_1da5, 0xd059_17a4_edfe_bf3a, 2262),
     );
 }
 
@@ -259,27 +264,28 @@ fn synthetic_map_mesh_and_picking_are_bit_exact() {
         "synthetic",
         mesh_hash(&map),
         pick_hash(&map),
-        (0xce78_5e16_375b_bd4c, 0xe991_3ab4_d9ba_9745, 1532),
+        (0xf965_b1e1_69bf_91ef, 0xe991_3ab4_d9ba_9745, 1532),
     );
 }
 
 /// Chunks with no ramp corner in any dual cell are untouched by ramp geometry: their hashes were
 /// recorded before plan `2026-11-09-ramp-geometry` WP1 changed the mesher's ramp handling, and
-/// must not move with any later ramp change (plan section 4, D-3 and D-5).
+/// must not move with any later ramp change (plan section 4, D-3 and D-5). They move with cliff
+/// changes, and were re-recorded by plan `2026-11-30-terrain-and-air-indicators` WP1.
 #[test]
 fn ramp_free_chunks_are_bit_exact() {
     let maps = [
         (
             "default_arena",
             load_shipped_map("default_arena.scmap.ron"),
-            (0x1d88_581e_ad3f_f398, 21),
+            (0xed16_db8a_3005_9794, 21),
         ),
         (
             "showcase_canyon",
             load_shipped_map("showcase_canyon.scmap.ron"),
-            (0xdbb5_9ede_15b0_9c12, 21),
+            (0x4021_f804_8011_f672, 21),
         ),
-        ("synthetic", synthetic_map(), (0x4b31_db42_9fac_1b7d, 1)),
+        ("synthetic", synthetic_map(), (0xc8d5_46f4_ba87_a3d7, 1)),
     ];
     let mut changed = Vec::new();
     for (name, map, expected) in maps {
