@@ -424,7 +424,7 @@ fn bubble_instance(
     attack_swing: Option<AttackSwing>,
     barrier_hit: bool,
 ) -> BubbleRenderInstance {
-    let placed = Placed::new(arch, entity.siege_weapon.as_ref(), entity.position, map);
+    let placed = Placed::new(arch, entity.siege_weapon.as_deref(), entity.position, map);
     let is_attacking = matches!(
         entity.weapon_phase,
         WeaponPhase::Windup { .. } | WeaponPhase::Backswing { .. }
