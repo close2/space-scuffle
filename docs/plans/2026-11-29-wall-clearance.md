@@ -792,3 +792,38 @@ change are judged against them. Q0134 is closed with a resolution that points he
 scenes": both known answers hold in all 144 scenes under each arm; up to half the units of a 48-unit group stop short
 (the hairpin); held cutting walk legs run up to 130 ticks; reported, not judged.
 
+
+## Amendment 2 (orchestrator, 2026-11-26): window W's outcome; WP1 is judged on the decision-time count, WP2 is parked
+
+**What was measured** (evidence `docs/evidence/2026-11-29-wall-clearance.md`, WP1 and WP2 sections).
+- **WP1 (B-240)** stopped on §7 rule 2: M-5a, counted as written, fell from 4/3/3 to 1 on `showcase.ron`'s nine seeds
+  and from 7 to 2 on `showcase_effects.ron`, not to 0. Every remaining update is traced and shallow (dip ≤ 0.005).
+  None is a hand-off that cuts when it is decided: each is a leg that was walkable at the hand-off but is read after
+  that tick's step, or a waypoint passed by landing exactly on it. Counted at the decision, cutting hand-offs are 0 on
+  all 18 showcase runs and all 432 crowd scene-arms (base: 1,586 in the crowd scenes under S). Hard checks hold; only
+  battle 40 moves in the matrix, with no winner flip and no Class R battle moving.
+- WP1's "not worse beyond noise" is mixed. `showcase.ron` (33 seeds) is within noise everywhere.
+  `showcase_effects.ron` barely depends on the seed, so its noise interval has zero width and every change counts:
+  ramp W gets worse (M-4 22.7 → 28.5), as a knock-on of the tick-192 divergence, while several other figures improve.
+  On the crowd scenes, the figures above and below the noise band per geometry and size are S 7 / 5, R 7 / 2 and
+  L 6 / 7, mostly fractions of one reversal per scene.
+- **WP2 (B-241)** stopped on the existing zig-zag guards (`the_canyon_march_has_no_zig_zag_under_the_solver`,
+  `battlefield_bubble_trajectories_are_smooth_without_micro_jitter`). The rule drops the right leg, and the re-planned
+  route passes a friend whom contact then turns by 13° and back. The only fixes are in contact or steering, which
+  §7 rule 10 forbids here.
+
+**Decision (this package's one amendment, §7 rule 6; earlier rules named).**
+1. **M-5a counts hand-offs whose leg cuts when the hand-off is decided.** That is D-1's own statement of the defect
+   ("the hand-off's view is the step's view") and Amendment 1's wording for the crowd scenes ("cutting route updates
+   caused by a rounding-depth hand-off must be gone, each remaining one traced and explained"). The post-step reads
+   are held legs, which B-241 and M-5b own; they stay open with B-241, with the figures above. No constant, tolerance
+   or threshold changes.
+2. **"Not worse" is read on the crowd scenes together with the showcases** (Amendment 1, from the owner's answer to
+   Q0134: the showcase alone never decides). The ramp W rise on `showcase_effects.ron` and the mixed crowd figures are
+   recorded, not waived silently: they go to the owner as [Q0137](../questions/open/0137-wall-clearance-wp1-mixed.md),
+   whose default merges WP1.
+3. **WP1 merges** once the harness step rule, the G hard checks and held-out HA (still running at this writing) hold.
+   If any of them fails, WP1 stops and stays parked.
+4. **WP2 is parked** on branch `wall-clearance-plan` (kept). B-241 stays open. It is re-planned after `Gated` WP4,
+   alongside WP3 in window X, because Gated's contact layer is what turns the friend.
+5. The draft question of §11.2 is renumbered to the next free number, Q0138, if it is ever filed.
