@@ -29,9 +29,9 @@
 use sim_core::{ActiveProjectile, SimWorld, UnitArchetype, WeaponSpec};
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
-    AttackVisibility, CombatEventVisual, EntityId, MissileMover, MissilePhase, MoverType, PhaseEnd,
-    PlayerId, PlayerView, ShapeKind, SimScalar, SimVec2, Tick, TickBundle, UnitOrder, UnitTypeId,
-    TICKS_PER_SECOND,
+    AbilityTargetKind, AttackVisibility, CombatEventVisual, EntityId, MissileMover, MissilePhase,
+    MoverType, PhaseEnd, PlayerId, PlayerView, ShapeKind, SimScalar, SimVec2, Tick, TickBundle,
+    UnitOrder, UnitTypeId, TICKS_PER_SECOND,
 };
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -1198,6 +1198,73 @@ fn a_mover_weapons_release_shows_its_attacker() -> TestResult {
             listed.contains(&bench.shooter),
             "{}: image at the release",
             attacker.slug
+        );
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------------------------
+// The High Templar analogue's bolt (M-9, plan `2026-11-28-missile-movers-b52` WP2)
+// ---------------------------------------------------------------------------------------------
+
+/// The shipped mobile ground caster whose only weapon is a constant missile and which casts an
+/// energy-costing spell at a position: the High Templar analogue (Psionic Storm). The Ravager
+/// analogue's bile costs no energy and the Queen analogue has an air weapon block.
+fn bolt_caster(world: &SimWorld) -> Result<UnitArchetype, String> {
+    let found: Vec<&UnitArchetype> = world
+        .catalog
+        .archetypes()
+        .filter(|arch| {
+            arch.mover_type == MoverType::Ground
+                && arch.max_speed > SimScalar::ZERO
+                && arch.air_weapon.is_none()
+                && arch
+                    .weapon
+                    .as_ref()
+                    .is_some_and(|w| w.projectile_speed.is_some() && w.missile_movers.is_empty())
+                && arch.abilities.iter().any(|ability| {
+                    ability.target_kind == AbilityTargetKind::TargetPosition
+                        && ability.energy_cost > SimScalar::ZERO
+                })
+        })
+        .collect();
+    match found.as_slice() {
+        [one] => Ok((*one).clone()),
+        other => Err(format!("one bolt caster, found {}", other.len())),
+    }
+}
+
+/// M-9: the High Templar analogue's bolt, released at a held target 0.63 and 5.9 world units away
+/// edge to edge, lands after `ceil(path / 1.05)` ticks, `MissileDefault`'s 18.75 (S12), one tick
+/// before a bolt of 1.0 per tick would (§2.4: paths 1.005 and 6.275 with its radius 0.375).
+#[test]
+fn the_bolt_flies_missile_defaults_speed() -> TestResult {
+    let world = sim_fixtures::world(
+        GameMap::new(8, 8, MapCell::default_ground(CliffLevel(0)))?,
+        1,
+    );
+    let caster = bolt_caster(&world)?;
+    let victim = missile_archetype(&world)?;
+    for (seed, edge) in (0x600_u64..).zip([0.63, 5.9]) {
+        let mut bench = shipped_duel(seed, &caster, &victim, scalar(10.0), scalar(edge), |_| {})?;
+        let path = bench.shooter_radius + scalar(edge);
+        let ticks = |speed: SimScalar| (path / speed).saturating_ceil().saturating_to_u32();
+        assert!(
+            (value(bench.speed) - 1.05).abs() < 1e-6,
+            "MissileDefault's 18.75 x 0.056, not {:?}",
+            bench.speed
+        );
+        let flight = bench.fly(|_| Ok(()))?;
+        // At 0.63 the bolt lands on its release tick, so no state of its flight remains.
+        assert!(
+            flight.states.iter().all(|state| state.mover.is_none()),
+            "a constant missile"
+        );
+        assert_eq!(flight.ticks(), Some(ticks(bench.speed)), "edge {edge}");
+        assert_eq!(
+            flight.ticks(),
+            Some(ticks(SimScalar::ONE) - 1),
+            "edge {edge}: one tick before a bolt of 1.0"
         );
     }
     Ok(())

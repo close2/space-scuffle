@@ -2042,7 +2042,12 @@
                 backswing_ticks: 9,
                 random_delay_ticks: (-1.1161, 2.2321),
                 splash: None,
-                projectile_speed: Some(1.0),
+                // 5.0.14 HighTemplarWeaponLM (balancemulti EffectData:1404-1409) flies its Movers entry
+                // HighTemplarWeaponMover, a MissileDefault child with no field of its own (balancemulti
+                // MoverData:47); MissileDefault (core MoverData:13-25) reaches MaxSpeed 18.75 within a
+                // tenth of a tick and its kill phase carries it on: a constant 18.75 x 0.056 = 1.05 per
+                // tick. Plan 2026-11-28-missile-movers-b52 D-1, S12 (B-52).
+                projectile_speed: Some(1.05),
                 weapon_class: Some("enclave_ground_weapons"),
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 0.0,
