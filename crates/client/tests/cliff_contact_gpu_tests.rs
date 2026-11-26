@@ -59,6 +59,12 @@ mod cliff_contact_stage;
     dead_code,
     reason = "shared by several test binaries that each use a subset"
 )]
+#[path = "support/gpu_battle.rs"]
+mod gpu_battle;
+#[allow(
+    dead_code,
+    reason = "shared by several test binaries that each use a subset"
+)]
 #[path = "support/gpu_run.rs"]
 mod gpu_run;
 #[allow(
@@ -69,18 +75,12 @@ mod gpu_run;
 mod unit_cycling;
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use battle_harness::{Harness, LOCAL_PLAYER};
 use bevy::prelude::*;
-use bevy::render::settings::{RenderCreation, WgpuSettings};
-use bevy::render::view::screenshot::save_to_disk;
-use bevy::render::RenderPlugin;
-use bevy::time::TimeUpdateStrategy;
 use client::camera::MIN_CAMERA_DISTANCE;
-use client::offscreen::{CaptureTarget, OffscreenCanvas};
 use client::scene_controller::RenderEntityMap;
-use client::{ClientMode, RtsCamera};
+use client::RtsCamera;
 use cliff_contact_stage::Wall;
 use serde::{Deserialize, Serialize};
 use sim_types::{EntityId, SimVec2};
@@ -101,10 +101,6 @@ const CHILD: &str = "cliff_contact_child";
 const REPORT_FILE: &str = "report.ron";
 /// Cells the unit is written away from the wall for capture `A`.
 const AWAY_CELLS: i32 = 20;
-/// Frames the battle gets to load its media.
-const READY_FRAMES: usize = 600;
-/// Frames a capture may take to reach the disk.
-const CAPTURE_FRAMES: usize = 120;
 /// Frames between a staged change and its capture: the camera's look height eases over several
 /// frames (`LOOK_AT_SMOOTHING_SECS`), and both captures wait the same.
 const SETTLE_FRAMES: usize = 40;
@@ -137,116 +133,6 @@ struct Report {
 
 // --- Child ---------------------------------------------------------------------------------------
 
-/// Steps until the battle is ready, with its media loaded and its first snapshot drawn.
-fn ready(harness: &mut Harness) {
-    for _ in 0..READY_FRAMES {
-        let world = harness.app.world();
-        let images = world.resource::<Assets<Image>>();
-        let registry = world.resource::<client::FlipbookRegistry>();
-        let loaded = !registry.textures_by_id.is_empty()
-            && registry
-                .textures_by_id
-                .values()
-                .all(|image| images.contains(image));
-        if loaded && !world.resource::<RenderEntityMap>().is_empty() {
-            return;
-        }
-        harness.step(1);
-    }
-    panic!("the battle never became ready");
-}
-
-/// Boots the production client on `scenario` as the battle harness does, but with a real
-/// renderer on the adapter the GPU harness selected for this child, as
-/// `render_pool_gpu_tests.rs` does. The window has no surface, so the camera draws only into the
-/// offscreen canvas.
-fn boot_on_gpu(scenario: &str) -> Harness {
-    let root =
-        client::ResolvedAssetsRoot::from_directory(&battle_harness::assets()).expect("assets root");
-    let definition =
-        client::runtime_battle::BattleDefinition::load(root.as_path(), scenario.as_ref())
-            .expect("battle scenario");
-    let mut app = App::new();
-    app.insert_resource(client::CatalogResource(definition.catalogs.units.clone()))
-        .insert_resource(definition.palette.clone())
-        .insert_resource(definition)
-        .insert_resource(root.clone())
-        .add_plugins(
-            client::presentation::GamePresentationPlugins
-                .set(RenderPlugin {
-                    render_creation: RenderCreation::Automatic(WgpuSettings::default()),
-                    ..default()
-                })
-                .set(AssetPlugin {
-                    file_path: root.bevy_file_path().expect("asset path").into(),
-                    ..default()
-                })
-                .set(WindowPlugin {
-                    primary_window: Some(Window {
-                        resolution: (SIZE.x as f32, SIZE.y as f32).into(),
-                        ..default()
-                    }),
-                    ..default()
-                })
-                .disable::<bevy::winit::WinitPlugin>(),
-        )
-        .add_plugins(bevy_egui::EguiPlugin)
-        .add_plugins(client::ClientAppPlugin {
-            mode: ClientMode::LiveBattle,
-            max_frames: None,
-            screenshot_out: None,
-        })
-        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
-            40,
-        )));
-    app.finish();
-    app.cleanup();
-    app.world_mut()
-        .resource_mut::<client::LabState>()
-        .battle_paused = true;
-    let mut harness = Harness { app };
-    harness.step(4);
-    harness
-}
-
-/// Runs `ticks` ticks, one a frame, and pauses.
-fn run_ticks(harness: &mut Harness, ticks: u32) {
-    let goal = harness.world().current_tick + ticks;
-    harness.resume();
-    while harness.world().current_tick < goal {
-        harness.step(1);
-    }
-    harness.pause();
-}
-
-/// Captures the canvas into `directory/name.png` with the clock stopped.
-fn capture(harness: &mut Harness, directory: &Path, name: &str) {
-    let path = directory.join(format!("{name}.png"));
-    harness
-        .app
-        .world_mut()
-        .resource_mut::<Time<Virtual>>()
-        .pause();
-    let target = harness.app.world().resource::<CaptureTarget>().clone();
-    harness
-        .app
-        .world_mut()
-        .spawn(target.screenshot())
-        .observe(save_to_disk(path.clone()));
-    for _ in 0..CAPTURE_FRAMES {
-        if path.is_file() {
-            break;
-        }
-        harness.step(1);
-    }
-    assert!(path.is_file(), "the capture {name} reached the disk");
-    harness
-        .app
-        .world_mut()
-        .resource_mut::<Time<Virtual>>()
-        .unpause();
-}
-
 /// Writes unit `id` to `at`, runs one tick so the snapshot carries it, and lets the frame settle.
 fn place(harness: &mut Harness, id: EntityId, at: SimVec2) {
     harness
@@ -255,7 +141,7 @@ fn place(harness: &mut Harness, id: EntityId, at: SimVec2) {
         .get_mut(&id)
         .expect("the staged unit")
         .position = at;
-    run_ticks(harness, 1);
+    gpu_battle::run_ticks(harness, 1);
     harness.step(SETTLE_FRAMES);
 }
 
@@ -326,7 +212,7 @@ fn review_poses(harness: &mut Harness, wall: Wall, directory: &Path) {
         .spawn_unit(brink_type, LOCAL_PLAYER, at)
         .expect("the brink unit is placed");
     place(harness, id, at);
-    capture(harness, directory, "brink");
+    gpu_battle::capture(harness, directory, "brink");
     let mut camera = harness
         .app
         .world_mut()
@@ -335,7 +221,7 @@ fn review_poses(harness: &mut Harness, wall: Wall, directory: &Path) {
     camera.target.x += 2.5 * wall.low_side as f32;
     camera.target.y -= 1.5;
     harness.step(SETTLE_FRAMES);
-    capture(harness, directory, "brink_side");
+    gpu_battle::capture(harness, directory, "brink_side");
 }
 
 /// The child: stages the wall and the unit, captures `B` and `A`, and writes its report and `Σ`.
@@ -344,19 +230,11 @@ fn run_child() {
         println!("{OUT_VAR} is not set: this child runs only under its parent");
         return;
     };
-    let mut harness = boot_on_gpu(client::runtime_battle::DEFAULT_BATTLE_SCENARIO);
-    let canvas = OffscreenCanvas::install(&mut harness.app, SIZE).expect("a canvas");
-    {
-        let world = harness.app.world_mut();
-        let mut cameras = world.query_filtered::<&mut Camera, With<RtsCamera>>();
-        for mut camera in cameras.iter_mut(world) {
-            camera.target = CaptureTarget::Image(canvas.image.clone()).camera_target();
-        }
-        world.resource_mut::<client::LabState>().opt_smog_volume = false;
-    }
-    ready(&mut harness);
+    let mut harness =
+        gpu_battle::boot_on_gpu(client::runtime_battle::DEFAULT_BATTLE_SCENARIO, SIZE);
+    gpu_battle::ready(&mut harness);
     unit_cycling::kill_mobile_units(harness.world_mut());
-    run_ticks(&mut harness, 2);
+    gpu_battle::run_ticks(&mut harness, 2);
 
     let wall = Wall::find(&harness.world().map);
     println!("staged wall: {wall:?}");
@@ -383,7 +261,7 @@ fn run_child() {
         camera.distance = MIN_CAMERA_DISTANCE;
     }
     place(&mut harness, id, at);
-    capture(&mut harness, &directory, "B");
+    gpu_battle::capture(&mut harness, &directory, "B");
     let (centre, drawn_radius) = drawn_sphere(&mut harness, id);
     let sigma = silhouette(&mut harness, centre, drawn_radius);
     sigma
@@ -407,7 +285,7 @@ fn run_child() {
         AWAY_CELLS
     };
     place(&mut harness, id, at + SimVec2::from_i32(0, away_rows));
-    capture(&mut harness, &directory, "A");
+    gpu_battle::capture(&mut harness, &directory, "A");
     if std::env::var_os(REVIEW_VAR).is_some() {
         review_poses(&mut harness, wall, &directory);
     }

@@ -18,6 +18,8 @@
 //!   tether are checked against its record. This is the whole path: snapshot, synchroniser,
 //!   indicators.
 //!
+//! The WP2 review captures of the same crossing are `air_indicator_review_gpu_tests.rs`.
+//!
 //! # Invariants verified
 //! World heights agree within [`HEIGHT_TOLERANCE`]: a few `f32` roundings of the transform
 //! product at altitudes below 16 world units.
@@ -34,9 +36,16 @@
     dead_code,
     reason = "shared by several test binaries that each use a subset"
 )]
+#[path = "support/air_crossing.rs"]
+mod air_crossing;
+#[allow(
+    dead_code,
+    reason = "shared by several test binaries that each use a subset"
+)]
 #[path = "support/battle_harness.rs"]
 mod battle_harness;
 
+use air_crossing::{smallest_air_unit, Crossing, PAST_CELLS, START_CELLS};
 use battle_harness::{Harness, LOCAL_PLAYER};
 use bevy::prelude::*;
 use client::battle_selection::BattleSelection;
@@ -48,9 +57,8 @@ use client::indicators::{
 use client::player_presentation::{PlayerStyle, PresentationStatus};
 use client::runtime_battle::{BattleDefinition, DEFAULT_BATTLE_SCENARIO};
 use client::scene_controller::{LiveBattleBubble, RenderEntityMap};
-use sim_map::grid::GameMap;
 use sim_types::snapshot::BubbleRenderInstance;
-use sim_types::{EntityId, MoverType, ShapeKind, SimScalar, UnitTypeId};
+use sim_types::{EntityId, ShapeKind};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -337,95 +345,8 @@ fn the_shadow_follows_a_change_of_altitude() -> TestResult {
 
 // --- I-1 -----------------------------------------------------------------------------------------
 
-/// Cells the unit starts before the cliff, and flies past it.
-const START_CELLS: u32 = 2;
-const PAST_CELLS: u32 = 3;
-
 /// Frames the crossing may take before the test gives up.
 const CROSSING_FRAMES: usize = 1500;
-
-/// Cells around the crossing that must hold no ramp.
-const RAMP_CLEARANCE: u32 = 2;
-
-/// Least distance in cells between the crossing and any unit of another player.
-const ENEMY_CLEARANCE: f32 = 16.0;
-
-/// A cliff the unit crosses along +X on row `y`: from cell `x - START_CELLS` to cell
-/// `x + 1 + PAST_CELLS`, where cells `x` and `x + 1` are plateaus of different level.
-#[derive(Debug, Clone, Copy)]
-struct Crossing {
-    /// The cell on the near side of the edge.
-    x: u32,
-    y: u32,
-}
-
-impl Crossing {
-    /// The first row-wise crossing of `map` with plain ground on its whole path, no ramp near it
-    /// and no unit of another player near it.
-    fn find(map: &GameMap, enemies: &[Vec2]) -> Self {
-        let level = |x: u32, y: u32| {
-            let cell = map.cell(x, y).ok()?;
-            let ground = cell.terrain_kind != sim_map::grid::TerrainKind::Abyss
-                && map.ramp_profile(x, y).is_none();
-            ground.then_some(cell.cliff_level.0)
-        };
-        let clear_of_ramps = |x: u32, y: u32| {
-            (x.saturating_sub(START_CELLS + RAMP_CLEARANCE)..=x + PAST_CELLS + RAMP_CLEARANCE + 1)
-                .all(|cx| {
-                    (y.saturating_sub(RAMP_CLEARANCE)..=y + RAMP_CLEARANCE)
-                        .all(|cy| map.ramp_profile(cx, cy).is_none())
-                })
-        };
-        for y in RAMP_CLEARANCE..map.height().saturating_sub(RAMP_CLEARANCE) {
-            for x in START_CELLS..map.width().saturating_sub(PAST_CELLS + 1) {
-                let path = (x - START_CELLS..=x + 1 + PAST_CELLS).map(|cx| level(cx, y));
-                let Some(levels) = path.collect::<Option<Vec<u8>>>() else {
-                    continue;
-                };
-                let near = levels[..=START_CELLS as usize]
-                    .iter()
-                    .all(|l| *l == levels[0]);
-                let far = levels[START_CELLS as usize + 1..]
-                    .iter()
-                    .all(|l| *l == levels[levels.len() - 1]);
-                let centre = Vec2::new(x as f32 + 1.0, y as f32 + 0.5);
-                if near
-                    && far
-                    && levels[0] != levels[levels.len() - 1]
-                    && clear_of_ramps(x, y)
-                    && enemies.iter().all(|e| e.distance(centre) > ENEMY_CLEARANCE)
-                {
-                    return Self { x, y };
-                }
-            }
-        }
-        panic!("the shipped battle map has a straight cliff crossing clear of ramps and enemies");
-    }
-
-    /// World centre of cell `(x, self.y)`.
-    fn at(self, x: u32) -> Vec2 {
-        Vec2::new(x as f32 + 0.5, self.y as f32 + 0.5)
-    }
-}
-
-/// The selectable air archetype with media and the smallest drawn radius, by catalog property.
-fn smallest_air_unit(harness: &Harness) -> UnitTypeId {
-    let assets = battle_harness::assets();
-    harness
-        .world()
-        .catalog
-        .archetypes()
-        .filter(|a| {
-            a.mover_type == MoverType::Air
-                && a.selectable
-                && a.max_speed > SimScalar::ZERO
-                && matches!(a.shape, ShapeKind::UnitSphere)
-                && battle_harness::presentable(&assets, &a.slug)
-        })
-        .min_by_key(|a| (a.drawn_radius(), a.unit_type_id))
-        .expect("the catalog ships a selectable air unit with media")
-        .unit_type_id
-}
 
 /// The bubble entity drawing unit `id`, and its record.
 fn bubble_of(harness: &mut Harness, id: EntityId) -> (Entity, BubbleRenderInstance) {
