@@ -3962,9 +3962,9 @@
                 weapons: [(weapon: Primary, travel: Some("acid_spit"), impact: Some("acid_hit"))],
             ),
             veo_prompts: {
-                Idle: "Spore Matriarch: Massive manta-ray bio-beast drifting slowly high above ground with pulsating spore pods.",
-                Walk: "Spore Matriarch: Majestic undulating wing sweeps slowly displacing air.",
-                Attack: "Spore Matriarch: Launching clusters of writhing bio-symbionts plunging toward ground targets.",
+                Idle: "Spore Matriarch: a single manta-ray-shaped swarm beast, broad dark green chitin wings edged with glowing amber spore pods, a thin tail, two pale larvae on its belly, seen from above at a three-quarter angle, head toward the lower right, wings spread wide and motionless, the whole beast in the middle of the frame with wide margins, plain dark backdrop, lit softly from the front.",
+                Walk: "Spore Matriarch: the same huge winged beast gliding forward in place, its broad wings rippling in slow even waves, fully visible in the middle of the frame, no other creatures.",
+                Attack: "Spore Matriarch: the same huge winged beast flings two small pale parasite larvae from under its belly toward the lower right.",
             },
         ),
         (
