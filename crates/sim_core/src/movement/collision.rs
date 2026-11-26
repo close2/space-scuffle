@@ -476,9 +476,10 @@ impl SimWorld {
     /// C′, Amendments 3 and 3a): each body's walk for E-2 (where its committed walk began: its
     /// tick-start position when the movement phase recorded a step for it this tick, its
     /// committed position otherwise, as for a body a cast placed); "attacking" read from the
-    /// tick-start snapshot ([`SimWorld::attacking_at_tick_start`]) instead of the committed
+    /// tick-start snapshot ([`SimWorld::attack_band_at_tick_start`]) instead of the committed
     /// positions; and for an attacking unit D-δ's radial (the unit vector from its target to it)
-    /// and its target's slot, so friends nudge it round its target and never out of its band.
+    /// and its ring ([`super::solver::Ring`]: its target's slot and its weapon band, Amendment
+    /// 3b), so friends nudge it round its target and never out of its band.
     fn gated_bodies(&self, solver: &mut super::solver::ContactSolver) {
         solver.walks.clear();
         solver.rings.clear();
@@ -502,24 +503,25 @@ impl SimWorld {
                 committed: body.position,
                 from,
             });
-            body.party.engaged = self.attacking_at_tick_start(body.id);
-            let target = (body.party.engaged && !body.party.holding)
-                .then(|| {
-                    self.entities
-                        .get(&body.id)
-                        .and_then(super::locomotion::engaged_target)
-                })
-                .flatten();
-            let ring = target.and_then(|id| {
-                let slot = slots
-                    .binary_search_by_key(&id, |&(entity, _)| entity)
-                    .ok()?;
-                let centre = self.entities.get(&id)?.position;
-                let radial = super::math::direction(body.position, centre).ok()?;
-                (radial != SimVec2::ZERO).then_some((slots[slot].1, radial))
-            });
+            let band = self.attack_band_at_tick_start(body.id);
+            body.party.engaged = band.is_some();
+            let ring = band
+                .filter(|band| !body.party.holding && band.min <= band.max)
+                .and_then(|band| {
+                    let slot = slots
+                        .binary_search_by_key(&band.target, |&(entity, _)| entity)
+                        .ok()?;
+                    let centre = self.entities.get(&band.target)?.position;
+                    let radial = super::math::direction(body.position, centre).ok()?;
+                    let ring = super::solver::Ring {
+                        target: slots[slot].1,
+                        min: band.min,
+                        max: band.max,
+                    };
+                    (radial != SimVec2::ZERO).then_some((ring, radial))
+                });
             body.party.nudge = ring.map(|(_, radial)| radial);
-            solver.rings.push(ring.map(|(slot, _)| slot));
+            solver.rings.push(ring.map(|(ring, _)| ring));
         }
         solver.slots = slots;
     }

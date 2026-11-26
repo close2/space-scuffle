@@ -1412,3 +1412,28 @@ Acceptance after 3b: H-1 (holding) = 0; H-1b out-of-band = 0; H-2 (repaired) = 0
 everywhere, Broodling spawn overlaps excluded as spawn-placement (B-236) and Abduct's pull excluded from H-1 as an
 ability displacement, both reported separately; H-5, H-7, H-6 as before. A failure after 3b stops the package for the
 owner (Q-draft).
+
+**Implementation decisions (Q0002), recorded with WP1's 3b build (evidence §11):**
+- **Order in an application:** D-δ's ring turns only the friend part of an attacking unit's step (the enemy pairs' part
+  is kept as it is); E-2 then bounds every step; the band last shortens an attacking unit's step along itself. A
+  shortened step stays within E-2's bound, since every allowance is non-negative, so the band never undoes E-2. The
+  set of item 1 is reached along the step, not by a Euclidean projection: the step is the longest part of the
+  E-2-bounded step that stays in the band (bisection to 2⁻¹⁶).
+- **Where the band is measured:** H-1b judges the band round where the target ends the tick, which no application
+  before the last knows. The band is kept round every place the target may end at (where it stands, where its
+  bounded step takes it, where its own walk began and ended); attacking units move after the other bodies of an
+  application and are judged again round where their targets then stand, a terrain slide out of the band being
+  refused as E-2 refuses one into an enemy; and after the last pass an attacking unit left out of its band round its
+  target's final position, though its committed position is in it, steps back toward that position by the least part
+  that puts it in the band, through E-2's bound and the terrain step (`restore_bands`).
+- **The pin:** "fixed for its friend pairs on that application" is built as C′-3's flag, which it is told to be like:
+  a unit that took less than half of its friend correction counts as fixed from the next application, until it takes
+  at least half of one again. It is judged only in an application that gave it a friend correction.
+- **Item 2 at E-2 itself:** the traces of `enemy-press` seed 288 show the transferred correction was bounded by E-2,
+  but E-2's projections off several enemies, summed, turned the step back and lengthened it (0.76 south became 1.13
+  north-east), past the reach the limits were found with, into attackers no limit examined. A projection onto E-2's
+  set (convex, holding the zero step) never does either, so a summed projection that does is not taken: the guard
+  shortens the whole step to what every examined enemy admits instead, nothing when it closes on one with no
+  allowance, and the friend pair keeps its overlap. This applies to every step under `Gated`, a transfer included.
+- **Attacking set data:** the snapshot records each attacking unit's target and band (`AttackBand`), so the solve
+  keeps the band the pursuit measures (both radii, upgrades and status modifiers included).

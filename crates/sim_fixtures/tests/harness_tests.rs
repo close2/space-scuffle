@@ -1069,3 +1069,31 @@ fn left_band_blames_the_push_and_not_the_target() -> Result<(), Box<dyn Error>> 
     assert!(!left_band(&world, attacker, start));
     Ok(())
 }
+
+/// Plan `2026-11-27-gated-movement` Amendment 3b: the `enemy-press` scenes of record under `Gated`
+/// keep every hard check: no holding unit moved (H-1), no attacking unit pushed out of its band
+/// (H-1b), no unit moved by an enemy pair (H-2 repaired), and no enemy overlap above T7's 0.5 %.
+/// Seed 288 is evidence §10's case (at the map edge, a fleeing enemy and its friend pressed into
+/// two attackers under Amendment 3; an attacker out of its band under Amendment 3a); seed 268's
+/// attackers stand against the map edge beside a target that walks and is put back each tick
+/// (72 unit-ticks out of the band under Amendment 3a); in seed 201 an attacker nudged round its
+/// target is left out of its band by the target's own later correction (one unit-tick, before
+/// the band was restored at the end of the solve).
+#[test]
+fn enemy_press_scenes_of_record_keep_the_hard_checks_under_gated() -> Result<(), Box<dyn Error>> {
+    let options = RunOptions::with_pipeline(sim_core::catalog::MovementPipeline::Gated)?;
+    for seed in [288, 268, 201] {
+        let scenario = generate(Family::EnemyPress, seed, false);
+        let row = sim_fixtures::harness::run_scenario(&scenario, &options)?;
+        let (_, known) = row.known.ok_or("enemy-press has a known answer")?;
+        assert_eq!(known.hold_moved_clean_ticks, 0, "H-1, seed {seed}");
+        assert_eq!(known.attack_left_band_ticks, 0, "H-1b, seed {seed}");
+        assert_eq!(known.enemy_pair_moved_ticks, 0, "H-2, seed {seed}");
+        assert!(
+            known.enemy_pair_ov_max <= 0.005,
+            "enemy overlap {} in seed {seed}",
+            known.enemy_pair_ov_max
+        );
+    }
+    Ok(())
+}

@@ -827,12 +827,42 @@ impl SimWorld {
             .is_ok_and(|d| d <= band.max && d >= band.min)
     }
 
+    /// The target and weapon band of `actor`, which stands in range of a live target
+    /// ([`Self::in_range_of_live_target`]), for the `Gated` contact solve (plan
+    /// `2026-11-27-gated-movement` Amendment 3b). A band that cannot be resolved (no weapon
+    /// against the target, a fault) is empty, `min` above `max`, and keeps no ring: the solve
+    /// then leaves the unit to no friend, as an anchored body.
+    fn attack_band(&self, entry: MotionEntry, actor: &Entity) -> super::AttackBand {
+        let target = engaged_target(actor);
+        let band = target
+            .and_then(|id| self.entities.get(&id).map(|t| (id, t)))
+            .and_then(|(id, t)| {
+                self.pursuit_band(entry, actor, t, id, AttackOrigin::Explicit)
+                    .ok()
+                    .flatten()
+            });
+        let scalar = |raw: i128| SimScalar::from_raw(i64::try_from(raw).unwrap_or(i64::MAX));
+        match (target, band) {
+            (Some(target), Some(band)) => super::AttackBand {
+                target,
+                min: scalar(band.min),
+                max: scalar(band.max),
+            },
+            (target, _) => super::AttackBand {
+                target: target.unwrap_or(entry.id),
+                min: SimScalar::ONE,
+                max: SimScalar::ZERO,
+            },
+        }
+    }
+
     /// Deviation D-δ (Q0095, plan Amendment 15, N): when the catalog's
     /// `contact.nudge_engaged_along_ring` is on, the unit vector from `actor`'s target to it if
     /// `actor` is a melee attacker in range of a live target that allies may nudge along its
     /// ring: never on Hold Position (nor immobile or unpushable), and only under the `Solver`
-    /// pipeline: under `Gated` no ally ever nudges an attacking unit (C′-1 of plan
-    /// `2026-11-27-gated-movement`, Q0121 (a)), whatever the switch says. `None` otherwise.
+    /// pipeline: under `Gated` the collision phase gives every attacking unit its ring and band
+    /// itself (C′-1 of plan `2026-11-27-gated-movement`, Amendments 3a and 3b), whatever the
+    /// switch says. `None` otherwise.
     pub(crate) fn nudge_radial(&self, entry: MotionEntry, actor: &Entity) -> Option<SimVec2> {
         let rules = self.catalog.movement_rules().contact();
         if !rules.nudge_engaged_along_ring
@@ -922,9 +952,11 @@ impl SimWorld {
                     {
                         let obstacle = self.obstacle_of(entry, actor);
                         // C′-1 (Amendment 3, item 1): under `Gated`, "attacking" is read here,
-                        // from the snapshot, once per tick, before any body moves.
+                        // from the snapshot, once per tick, before any body moves, with the
+                        // target and band the solve keeps it in (Amendment 3b).
                         if gated && obstacle.anchored && !actor.cannot_be_pushed() {
-                            self.movement.attacking_at_start.push(id);
+                            let band = self.attack_band(entry, actor);
+                            self.movement.attacking_at_start.push((id, band));
                         }
                         let class = entry.policy.class.index();
                         self.movement.obstacles[class].push(obstacle);

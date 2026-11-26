@@ -15,12 +15,20 @@
 //! body may not move) sums its corrections without averaging (C-1b).
 //!
 //! **The `Gated` pipeline's contact layer C′** (plan `2026-11-27-gated-movement` §3.1), chosen by
-//! [`SolverSettings::gated`], adds three rules to the same iterations, and nothing else:
-//! - **C′-1:** no ally nudges an attacking unit along its ring (D-δ is never applied, whatever
-//!   [`ContactParty::nudge`] holds; owner answer Q0121 (a)), and two anchored friends (attacking
-//!   or holding) take no correction from each other (plan Amendment 3, item 2), so attacking and
-//!   holding units are moved by no friend. "Attacking" is the caller's: under `Gated` the
-//!   collision phase reads it from the tick-start snapshot (Amendment 3, item 1).
+//! [`SolverSettings::gated`], adds these rules to the same iterations, and nothing else:
+//! - **C′-1 (Amendments 3, 3a and 3b, the owner's guidance):** a holding unit is moved by nothing,
+//!   a fixed body included. An attacking unit (its target in its weapon band in the tick-start
+//!   snapshot, read by the collision phase) may be nudged by friends, never out of its band: it
+//!   carries a [`Ring`], and its friend correction is taken in this order of precedence (3b):
+//!   (i) E-2, it closes on no enemy beyond its share; (ii) its band, its distance from its target
+//!   stays in the band; (iii) D-δ's ring, the correction turned round the target. The ring turns
+//!   the friend part first ([`ContactSolver::keep_rings`]), E-2 bounds every step, and the band
+//!   then only shortens a step along itself ([`ContactSolver::keep_bands`]), which keeps it
+//!   within E-2's bound; a move terrain changes is judged again, and at the end of the solve a
+//!   unit out of its band round where its target ended steps back into it
+//!   ([`ContactSolver::restore_bands`]). An attacking unit that can take less than half of its
+//!   friend correction is pinned: it counts as fixed in its friend pairs, its partner taking the
+//!   whole correction, as from a body terrain holds (C′-3).
 //! - **C′-2, enemies block (E-2, plan `2026-11-25-enemy-contact-and-ring-retarget` §4.2,
 //!   B-193):** no step a body takes in the tick closes on an enemy by more than the body's share
 //!   of the gap between them: its committed walk (application zero: the bodies enter at the start
@@ -37,12 +45,17 @@
 //!   steps can bring into contact, and rebuilt with the steps' reach when it may not
 //!   (Amendment 3, item 3; [`ContactSolver::gated_application`]). The enemy pairs' part of each
 //!   body's steps is kept as H-2's probe ([`ContactSolver::enemy_push`]).
+//!   A step E-2 projects off several enemies at once is never lengthened or turned back
+//!   ([`contracts`]): when the summed projections would do either, the guard shortens the whole
+//!   step instead (Amendment 3b, item 2), so a transferred correction that would close a body on
+//!   an enemy is not taken and its friend pair keeps its overlap.
 //! - **C′-3, the terrain transfer (B-220):** a body whose own correction terrain refused in an
 //!   application (the terrain step returned another target and the body moved less than half
-//!   its correction) counts as fixed in every later application of the solve, until a step of
-//!   its own is admitted, for every friend pair in which its share is positive: the partner takes
-//!   the whole correction, or none when it cannot be moved by friends either (fixed, holding or
-//!   engaged), as C-2's "one fixed" and "both fixed" rows.
+//!   its correction), or a pinned attacking unit, counts as fixed in every later application of
+//!   the solve, until it takes at least half of a correction again, for every friend pair in
+//!   which its share is positive: the partner takes the whole correction, or none when it cannot
+//!   be moved at all (fixed or holding), as C-2's "one fixed" and "both fixed" rows; an attacking
+//!   partner takes it under its band. The transferred step is bounded by E-2 like any other.
 //!
 //! C-3′ runs under `Gated` at the `gated` section's cap ([`SolverSettings::crowd_iterations`] is
 //! filled with it by the caller).
@@ -73,7 +86,11 @@
 //!   C-1a. A body that E-2 does not shorten is placed at its committed position exactly, so a
 //!   scene without enemies in reach is solved as without E-2.
 //! - C′-3 reads each body's own flag from its previous terrain step, so it keeps C-1a; a body
-//!   whose flag changes counts as moved for the pair cache (K-1).
+//!   whose flag changes counts as moved for the pair cache (K-1). The pin is read the same way.
+//! - Amendment 3b's ring, band and restore read only application-start positions, the bounded
+//!   steps and the targets' positions once the bodies without a ring have moved; every scale is
+//!   computed before any is applied, so they keep C-1a. The band only shortens a step, so a step
+//!   E-2 admitted stays admitted, and no rule after E-2 lengthens or turns a step.
 
 use super::contact::{settle_on_terrain, slide_along_wall};
 use super::grid::BodyGrid;
@@ -107,9 +124,10 @@ pub struct ContactParty {
     /// Its committed step this tick is longer than `STANDING_DRIFT` (1/64 world units).
     pub moving: bool,
     /// Deviation D-δ (Q0095, plan Amendment 15, N): for an engaged melee unit that allies may nudge
-    /// along its attack ring, the unit vector from its target to it; `None` otherwise. In a
-    /// friend pair such a unit is shared as if not engaged, but only the part of its correction
-    /// along the ring's tangent is taken, so it never leaves its range.
+    /// along its attack ring, the unit vector from its target to it; `None` otherwise (under
+    /// `Gated`, every attacking unit with a [`Ring`]). In a friend pair such a unit is shared as
+    /// if not engaged, but only the part of its correction along the ring's tangent is taken, so
+    /// it never leaves its range.
     pub nudge: Option<SimVec2>,
 }
 
@@ -391,8 +409,9 @@ pub(crate) struct SolverSettings {
     pub moving_overlap_permille: u16,
     /// D-β.
     pub moving_friends_push: bool,
-    /// The `Gated` pipeline's contact rules C′ (plan `2026-11-27-gated-movement` §3.1): D-δ never
-    /// applied, enemies block (E-2) and the terrain transfer (C′-3).
+    /// The `Gated` pipeline's contact rules C′ (plan `2026-11-27-gated-movement` §3.1, Amendments
+    /// 3 to 3b): holding units moved by nothing, attacking units nudged within their band, enemies
+    /// block (E-2) and the terrain transfer (C′-3).
     pub gated: bool,
 }
 
@@ -458,6 +477,20 @@ struct Limit {
     allow_b: SimScalar,
 }
 
+/// An attacking unit's ring (`Gated` only, plan `2026-11-27-gated-movement` Amendments 3a and
+/// 3b): its attack target among the solver's bodies and its weapon band against it. Friends may
+/// nudge the unit round the target, never out of the band.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Ring {
+    /// The slot of its attack target in [`ContactSolver::bodies`].
+    pub target: u32,
+    /// The nearest centre distance from the target its weapon reaches, world units; zero when
+    /// the weapon has no minimum range.
+    pub min: SimScalar,
+    /// The farthest centre distance from the target its weapon reaches, world units.
+    pub max: SimScalar,
+}
+
 /// A body's planned step of one application: `None` for a body it does not move.
 type Planned = Option<Result<SimVec2, MovementMathError>>;
 
@@ -508,13 +541,23 @@ pub(crate) struct ContactSolver {
     /// step the body took in this solve, the probe of H-2 (plan `2026-11-27-gated-movement`
     /// Amendment 3, item 4). Derived output, never read by the solve.
     pub enemy_push: Vec<SimScalar>,
-    /// `Gated` only, parallel to [`Self::bodies`] and filled by the caller: for an attacking unit,
-    /// the slot of its target among the bodies (Amendment 3a, item 2); the solve keeps the unit
-    /// at its distance from that body's position, so a friend's nudge never takes it out of its
-    /// weapon band.
-    pub rings: Vec<Option<u32>>,
+    /// `Gated` only, parallel to [`Self::bodies`] and filled by the caller: for an attacking unit
+    /// friends may nudge, its [`Ring`] (Amendments 3a and 3b).
+    pub rings: Vec<Option<Ring>>,
     /// `Gated` only: the caller's scratch for finding a body's slot by its entity id.
     pub slots: Vec<(EntityId, u32)>,
+    /// Per body (`Gated` only): Amendment 3b's pin, an attacking unit that could take less than
+    /// half of its friends' correction in an application (E-2 and its band left too little of
+    /// it), so it counts as fixed in its friend pairs, as a body terrain holds (C′-3), until it
+    /// takes at least half of a friend correction again.
+    pinned: Vec<bool>,
+    /// Per body (`Gated` only): the friend part of an attacking unit's step in the current
+    /// application, before its ring, its band and E-2 (zero for any other body), world units.
+    wanted: Vec<SimVec2>,
+    /// Per body (`Gated` only): where an attacking unit's target stands once the bodies without
+    /// a ring have moved in the current application, world units: the centre its move is judged
+    /// round ([`Self::move_planned`]).
+    centres: Vec<SimVec2>,
     /// `Gated` only: friend pairs, over the solve's applications, in which a body held by
     /// terrain counted as fixed (C′-3), the probe `terrain_transfers`.
     pub transfers: u32,
@@ -614,7 +657,7 @@ impl ContactSolver {
     }
 
     /// Adds the pair of slots `first` and `second` with its shares, lower id first. Under `G`
-    /// (`Gated`) the shares are C′'s (no D-δ nudge, anchored friends uncorrected) and an enemy
+    /// (`Gated`) the shares are C′'s (a holding body moved by nothing) and an enemy
     /// pair joins the enemy index with E-2's frozen gap shares.
     fn add_pair<const G: bool>(
         &mut self,
@@ -806,11 +849,89 @@ impl ContactSolver {
         if G {
             let context = (map_size, settings, &mut done);
             self.gated_application(false, context, (&mut connected, &mut terrain), report);
+            let context = (map_size, settings, &mut done);
+            self.restore_bands(context, (&mut connected, &mut terrain), report);
         } else {
             self.apply(false, &mut terrain, report);
         }
         done.pairs = self.pairs.len();
         done
+    }
+
+    /// Amendment 3b (ii) at the end of the solve: the band is judged round where the target ends
+    /// the tick, which no application before the last knows. An attacking unit the solve moved
+    /// ([`Self::walks`]: off its committed position) that ends out of its band round its target's
+    /// final position, though at its committed position it would be in it, steps back toward its
+    /// committed position by the least part of the way that puts it in the band
+    /// ([`restore_scale`]). The steps pass E-2's bound like any other ([`Self::bound_enemy_steps`],
+    /// after making sure the list covers them) and a terrain step that refuses a slide turning
+    /// one back into an enemy ([`closes_too_far`]); a unit E-2 or terrain leaves short of the band
+    /// stays out of it. A solve in which every attacking unit ends in its band does nothing here.
+    fn restore_bands(
+        &mut self,
+        (map_size, settings, done): ((u32, u32), SolverSettings, &mut SolveReport),
+        (connected, terrain): (
+            &mut impl FnMut(&SolverBody, &SolverBody) -> bool,
+            &mut impl FnMut(&SolverBody, SimVec2) -> Result<Option<SimVec2>, MovementMathError>,
+        ),
+        report: &mut impl FnMut(MovementInvariant),
+    ) {
+        self.planned.clear();
+        self.limits.clear();
+        let mut longest = 0_i128;
+        for (slot, body) in self.bodies.iter().enumerate() {
+            let back = self
+                .rings
+                .get(slot)
+                .copied()
+                .flatten()
+                .zip(self.walks.get(slot));
+            let step = back.and_then(|(ring, walk)| {
+                let centre = self.bodies[ring.target as usize].position;
+                let out =
+                    !in_band(body.position, centre, ring) && in_band(walk.committed, centre, ring);
+                out.then(|| restore_step(body.position, walk.committed, centre, ring))
+            });
+            if let Some(Ok(step)) = step {
+                longest = longest.max(l1_raw(step));
+            }
+            self.planned.push(step);
+        }
+        if longest == 0 {
+            return;
+        }
+        if self.reach_is_short(longest) {
+            let extra = SimScalar::from_raw(i64::try_from(2 * longest).unwrap_or(i64::MAX));
+            let reach = Reach {
+                extra,
+                enemies_only: true,
+            };
+            self.build_pairs::<true>((map_size, settings, reach), connected, report);
+            done.rebuilds = done.rebuilds.saturating_add(1);
+        }
+        if !self.enemy_pairs.is_empty() {
+            self.bound_enemy_steps(report);
+        }
+        let limits = &self.limits[..];
+        for (slot, (body, planned)) in self.bodies.iter_mut().zip(&self.planned).enumerate() {
+            let Some(step) = *planned else {
+                continue;
+            };
+            let target = step.and_then(|step| checked_vec_add(body.position, step));
+            match target.and_then(|target| Ok((target, terrain(body, target)?))) {
+                Ok((target, Some(next)))
+                    if next == target || !closes_too_far(limits, slot, body.position, next) =>
+                {
+                    body.position = next;
+                }
+                Ok(_) => {}
+                Err(source) => report(MovementInvariant::Arithmetic {
+                    entity: body.id,
+                    operation: "contact solver band restore",
+                    source,
+                }),
+            }
+        }
     }
 
     /// Clears `Gated`'s per-solve buffers: no body is held by terrain, nothing pushed yet.
@@ -819,6 +940,8 @@ impl ContactSolver {
         self.list_extra = SimScalar::ZERO;
         self.held_by_terrain.clear();
         self.held_by_terrain.resize(self.bodies.len(), false);
+        self.pinned.clear();
+        self.pinned.resize(self.bodies.len(), false);
         self.enemy_push.clear();
         self.enemy_push.resize(self.bodies.len(), SimScalar::ZERO);
     }
@@ -872,7 +995,10 @@ impl ContactSolver {
             let counts = (self.steps[ia].moves, self.steps[ib].moves);
             let mut shares = (pair.share_a, pair.share_b);
             if G {
-                let held = (self.held_by_terrain[ia], self.held_by_terrain[ib]);
+                let held = (
+                    self.held_by_terrain[ia] || self.pinned[ia],
+                    self.held_by_terrain[ib] || self.pinned[ib],
+                );
                 if let Some(transfer) = transferred_shares(pair, (a, b), held) {
                     shares = transfer;
                     self.transfers = self.transfers.saturating_add(1);
@@ -1050,10 +1176,13 @@ impl ContactSolver {
         let mut reached = false;
         for _ in 0..REACH_ROUNDS {
             self.plan_steps(average);
+            // Amendment 3b: the ring first, E-2 next, the band last; the band only shortens a
+            // step, which keeps it within E-2's bound (every allowance is non-negative).
+            self.keep_rings(average, report);
             if !self.enemy_pairs.is_empty() {
                 self.bound_enemy_steps(report);
             }
-            self.keep_rings(report);
+            self.keep_bands(report);
             let longest = self.planned.iter().map(|&p| l1_raw(planned_step(p))).max();
             let longest = longest.unwrap_or(0);
             if !self.reach_is_short(longest) {
@@ -1076,7 +1205,12 @@ impl ContactSolver {
         self.move_planned(average, terrain, report)
     }
 
-    /// The moves of [`Self::gated_application`], once the steps are planned and bounded.
+    /// The moves of [`Self::gated_application`], once the steps are planned and bounded: every
+    /// body without a ring first, then every attacking unit ([`Self::rings`]), whose band is
+    /// judged round where its target stands after the first moves ([`Self::centres`]; an
+    /// attacking target, not moved yet, where it stood). Each body's move reads only its own
+    /// state and the application's limits, and the centres are fixed before any attacking unit
+    /// moves, so the result does not depend on body order.
     fn move_planned(
         &mut self,
         average: bool,
@@ -1084,60 +1218,108 @@ impl ContactSolver {
         report: &mut impl FnMut(MovementInvariant),
     ) -> bool {
         let mut moved = false;
-        let limits = &self.limits[..];
-        for (slot, ((body, planned), last)) in self
-            .bodies
-            .iter_mut()
-            .zip(&self.planned)
-            .zip(&mut self.steps)
-            .enumerate()
-        {
-            let Some(step) = *planned else {
-                continue;
-            };
-            let target = step.and_then(|step| checked_vec_add(body.position, step));
-            if target.is_ok() && target.ok() == last.held {
-                continue;
+        let ringed = |rings: &[Option<Ring>], slot: usize| rings.get(slot).copied().flatten();
+        for slot in 0..self.bodies.len() {
+            if ringed(&self.rings, slot).is_none() {
+                moved |= self.move_body(slot, average, terrain, report);
             }
-            let attempted = target.ok();
-            last.held = None;
-            let next = match target.and_then(|target| terrain(body, target)) {
-                Ok(next) => next,
-                Err(source) => {
-                    report(MovementInvariant::Arithmetic {
-                        entity: body.id,
-                        operation: "contact solver terrain step",
-                        source,
-                    });
-                    continue;
-                }
-            };
-            let refused = refused_by_terrain(body.position, attempted, next);
-            if refused != self.held_by_terrain[slot] {
-                self.held_by_terrain[slot] = refused;
+        }
+        self.centres.clear();
+        self.centres.resize(self.bodies.len(), SimVec2::ZERO);
+        for slot in 0..self.bodies.len() {
+            if let Some(ring) = ringed(&self.rings, slot) {
+                self.centres[slot] = self.bodies[ring.target as usize].position;
+            }
+        }
+        for slot in 0..self.bodies.len() {
+            if ringed(&self.rings, slot).is_some() {
+                moved |= self.move_body(slot, average, terrain, report);
+            }
+        }
+        moved
+    }
+
+    /// One body's move of [`Self::move_planned`]: its planned step through `terrain`, refused when
+    /// the terrain's slide turns it back into an enemy beyond its allowance ([`closes_too_far`])
+    /// or, for an attacking unit, when it leaves the band round [`Self::centres`] or round where
+    /// its target's walk began or ended ([`band_admits`]). Records C′-3's flag and Amendment 3b's pin (an attacking unit that took
+    /// less than half of its friends' correction), each change of which counts as a move, and the
+    /// enemy pairs' part of the step taken. Returns whether the body moved or changed a flag.
+    fn move_body(
+        &mut self,
+        slot: usize,
+        average: bool,
+        terrain: &mut impl FnMut(&SolverBody, SimVec2) -> Result<Option<SimVec2>, MovementMathError>,
+        report: &mut impl FnMut(MovementInvariant),
+    ) -> bool {
+        let Some(step) = self.planned[slot] else {
+            return false;
+        };
+        let (body, last) = (&mut self.bodies[slot], &mut self.steps[slot]);
+        let target = step.and_then(|step| checked_vec_add(body.position, step));
+        if target.is_ok() && target.ok() == last.held {
+            return false;
+        }
+        let (attempted, from) = (target.ok(), body.position);
+        last.held = None;
+        let next = match target.and_then(|target| terrain(body, target)) {
+            Ok(next) => next,
+            Err(source) => {
+                report(MovementInvariant::Arithmetic {
+                    entity: body.id,
+                    operation: "contact solver terrain step",
+                    source,
+                });
+                return false;
+            }
+        };
+        let mut moved = false;
+        let refused = refused_by_terrain(from, attempted, next);
+        if refused != self.held_by_terrain[slot] {
+            self.held_by_terrain[slot] = refused;
+            last.moves = last.moves.wrapping_add(1);
+            moved = true;
+        }
+        let ring = self.rings.get(slot).copied().flatten();
+        let centres = ring.map(|ring| {
+            let walk = self.walks.get(ring.target as usize).copied();
+            let at = self.centres[slot];
+            walk.map_or([at; 3], |w| [at, w.from, w.committed])
+        });
+        let admitted = |next: SimVec2| {
+            (Some(next) == attempted || !closes_too_far(&self.limits, slot, from, next))
+                && ring.zip(centres).is_none_or(|(ring, centres)| {
+                    centres.iter().all(|&c| band_admits(from, next, c, ring))
+                })
+        };
+        match next {
+            // Refused by E-2 or the band: the body stays, and may try the step again.
+            Some(next) if !admitted(next) => {}
+            Some(next) if next != from => {
+                body.position = next;
                 last.moves = last.moves.wrapping_add(1);
                 moved = true;
+                let count = self.sums[slot].count;
+                let part = self.enemy_sums[slot];
+                let pushed = if average && count > 1 {
+                    l1_raw(part) / i128::from(count)
+                } else {
+                    l1_raw(part)
+                };
+                let pushed = SimScalar::from_raw(i64::try_from(pushed).unwrap_or(i64::MAX));
+                self.enemy_push[slot] = self.enemy_push[slot].saturating_add(pushed);
             }
-            match next {
-                // E-2: a terrain slide that turns a bounded step back into an enemy is refused.
-                Some(next)
-                    if Some(next) != attempted
-                        && closes_too_far(limits, slot, body.position, next) => {}
-                Some(next) if next != body.position => {
-                    body.position = next;
-                    last.moves = last.moves.wrapping_add(1);
-                    moved = true;
-                    let count = self.sums[slot].count;
-                    let part = self.enemy_sums[slot];
-                    let pushed = if average && count > 1 {
-                        l1_raw(part) / i128::from(count)
-                    } else {
-                        l1_raw(part)
-                    };
-                    let pushed = SimScalar::from_raw(i64::try_from(pushed).unwrap_or(i64::MAX));
-                    self.enemy_push[slot] = self.enemy_push[slot].saturating_add(pushed);
-                }
-                _ => last.held = attempted,
+            _ => last.held = attempted,
+        }
+        let wanted = self.wanted.get(slot).copied().unwrap_or(SimVec2::ZERO);
+        if ring.is_some() && wanted != SimVec2::ZERO {
+            let pinned = checked_vec_add(from, wanted).map_or(true, |whole| {
+                refused_by_terrain(from, Some(whole), Some(body.position))
+            });
+            if pinned != self.pinned[slot] {
+                self.pinned[slot] = pinned;
+                last.moves = last.moves.wrapping_add(1);
+                moved = true;
             }
         }
         moved
@@ -1162,26 +1344,86 @@ impl ContactSolver {
                 .any(|(body, &anchor)| !super::math::within_distance(body.position, anchor, margin))
     }
 
-    /// Amendment 3a, item 2: turns each attacking unit's planned step so that it ends at the unit's
-    /// present distance from its target ([`Self::rings`]), the target read where it stands at
-    /// the application's start: the unit moves round its target and never out of its band.
-    fn keep_rings(&mut self, report: &mut impl FnMut(MovementInvariant)) {
+    /// Amendment 3b (iii), D-δ's ring: turns the friend part of each attacking unit's planned
+    /// step ([`Self::rings`]) so that it ends at the unit's present distance from its target, the
+    /// target read where it stands at the application's start ([`ring_step`]); the enemy pairs'
+    /// part ([`Self::enemy_sums`], the mean's share of it when `average`) is kept as it is. The
+    /// friend part is recorded in [`Self::wanted`], against which the pin is judged.
+    fn keep_rings(&mut self, average: bool, report: &mut impl FnMut(MovementInvariant)) {
+        self.wanted.clear();
+        self.wanted.resize(self.bodies.len(), SimVec2::ZERO);
         for (slot, planned) in self.planned.iter_mut().enumerate() {
-            let (Some(Ok(step)), Some(Some(target))) = (*planned, self.rings.get(slot)) else {
+            let (Some(Ok(step)), Some(Some(ring))) = (*planned, self.rings.get(slot)) else {
                 continue;
             };
-            let (Some(body), Some(centre)) =
-                (self.bodies.get(slot), self.bodies.get(*target as usize))
-            else {
-                continue;
+            let (body, centre) = (&self.bodies[slot], &self.bodies[ring.target as usize]);
+            let count = self.sums[slot].count;
+            let enemy = if average && count > 1 {
+                super::math::checked_vec_div(self.enemy_sums[slot], SimScalar::from_num(count))
+            } else {
+                Ok(self.enemy_sums[slot])
             };
-            match ring_step(body.position, step, centre.position) {
-                Ok(kept) => *planned = Some(Ok(kept)),
+            let kept = enemy.and_then(|enemy| {
+                let friend = checked_vec_sub(step, enemy)?;
+                let turned = ring_step(body.position, friend, centre.position)?;
+                Ok((friend, checked_vec_add(turned, enemy)?))
+            });
+            match kept {
+                Ok((friend, kept)) => {
+                    self.wanted[slot] = friend;
+                    *planned = Some(Ok(kept));
+                }
                 Err(source) => report(MovementInvariant::Arithmetic {
                     entity: body.id,
                     operation: "contact solver ring",
                     source,
                 }),
+            }
+        }
+    }
+
+    /// Amendment 3b (ii), the band, after E-2: shortens each attacking unit's bounded step, along
+    /// itself, to the longest part that keeps the unit in its weapon band ([`band_scale`]) round
+    /// every place its target may end the tick at: where it stands, where its bounded step would
+    /// take it (its terrain step may refuse that step), and where its own walk began and ended
+    /// this tick ([`Self::walks`]; a later correction may take it back), since H-1b judges the
+    /// band round where the target ends. [`Self::move_planned`] judges the move again round where
+    /// the target stands after its own move. Shortening a step keeps it within E-2's bound, since every
+    /// allowance is non-negative. Every scale is read from the bounded steps before any is
+    /// applied, so the result does not depend on body order.
+    fn keep_bands(&mut self, report: &mut impl FnMut(MovementInvariant)) {
+        self.scales.clear();
+        self.scales.resize(self.bodies.len(), SimScalar::ONE);
+        for (slot, ring) in self.rings.iter().enumerate() {
+            let (Some(ring), Some(Ok(step))) = (ring, self.planned[slot]) else {
+                continue;
+            };
+            let (body, target) = (&self.bodies[slot], ring.target as usize);
+            let at = self.bodies[target].position;
+            let ahead = checked_vec_add(at, planned_step(self.planned[target]));
+            let walk = self.walks.get(target).copied();
+            let centres = ahead.map(|ahead| {
+                let (from, committed) = walk.map_or((at, at), |w| (w.from, w.committed));
+                [at, ahead, from, committed]
+            });
+            match centres.and_then(|centres| band_scale(body.position, step, &centres, *ring)) {
+                Ok(scale) => self.scales[slot] = scale,
+                Err(source) => {
+                    self.scales[slot] = SimScalar::ZERO;
+                    report(MovementInvariant::Arithmetic {
+                        entity: body.id,
+                        operation: "contact solver band",
+                        source,
+                    });
+                }
+            }
+        }
+        for (planned, &scale) in self.planned.iter_mut().zip(&self.scales) {
+            if let Some(Ok(step)) = planned {
+                if scale < SimScalar::ONE {
+                    *step =
+                        SimVec2::new(step.x.saturating_mul(scale), step.y.saturating_mul(scale));
+                }
             }
         }
     }
@@ -1358,11 +1600,19 @@ impl ContactSolver {
                 continue;
             }
             if let Some(Ok(step)) = *planned {
-                let projected = checked_vec_sub(step, adjust);
-                if let Err(source) = projected {
-                    report(fault(body.id, source));
+                match checked_vec_sub(step, adjust) {
+                    // Amendment 3b, item 2: projections summed over several enemies may lengthen
+                    // the step or turn it back, past the reach the limits were found with; the
+                    // step is then kept whole for the guard, which shortens it to what every
+                    // examined enemy admits, nothing when it closes on one with no allowance.
+                    Ok(projected) if !contracts(step, projected) => {}
+                    projected => {
+                        if let Err(source) = projected {
+                            report(fault(body.id, source));
+                        }
+                        *planned = Some(projected);
+                    }
                 }
-                *planned = Some(projected);
             }
         }
         self.guard_enemy_steps(report);
@@ -1499,6 +1749,114 @@ fn ring_step(from: SimVec2, step: SimVec2, centre: SimVec2) -> Result<SimVec2, M
     checked_vec_sub(end, from)
 }
 
+/// The band's test of one move (Amendment 3b (ii)): whether a body moving from `from` to `to`
+/// stays in `ring`'s band round `centre`, its distance from `centre` between `ring.min` and
+/// `ring.max`, or, for a body that stands outside the band already, no farther outside it than
+/// it stands. Exact in raw units (squared distances, no root). An unrepresentable distance
+/// admits nothing.
+fn band_admits(from: SimVec2, to: SimVec2, centre: SimVec2, ring: Ring) -> bool {
+    let squared = |p: SimVec2| {
+        let x = i128::from(p.x.raw()) - i128::from(centre.x.raw());
+        let y = i128::from(p.y.raw()) - i128::from(centre.y.raw());
+        x.checked_mul(x)
+            .zip(y.checked_mul(y))
+            .and_then(|(xx, yy)| xx.checked_add(yy))
+    };
+    let edge = |r: SimScalar| i128::from(r.raw()).checked_mul(i128::from(r.raw()));
+    match (squared(from), squared(to), edge(ring.min), edge(ring.max)) {
+        (Some(now), Some(then), Some(near), Some(far)) => {
+            then <= far.max(now) && then >= near.min(now)
+        }
+        _ => false,
+    }
+}
+
+/// Whether `position` lies in `ring`'s band round `centre`: its distance from `centre` between
+/// `ring.min` and `ring.max`. Exact in raw units; an unrepresentable distance is out of it.
+fn in_band(position: SimVec2, centre: SimVec2, ring: Ring) -> bool {
+    let x = i128::from(position.x.raw()) - i128::from(centre.x.raw());
+    let y = i128::from(position.y.raw()) - i128::from(centre.y.raw());
+    let edge = |r: SimScalar| i128::from(r.raw()).checked_mul(i128::from(r.raw()));
+    let squared = x
+        .checked_mul(x)
+        .zip(y.checked_mul(y))
+        .and_then(|(xx, yy)| xx.checked_add(yy));
+    match (squared, edge(ring.min), edge(ring.max)) {
+        (Some(squared), Some(near), Some(far)) => squared >= near && squared <= far,
+        _ => false,
+    }
+}
+
+/// The step of [`ContactSolver::restore_bands`]: from `position`, out of `ring`'s band round
+/// `centre`, the least part, to within 2⁻¹⁶, of the way back to `committed`, which is in it, that
+/// ends in the band ([`in_band`], applied to the scaled step exactly as it will be taken).
+///
+/// # Errors
+/// An unrepresentable step or end.
+fn restore_step(
+    position: SimVec2,
+    committed: SimVec2,
+    centre: SimVec2,
+    ring: Ring,
+) -> Result<SimVec2, MovementMathError> {
+    let way = checked_vec_sub(committed, position)?;
+    let scaled =
+        |scale: SimScalar| SimVec2::new(way.x.saturating_mul(scale), way.y.saturating_mul(scale));
+    // `high` ends in the band (the whole way does) and `low` does not; halve the interval.
+    let (mut low, mut high) = (0_i64, SimScalar::ONE.raw());
+    for _ in 0..BAND_BISECTIONS {
+        let middle = low + (high - low) / 2;
+        let end = checked_vec_add(position, scaled(SimScalar::from_raw(middle)))?;
+        if in_band(end, centre, ring) {
+            high = middle;
+        } else {
+            low = middle;
+        }
+    }
+    Ok(scaled(SimScalar::from_raw(high)))
+}
+
+/// Bisection steps of [`band_scale`] and [`restore_step`]: the scale each returns is within
+/// 2⁻¹⁶ of the bound it seeks.
+const BAND_BISECTIONS: u32 = 16;
+
+/// The largest factor in [0, 1], to within 2⁻¹⁶, by which a body at `from` may take `step` and
+/// stay in `ring`'s band round every one of `centres` ([`band_admits`], applied to the scaled
+/// step exactly as it will be taken): one when the whole step is admitted, zero when no part of it is. Every
+/// scale it returns is admitted, so the step it gives never leaves the band.
+///
+/// # Errors
+/// An unrepresentable end of a step.
+fn band_scale(
+    from: SimVec2,
+    step: SimVec2,
+    centres: &[SimVec2],
+    ring: Ring,
+) -> Result<SimScalar, MovementMathError> {
+    let scaled =
+        |scale: SimScalar| SimVec2::new(step.x.saturating_mul(scale), step.y.saturating_mul(scale));
+    let admits = |scale: SimScalar| -> Result<bool, MovementMathError> {
+        let to = checked_vec_add(from, scaled(scale))?;
+        Ok(centres
+            .iter()
+            .all(|&centre| band_admits(from, to, centre, ring)))
+    };
+    if admits(SimScalar::ONE)? {
+        return Ok(SimScalar::ONE);
+    }
+    // `low` is admitted (a zero step always is) and `high` is not; halve the interval.
+    let (mut low, mut high) = (0_i64, SimScalar::ONE.raw());
+    for _ in 0..BAND_BISECTIONS {
+        let middle = low + (high - low) / 2;
+        if admits(SimScalar::from_raw(middle))? {
+            low = middle;
+        } else {
+            high = middle;
+        }
+    }
+    Ok(SimScalar::from_raw(low))
+}
+
 /// Whether the move of the body in `slot` from `from` to `to` closes on an enemy of the
 /// application's `limits` by more than its allowance: a terrain step that slides a bounded step
 /// along a wall can turn it back into an enemy (a body sliding into the corner of a wall and an
@@ -1538,6 +1896,35 @@ fn enemy_part(
         sums[ib] = checked_vec_add(sums[ib], corrected.delta_b)?;
     }
     Ok(())
+}
+
+/// Rounding allowed to [`contracts`], raw Q32.32 units squared (2⁻²⁴ world units squared): a
+/// projected step's components each truncate by a few raw units, which moves its square by far
+/// less, and a summed projection that overshoots misses by the square of a visible length.
+const CONTRACTION_SLACK: i128 = 1 << 40;
+
+/// Whether `projected` is a step E-2's projection of `step` may give (Amendment 3b, item 2): no
+/// longer than `step` and not turned back against it (`|p|² ≤ |s|²` and `p · s ≥ 0`, each to
+/// within [`CONTRACTION_SLACK`]), as every projection onto a convex set holding the zero step is.
+/// A sum of projections off several enemies may break both. Exact in raw units.
+fn contracts(step: SimVec2, projected: SimVec2) -> bool {
+    let raw = |v: SimVec2| (i128::from(v.x.raw()), i128::from(v.y.raw()));
+    let ((sx, sy), (px, py)) = (raw(step), raw(projected));
+    let dot = |(ax, ay): (i128, i128), (bx, by): (i128, i128)| {
+        ax.checked_mul(bx)
+            .zip(ay.checked_mul(by))
+            .and_then(|(x, y)| x.checked_add(y))
+    };
+    match (
+        dot((sx, sy), (sx, sy)),
+        dot((px, py), (px, py)),
+        dot((sx, sy), (px, py)),
+    ) {
+        (Some(whole), Some(length), Some(along)) => {
+            length <= whole.saturating_add(CONTRACTION_SLACK) && along >= -CONTRACTION_SLACK
+        }
+        _ => false,
+    }
 }
 
 /// The step `planned` holds, or zero.
@@ -3646,7 +4033,12 @@ mod tests {
             distance(bodies[2].position, bodies[0].position),
             distance(bodies[3].position, bodies[0].position),
         ];
-        let rings = [None, None, Some(0), Some(0)];
+        let ring = Some(Ring {
+            target: 0,
+            min: ZERO,
+            max: SimScalar::from_num(1.1),
+        });
+        let rings = [None, None, ring, ring];
         let (solved, _, errors) = solve_ringing(&mut world, &bodies, &rings, GATED);
         assert_eq!(errors, []);
         assert_ne!(solved.bodies[2].position, bodies[2].position);
@@ -3661,11 +4053,11 @@ mod tests {
         Ok(())
     }
 
-    /// [`solve_reporting`] with `Gated`'s rings (each attacking body's target slot).
+    /// [`solve_reporting`] with `Gated`'s rings (each attacking body's target slot and band).
     fn solve_ringing(
         world: &mut crate::SimWorld,
         bodies: &[SolverBody],
-        rings: &[Option<u32>],
+        rings: &[Option<Ring>],
         settings: SolverSettings,
     ) -> (ContactSolver, SolveReport, Vec<MovementInvariant>) {
         let mut solver = ContactSolver::default();
@@ -3724,6 +4116,295 @@ mod tests {
         assert_eq!(errors, []);
         assert!(worst_enemy_overlap(&solved.bodies) <= ROUNDING_SHARE);
         assert!(solved.enemy_push.iter().all(|&p| p == SimScalar::ZERO));
+        Ok(())
+    }
+    /// The scene of Amendment 3b's precedence tests: a standing enemy target `T` (slot 0); its
+    /// melee attacker `A` (slot 1) west of it at 1.05, its ring kept by the caller; a standing
+    /// enemy `E` (slot 2) north-east of `A`, 0.002 beyond contact; and a walking friend `F`
+    /// (slot 3) overlapping `A` from the south by 0.15, so its correction nudges `A` north along
+    /// its ring, toward `E`. Radii 0.5.
+    fn pinned_scene() -> Result<[SolverBody; 4], MovementMathError> {
+        let (target, attacker) = (at(20.0, 20.0), at(18.95, 20.0));
+        let standing = ContactParty {
+            idle: true,
+            ..party(1)
+        };
+        let attacking = ContactParty {
+            engaged: true,
+            nudge: Some(direction(attacker, target)?),
+            ..party(0)
+        };
+        let walker = ContactParty {
+            moving: true,
+            ..party(0)
+        };
+        Ok([
+            solver_body(1, standing, 0.5, target, target),
+            solver_body(2, attacking, 0.5, attacker, attacker),
+            solver_body(3, standing, 0.5, at(19.472, 20.855), at(19.472, 20.855)),
+            solver_body(4, walker, 0.5, at(18.95, 18.9), at(18.95, 19.15)),
+        ])
+    }
+
+    /// `A`'s ring in [`pinned_scene`] with the band's far edge `max`.
+    fn pinned_rings(max: SimScalar) -> [Option<Ring>; 4] {
+        let ring = Ring {
+            target: 0,
+            min: ZERO,
+            max,
+        };
+        [None, Some(ring), None, None]
+    }
+
+    /// E-2's hold on [`pinned_scene`]: the enemy `E` was moved by nothing, no enemy pair pushed any
+    /// body, and `A` never came into contact with `E`.
+    fn assert_e2_held(solved: &ContactSolver, scene: &[SolverBody; 4]) {
+        assert_eq!(solved.bodies[2].position, scene[2].position, "E was moved");
+        assert!(
+            solved.enemy_push.iter().all(|&p| p == ZERO),
+            "an enemy pair pushed: {:?}",
+            solved.enemy_push
+        );
+        assert!(
+            exact_overlap_share(&solved.bodies[1], &solved.bodies[2]) <= 0.0,
+            "A closed into E"
+        );
+    }
+
+    /// A3b-T1 (plan `2026-11-27-gated-movement` Amendment 3b, item 1, (i) before (iii)): an
+    /// attacking unit a friend nudges along its ring toward an enemy closes on that enemy by no
+    /// more than its share of the gap: E-2 is the last word on the step, not the ring. Red on
+    /// Amendment 3a, whose ring step turned the step after E-2 had bounded it.
+    #[test]
+    fn an_attacker_nudged_toward_an_enemy_closes_by_its_share_only_under_gated(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut world = flat_world(None)?;
+        let scene = pinned_scene()?;
+        let rings = pinned_rings(SimScalar::from_num(1.1));
+        let (solved, _, errors) = solve_ringing(&mut world, &scene, &rings, GATED);
+        assert_eq!(errors, []);
+        assert_e2_held(&solved, &scene);
+        Ok(())
+    }
+
+    /// A3b-T2 (Amendment 3b, item 1, (i) before (ii) before (iii)): the attacker of
+    /// [`pinned_scene`] stands on its band's far edge. E-2 removes the inward turn of its ring
+    /// step, which alone would carry it out of the band; the band then shortens the step, so
+    /// it ends neither closer to `E` than its share nor out of its band. Red on Amendment 3a
+    /// (E-2 broken by the ring step) and on the scratch order with E-2 last (the band broken).
+    #[test]
+    fn an_attacker_on_its_bands_edge_keeps_e2_and_its_band_under_gated(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut world = flat_world(None)?;
+        let scene = pinned_scene()?;
+        let edge = super::super::checked_distance(scene[1].position, scene[0].position)
+            .ok_or("the edge")?;
+        let (solved, _, errors) = solve_ringing(&mut world, &scene, &pinned_rings(edge), GATED);
+        assert_eq!(errors, []);
+        assert_e2_held(&solved, &scene);
+        let end =
+            super::super::checked_distance(solved.bodies[1].position, solved.bodies[0].position)
+                .ok_or("the end")?;
+        assert!(end <= edge, "out of the band: {end:?} > {edge:?}");
+        Ok(())
+    }
+
+    /// A3b-T3 (Amendment 3b, item 1, the empty set): the attacker of [`pinned_scene`] on its band's
+    /// edge can take almost none of its friend's nudge, so it is fixed for its friend pairs and
+    /// the walking friend takes the whole correction, as from a body terrain holds (C′-3): two
+    /// averaged iterations leave their overlap within the dead band. Red on Amendment 3a, where
+    /// the friend took half of what was left in each iteration.
+    #[test]
+    fn a_pinned_attacker_passes_its_friends_correction_to_them_under_gated(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut world = flat_world(None)?;
+        let scene = pinned_scene()?;
+        let edge = super::super::checked_distance(scene[1].position, scene[0].position)
+            .ok_or("the edge")?;
+        let short = SolverSettings {
+            iterations: 2,
+            crowd_iterations: 2,
+            ..GATED
+        };
+        let (solved, _, errors) = solve_ringing(&mut world, &scene, &pinned_rings(edge), short);
+        assert_eq!(errors, []);
+        assert_e2_held(&solved, &scene);
+        let left = exact_overlap_share(&solved.bodies[1], &solved.bodies[3]);
+        assert!(left <= 0.01, "the friend overlap left: {left}");
+        let end =
+            super::super::checked_distance(solved.bodies[1].position, solved.bodies[0].position)
+                .ok_or("the end")?;
+        assert!(end <= edge);
+        Ok(())
+    }
+
+    /// A3b-T4 (Amendment 3b, item 1, the precedence as a rule on one step): [`band_scale`] keeps
+    /// a step whole inside the band, shortens one that would leave it to the band's edge, never
+    /// lets a body farther out than it stands when it is out already, admits nothing that starts
+    /// on the far edge and leads straight out, and round two centres admits what both admit.
+    #[test]
+    fn the_band_shortens_only_a_step_that_would_leave_it() -> Result<(), MovementMathError> {
+        let centre = at(20.0, 20.0);
+        let ring = |min: f64, max: f64| Ring {
+            target: 0,
+            min: SimScalar::from_num(min),
+            max: SimScalar::from_num(max),
+        };
+        let inside = band_scale(at(19.0, 20.0), at(0.0, 0.1), &[centre], ring(0.0, 1.5))?;
+        assert_eq!(inside, ONE);
+        let outward = band_scale(at(19.0, 20.0), at(-1.0, 0.0), &[centre], ring(0.0, 1.5))?;
+        assert!(
+            outward > SimScalar::from_num(0.49) && outward <= HALF,
+            "{outward:?}"
+        );
+        let on_edge = band_scale(at(18.5, 20.0), at(-0.25, 0.0), &[centre], ring(0.0, 1.5))?;
+        assert_eq!(on_edge, ZERO);
+        let beyond = band_scale(at(18.0, 20.0), at(0.0, 0.5), &[centre], ring(0.0, 1.5))?;
+        assert_eq!(beyond, ZERO);
+        let inward = band_scale(at(18.0, 20.0), at(0.25, 0.0), &[centre], ring(0.0, 1.5))?;
+        assert_eq!(inward, ONE);
+        let too_close = band_scale(at(19.0, 20.0), at(0.75, 0.0), &[centre], ring(0.5, 1.5))?;
+        assert!(too_close > SimScalar::from_num(0.66) && too_close < SimScalar::from_num(0.67));
+        // Round two centres, a step is kept to what both bands admit: 0.5 round the first, whole
+        // round the second (1.0 moved to (21, 20) is 0.5 from it).
+        let both = band_scale(
+            at(19.0, 20.0),
+            at(-1.0, 0.0),
+            &[centre, at(19.0, 20.5)],
+            ring(0.0, 1.5),
+        )?;
+        assert_eq!(
+            both,
+            band_scale(at(19.0, 20.0), at(-1.0, 0.0), &[centre], ring(0.0, 1.5))?
+        );
+        Ok(())
+    }
+    /// A3b-T5 (plan `2026-11-27-gated-movement` Amendment 3b, item 2): a walker `P` (radius 0.5)
+    /// steps 0.3 south into five standing enemies (radius 0.1) at contact on its southern half;
+    /// a sixth `N` stands 0.35 beyond contact to its north. E-2's projections off the five, summed,
+    /// turned the step back to 0.6 north, past the reach the limits were found with, into `N`,
+    /// which no limit examined. A projection never lengthens a step or turns it back, so `P`'s
+    /// walk is shortened by the guard instead, to nothing: it stays, and nobody is pushed. Red
+    /// before the contraction test (evidence §10's `enemy-press` seed 288, at a transfer).
+    #[test]
+    fn a_step_pressed_into_several_enemies_is_not_turned_back_under_gated(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut world = flat_world(None)?;
+        let walker = ContactParty {
+            moving: true,
+            ..party(0)
+        };
+        let standing = ContactParty {
+            idle: true,
+            ..party(1)
+        };
+        let mut bodies = vec![solver_body(1, walker, 0.5, at(20.0, 20.0), at(20.0, 19.7))];
+        for (k, degrees) in [-30.0_f64, -60.0, -90.0, -120.0, -150.0]
+            .into_iter()
+            .enumerate()
+        {
+            let (sin, cos) = degrees.to_radians().sin_cos();
+            let p = at(20.0 + 0.6001 * cos, 20.0 + 0.6001 * sin);
+            let id = 2 + u32::try_from(k)?;
+            bodies.push(solver_body(id, standing, 0.1, p, p));
+        }
+        bodies.push(solver_body(
+            9,
+            standing,
+            0.1,
+            at(20.0, 20.95),
+            at(20.0, 20.95),
+        ));
+        let (solved, _, errors) = solve_reporting(&mut world, &bodies, GATED);
+        assert_eq!(errors, []);
+        for (before, after) in bodies.iter().zip(&solved.bodies).skip(1) {
+            assert_eq!(after.position, before.position, "{:?} was moved", before.id);
+        }
+        assert!(solved.enemy_push.iter().all(|&p| p == ZERO));
+        assert!(worst_enemy_overlap(&solved.bodies) <= ROUNDING_SHARE);
+        assert!(
+            solved.bodies[0].position.y <= bodies[0].start.y,
+            "P turned back north"
+        );
+        Ok(())
+    }
+
+    /// A3b-T6 (Amendment 3b (ii) at the end of the solve, [`ContactSolver::restore_bands`]): an
+    /// attacking unit the solve left out of its band round where its target ends, though its
+    /// committed position is in it, steps back toward that position just into the band; one in
+    /// its band, or one whose committed position is out of it too, is left alone.
+    #[test]
+    fn an_attacker_left_out_of_its_band_steps_back_into_it_under_gated(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut world = flat_world(None)?;
+        let standing = ContactParty {
+            idle: true,
+            ..party(1)
+        };
+        let attacking = ContactParty {
+            engaged: true,
+            ..party(0)
+        };
+        let ring = Ring {
+            target: 0,
+            min: ZERO,
+            max: SimScalar::from_num(1.5),
+        };
+        let target = at(20.0, 20.0);
+        // Committed at 1.4 west of the target; the solve left the first at 1.6 (out), the second
+        // at 1.45 (in); the third was committed at 1.7, out already, and stands at 1.8.
+        let cases = [
+            (at(18.6, 20.0), at(18.4, 20.0), true),
+            (at(18.6, 20.0), at(18.55, 20.0), false),
+            (at(18.3, 20.0), at(18.2, 20.0), false),
+        ];
+        for (committed, left, moves) in cases {
+            let mut solver = ContactSolver::default();
+            solver.bodies.extend([
+                solver_body(1, standing, 0.5, target, target),
+                solver_body(2, attacking, 0.5, committed, left),
+            ]);
+            solver.walks.extend(solver.bodies.iter().map(|b| Walk {
+                committed: b.start,
+                from: b.start,
+            }));
+            solver.rings.extend([None, Some(ring)]);
+            solver.start_gated();
+            let mut errors = Vec::new();
+            let map = &world.map;
+            let size = (map.width(), map.height());
+            let pathfinder = &mut world.pathfinder;
+            let mut done = SolveReport::default();
+            solver.build_pairs::<true>(
+                (size, GATED, Reach::CONTACT),
+                &mut |a, b| bodies_touch(map, a, b),
+                &mut |e| errors.push(e),
+            );
+            solver.restore_bands(
+                (size, GATED, &mut done),
+                (&mut |a, b| bodies_touch(map, a, b), &mut |body, to| {
+                    terrain_step(
+                        map,
+                        pathfinder,
+                        body.policy,
+                        (body.start, body.position),
+                        to,
+                    )
+                }),
+                &mut |e| errors.push(e),
+            );
+            assert_eq!(errors, []);
+            let end = solver.bodies[1].position;
+            if moves {
+                assert!(in_band(end, target, ring), "{end:?}");
+                assert!(
+                    end.x < SimScalar::from_num(18.501) && end.x > left.x,
+                    "{end:?}"
+                );
+            } else {
+                assert_eq!(end, left);
+            }
+        }
         Ok(())
     }
 }
