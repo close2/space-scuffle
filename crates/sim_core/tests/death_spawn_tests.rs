@@ -762,3 +762,118 @@ fn ds12_a_recorded_fight_replays_to_the_same_checksums() -> TestResult {
     assert_eq!(fight_checksums(&read)?, recorded);
     Ok(())
 }
+
+/// DS-15 (plan §6.2): the shipped structure with the largest death spawn, found by property,
+/// killed by a constructed army through its owner's attack order: DS-1 holds with the shipped
+/// values (that many units of the shipped spawn, its delay after the death, at the centre, the
+/// structure's owner's), and the created units fight the army.
+#[test]
+fn ds15_a_shipped_structure_leaves_its_broodlings_which_fight() -> TestResult {
+    let map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0)))?;
+    let world = sim_fixtures::world(map, 0xD5_15);
+    let (host, spec) = world
+        .catalog
+        .archetypes()
+        .filter_map(|a| {
+            a.capabilities
+                .death_spawn
+                .map(|spec| (a.unit_type_id, spec))
+        })
+        .max_by_key(|(id, spec)| (spec.count, std::cmp::Reverse(*id)))
+        .ok_or("a shipped structure with a death spawn")?;
+    let mut f = Field {
+        world,
+        unit: spec.unit,
+        host,
+    };
+    let (structure, centre) = f.host_at(FOE, 28, 28)?;
+    f.world.entities.get_mut(&structure).ok_or("host")?.hp = SimScalar::from_i32(60);
+    let soldier = armed_ground(&f.world, f.unit)?;
+    let mut army = Vec::new();
+    for dy in [-2, 0, 2] {
+        let at = centre - SimVec2::from_i32(5, dy);
+        let id = f.world.spawn_unit(soldier, ME, at)?;
+        durable(&mut f.world, id)?;
+        army.push(id);
+    }
+    f.step();
+    f.step_with(vec![PlayerCommand {
+        player_id: ME,
+        entities: army.clone(),
+        order: UnitOrder::attack(structure),
+        queue: false,
+    }]);
+    let mut death = None;
+    for _ in 0..2000 {
+        f.step();
+        if !f.world.entities.contains_key(&structure) {
+            death = Some(f.world.current_tick);
+            break;
+        }
+    }
+    let death = death.ok_or("the army killed the structure")?;
+    while f.world.current_tick < death + u32::from(spec.delay_ticks) - 1 {
+        f.step();
+        assert_eq!(f.spawned().len(), 0);
+    }
+    f.step();
+    let created = f.spawned();
+    assert_eq!(created.len(), usize::from(spec.count));
+    assert!(created
+        .iter()
+        .all(|u| u.owner == FOE && u.pos_at_tick_start == centre));
+    let mut fought = false;
+    for _ in 0..100 {
+        f.step();
+        fought |= army
+            .iter()
+            .any(|id| f.world.entities.get(id).is_some_and(|u| u.hp < u.max_hp));
+    }
+    assert!(fought, "the created units struck the army");
+    Ok(())
+}
+
+/// DS-6 for the shipped hosts (plan §6.1, once WPA2 authors them): every shipped archetype with
+/// a death spawn, found by property, placed on open ground and killed, creates every unit at its
+/// centre with no `DeathSpawnBlocked`.
+#[test]
+fn ds6_every_shipped_host_leaves_its_units_at_its_centre() -> TestResult {
+    let map = GameMap::new(48, 48, MapCell::default_ground(CliffLevel(0)))?;
+    let shipped: Vec<(UnitTypeId, DeathSpawnSpec)> = sim_fixtures::world(map, 0)
+        .catalog
+        .archetypes()
+        .filter_map(|a| {
+            a.capabilities
+                .death_spawn
+                .map(|spec| (a.unit_type_id, spec))
+        })
+        .collect();
+    assert!(!shipped.is_empty(), "premise: shipped hosts");
+    for (host, spec) in shipped {
+        let map = GameMap::new(48, 48, MapCell::default_ground(CliffLevel(0)))?;
+        let mut f = Field {
+            world: sim_fixtures::world(map, 0xD5_06),
+            unit: spec.unit,
+            host,
+        };
+        let (structure, centre) = f.host_at(FOE, 20, 20)?;
+        f.kill(structure)?;
+        for _ in 0..=spec.delay_ticks {
+            f.step();
+            assert!(
+                !f.world
+                    .diagnostics()
+                    .iter()
+                    .any(|d| matches!(d, SimulationDiagnostic::DeathSpawnBlocked { .. })),
+                "{host:?}: the centre is free"
+            );
+        }
+        let created = f.spawned();
+        assert_eq!(created.len(), usize::from(spec.count), "{host:?}");
+        assert!(
+            created.iter().all(|u| u.pos_at_tick_start == centre),
+            "{host:?}"
+        );
+    }
+    Ok(())
+}
