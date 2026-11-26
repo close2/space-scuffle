@@ -26,3 +26,10 @@ targets instead.
 
 Answered as above. These answers (Q0120 (a), Q0121 (a), Q0122 (c), Q0123 (a), Q0124 (a)) govern the implementation
 plan of the movement redesign, written next from the design round `docs/plans/2026-11-26-movement-blank-sheet.md`.
+
+## Owner addendum (2026-11-29)
+
+After watching StarCraft II footage, the owner revised this answer: marines in combat are pushed slightly by their
+allies, so attacking units **may** be nudged by friends (never out of their weapon band), while **Hold Position units
+must never move**, and enemies still never push each other. Applied to the Gated movement plan as Amendments 3a and 3b
+(precedence: enemies never push, then the weapon band, then the ally's nudge).

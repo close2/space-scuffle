@@ -132,6 +132,9 @@
         // shown by light and vapour trails (a saucer has no exhaust), and an Attack that fires
         // or launches forward and returns to the hover pose. The interceptor's beams and the
         // Carrier's drones leave toward the lower right, the way both face.
+        // Their Idle texts (the seed pictures) were reworded in the continuation under Q0131 on the
+        // Brood Lord analogue's pattern: "seen from above … looking down on its top", a plain dark
+        // backdrop, no "high above" or "floating"; the Carrier's first seed on it had no shafts.
         // spore_matriarch, brood_mite (broodlings batch, 2026-11-26; plan 2026-11-28-broodlings
         // WP6, D-12): the Brood Lord analogue and the Broodling it throws, the second and third
         // Sylvan Swarm creatures with generated media. The Brood Lord analogue is described as a
@@ -232,7 +235,11 @@
         // catalog, or blank terms, is refused.
         // spore_matriarch: its first four seeds drew light shafts from above and flapped their
         // wings; brood_mite: its pinned Idles nodded their heads and flushed in colour.
+        // mothership_carrier, saucer_interceptor: their first four seeds each drew diagonal light
+        // shafts across the backdrop (carrier batch, Q0131 (a)).
         negative_overrides: {
+            "mothership_carrier": "light shafts, tractor beam, beam of light from above, volumetric light, haze, light streaks",
+            "saucer_interceptor": "light shafts, tractor beam, beam of light from above, volumetric light, haze, light streaks",
             "spore_matriarch": "light shafts, tractor beam, beam of light from above, volumetric light, haze, flapping wings",
             "brood_mite": "head turning, nodding, twitching, colour change",
         },
@@ -423,6 +430,10 @@
         // analogue's Idle and Walk keep no scale lock either: every clip of it beats its wings,
         // which reads as an uneven zoom; its accepted loops are a temporary exception under the
         // owner's answer to Q0133 (a polish pass redoes them).
+        // saucer_interceptor Walk (carrier batch continuation, 2026-11-26): no scale lock. Its
+        // light trails appear after the pinned first frame and vanish before the pinned last one,
+        // which reads as an uneven zoom, so the default lock refuses the seam repair; the
+        // accepted Walk is a temporary exception under the owner's answer to Q0131.
         overrides: {
             "spore_matriarch": {
                 Attack: (pin_end: true, seam: None),
@@ -438,6 +449,7 @@
             },
             "saucer_interceptor": {
                 Attack: (pin_end: true, seam: None),
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 2))),
             },
             "burrow_scorpion": {
                 Attack: (pin_end: true, seam: None),
