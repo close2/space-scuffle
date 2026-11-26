@@ -80,3 +80,77 @@ G-1's staging on the shipped battle (`showcase_canyon`): the wall `x = 26`, cont
 onto canvas column 820.0 (the battle view's viewport starts right of its side panel), and 0.30 world units at the
 sphere's depth span 41.8 px: **139.2 px per world unit**, so the foot (0.22) covers about 31 px and the jitter (0.06)
 about 8 px.
+
+## 2. WP1: the setback (B-243)
+
+On `aaa5d450`. Logs under `~/scratch/terrain-indicators/logs/wp1_*`.
+
+| Check | Result |
+|---|---|
+| T-A, T-A2 | pass; T-A's sweep also covers void low corners (167,424 rows) |
+| T-B1, four maps | no profile violation; tau 1.2207e-4 (64- and 77-cell maps), 6.1035e-5 (37-cell synthetic), epsilon 1.53e-5 (7.63e-6 on `default_arena`) |
+| G-1 (radv) | 3,184 of 3,184 band pixels and 5,332 of 5,332 control pixels change |
+| `terrain_tests` (unchanged) | 14 of 14, the 4×4 counts included |
+| `ramp_geometry_tests` T0 to T3, `smog_golden_tests` | pass unchanged |
+| `mesher_golden_tests` | the six mesh hashes move, pick hashes and hit counts identical; re-recorded at `0c682640` |
+| Scratch mesher check (`result_wp1.txt`) | toes off the edge 0 of 318; canonical rows towards the low side 0 of 1,050 (ground) and 0 of 10,816 (void): **acceptance 4, 0 down from 5,501** |
+
+**Deviation: void edges are set back by the jitter amplitude.** With the plan's setback of 0 on void edges, T-B1 stayed
+red on the goldens' synthetic map. It found 14 triangles in 7 cells, up to 0.15 above the floor and 0.008 into the
+cell. A straight contour whose two low corners differ, one void and one ground, draws one wall strip between the
+two profiles. The void-side profile's rows jitter up to 0.06 onto the low side. The ground-side toe lies on the
+edge. So the strip crosses the edge line into the ground quadrant. Setting void edges back by
+`WALL_JITTER_AMPLITUDE` (0.06) keeps every row of every edge behind its edge. It is the same translation as D-1,
+smaller, and it moves the border and abyss walls 0.06. It also keeps every mesh vertex within `[0, M]`, so tau is
+the plan's own figure.
+
+Review capture `~/scratch/terrain-indicators/review/wp1/` (README.txt, contact_sheet.png).
+
+## 3. WP2: the air pose (B-238, B-244)
+
+On `8ced7c35`. U-1, U-2 and I-1 pass (`logs/wp2_*`). These pass unchanged: `render_pool_tests` (12),
+`render_pool_gpu_tests` on radv, `round2_visual_tests` (22), `player_presentation_tests`, `system_ownership_tests`,
+`sync_steady_state_tests` (16), and `sync_allocation_count_tests` (valgrind, 16, run alone under
+`flock ~/scratch/gate.lock`).
+
+**Deviation from D-5's formula.** D-5's `max(h + r_off − SHADOW_LIFT, SHADOW_LIFT)` would put a grounded dome's
+hidden shadow at `ground_z − 0.02` and fail U-1, the plan's own test. So the shadow uses the exact span, and only
+the tether's length is floored at `SHADOW_LIFT`, keeping its sign, so that no scale is zero.
+
+**Deviation from §6.2's wording.** The review child is its own GPU target, `air_indicator_review_gpu_tests.rs`, with
+an ignored parent. The gate's catalog classes every file that launches GPU children as Gpu, so a child inside
+`air_indicator_tests.rs` would have turned U-2 and I-1 into GPU tests.
+
+Review capture `~/scratch/terrain-indicators/review/wp2/`.
+
+## 4. WP3: the corners (B-245, Q0136 default (a))
+
+On `6c47fc4d`.
+
+| Check | Result |
+|---|---|
+| T-B2, four maps | no violation of either class (on the WP1 tree: `showcase_canyon` 320 triangles in 24 walkable cells, nooks 0.354 deep; synthetic 1,014 in 60) |
+| T-B1, T-A, T-A2, G-1 | still pass (G-1: 3,184 of 3,184) |
+| `terrain_tests` (unchanged) | 14 of 14, the 4×4 counts and seams included |
+| `ramp_geometry_tests`, `smog_golden_tests` | pass unchanged |
+| `mesher_golden_tests` | `showcase_canyon` and synthetic mesh and ramp-free hashes move; `default_arena` (no concave corner) and every pick hash unchanged |
+
+**Deviations from D-3's text.**
+- **The L is one polygon.** A concave corner's L is a single polygon, star-shaped from the corner diagonal to the
+  nook, and fanned from that corner. Two convex parts double that corner. On chunk seams that changed the seam
+  vertex multisets, and `test_chunk_borders_are_watertight`, which compares them exactly, failed. The geometry
+  itself stayed watertight.
+- **No mitre beside a ramp.** Only the corner diagonal to the nook can be a ramp. Beside one, the corner stands at
+  the centre unmitred, as R6's centre profile does: the mitre would put walls in the ramp's footprint (synthetic
+  map, 45 triangles in two ramp cells).
+- **The ramp pass follows the new table.** `dual_floor_level_beside` (rule R3) becomes `min(corner, max(edge
+  neighbours))` to match the new table, so the ramp pass still agrees with the dual grid.
+
+Review capture `~/scratch/terrain-indicators/review/wp3/`, the material for Q0136.
+
+## 5. WP4: final tree
+
+- **No simulation change.** `git diff main -- crates/sim_types crates/sim_map crates/sim_core assets` is empty. On
+  the final tree, `golden_replay_tests` (4) and `sc2_who_wins_matchup_matrix_tests` (4) pass (`logs/wp4_*`).
+- **Acceptance 4.** The scratch mesher check on the final tree (`result_final.txt`): 0 of 318 toes off the edge, and
+  0 of 11,866 canonical rows on the low side of their edge.

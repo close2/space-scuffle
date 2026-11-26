@@ -697,3 +697,66 @@ cost.
 
 ## Answer
 ```
+
+---
+
+## As built
+
+Built on branch `terrain-indicators-plan` (worktree `.claude/worktrees/terrain-indicators-plan`, target
+`~/cargo-target/terrain-indicators`), on `main` at `e5ebc043`. All figures are in the evidence file
+[`2026-11-30-terrain-and-air-indicators`](../evidence/2026-11-30-terrain-and-air-indicators.md). The review captures
+are under `~/scratch/terrain-indicators/review/{wp1,wp2,wp3}/`.
+
+| Package | Commits | What |
+|---|---|---|
+| WP0 | `cbd8a8e4`, `f7955374` | Every new test, red on `main`'s production code. Support modules `terrain_mesh.rs`, `cliff_contact_stage.rs`, `gpu_battle.rs` and `air_crossing.rs`. The WP2 review child. Catalog entries. |
+| WP1 | `aaa5d450`, `0c682640` (golden re-record) | `edge_setback`, the toe on the edge, the floor insets, W1 in the module documentation |
+| WP2 | `8ced7c35` | `AirPose::of`, `SHADOW_LIFT`, `follow_air_pose`, `update_overhead_bar` with `OverheadBarParts` |
+| WP3 | `6c47fc4d`, `aca9dc86` (golden re-record) | `regions` and `low_regions`, `DualVertexRef::Centre`, `ContourSegment::through_centre`, the mitred corner profile (`ProfileFrame`), low-connected saddles, R3's new `dual_floor_level_beside` |
+| WP4 | this commit | records |
+
+Green: T-A, T-A2, T-B1 and T-B2 on all four maps, G-1 on radv, U-1, U-2 and I-1. These are green and unchanged:
+`terrain_tests` (the 4×4 counts and the seams), `ramp_geometry_tests`, `smog_golden_tests`,
+`sync_steady_state_tests`, `sync_allocation_count_tests` (valgrind), `render_pool_tests`, `render_pool_gpu_tests`,
+`round2_visual_tests`, `player_presentation_tests` and `system_ownership_tests`. The mesher's pick hashes, its hit
+counts and its texture-array hash never moved. No file under `crates/sim_*` or `assets/` changed, and
+`golden_replay_tests` and the matchup matrix pass. The scratch mesher check counts 0 rows on the low side of
+their edge, down from 5,501 (acceptance 4).
+
+Deviations, each recorded in its commit and in the evidence file:
+
+1. **Void edges are set back too** (D-1). Edges whose low side is void are set back by `WALL_JITTER_AMPLITUDE`
+   (0.06), not 0. Without it, T-B1 on the synthetic map caught a straight contour between a void-side and a
+   ground-side profile crossing into the ground cell. Border and abyss walls move 0.06, and no wall row of any edge
+   lies on its low side.
+2. **The shadow's span is not clamped** (D-5). The shadow uses the exact span `h + r_off − SHADOW_LIFT`, and only the
+   tether's length is floored at `SHADOW_LIFT`. D-5's clamp would put a grounded dome's hidden shadow below the
+   ground and fail U-1.
+3. **The L is one polygon** (D-3). A concave corner's L is one polygon, star-shaped from the corner diagonal to the
+   nook. Two convex parts doubled a corner vertex on chunk seams and failed the unchanged seam test.
+4. **No mitre beside a ramp** (D-3). Beside a ramp (only the corner diagonal to the nook can be one), the concave
+   corner stands at the centre unmitred, as R6's centre profile does.
+5. **R3 follows the table.** `dual_floor_level_beside` becomes `min(corner, max(edge neighbours))`, so the ramp pass
+   matches the new table.
+6. **G-1's silhouette is the drawn disc** (§5.2). `Σ` is the disc `bubble_dome.wgsl` draws, a screen-space circle of
+   the radius at the centre's depth, not a ray-sphere hit. The shader discards the perspective sphere's ears, and
+   with the ray-sphere `Σ` the control failed at 97 %.
+7. **G-1's wall is shorter** (§5.2). The staged wall is straight 5 rows beyond the contact row and 2 rows before it
+   (8 cells, the rows the camera sees). `showcase_canyon` has no wall with 8 flat rows on the camera side clear of
+   ramps. The wall found is `x = 26`, row 31.
+8. **The review child is its own target** (§6.2). The WP2 review child is `air_indicator_review_gpu_tests.rs`, a
+   separate Gpu target with an ignored parent, because the gate classes any file that launches GPU children as Gpu.
+9. **Review substitutes** (§6.2, §6.3):
+   - *Before columns:* `before/` was built from WP0, which has `main`'s production code, in a separate worktree and
+     target directory.
+   - *`default_arena`:* it has no preview pose, because `terrain_preview` renders `showcase_canyon` only. WP1 moved
+     its mesh only by the void setback, and WP3 not at all.
+   - *Staircase close-ups:* they are crops of the preview poses.
+   - *Showcase scenes:* the `terrain` and `advance` scenes come from `showcase take --take battle`, run the way
+     `showcase render --driver radv` runs it.
+10. **The support module holds the ramp fixture too** (§5.1), so that T-B can mesh it.
+
+Records: `DESIGN.md` §4 (B-238 fixed; B-243 added as fixed, citing `1c146c83`, because `wall-clearance-plan` had
+not merged; B-244 and B-245 added, fixed), plan 21b §5.3 (the saddle note marked superseded), this section, the
+README row, and the evidence file. Q0136 stays open, and its default (a) is built. WP3 is the last package, so an
+answer of (b) or (c) reverts `6c47fc4d` and `aca9dc86`.
