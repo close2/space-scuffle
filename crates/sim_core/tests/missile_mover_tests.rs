@@ -1295,6 +1295,25 @@ fn viking(world: &SimWorld) -> Result<UnitArchetype, String> {
     })
 }
 
+/// The shipped air unit whose air weapon flies movers and splashes: the Liberator analogue.
+fn liberator(world: &SimWorld) -> Result<UnitArchetype, String> {
+    one_archetype(world, "the Liberator analogue", |arch| {
+        arch.mover_type == MoverType::Air
+            && arch
+                .air_weapon
+                .as_ref()
+                .is_some_and(|w| !w.missile_movers.is_empty() && w.splash.is_some())
+    })
+}
+
+/// The shipped unit, not a structure, whose primary `weapon` flies movers: the Banshee analogue.
+fn banshee(world: &SimWorld) -> Result<UnitArchetype, String> {
+    one_archetype(world, "the Banshee analogue", |arch| {
+        !matches!(arch.shape, ShapeKind::BuildingDome { .. })
+            && !movers_of(arch.weapon.as_ref()).is_empty()
+    })
+}
+
 /// What a volley did: the ticks on which its missiles were released and on which its target's
 /// vitals dropped.
 struct Volley {
@@ -1302,8 +1321,9 @@ struct Volley {
     strikes: Vec<u32>,
 }
 
-/// Orders `bench`'s shooter to attack and steps until `strikes` drops of the target's vitals, or
-/// 200 ticks; every renderer missile event counts as a release.
+/// Orders `bench`'s shooter to attack and steps until `strikes` drops of the target's life plus
+/// shields (a regenerating target's rise is not a strike), or 200 ticks; every renderer missile
+/// event counts as a release.
 fn volley(bench: &mut Bench, strikes: usize) -> Result<Volley, String> {
     bench
         .world
@@ -1312,7 +1332,8 @@ fn volley(bench: &mut Bench, strikes: usize) -> Result<Volley, String> {
         .ok_or("the shooter exists")?
         .issue_order(UnitOrder::attack(bench.target), false)
         .map_err(|error| format!("{error:?}"))?;
-    let mut last = bench.vitals(bench.target);
+    let total = |bench: &Bench| bench.vitals(bench.target).map(|(hp, shields)| hp + shields);
+    let mut last = total(bench);
     let mut seen = Volley {
         releases: Vec::new(),
         strikes: Vec::new(),
@@ -1325,11 +1346,11 @@ fn volley(bench: &mut Bench, strikes: usize) -> Result<Volley, String> {
             .filter(|event| matches!(event, CombatEventVisual::ProjectileVisual { .. }))
             .count();
         seen.releases.extend(std::iter::repeat_n(tick, released));
-        let now = bench.vitals(bench.target);
-        if now != last {
+        let now = total(bench);
+        if now < last {
             seen.strikes.push(tick);
-            last = now;
         }
+        last = now;
         if seen.strikes.len() == strikes {
             return Ok(seen);
         }
@@ -1388,6 +1409,89 @@ fn the_viking_torpedoes_land_after_their_flight() -> TestResult {
         );
     }
     Ok(())
+}
+
+/// M-12: `attacker`'s two missiles at an unarmed, held `victim`, at each `(edge, ticks)` of
+/// `table` (§2.4), each land `ticks` after their own release, the release tick counted, the
+/// second released the weapon's strike interval after the first, and nothing lands on a release
+/// tick.
+fn volleys_land_on_the_table(
+    seed: u64,
+    attacker: &UnitArchetype,
+    victim: &UnitArchetype,
+    table: &[(f64, u32)],
+) -> TestResult {
+    let interval = attacker
+        .weapon_against(victim.mover_type, None)
+        .map(|w| u32::from(w.strike_interval_ticks))
+        .ok_or("armed against the victim")?;
+    for (seed, &(edge, expected)) in (seed..).zip(table) {
+        let mut bench = shipped_duel(
+            seed,
+            attacker,
+            victim,
+            scalar(12.0),
+            scalar(edge),
+            seeing(12),
+        )?;
+        let seen = volley(&mut bench, 2)?;
+        let (first, second) = (seen.releases[0], seen.releases[1]);
+        assert_eq!(
+            second - first,
+            interval,
+            "{}, edge {edge}: interval",
+            attacker.slug
+        );
+        assert_eq!(
+            seen.strikes,
+            vec![first + expected - 1, second + expected - 1],
+            "{}, edge {edge}: each missile after its own {expected}-tick flight",
+            attacker.slug
+        );
+        assert!(
+            seen.strikes
+                .iter()
+                .all(|tick| !seen.releases.contains(tick)),
+            "{}, edge {edge}: no strike on a release tick",
+            attacker.slug
+        );
+    }
+    Ok(())
+}
+
+/// M-12: the Liberator analogue's rockets fly `LiberatorMissile` (S5, S6: thrown at 0.448 for
+/// 3, then 0.896) and the Banshee analogue's `BacklashRocketsLMWeapon` (S8: from 0.56
+/// accelerating 0.06272 to 2.8), landing on §2.4's ticks.
+#[test]
+fn the_liberator_and_banshee_rockets_land_after_their_flight() -> TestResult {
+    let world = sim_fixtures::world(
+        GameMap::new(8, 8, MapCell::default_ground(CliffLevel(0)))?,
+        1,
+    );
+    let liberator = liberator(&world)?;
+    let air_victim = viking(&world)?;
+    volleys_land_on_the_table(
+        0x730,
+        &liberator,
+        &air_victim,
+        &[(0.5, 3), (1.0, 4), (2.0, 7), (3.0, 8), (4.0, 9), (5.0, 10)],
+    )?;
+    let banshee = banshee(&world)?;
+    let ground_victim = missile_archetype(&world)?;
+    volleys_land_on_the_table(
+        0x740,
+        &banshee,
+        &ground_victim,
+        &[
+            (0.5, 3),
+            (1.0, 3),
+            (2.0, 5),
+            (3.0, 6),
+            (4.0, 7),
+            (5.0, 8),
+            (6.0, 9),
+        ],
+    )
 }
 
 /// M-15: a Viking analogue's torpedo whose target dies or cloaks undetected in flight is missed
@@ -1449,6 +1553,8 @@ fn every_finder_matches_exactly_one_shipped_archetype() -> TestResult {
         ground_mover_structure(&world)?,
         bolt_caster(&world)?,
         viking(&world)?,
+        liberator(&world)?,
+        banshee(&world)?,
     ];
     let mut slugs: Vec<&str> = found.iter().map(|arch| arch.slug.as_str()).collect();
     slugs.sort_unstable();
