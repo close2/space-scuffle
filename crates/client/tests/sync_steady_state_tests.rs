@@ -369,6 +369,9 @@ fn retained_buffers(world: &World) -> Vec<Buffer> {
     if let Some(selection) = world.get_resource::<BattleSelection>() {
         found.extend(selection.retained_buffers());
     }
+    if let Some(map) = world.get_resource::<client::RenderEntityMap>() {
+        found.extend(map.retained_buffers());
+    }
     if let Some(session) = world.get_resource::<BattleSession>() {
         found.extend(session.frames.retained_buffers());
     }
@@ -735,9 +738,8 @@ fn presented(harness: &Harness) -> Presented {
     let world = harness.app.world();
     let phases = world
         .resource::<client::RenderEntityMap>()
-        .0
         .iter()
-        .map(|(&id, &entity)| {
+        .map(|(id, entity)| {
             let phase = *world
                 .get::<FlipbookPhase>(entity)
                 .expect("a live bubble has a flipbook phase");
@@ -1054,14 +1056,22 @@ fn a_gas_trip_in_and_out_of_the_extractor_spawns_nothing() {
     let mut warm = Motion::default();
     through_a_gas_trip(&mut harness, worker, &mut warm);
     run_ticks(&mut harness, WARM_TICKS);
-    let render = harness.app.world().resource::<client::RenderEntityMap>().0[&worker];
+    let render = harness
+        .app
+        .world()
+        .resource::<client::RenderEntityMap>()
+        .get(worker);
     let entities = census(&harness);
     let buffers = retained_buffers(harness.app.world());
     reset(&mut harness);
     let mut motion = Motion::default();
     let presence_changes = through_a_gas_trip(&mut harness, worker, &mut motion);
     assert_eq!(
-        harness.app.world().resource::<client::RenderEntityMap>().0[&worker],
+        harness
+            .app
+            .world()
+            .resource::<client::RenderEntityMap>()
+            .get(worker),
         render,
         "one render entity through the trip"
     );
@@ -1697,25 +1707,18 @@ fn a_held_spell_image_changes_nothing_on_running_frames() {
 
 // --- Units that come and go (plan 2026-11-29-render-entity-pool R-1, R-2) ----------------------
 
-/// Live bubbles spawned since the observation of a cycling test began.
-#[derive(Resource, Debug, Default)]
-struct BubblesSpawned(u32);
-
-/// Counts the live bubbles spawned on each frame.
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "Bevy passes system parameters by value"
-)]
-fn count_spawned_bubbles(
-    added: Query<'_, '_, (), Added<client::scene_controller::LiveBattleBubble>>,
-    mut spawned: ResMut<'_, BubblesSpawned>,
-) {
-    spawned.0 += u32::try_from(added.iter().count()).expect("few bubbles a frame");
+/// How the render pool was used in the session.
+fn pool_stats(harness: &Harness) -> client::RenderPoolStats {
+    harness
+        .app
+        .world()
+        .resource::<client::RenderEntityMap>()
+        .stats()
 }
 
-/// Render entities the pool has spawned in the session: before the pool, one per arrival.
+/// Render entities the pool has spawned in the session.
 fn pool_spawned(harness: &Harness) -> u32 {
-    harness.app.world().resource::<BubblesSpawned>().0
+    pool_stats(harness).spawned
 }
 
 /// What a cycling window saw, counted from consecutive presented snapshots.
@@ -1807,6 +1810,7 @@ fn assert_cycling_window_is_steady(
 ) {
     let entities = census(harness);
     let buffers = retained_buffers(harness.app.world());
+    let before = pool_stats(harness);
     reset(harness);
     let mut motion = Motion::default();
     let mut membership = Membership::default();
@@ -1853,14 +1857,12 @@ fn assert_cycling_window_is_steady(
         Vec::new(),
         "retained buffers that moved or grew"
     );
-}
-
-/// Starts counting the live bubbles spawned.
-fn watch_spawns(harness: &mut Harness) {
-    harness
-        .app
-        .init_resource::<BubblesSpawned>()
-        .add_systems(Last, count_spawned_bubbles);
+    let after = pool_stats(harness);
+    assert_eq!(
+        (after.spawned, u64::from(after.reused - before.reused)),
+        (before.spawned, arrivals),
+        "every arrival of the window reused a parked entity ({before:?} then {after:?})"
+    );
 }
 
 /// R-1 = B-19 (plan `2026-11-28-broodlings` D-12 item 3, plan `2026-11-29-render-entity-pool`
@@ -1873,7 +1875,6 @@ fn watch_spawns(harness: &mut Harness) {
 fn broodlings_cycling_create_and_remove_no_bubble_material() {
     let mut harness = Harness::battle();
     settle(&mut harness, true);
-    watch_spawns(&mut harness);
     let stage = unit_cycling::stage_brood(harness.world_mut());
     harness.resume();
     let mut drive = |_: &mut Harness| {};
@@ -1892,7 +1893,6 @@ fn broodlings_cycling_create_and_remove_no_bubble_material() {
 fn air_units_cycling_create_and_remove_nothing() {
     let mut harness = Harness::battle();
     settle(&mut harness, true);
-    watch_spawns(&mut harness);
     let assets = battle_harness::assets();
     let mut cycle = unit_cycling::stage_air_cycle(harness.world_mut(), &assets);
     harness.resume();

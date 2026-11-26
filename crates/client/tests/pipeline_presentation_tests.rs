@@ -326,8 +326,8 @@ fn moving_no_tick_frames_interpolate_and_real_death_changes_membership() -> Test
     assert!(!app
         .world()
         .resource::<client::RenderEntityMap>()
-        .0
-        .contains_key(&victim));
+        .get(victim)
+        .is_some());
     Ok(())
 }
 

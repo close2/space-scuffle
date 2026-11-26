@@ -116,7 +116,7 @@ fn ready(harness: &Harness) -> bool {
             .values()
             .all(|image| images.contains(image))
         && world.resource::<BattleSession>().is_ready()
-        && !world.resource::<RenderEntityMap>().0.is_empty()
+        && !world.resource::<RenderEntityMap>().is_empty()
 }
 
 /// The local player's harvesters, ordered by ID.
@@ -139,10 +139,9 @@ fn local_workers(harness: &Harness) -> Vec<EntityId> {
 /// The material handle of unit `id`'s live bubble.
 fn material(harness: &Harness, id: EntityId) -> AssetId<BubbleDomeMaterial> {
     let world = harness.app.world();
-    let entity = *world
+    let entity = world
         .resource::<RenderEntityMap>()
-        .0
-        .get(&id)
+        .get(id)
         .expect("the unit has a live bubble");
     world
         .get::<MeshMaterial3d<BubbleDomeMaterial>>(entity)
@@ -210,10 +209,9 @@ fn presented_tick(harness: &Harness) -> Tick {
 /// The flipbook phase of unit `id`'s live bubble.
 fn phase(harness: &Harness, id: EntityId) -> FlipbookPhase {
     let world = harness.app.world();
-    let entity = *world
+    let entity = world
         .resource::<RenderEntityMap>()
-        .0
-        .get(&id)
+        .get(id)
         .expect("the unit has a live bubble");
     *world
         .get::<FlipbookPhase>(entity)
@@ -234,9 +232,8 @@ fn observe_all(harness: &Harness) -> (u32, BTreeMap<EntityId, Observed>) {
         .app
         .world()
         .resource::<RenderEntityMap>()
-        .0
-        .keys()
-        .copied()
+        .iter()
+        .map(|(id, _)| id)
         .collect();
     let bubbles = ids
         .into_iter()

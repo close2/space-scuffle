@@ -1094,7 +1094,6 @@ fn run_child(variant: Variant) -> TestResult {
         && app
             .world()
             .resource::<client::RenderEntityMap>()
-            .0
             .is_empty()
     {
         return Err("the live synchroniser presented nothing after warm-up".into());
@@ -1712,7 +1711,9 @@ fn brood_cycle_frames_allocate_nothing() -> TestResult {
         return Err("invariant: count_all returns one count per run".into());
     };
     let report = format!(
-        "blocks allocated inside {WINDOW_FUNCTION} after {} warm ticks; windows of {short} and          {long} ticks:\n  live {} (process {}), {} (process {})\n  baseline {} (process {}),          {} (process {})",
+        "blocks allocated inside {WINDOW_FUNCTION} after {} warm ticks; windows of {short} and \
+         {long} ticks:\n  live {} (process {}), {} (process {})\n  baseline {} (process {}), \
+         {} (process {})",
         4 * lifetime,
         live_short.window,
         live_short.total,

@@ -168,11 +168,11 @@ fn run_until(harness: &mut Harness, what: &str, done: impl Fn(&mut Harness) -> b
 
 /// The bubble entity of unit `id`.
 fn bubble(harness: &Harness, id: EntityId) -> Entity {
-    *harness
+    harness
         .app
         .world()
         .resource::<RenderEntityMap>()
-        .get(&id)
+        .get(id)
         .expect("unit must have a bubble")
 }
 
@@ -287,7 +287,8 @@ fn an_enemy_born_in_the_fog_is_hidden_from_its_first_frame() {
             .app
             .world()
             .resource::<RenderEntityMap>()
-            .contains_key(&born)
+            .get(born)
+            .is_some()
     });
     assert_eq!(
         *harness
