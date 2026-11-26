@@ -383,6 +383,36 @@ fn input_ownership_is_sampled_after_the_inspector_draws() {
     );
 }
 
+/// The live synchroniser's commands (a parked or reused bubble's marker swap, plan
+/// `2026-11-29-render-entity-pool` D-2) are applied before any consumer of the bubbles runs: each
+/// consumer is ordered after the synchroniser, so Bevy's sync point between them applies the
+/// queued swaps first and no consumer sees a bubble half parked. Picking runs in an earlier set,
+/// on the previous frame's applied state.
+#[test]
+fn bubble_consumers_run_after_the_live_synchroniser() {
+    let harness = skirmish();
+    let schedules = harness.app.world().resource::<Schedules>();
+    let update = schedules
+        .get(Update)
+        .expect("invariant: every Bevy App has an Update schedule");
+    for consumer in [
+        "client::battle_hud::fog::refresh_battle_fog",
+        "client::effects::stance::present_stances",
+        "client::effects::systems::spawn_mode_trails",
+        "client::indicators::update_indicators_system",
+        "client::smog::update_smog_field_system",
+    ] {
+        assert!(
+            schedule_order::runs_before(
+                update,
+                "client::scene_controller::sync_live_battle_system",
+                consumer,
+            ),
+            "{consumer} must be ordered after sync_live_battle_system"
+        );
+    }
+}
+
 /// Stages of the toy schedule in [`the_order_model_follows_sets_and_ignores_membership`].
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 enum Stage {

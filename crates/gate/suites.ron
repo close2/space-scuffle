@@ -114,6 +114,11 @@ SuiteCatalog(
         // A selected structure's rally (plan 2026-11-23-production-queue WP5): one child, three
         // shots.
         "client/rally_gpu_tests": (class: Gpu),
+        // A reused render entity renders as a fresh one (plan 2026-11-29-render-entity-pool R-8):
+        // two offscreen children, three shots each, compared bit for bit.
+        "client/render_pool_gpu_tests": (class: Gpu, triggers: [
+            "crates/client/src/{scene_controller.rs,render_pool.rs,indicators.rs,bubble_shader.rs}",
+        ]),
         // Mode atlases in a real battle (plan 2026-11-09-effect-visualization WP13): one child,
         // three shots.
         "client/mode_atlas_gpu_tests": (class: Gpu),
@@ -181,9 +186,12 @@ SuiteCatalog(
 
         // Valgrind: counts the live battle sync's steady-state allocations.
         // Its running children also hold an attack snapshot through the snapshot pool (plan
-        // 2026-11-24-attacker-snapshot P-16).
+        // 2026-11-24-attacker-snapshot P-16). The synchroniser, its render pool, the indicators
+        // it spawns and the bubble material it writes are its own subject (plan
+        // 2026-11-29-render-entity-pool §1, WP1).
         "client/sync_allocation_count_tests": (class: Valgrind, triggers: [
             "crates/client/src/{battle_pipeline/**,presentation.rs,runtime_battle/**,player_presentation/**,effects/**,battle_hud/attack_snapshots.rs}",
+            "crates/client/src/{scene_controller.rs,render_pool.rs,indicators.rs,bubble_shader.rs}",
         ]),
         // Valgrind: counts the effect engine's steady-state allocations (plan
         // 2026-11-10-spellcaster-mechanics D-18).

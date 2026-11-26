@@ -1030,9 +1030,11 @@ of the final tree), checksum schema 57. Measurements in
 15. B-8's row no longer exists in `DESIGN.md`, so the note on the Interceptor's priority (20 in the data, not 19) is
     recorded here instead.
 
-**Not done:** H-20 (steady state and valgrind with Carriers cycling). The media landed in the WP5 continuation
+**Not done here:** H-20 (steady state and valgrind with Carriers cycling). The media landed in the WP5 continuation
 (Q0131 closed; both identities in `required_set.ron`, H-21 met), but a battle with members cycling allocates render
-entities in the client (B-237), so H-20 waits for the render-entity pool package, which writes it.
+entities in the client (B-237), so H-20 waits for the render-entity pool package, which writes it. **Done there:**
+plan [`2026-11-29-render-entity-pool`](2026-11-29-render-entity-pool.md) WP4 writes H-20 (steady state and the
+`HangarCycle` valgrind pair, the cycle driven from the snapshot) and closes B-237.
 
 **Owner questions.** Q0129 is closed on `main` with its resolution. Q0130 is open; its default (a), interceptors hover,
 is what is built (B-229). Q0131 is closed (answered (a) with a cap, then (b); the WP5 continuation).

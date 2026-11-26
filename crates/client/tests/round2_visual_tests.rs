@@ -611,23 +611,26 @@ fn test_ground_unit_altitude_never_spawns_air_tether() -> Result<(), Box<dyn std
 
     app.update();
 
-    // Verify no AirTetherMarker or AirShadowMarker spawned
+    // A ground unit's air shadow and tether exist, hidden, so any parked render entity can take
+    // any arrival (plan 2026-11-29-render-entity-pool D-6).
     let mut tether_query = app
         .world_mut()
-        .query_filtered::<Entity, With<AirTetherMarker>>();
+        .query_filtered::<&Visibility, With<AirTetherMarker>>();
+    let tethers: Vec<Visibility> = tether_query.iter(app.world()).copied().collect();
     assert_eq!(
-        tether_query.iter(app.world()).count(),
-        0,
-        "Ground unit must never spawn AirTetherMarker"
+        tethers,
+        [Visibility::Hidden],
+        "a ground unit's air tether is hidden"
     );
 
     let mut shadow_query = app
         .world_mut()
-        .query_filtered::<Entity, With<AirShadowMarker>>();
+        .query_filtered::<&Visibility, With<AirShadowMarker>>();
+    let shadows: Vec<Visibility> = shadow_query.iter(app.world()).copied().collect();
     assert_eq!(
-        shadow_query.iter(app.world()).count(),
-        0,
-        "Ground unit must never spawn AirShadowMarker"
+        shadows,
+        [Visibility::Hidden],
+        "a ground unit's air shadow is hidden"
     );
 
     // Verify GroundRingMarker is spawned

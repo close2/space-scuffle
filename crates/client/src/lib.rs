@@ -52,6 +52,7 @@ pub mod offscreen;
 pub mod player_presentation;
 pub mod presentation;
 pub mod render_compatibility;
+pub mod render_pool;
 pub mod runtime_battle;
 pub mod scene_controller;
 pub mod selection;
@@ -74,6 +75,7 @@ pub use indicators::{
 };
 pub use lab_stage::{spawn_lab_stage, LabStageMarker};
 pub use lab_ui::{lab_ui_system, LabState, LabTab};
+pub use render_pool::{ParkedBattleBubble, RenderPoolBound, RenderPoolStats};
 pub use scene_controller::{
     sync_lab_preview_system, sync_live_battle_system, sync_swarm_stress_system, LabPreviewBubble,
     LiveBattleBubble, RenderEntityMap, SwarmBubble,
