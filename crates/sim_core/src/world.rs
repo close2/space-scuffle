@@ -25,8 +25,10 @@ mod abilities;
 mod attack_dash;
 mod casts;
 mod commands;
+pub mod death_spawns;
 pub(crate) mod presentation;
 pub(crate) mod snapshot;
+mod spawns;
 pub mod tracked_targets;
 mod upgrade_stats;
 pub(crate) mod upkeep;
@@ -169,6 +171,9 @@ pub struct SimWorld {
     pub tracked_targets: tracked_targets::TrackedTargets,
     /// The id the next route group gets; hashed.
     pub(crate) next_route_group: u32,
+    /// Death spawns waiting for their delay, in queue order (plan
+    /// `2026-12-01-death-spawns-and-hangar-commands` D-2); hashed.
+    pub(crate) pending_death_spawns: Vec<death_spawns::PendingDeathSpawn>,
     /// Unhashed provenance for the render snapshot: projectile sources and this
     /// tick's barrier hits (plan `2026-11-09-effect-visualization` D-1).
     pub(crate) presentation: presentation::PresentationWorkspace,
@@ -250,6 +255,12 @@ impl SimWorld {
             route_groups: Vec::new(),
             tracked_targets: tracked_targets::TrackedTargets::default(),
             next_route_group: 1,
+            // PERFORMANCE RATIONALE:
+            // Why: The upkeep phase drains this list in place every tick a spawn waits.
+            // What: Reserve room for a few deaths at creation; the list keeps its high-water
+            //       mark, so a steady stream of deaths allocates nothing.
+            // Trade-off: A few hundred bytes per world that may never see a death spawn.
+            pending_death_spawns: Vec::with_capacity(death_spawns::RESERVED_PENDING_DEATH_SPAWNS),
             presentation: presentation::PresentationWorkspace::default(),
         };
 

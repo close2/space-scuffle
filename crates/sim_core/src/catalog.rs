@@ -27,13 +27,13 @@ use sim_types::{
     default_projectile_lifetime_ticks, AbilitySpec, AllowedMovement, AnimState,
     ArchetypeCapabilities, ArmorClassId, AttackCommand, AttackDashSpec, AttackVisibility,
     Attribute, AttributeBonuses, AttributeFlags, AutoRallySpec, BarrierSpec, CollisionClass,
-    FactionId, FootprintShape, HangarDeath, HangarSpec, HarvesterSpec, ImpactSpawn, MagazineLaunch,
-    MissileMover, MissilePhase, MissileValidation, MoverType, OverclockSpec, PhaseEnd,
-    PlacementFlag, PlacementFlags, ProjectileTargetLossBehavior, ResourceKind, ResourceKindSet,
-    ShapeKind, SilhouetteClass, SimAngle, SimScalar, SpawnOrder, SplashCliff, SplashImpact,
-    SplashLine, SplashLineAxis, SplashLineOrigin, SplashShape, StanceOrders, StrikeMagazineSpec,
-    StructureStrike, TimedLifeSpec, TurretIdle, UnitModeSpec, UnitTypeId, UpgradeEffect,
-    WeaponVisualKind,
+    DeathSpawnSpec, FactionId, FootprintShape, HangarDeath, HangarSpec, HarvesterSpec, ImpactSpawn,
+    MagazineLaunch, MissileMover, MissilePhase, MissileValidation, MoverType, OverclockSpec,
+    PhaseEnd, PlacementFlag, PlacementFlags, ProjectileTargetLossBehavior, ResourceKind,
+    ResourceKindSet, ShapeKind, SilhouetteClass, SimAngle, SimScalar, SpawnOrder, SplashCliff,
+    SplashImpact, SplashLine, SplashLineAxis, SplashLineOrigin, SplashShape, StanceOrders,
+    StrikeMagazineSpec, StructureStrike, TimedLifeSpec, TurretIdle, UnitModeSpec, UnitTypeId,
+    UpgradeEffect, WeaponVisualKind,
 };
 pub use sim_types::{SplashSpec, SplashZone, WeaponSpec};
 mod collision_classes;
@@ -765,9 +765,15 @@ impl UnitCatalog {
         // callers with an unexpectedly partially modified catalog.
         let mut staged = self.clone();
         let factions = &self.factions;
+        // A death spawn names its unit by slug (plan `2026-12-01-death-spawns-and-hangar-commands`
+        // D-1); the units are loaded before the structures.
+        let unit_ids: BTreeMap<String, UnitTypeId> = self
+            .archetypes()
+            .map(|archetype| (archetype.slug.clone(), archetype.unit_type_id))
+            .collect();
         staged.register_authored_batch(catalog_file.structures.into_iter().map(|def| {
             def.validate()?;
-            def.into_archetype(factions)
+            def.into_archetype(factions, &unit_ids)
         }))?;
         staged.slug_index();
         *self = staged;
@@ -975,7 +981,8 @@ impl UnitCatalog {
             self.validate_rally_exclusions(archetype)?;
         }
         self.validate_hangar_members()?;
-        self.validate_impact_spawns()
+        self.validate_impact_spawns()?;
+        self.validate_death_spawns()
     }
 
     /// Checks that every unit a rally slot of `archetype` excludes (plan `2026-11-25-rallies`
@@ -1365,6 +1372,8 @@ struct CapabilitiesDef {
     hangar: Option<HangarSpecDef>,
     #[serde(default)]
     strike_magazine: Option<StrikeMagazineSpec>,
+    #[serde(default)]
+    death_spawn: Option<DeathSpawnSpecDef>,
 }
 
 /// An authored hangar (plan `2026-11-28-carrier-interceptors` D-2): the member as a slug and
@@ -1826,6 +1835,58 @@ impl ImpactSpawnDef {
     }
 }
 
+/// An authored death spawn (plan `2026-12-01-death-spawns-and-hangar-commands` D-1): the
+/// created unit as a slug and the search range in world units, resolved to [`DeathSpawnSpec`]
+/// once the units are known. A unit authors it under `capabilities`, a structure as a top-level
+/// field; both read this form. Unknown fields are refused.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DeathSpawnSpecDef {
+    /// The created archetype's slug.
+    pub(crate) unit: String,
+    /// Units created, 1 to 16.
+    pub(crate) count: u8,
+    /// Ticks from the death to the creation.
+    pub(crate) delay_ticks: u16,
+    /// World units around the death point searched for a valid place; 0 is no search.
+    pub(crate) search_range: f32,
+    /// The timed life of each created unit, if any.
+    #[serde(default)]
+    pub(crate) timed_life: Option<TimedLifeSpec>,
+    /// Whether a unit that dies under construction leaves nothing.
+    pub(crate) disabled_while_constructing: bool,
+}
+
+impl DeathSpawnSpecDef {
+    /// The spawn with its unit resolved against `unit_ids` and the search range in fixed point
+    /// (`SimScalar::from_f32_lossy`, as every authored distance).
+    ///
+    /// # Errors
+    /// [`SimCoreError::CatalogInvalidValue`] at `capabilities.death_spawn.unit` of `definition`
+    /// when the slug names no unit of `unit_ids`.
+    fn resolve(
+        &self,
+        definition: &str,
+        unit_ids: &BTreeMap<String, UnitTypeId>,
+    ) -> SimResult<DeathSpawnSpec> {
+        let unit = *unit_ids
+            .get(&self.unit)
+            .ok_or_else(|| SimCoreError::CatalogInvalidValue {
+                definition: definition.to_owned(),
+                field: "capabilities.death_spawn.unit".to_owned(),
+                reason: "the spawned unit names no unit of the catalog",
+            })?;
+        Ok(DeathSpawnSpec {
+            unit,
+            count: self.count,
+            delay_ticks: self.delay_ticks,
+            search_range: SimScalar::from_f32_lossy(self.search_range),
+            timed_life: self.timed_life,
+            disabled_while_constructing: self.disabled_while_constructing,
+        })
+    }
+}
+
 /// An authored missile mover (`StarCraft` II `CEffectLaunchMissile` `Movers` entry, plan
 /// `2026-11-27-weapon-delivery` D-2), in world units and ticks, converted to
 /// [`sim_types::MissileMover`] once at load. Unknown fields are refused, so a misspelt or stale
@@ -2190,6 +2251,11 @@ impl UnitArchetypeDef {
             .as_ref()
             .map(|hangar| hangar.resolve(&self.slug, unit_ids))
             .transpose()?;
+        let death_spawn = authored
+            .death_spawn
+            .as_ref()
+            .map(|spawn| spawn.resolve(&self.slug, unit_ids))
+            .transpose()?;
         let overclock = authored.overclock.map(|o| OverclockSpec {
             hp_cost: SimScalar::from_f32_lossy(o.hp_cost),
             duration_ticks: o.duration_ticks,
@@ -2241,6 +2307,7 @@ impl UnitArchetypeDef {
             modes: modes.clone(),
             hangar,
             strike_magazine: authored.strike_magazine,
+            death_spawn,
         };
         Ok((capabilities, abilities, modes))
     }
@@ -2526,6 +2593,10 @@ struct StructureArchetypeDef {
     /// Active tactical abilities.
     #[serde(default)]
     pub abilities: Vec<AbilitySpec>,
+    /// The units the structure leaves when it dies (plan
+    /// `2026-12-01-death-spawns-and-hangar-commands` D-1); `None` when omitted.
+    #[serde(default)]
+    pub(crate) death_spawn: Option<DeathSpawnSpecDef>,
     /// Whether this structure is featured in the Visual Lab hero showcase.
     #[serde(default)]
     pub showcase_hero: bool,
@@ -2543,10 +2614,23 @@ struct StructureArchetypeDef {
 
 impl StructureArchetypeDef {
     /// The capability bundle of this structure: a dropoff, an extractor and whether it hides its
-    /// harvesters (plan `2026-11-24-hidden-harvesters` D-1), its abilities and its auto-rally
-    /// (plan `2026-11-23-production-queue` D-7); no unit capability.
-    fn capabilities(&self) -> ArchetypeCapabilities {
-        ArchetypeCapabilities {
+    /// harvesters (plan `2026-11-24-hidden-harvesters` D-1), its abilities, its auto-rally
+    /// (plan `2026-11-23-production-queue` D-7) and its death spawn, resolved against
+    /// `unit_ids` (plan `2026-12-01-death-spawns-and-hangar-commands` D-1); no other unit
+    /// capability.
+    ///
+    /// # Errors
+    /// [`SimCoreError::CatalogInvalidValue`] when the death spawn names no unit of `unit_ids`.
+    fn capabilities(
+        &self,
+        unit_ids: &BTreeMap<String, UnitTypeId>,
+    ) -> SimResult<ArchetypeCapabilities> {
+        let death_spawn = self
+            .death_spawn
+            .as_ref()
+            .map(|spawn| spawn.resolve(&self.slug, unit_ids))
+            .transpose()?;
+        Ok(ArchetypeCapabilities {
             overclock: None,
             harvester: None,
             barrier: None,
@@ -2565,15 +2649,20 @@ impl StructureArchetypeDef {
             modes: Vec::new(),
             hangar: None,
             strike_magazine: None,
-        }
+            death_spawn,
+        })
     }
 
     /// Converts a structure definition into a unified [`UnitArchetype`], resolving its faction
-    /// and weapon classes against `factions`.
-    pub fn into_archetype(self, factions: &FactionCatalog) -> SimResult<UnitArchetype> {
+    /// and weapon classes against `factions` and its death spawn's unit against `unit_ids`.
+    pub fn into_archetype(
+        self,
+        factions: &FactionCatalog,
+        unit_ids: &BTreeMap<String, UnitTypeId>,
+    ) -> SimResult<UnitArchetype> {
         // Exact: validation admits only multiples of 1/16 (plan `2026-11-18-structure-radius` D-2).
         let radius = SimScalar::from_num(self.radius);
-        let capabilities = self.capabilities();
+        let capabilities = self.capabilities(unit_ids)?;
         // No rule reads a structure's terrain radius (units meet its shape, B-131, B-134, and it
         // never moves). The shape's smaller half-extent keeps `motion_entry`'s map-edge domain
         // check true for a footprint flush with the border (it is at most half the footprint's
