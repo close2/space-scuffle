@@ -682,7 +682,7 @@ No `crates/gate/suites.ron` change is expected (no new test file); if one is nee
   `Left` (`liberty` EffectData:2664–2667, :2741–2748, :2774–2779; MoverData:44, :620: `Throw` 5 accelerating 3 to 8
   to `Outro 1.5,4.5`, then `Guidance` accelerating 20 to 40). Deferred to the plan that fixes B-21 (Brood Lord spawns
   no Broodlings), because the escort chain is that plan's delivery; it reaches battles 19 and 20." Not in B-52's rows;
-  the movers mechanism already expresses it. M-8 lists it with `known_bug: "B-232"`.
+  the movers mechanism already expresses it. M-8 lists it with `known_bug: "B-232"`. *Taken up by plan [`2026-11-28-broodlings`](2026-11-28-broodlings.md) (WP2, fixed).*
 - **Decelerating phases and `MinSpeed`:** no row here uses them (weapon-delivery D-4 keeps refusing negative
   acceleration).
 - **The Liberator's Defender Mode weapon:** not a missile row of B-52.

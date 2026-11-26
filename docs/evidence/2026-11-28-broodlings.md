@@ -81,8 +81,8 @@ regenerating 0.01531 per tick (107.0000 → 107.7043 over the 46 ticks between i
 the fourth impact, ticks 142 to 147.
 
 **WP3 alone** (with WP2's mover, 13 ticks of flight at this edge): strikes land on R + 13 (2), then one each on R + 70,
-R + 115, R + 160, R + 205, R + 250 and R + 295 (§2.4's schedule; the weapon's random delay cannot move it: the
-cooldown it charges, 42 + at most 2.2 ticks, ends before the next charge arms, 45 ticks after the last). The eighth
+R + 115, R + 160, R + 205, R + 250 and R + 295 (§2.4's schedule, which leaves out the weapon's random delay; WP3
+measured that the delay may hold a release up to 3 ticks past the arming, see below). The eighth
 strike, on R + 295 = tick 299, brings 152 damage against 145 + 299 × 0.01531 = 149.6 life: the roach dies on about tick
 299, inside the 400-tick limit with one strike's margin in time (the seventh leaves it 15.9 short) and 2.4 life to
 spare at the eighth. **WP3 alone keeps battle 20's expectation, so the pre-decided amendment (WP3 and WP4 measured
@@ -126,3 +126,119 @@ bench-bin-wp0/`), one run under `perf stat -e instructions:u` (load average 27 t
 running): 64x64 0 units 3047 ticks/s, 100 units 612, 400 units 63; 128x128 400 units 115; 256x256 0 units 172;
 `showcase_canyon` 400 units 65; 67 casters 159; 12 hangar units 280. Every scenario is above 50 ticks/s. User-space
 instructions of the whole run: 297,774,251,463. WP7 compares the final tree against this binary, interleaved.
+
+## WP1: the mechanisms, latent (`2aa72f59`)
+
+**Red first** (`~/scratch/broodlings/red/`): `broodling_tests.rs` on WP0's tree does not compile (13 errors: no
+`StrikeMagazineSpec`, `ImpactSpawn`, `TimedLifeSpec`, `Entity::strike_magazine`, `Entity::timed_life`,
+`ImpactSpawnBlocked`; `wp1-red-on-wp0.log`). Behaviourally, on a copy of WP1's tree with each rule switched off
+(`neuter_wp1.py`: the swing gate ignores the magazine, a release spends nothing, the magazine never rebuilds, no spawn
+is collected, the clock never kills; `wp1-red-neutered*.log`): B-1 to B-8 fail and both magazine unit tests fail; B-9
+(nothing created by a fizzled missile) passes there too, as a negative test must. On WP1's tree all pass, with the
+validation (B-10, `catalog/strike_validation.rs`), encoding (`checksum/encoding.rs`) and placement unit tests.
+
+**B-1 is exact**: with no random delay, the releases land on §2.4's ticks R, R + 57, R + 102, … over 20 strikes.
+The magazine's upkeep counts the arming, then starts a build, then counts the build: a build started on the upkeep
+after a release ends 45 ticks after it (the plan's prose order would end it one tick later and give R + 58); stop rule
+10 holds on that order.
+
+**Latent proof** (`proofcopy.sh wp1-latent 2aa72f59 unhash.py`): a `git archive` copy of WP1, every file touched,
+the schema set back to 60 and the three new fields unhashed, built in a fresh target directory: both goldens and
+`DEFAULT_SANDBOX_CHECKSUM` reproduce `main`'s recorded values on native debug and release and `wasm32-wasip1` release
+and debug, **8 of 8**. Stop rule 1 holds; the schema steps to 61 (provisional).
+
+**Worlds** against WP0's: every output file byte-identical (490 files, 0 differing). Stop rule 6 holds: no file under
+`movement/`, `steering.rs`, `movement_rules.ron` or `target_acquisition.rs` was edited in any package.
+
+## WP2: the escort missile's mover (`d942ba2d`)
+
+**Red first** on WP1's tree (`red/wp2-red.log`): B-11 (`the_brood_lord_escorts_land_after_their_flight`), the finder
+census and the movers reference table fail. **B-11 lands on §2.4's tick at all eleven edge distances (0.5 to 10: 5,
+7, 10, 12, 14, 16, 17, 18, 19, 20, 21 ticks), with no fixed-point exception**; stop rule 10 holds.
+
+**Worlds** against WP1's: only `matrix.csv`/`matrix.md` differ, in battle 20 alone (20 of 20 runs; no winner or
+expectation change; the roach dies on tick 149 to 155, was 142 to 147). Battle 19 is identical on all 20 runs. Per-unit
+traces (`scripts/firstdiff.py trace-wp1 trace-wp2`): every run's first difference is the roach's life on tick 8 or 9,
+the tick the constant-speed missile landed; it lands 13 ticks after its release at edge 3.5 instead. **Class D.**
+
+## WP3: the escort magazine (`7b815da4`)
+
+Q0132 was unanswered on `main` when WP3 landed (checked by fetching `origin/main`), so default (a) stands and stop rule
+11 holds. **Red first** on WP2's tree (`red/wp3-red.log`): B-12 fails (no shipped unit has a strike magazine).
+
+**The shipped random delay.** With the shipped weapon's random delay (−1.1161 to 2.2321 ticks, B-3) the charge arms
+on §2.4's tick but the swing may still wait for the cooldown that release charged (42 ticks plus the delay's whole
+ticks, carried): after the first two releases (R, R + 57, the magazine's alone), each follows the last by 43 to 48
+ticks, and over 20 strikes the releases fall up to 3 ticks after §2.4's (B-12 asserts exactly that). §2.4 left the
+delay out; B-1 without it is exact, so this is the plan's derivation, not the mechanism (recorded, no stop).
+
+**Worlds** against WP2's: battle 20 alone (20 of 20; outcome and expectation unchanged; the roach dies on tick 298 to
+304 of 400, as WP0's margin predicted, ±3). First difference (`firstdiff-wp3.txt`): the Brood Lord analogue's weapon
+phase on tick 45 to 47, where WP2's swing started and WP3's, with no charge armed, does not. **Class M.** Battle 19 and
+every other world identical.
+
+## WP4: the Broodling (`3f51a790`)
+
+**Red first** on WP3's tree (`red/wp4-red-on-wp3.log`): B-13 and B-15 fail (no shipped spawned unit), B-14
+(`runtime_catalog_tests`) fails, and ten reference tables fail on the missing "Broodling" rows.
+
+**Worlds** against WP3's: battle 20 alone (20 of 20; outcome and expectation unchanged; the roach dies on tick 163 to
+167). First difference (`firstdiff-wp4.txt`): on tick 17 the held roach turns toward unit 3 (`rotating`, target 3), a
+Broodling created at the end of tick 16, where WP3's first missile landed; the squads' rows are equal before it (the
+trace lists squads, not spawned units; the spawn and its clock draw are on tick 16). **Class N.** Battle 19 and every
+other world identical. No world WP0's probe did not list moved in any package; stop rules 2 and 4 hold; no close
+battle moved, so nothing is restated.
+
+## WP5: client (`41ae62a2`)
+
+B-17 (`runtime_media_tests::a_spawning_unit_is_presentable_only_with_its_spawns_media`) and B-18
+(`battle_input::hangar_pick_tests::a_spawned_unit_is_picked_as_any_unit`,
+`battle_presentation_tests::a_spawned_units_expiry_draws_its_death`) pass. Red on WP4's tree
+(`red/wp5-red-on-wp4.log`): B-17 fails (the spawner was presentable without its spawn's media); B-18's expiry test
+already passes there, as D-12 item 2 predicts (spawned units are ordinary units and need no client code). B-19 (steady state with Broodlings cycling) waits for WP6's media, as the Carrier's H-20 does.
+
+## WP6: media (`330c106a`), stopped
+
+[`veo/2026-11-28-batch-broodlings.md`](veo/2026-11-28-batch-broodlings.md): 8 generations, $3.20 (ledger $120.05 of
+$230); the Brood Lord analogue's four seeds gave no usable pin (three drew light shafts), the Broodling's pin is good
+but its three pinned Idles nodded. Nothing installed; Q0133 filed; the Brood Lord analogue stays locked in the client.
+
+## WP7: confirmation, re-record, records
+
+**Goldens and sandbox** (`1e79a52b`; `main` `65326e39` was already merged, nothing landed since): both goldens and
+`DEFAULT_SANDBOX_CHECKSUM` re-recorded once at schema 61 (provisional). `proofcopy.sh final 1e79a52b`: **8 of 8**
+recorded (native debug and release, `wasm32-wasip1` release and debug, each a fresh target directory on a touched
+`git archive` copy, `wasmtime --dir=<copy>`). `proofcopy.sh final-latent 1e79a52b unhash_final.py` (schema 60, the
+three fields unhashed, `main`'s goldens and sandbox value): **8 of 8**, so nothing but the encoding moved these worlds.
+
+**Held-out seeds** (`heldout.sh`, WP0's binary for `main` against the final tree's; matrix seeds 7001 to 7016, battles
+31 and 33 on 7001 to 7064, showcase and showcase effects on 9 to 16, skirmish on 9 to 12): 409 files, only
+`matrix.csv`/`matrix.md` differ, in battle 20 alone (16 of 16 seeds; no winner or expectation change; mean end 144.6 →
+164.6). Battle 20 is the one world WP0's probe listed; its classes are D, M and N. Stop rule 3 holds.
+
+**Throughput** (two interleaved rounds of WP0's binary, the final binary built with WP0's scenario table, `final-x`,
+and the final binary with the `brood` row; `perf stat -e instructions:u`; load average 11 to 59 from other agents):
+
+| Scenario | WP0 r2 | final-x r1 / r2 | final r1 / r2 |
+|---|---:|---:|---:|
+| 64x64, 0 units | 3097 | 3055 / 3104 | 3105 / 2719 |
+| 64x64, 100 | 795 | 791 / 793 | 796 / 542 |
+| 64x64, 400 | 106 | 108 / 104 | 108 / 105 |
+| 128x128, 400 | 169 | 176 / 171 | 178 / 159 |
+| 256x256, 0 | 189 | 194 / 190 | 194 / 189 |
+| showcase_canyon, 400 | 77 | 80 / 78 | 81 / 75 |
+| 64x64, 67 casters | 197 | 198 / 193 | 199 / 189 |
+| 64x64, 12 hangar units | 384 | 385 / 376 | 385 / 374 |
+| **64x64, 12 spawner units (brood)** | — | — | **402 / 403** |
+
+Every scenario runs at 75 ticks/s or more (the plan's floor is 50); the brood row averages 1.6 spawned units alive per
+measured tick. **Instructions: WP0 297,774,234,285 and 297,774,230,189; final-x 304,650,007,003 and 304,650,009,741:
++2.31 %, above the plan's +0.5 % (stop rule 5).** Bisection (one run each, `bisect-*.perf`, `var-*.perf`): WP1's binary
+already gives 304,648,592,933 and WP4's 304,648,860,528; WP1 with the three fields unhashed 304,562,428,527 and WP1
+with the new per-tick paths removed (the swing gate, the upkeep, the spawn collection) 305,052,424,268, so neither the
+encoding nor the new code is the cost. WP0's tree with an unused 24-byte field added to `WeaponSpec` gives
+304,284,195,045 and with an 8-byte boxed one 304,554,255,120: **any growth of `WeaponSpec` (376 → 384 bytes or more)
+costs about 2.3 % of the run's instructions**, through the weapon phase's per-entity, per-tick `WeaponSpec` clone
+(`ResolvedWeapon::to_spec` in `advance_weapon_cycles`) and the projectile list's copies; boxing `impact_spawn` would
+not help. Rates are unchanged within noise. Fixing it means either removing the per-tick clone (a combat-phase change
+outside this plan) or moving `impact_spawn` off `WeaponSpec` (an amendment of D-4); both are left to the orchestrator.

@@ -996,3 +996,50 @@ data supports the second (`BroodLordHangar`: 2 at the start, one built per 2.5 g
   its start and end speeds; impact when the remaining path is at most the step).
 - `~/scratch/combat_wp3_data/`: the 5.0.14 data copy of §2.1.
 - WP0 adds `census/`, `probe/`, `scripts/`, `bin-*`, `tree-*`, `world-*` under `~/scratch/broodlings-plan/`.
+
+## As built
+
+Built on branch `broodlings-plan` from `3e7934ed` (the plan with `main` `65326e39` merged; `main` did not move during
+the work); evidence in [`docs/evidence/2026-11-28-broodlings.md`](../evidence/2026-11-28-broodlings.md) and
+[`docs/evidence/veo/2026-11-28-batch-broodlings.md`](../evidence/veo/2026-11-28-batch-broodlings.md).
+
+- **WP0** (`6b8b71d5`): the census confirmed every source of §2.1 (no `MaxCount`, no `SpawnCount`, no condition on the
+  finish effect; stop rule 9 held); the probe and its control found releases in battle 20 only (none in 19: the
+  ground-only rule holds); the four-build baseline 8 of 8; battle 20's margin keeps WP3 alone within the 400-tick
+  limit (the roach dies about tick 299), so WP3 and WP4 were measured separately; the close list frozen: 14, 26, 31,
+  33, 35, 38a, 38b.
+- **WP1** (`2aa72f59`): the three mechanisms as D-3 to D-5; validation in `catalog/strike_validation.rs`; schema 61
+  (provisional). Latent proof 8 of 8; worlds byte-identical.
+- **WP2** (`d942ba2d`): the escort mover; B-11 lands on §2.4's tick at all eleven distances. Battle 20 by class D only.
+- **WP3** (`7b815da4`): the magazine (Q0132 unanswered, default (a)). Battle 20 by class M only (roach dies on tick
+  298 to 304).
+- **WP4** (`3f51a790`): `brood_mite` (`unit_type_id` 48) and the impact spawn. Battle 20 by class N only (roach dies on
+  tick 163 to 167). No close battle moved; nothing restated.
+- **WP5** (`41ae62a2`): presentability through `UnitArchetype::created_units`; B-17, B-18. B-19 waits for media.
+- **WP6** (`330c106a`): **stopped** (stop rule 8 in spirit, charter §1.2): 8 generations, $3.20; the Brood Lord
+  analogue's four seeds gave no usable pin (three drew light shafts), the Broodling's pinned Idles nodded. Nothing
+  installed; Q0133 filed (default (c)); the Brood Lord analogue stays locked in the client.
+- **WP7** (`1e79a52b`, records after it): goldens and sandbox re-recorded once at schema 61, proved 8 of 8 recorded
+  and 8 of 8 latent; held-out seeds confirm (battle 20 alone, classes D, M, N); the `brood` throughput row at 402
+  ticks/s, every scenario at 75 or more; **instructions +2.31 % on the existing scenarios, above +0.5 % (stop rule
+  5), reported**: any growth of `WeaponSpec` costs that much (evidence WP7).
+
+Deviations from the plan as written, each recorded:
+
+- **Magazine upkeep order**: arming, then a new build, then the build's countdown, so §2.4's R + 57 holds exactly
+  (the prose order of D-3 gives R + 58).
+- **The swing gate** lives at the swing start (`combat.rs`, `may_start_swing`), the one place a swing begins, rather
+  than in `advance_weapon_cycles`; the spend happens on the release in `advance_weapon_cycles`.
+- **Validation** also refuses delayed or spaced strikes on a strike-magazine unit (its release spends its charges once,
+  on the release tick); the spawn-only rule checks `trains_units` only, as the hangar's member rule does (start
+  loadouts and scenario spawns are not checked).
+- **Placement** replicates the effect engine's ring search for a not-yet-committed entity through `MotionPolicy`
+  (the plan's `first_valid_placement` needs an entity in the world and lives under `effects/`, which the plan does not
+  touch).
+- **§2.4 omitted the random delay**: with the shipped weapon's delay a release may wait up to 3 ticks past its
+  escort's arming; B-12 asserts the magazine's first two releases exactly and 43 to 48 ticks between later ones.
+- **B-5's lifted target** is not tested (a ground unit becoming air needs a mode); dies, cloaks undetected and
+  teleports are.
+- **WP0's margin with Broodlings** was measured at WP4 with the mechanism itself, not estimated with a scratch patch
+  at WP0 (the mechanism did not exist yet).
+- **`suites.ron`** is unchanged: `broodling_tests` is a default (fast) target of `sim_core`, selected without an entry.
