@@ -44,6 +44,12 @@
 //!   They hold a spell caster's image beside it: an enemy caster on another cliff stormed a
 //!   local unit below it, and the storm ended before the session began, so the pool holds two
 //!   images, one of each cause (plan `2026-11-27-launch-and-spell-visibility` V-25).
+//! - `brood_cycle_live_frames` and `brood_cycle_baseline_frames` are the same pair on the default
+//!   battle with every mobile unit killed and a Brood Lord analogue attacking a durable unarmed
+//!   target, so Broodlings arrive and expire on their own clocks; one 40 ms tick a frame, a
+//!   warm-up of `4 × L_max` ticks and windows of `2 × L_max` and `4 × L_max` ticks, `L_max`
+//!   being the Broodling's longest life read from the data (plan `2026-11-29-render-entity-pool`
+//!   R-1v). Their parent is `brood_cycle_frames_allocate_nothing`.
 //!
 //! **Invariants asserted.** Two runs of the live child at the same frame count report the same
 //! window count (the measurement is deterministic); the full app's difference equals the baseline's (the client's
@@ -66,6 +72,13 @@ mod effect_fixtures;
 )]
 #[path = "support/attack_snapshot_stage.rs"]
 mod attack_snapshot_stage;
+
+#[allow(
+    dead_code,
+    reason = "shared by several test binaries that each use a subset"
+)]
+#[path = "support/unit_cycling.rs"]
+mod unit_cycling;
 
 use std::path::Path;
 use std::process::Command;
@@ -117,6 +130,12 @@ enum Variant {
     EffectStream,
     /// The same splash stream and live synchroniser without the effect systems.
     EffectBaseline,
+    /// The live synchroniser and battle driver on the default battle with every mobile unit
+    /// killed and a Brood Lord analogue attacking a durable unarmed target, so Broodlings arrive
+    /// and expire on their own clocks (plan `2026-11-29-render-entity-pool` R-1v, B-19).
+    BroodCycleLive,
+    /// The battle driver alone on the same staged battle.
+    BroodCycleBaseline,
 }
 
 impl Variant {
@@ -130,7 +149,14 @@ impl Variant {
             Self::RunningBaseline => "running_baseline_frames",
             Self::EffectStream => "effect_stream_frames",
             Self::EffectBaseline => "effect_baseline_frames",
+            Self::BroodCycleLive => "brood_cycle_live_frames",
+            Self::BroodCycleBaseline => "brood_cycle_baseline_frames",
         }
+    }
+
+    /// Whether the child stages the Broodlings' battle, one 40 ms tick per frame.
+    fn cycles_broods(self) -> bool {
+        matches!(self, Self::BroodCycleLive | Self::BroodCycleBaseline)
     }
 
     /// Whether a splash event is sent every frame.
@@ -145,7 +171,10 @@ impl Variant {
 
     /// Whether the app carries the presentation systems under test.
     fn presents(self) -> bool {
-        !matches!(self, Self::Baseline | Self::RunningBaseline)
+        !matches!(
+            self,
+            Self::Baseline | Self::RunningBaseline | Self::BroodCycleBaseline
+        )
     }
 }
 
@@ -246,6 +275,60 @@ fn watch_gas_crew(session: Res<'_, BattleSession>, mut crew: ResMut<'_, GasCrew>
         }
         crew.housed[slot] = housed;
     }
+}
+
+/// Broodlings the watcher of the Broodlings' children tracks at once; more alive is a failure of
+/// the child, never a silent miscount.
+const BROOD_SLOTS: usize = 16;
+
+/// The Broodlings of the Broodlings' children and how often, across all frames so far, one
+/// arrived in or left the presented snapshot (plan `2026-11-29-render-entity-pool` R-1v).
+/// Fixed-size, so watching it allocates nothing.
+#[derive(Resource, Clone, Copy, Debug)]
+struct BroodWatch {
+    /// The archetype the Brood Lord analogue's impacts create.
+    kind: sim_types::UnitTypeId,
+    /// Its longest life in ticks (`L_max`).
+    lifetime: u32,
+    /// The Broodlings presented on the previous frame.
+    present: [Option<sim_types::EntityId>; BROOD_SLOTS],
+    /// Arrivals seen.
+    arrived: u32,
+    /// Departures seen.
+    departed: u32,
+    /// Whether more than [`BROOD_SLOTS`] were presented at once.
+    overflowed: bool,
+}
+
+/// Counts the Broodlings' arrivals and departures from the presented bubbles, on every frame.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+fn watch_broods(session: Res<'_, BattleSession>, mut watch: ResMut<'_, BroodWatch>) {
+    let bubbles = &session.frames.current().bubbles;
+    let mut now = [None; BROOD_SLOTS];
+    let mut count = 0;
+    let kind = watch.kind;
+    for bubble in bubbles.iter().filter(|bubble| bubble.unit_type == kind) {
+        if count == BROOD_SLOTS {
+            watch.overflowed = true;
+            break;
+        }
+        now[count] = Some(bubble.entity_id);
+        count += 1;
+        if !watch.present.contains(&Some(bubble.entity_id)) {
+            watch.arrived += 1;
+        }
+    }
+    let departed = watch
+        .present
+        .iter()
+        .flatten()
+        .filter(|id| !now.contains(&Some(**id)))
+        .count();
+    watch.departed += u32::try_from(departed).unwrap_or(u32::MAX);
+    watch.present = now;
 }
 
 /// Stages an attack snapshot in `simulation` before its session begins: runs ticks until the
@@ -373,6 +456,7 @@ fn steady_state_app(variant: Variant) -> Result<App, Box<dyn std::error::Error>>
     } else {
         DEFAULT_BATTLE_SCENARIO
     };
+    let ticking = variant.is_running() || variant.cycles_broods();
     let definition = BattleDefinition::load(root.as_path(), scenario.as_ref())?;
     let mut simulation = definition.instantiate()?;
     let crew = if variant.is_running() {
@@ -382,6 +466,17 @@ fn steady_state_app(variant: Variant) -> Result<App, Box<dyn std::error::Error>>
     } else {
         None
     };
+    let brood = variant.cycles_broods().then(|| {
+        let stage = unit_cycling::stage_brood(&mut simulation);
+        BroodWatch {
+            kind: stage.spawned,
+            lifetime: stage.lifetime,
+            present: [None; BROOD_SLOTS],
+            arrived: 0,
+            departed: 0,
+            overflowed: false,
+        }
+    });
     let session = BattleSession::prepare(
         SessionGeneration::FIRST,
         &mut simulation,
@@ -412,12 +507,12 @@ fn steady_state_app(variant: Variant) -> Result<App, Box<dyn std::error::Error>>
     .insert_resource(session.with_world(simulation))
     .insert_resource(client::LabState {
         current_tab: client::LabTab::LiveBattle,
-        battle_paused: !variant.is_running(),
+        battle_paused: !ticking,
         simulation_speed: 1,
         ..default()
     })
     .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
-        Duration::from_millis(20),
+        Duration::from_millis(if variant.cycles_broods() { 40 } else { 20 }),
     ))
     .add_systems(
         Startup,
@@ -429,7 +524,13 @@ fn steady_state_app(variant: Variant) -> Result<App, Box<dyn std::error::Error>>
     if let Some(crew) = crew {
         app.insert_resource(crew).add_systems(Last, watch_gas_crew);
     }
-    if variant == Variant::RunningBaseline {
+    if let Some(watch) = brood {
+        app.insert_resource(watch).add_systems(Last, watch_broods);
+    }
+    if matches!(
+        variant,
+        Variant::RunningBaseline | Variant::BroodCycleBaseline
+    ) {
         app.add_systems(Update, advance_battle_ticks);
     }
     if variant.presents() {
@@ -977,7 +1078,13 @@ fn run_child(variant: Variant) -> TestResult {
         .ok_or_else(|| format!("{FRAMES_ENV} is not UTF-8"))?
         .parse()?;
     let mut app = steady_state_app(variant)?;
-    for _ in 0..WARM_FRAMES {
+    // The Broodlings' children warm for 4 × `L_max` ticks, one tick a frame, a number read
+    // from the data, so both children of the pair measure the same ticks.
+    let warm = app
+        .world()
+        .get_resource::<BroodWatch>()
+        .map_or(WARM_FRAMES, |watch| 4 * watch.lifetime);
+    for _ in 0..warm {
         app.update();
     }
     if let Some(failure) = &app.world().resource::<client::LabState>().battle_failure {
@@ -1001,9 +1108,14 @@ fn run_child(variant: Variant) -> TestResult {
             .0
     };
     let before = tick(&app);
+    let ticked_from = before;
     let spawned_before = effects_spawned(&app);
     let crew_before = app.world().get_resource::<GasCrew>().copied();
+    let brood_before = app.world().get_resource::<BroodWatch>().copied();
     measured_steady_frames(&mut app, frames);
+    if let Some(before) = brood_before {
+        return check_brood_window(&app, frames, before, tick(&app) - ticked_from);
+    }
     if variant == Variant::EffectStream {
         check_effect_stream(&app, frames, spawned_before)?;
     }
@@ -1049,6 +1161,30 @@ fn run_child(variant: Variant) -> TestResult {
     if let Some(id) = busy {
         return Err(format!(
             "the running window must stay idle but for the gas crew, and {id:?} is not"
+        )
+        .into());
+    }
+    Ok(())
+}
+
+/// The Broodlings' children's check after their window of `frames` frames, in which the battle
+/// ran `ticked` ticks: one tick a frame, and at least two Broodlings arrived and two left, all
+/// tracked.
+fn check_brood_window(app: &App, frames: u32, before: BroodWatch, ticked: u32) -> TestResult {
+    if ticked != frames {
+        return Err(format!("the battle ran {ticked} ticks in {frames} frames").into());
+    }
+    let after = app
+        .world()
+        .get_resource::<BroodWatch>()
+        .copied()
+        .ok_or("invariant: a Broodlings' child has its watcher")?;
+    if after.overflowed {
+        return Err(format!("more than {BROOD_SLOTS} Broodlings were presented at once").into());
+    }
+    if after.arrived < before.arrived + 2 || after.departed < before.departed + 2 {
+        return Err(format!(
+            "Broodlings must arrive and leave in the window: {before:?} then {after:?}"
         )
         .into());
     }
@@ -1219,6 +1355,16 @@ fn running_live_sync_frames() -> TestResult {
 #[test]
 fn running_baseline_frames() -> TestResult {
     run_child(Variant::RunningBaseline)
+}
+
+#[test]
+fn brood_cycle_live_frames() -> TestResult {
+    run_child(Variant::BroodCycleLive)
+}
+
+#[test]
+fn brood_cycle_baseline_frames() -> TestResult {
+    run_child(Variant::BroodCycleBaseline)
 }
 
 /// The parts of a DHAT profile (`dhatFileVersion` 2, JSON) this test reads.
@@ -1526,6 +1672,67 @@ fn steady_state_frames_allocate_nothing() -> TestResult {
         0,
         "the effect systems allocated {} times over {window} frames of a splash stream\n{report}",
         effect_stream_difference - effect_baseline_difference,
+    );
+    Ok(())
+}
+
+/// The Broodlings' longest life `L_max`, in ticks, read from the shipped default battle as the
+/// children stage it.
+fn brood_lifetime() -> Result<u32, Box<dyn std::error::Error>> {
+    let root = client::ResolvedAssetsRoot::from_directory(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets"),
+    )?;
+    let definition = BattleDefinition::load(root.as_path(), DEFAULT_BATTLE_SCENARIO.as_ref())?;
+    let mut simulation = definition.instantiate()?;
+    Ok(unit_cycling::stage_brood(&mut simulation).lifetime)
+}
+
+/// R-1v (plan `2026-11-29-render-entity-pool` §6.1, B-19 under valgrind): on the staged
+/// Broodlings' battle, after a warm-up of `4 × L_max` ticks, the live synchroniser's windows of
+/// `2 × L_max` and `4 × L_max` ticks differ by exactly what the battle driver's alone differ by:
+/// Broodlings arriving and expiring cost the client no allocation. The baseline keeps the tick
+/// driver, so the simulation's own allocations for spawning and expiry cancel.
+#[test]
+fn brood_cycle_frames_allocate_nothing() -> TestResult {
+    let lifetime = brood_lifetime()?;
+    let (short, long) = (2 * lifetime, 4 * lifetime);
+    let runs: Vec<Run> = [Variant::BroodCycleLive, Variant::BroodCycleBaseline]
+        .into_iter()
+        .flat_map(|variant| {
+            [short, long].map(|frames| Run {
+                variant,
+                frames,
+                repeat: 0,
+            })
+        })
+        .collect();
+    let directory = tempfile::tempdir()?;
+    let counts = count_all(&runs, directory.path())?;
+    let [live_short, live_long, base_short, base_long] = counts.as_slice() else {
+        return Err("invariant: count_all returns one count per run".into());
+    };
+    let report = format!(
+        "blocks allocated inside {WINDOW_FUNCTION} after {} warm ticks; windows of {short} and          {long} ticks:\n  live {} (process {}), {} (process {})\n  baseline {} (process {}),          {} (process {})",
+        4 * lifetime,
+        live_short.window,
+        live_short.total,
+        live_long.window,
+        live_long.total,
+        base_short.window,
+        base_short.total,
+        base_long.window,
+        base_long.total
+    );
+    println!("{report}");
+    let live = i128::from(live_long.window) - i128::from(live_short.window);
+    let baseline = i128::from(base_long.window) - i128::from(base_short.window);
+    assert_eq!(
+        live - baseline,
+        0,
+        "the client's battle sync systems allocated {} times over {} ticks of Broodlings \
+         arriving and expiring, beyond the tick driver's and Bevy's own work\n{report}",
+        live - baseline,
+        long - short
     );
     Ok(())
 }
