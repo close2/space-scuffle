@@ -427,9 +427,10 @@ and an impact spawn, found by property) to the first army of a 64x64 battle of 2
 measured ticks include its releases, Broodling spawns, clocks and expiries (1.6 spawned units alive per measured tick
 on average). On 2026-11-26 it ran at 402 and 403 ticks/s in two interleaved runs; the eight older rows of the final tree ran
 at 75 ticks/s or more, but their user-space instructions rose by 2.31 % (304,650,007,003 against 297,774,234,285), above
-the plan's +0.5 % bound: any growth of `WeaponSpec` (24 or even 8 bytes, measured on the tree before the plan) costs
-that much, through the weapon phase's per-tick `WeaponSpec` clone; open for the orchestrator
-([evidence](docs/evidence/2026-11-28-broodlings.md), WP7).
+the plan's +0.5 % bound: any growth of `WeaponSpec` (24 or even 8 bytes, measured on the tree before the plan) cost
+that much, through the weapon phase's per-tick `WeaponSpec` clone. After `main`'s weapon-spec-borrow fix (`301d20d1`)
+the re-measure gives +0.041 % (296,709,229,108 against 296,588,891,466), every row at 65 ticks/s or more under load and
+the brood row at 392 ([evidence](docs/evidence/2026-11-28-broodlings.md), after the merge).
 
 **Frame budget.** `frame_budget` (`crates/client_diagnostics`) runs the real client on a flat 128×128 arena where
 two players with 0, 100 or 200 units each attack-move to the arena's centre (Q0018, option (b), chosen by the owner;

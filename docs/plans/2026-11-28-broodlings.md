@@ -1043,3 +1043,15 @@ Deviations from the plan as written, each recorded:
 - **WP0's margin with Broodlings** was measured at WP4 with the mechanism itself, not estimated with a scratch patch
   at WP0 (the mechanism did not exist yet).
 - **`suites.ron`** is unchanged: `broodling_tests` is a default (fast) target of `sim_core`, selected without an entry.
+
+### As built, continued (after `main` `301d20d1` and the owner's answers)
+
+- **Merge** (`50462a75`): `main`'s weapon-spec-borrow; instructions +0.041 % against `main` (stop rule 5 cleared);
+  worlds against `main`'s baseline: battle 20 alone, as before; four-build proof at schema 61, 8 of 8.
+- **Q0132** answered (a), closed (`6a7d3f86`).
+- **WP6 continued** (`af536308`): per-identity negative terms in the baker (`actions.negative_overrides`); 8 more
+  generations ($6.40 of the batch's $10; ledger $123.25 of $230); six clips installed and baked with flaws accepted
+  under Q0133 (closed); the Brood Lord analogue unlocked in the client.
+- **B-19 fails (stop rule 7)**: Broodlings coming and going add and remove bubble materials (6 and 6 in a 300-tick
+  window); D-12 item 3's render-entity pool is not built. The test is kept as a patch,
+  `~/scratch/broodlings/b19-test.patch`, for the package that builds the pool.
