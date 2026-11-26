@@ -267,6 +267,15 @@ fn slot_weapon(arch: &sim_core::UnitArchetype, slot: WeaponSlot) -> Option<&Weap
     }
 }
 
+/// Whether the test may stage `arch` on its own: it has shipped media (`presentable`) and a
+/// player can field and select it. A hangar's member (`selectable: false`, plan
+/// `2026-11-28-carrier-interceptors` D-8) is launched only by its hangar unit, with its own
+/// hangar cadence, so it is never a shooter or a target here: a subject must fire as a fielded
+/// unit fires.
+fn fielded(assets: &Path, arch: &sim_core::UnitArchetype) -> bool {
+    arch.selectable && presentable(assets, &arch.slug)
+}
+
 /// A shooter: a presentable mobile unit type and the slot of the ground weapon it fires.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 struct Shooter {
@@ -306,7 +315,7 @@ fn plan(world: &SimWorld, capacity: usize) -> (Vec<Vec<Planned>>, Vec<Family>) {
     let mut native: Vec<(Shooter, Family)> = Vec::new();
     let mut lab: Vec<Family> = Vec::new();
     for arch in world.catalog.archetypes() {
-        let shows = presentable(&assets, &arch.slug);
+        let shows = fielded(&assets, arch);
         for entry in &arch.effects.weapons {
             if entry.mode.is_some()
                 || entry.weapon == WeaponSlot::Air
@@ -427,7 +436,7 @@ fn anti_air_shooter_where(
                 && (entry.travel.is_some() || entry.impact.is_some())
         })?;
         let spec = arch.air_weapon.as_ref().filter(|spec| admits(spec))?;
-        (presentable(&assets, &arch.slug) && arch.max_speed > SimScalar::ZERO).then(|| {
+        (fielded(&assets, arch) && arch.max_speed > SimScalar::ZERO).then(|| {
             (
                 Shooter {
                     unit_type: arch.unit_type_id,
@@ -965,8 +974,11 @@ fn project3(camera: (&Camera, &GlobalTransform), point: Vec3) -> [f32; 2] {
 }
 
 /// A presentable mobile unit type, a flyer when `air` and a ground unit otherwise, that is no
-/// shooter of `wave`: the targets' type, unarmed in the test world's catalog so the targets
-/// fire on nothing.
+/// shooter of `wave` and carries no hangar: the targets' type, unarmed in the test world's
+/// catalog so the targets fire on nothing. A hangar unit (the Carrier analogue) is left out: it
+/// is the largest flyer, and its Idle (rim bays dimming and glowing over the whole wide disc)
+/// changes the units-only baseline beside the struck bubble by more than the impacts measured
+/// there, so the target would hide the looks it is staged to show.
 fn target_type(world: &mut SimWorld, wave: &[Planned], air: bool) -> UnitTypeId {
     let shooters: Vec<UnitTypeId> = wave.iter().map(|(shooter, ..)| shooter.unit_type).collect();
     let mover = if air {
@@ -982,7 +994,8 @@ fn target_type(world: &mut SimWorld, wave: &[Planned], air: bool) -> UnitTypeId 
                 && arch.mover_type == mover
                 && arch.modes.is_empty()
                 && !shooters.contains(&arch.unit_type_id)
-                && presentable(&assets(), &arch.slug)
+                && arch.capabilities.hangar.is_none()
+                && fielded(&assets(), arch)
         })
         .max_by_key(|arch| arch.collision_radius)
         .map(|arch| arch.unit_type_id)
@@ -2312,7 +2325,7 @@ fn beam_shooter(
             .is_some_and(|effect| effect.sustain.is_some())
     };
     let own = world.catalog.archetypes().find_map(|arch| {
-        if arch.max_speed <= SimScalar::ZERO || !presentable(&assets(), &arch.slug) {
+        if arch.max_speed <= SimScalar::ZERO || !fielded(&assets(), arch) {
             return None;
         }
         arch.effects.weapons.iter().find_map(|entry| {
@@ -2350,7 +2363,7 @@ fn beam_shooter(
                 && arch.modes.is_empty()
                 && arch.weapon.is_some()
                 && (arch.ground_weapon.is_none() || arch.ground_weapon == arch.weapon)
-                && presentable(&assets(), &arch.slug)
+                && fielded(&assets(), arch)
         })?
         .unit_type_id;
     let archetype = world
