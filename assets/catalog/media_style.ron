@@ -123,7 +123,26 @@
         // backdrop to stay unchanged (two clips turned it into grainy sand).
         // The client shows no burrowed form (the burrowed mode is drawn cloaked on the same
         // atlas), so the atlas holds the three published states only.
+        // mothership_carrier, saucer_interceptor (carrier batch, 2026-11-26; plan
+        // 2026-11-28-carrier-interceptors WP5): the Carrier and the interceptors it launches, the
+        // first Cosmic Enclave aircraft with generated media. Their authored texts named a
+        // cloudscape (a scene), a "massive shadow" (a floor to cast it on), "spinning rim lights"
+        // (a turning part) and "a fast banking glide" and "a strafing pass" (travel and a turn),
+        // and were rewritten on the aircraft pattern of batch 5: a still hover, flight in place
+        // shown by light and vapour trails (a saucer has no exhaust), and an Attack that fires
+        // or launches forward and returns to the hover pose. The interceptor's beams and the
+        // Carrier's drones leave toward the lower right, the way both face.
         overrides: {
+            "mothership_carrier": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the carrier keeps the same size and place in frame. The carrier hangs still in the air: it never turns, tilts or bobs, and only its rim bays and central core glow and blink softly. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the carrier flies forward in place, as if held in a wind tunnel, keeping the same size, pose and place in frame. From the first frame to the last its rim bays glow bright and long thin vapour trails stream back from its rim toward the upper left, flickering at an even pace; no ground contact. Seamless loop: the last frame matches the first.",
+                Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the carrier keeps its place in frame, hovering. The docking bays on its front rim flash open and a quick stream of tiny golden saucer drones flies out of them, one after another, straight toward the lower right and out of the frame, then the bays dim and the carrier hovers in its starting pose.",
+            },
+            "saucer_interceptor": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the drone keeps the same size and place in frame. The drone hangs still in the air: it never turns, tilts or bobs, and only its amber core and small rim lights glow and blink softly. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the drone flies at full speed in place, as if held in a wind tunnel, keeping the same size, pose and place in frame. From the first frame to the last its rim lights blaze and long thin bright light trails stream back from its rim toward the upper left, flickering at an even pace; no ground contact. Seamless loop: the last frame matches the first.",
+                Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the drone keeps its place in frame, hovering. It fires forward: two short bright amber energy beams flash from the front of its rim straight toward the lower right and out of the frame, then the beams fade and it hovers in its starting pose.",
+            },
             "burrow_scorpion": {
                 Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the scorpion keeps the same size, pose and place in frame. It crouches as still as a statue: body, legs, claws and tail never move; only the amber bands on its back glow steadily. Seamless loop: the last frame matches the first.",
                 Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans. The scorpion scuttles on a treadmill that holds it in place: its six legs clearly lift and step in quick turns at an even pace from the first frame to the last, while its body, claws and tail stay at exactly the same place, size and three-quarter facing in frame; it never moves forward, back or toward the camera. The smooth plain backdrop stays unchanged. Seamless loop: the last frame matches the first.",
@@ -257,7 +276,13 @@
         // burrow_scorpion (batch 6, 2026-11-09): a broad, flat creature seen at 3/4 with its claws
         // and tail spread wide, the shape the trike and the mech needed the letterbox for; it is
         // letterboxed from its first clip.
+        //
+        // mothership_carrier, saucer_interceptor (carrier batch, 2026-11-26): two wide flat
+        // saucers seen at 3/4, the aircraft shape batch 5 letterboxed; letterboxed from the first
+        // clip.
         overrides: {
+            "mothership_carrier": Letterbox(feather_permille: 30),
+            "saucer_interceptor": Letterbox(feather_permille: 30),
             "burrow_scorpion": Letterbox(feather_permille: 30),
             "repair_shuttle": Letterbox(feather_permille: 30),
             "welder_drone": Letterbox(feather_permille: 30),
@@ -357,7 +382,15 @@
         // (b1ef0cb7) loops raw (worst 0.696 against a threshold of 0.689), and a cross-fade of 2
         // of its 10 frames raises the median step and fails it by 0.0007, so it keeps loop
         // sampling only, as the crawler's Idle.
+        // mothership_carrier, saucer_interceptor Attack (carrier batch, 2026-11-26): pinned at its
+        // end to the Idle picture, as batch 5's aircraft.
         overrides: {
+            "mothership_carrier": {
+                Attack: (pin_end: true, seam: None),
+            },
+            "saucer_interceptor": {
+                Attack: (pin_end: true, seam: None),
+            },
             "burrow_scorpion": {
                 Attack: (pin_end: true, seam: None),
                 Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 0))),
