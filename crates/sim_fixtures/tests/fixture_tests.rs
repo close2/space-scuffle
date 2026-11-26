@@ -155,7 +155,12 @@ use std::path::PathBuf;
 /// encodes its hangar and hangar link, each weapon its magazine launch; with those left out at
 /// schema 56 a copy of the final tree reproduces `6_457_533_297_407_649_319` on all four builds.
 /// Behaviour: none (no hangar unit appears).
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 10_676_883_327_660_124_161;
+/// Re-recorded for plan 2026-11-28-missile-movers-b52 (checksum schema 57 -> 60): each missile
+/// phase's end is encoded as `MissilePhase::ends` with a variant tag; with the schema at 57 a copy
+/// of the final tree reproduces `10_676_883_327_660_124_161` on all four builds. Behaviour: none
+/// (no weapon of the plan fires). (60 is provisional, the next free at merge: 58 and 59 are
+/// reserved for the Gated movement plan.)
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 14_163_679_094_600_060_237;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

@@ -149,7 +149,11 @@ use std::collections::BTreeMap;
 /// `WeaponSpec::magazine_launch` (an option tag, then its tries and interval), after
 /// `missile_movers` (plan `2026-11-28-carrier-interceptors` D-3, D-4, §5). The number is the next
 /// free at merge: 54 and 55 are reserved for the Gated movement plan.
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 57;
+/// Schema 60 encodes each missile phase's end as `MissilePhase::ends`, an option tag, then a
+/// variant tag (`Flown` 0, `Remaining` 1) and its value, in place of `ends_after` (plan
+/// `2026-11-28-missile-movers-b52` D-2, D-5). The number is the next free at merge: 58 and 59
+/// are reserved for the Gated movement plan.
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 60;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.

@@ -28,11 +28,11 @@ use sim_types::{
     ArchetypeCapabilities, ArmorClassId, AttackCommand, AttackDashSpec, AttackVisibility,
     Attribute, AttributeBonuses, AttributeFlags, AutoRallySpec, BarrierSpec, CollisionClass,
     FactionId, FootprintShape, HangarDeath, HangarSpec, HarvesterSpec, MagazineLaunch,
-    MissileMover, MissilePhase, MissileValidation, MoverType, OverclockSpec, PlacementFlag,
-    PlacementFlags, ProjectileTargetLossBehavior, ResourceKind, ResourceKindSet, ShapeKind,
-    SilhouetteClass, SimAngle, SimScalar, SplashCliff, SplashImpact, SplashLine, SplashLineAxis,
-    SplashLineOrigin, SplashShape, StanceOrders, StructureStrike, TurretIdle, UnitModeSpec,
-    UnitTypeId, UpgradeEffect, WeaponVisualKind,
+    MissileMover, MissilePhase, MissileValidation, MoverType, OverclockSpec, PhaseEnd,
+    PlacementFlag, PlacementFlags, ProjectileTargetLossBehavior, ResourceKind, ResourceKindSet,
+    ShapeKind, SilhouetteClass, SimAngle, SimScalar, SplashCliff, SplashImpact, SplashLine,
+    SplashLineAxis, SplashLineOrigin, SplashShape, StanceOrders, StructureStrike, TurretIdle,
+    UnitModeSpec, UnitTypeId, UpgradeEffect, WeaponVisualKind,
 };
 pub use sim_types::{SplashSpec, SplashZone, WeaponSpec};
 mod collision_classes;
@@ -1743,8 +1743,11 @@ struct WeaponSpecDef {
 
 /// An authored missile mover (`StarCraft` II `CEffectLaunchMissile` `Movers` entry, plan
 /// `2026-11-27-weapon-delivery` D-2), in world units and ticks, converted to
-/// [`sim_types::MissileMover`] once at load.
+/// [`sim_types::MissileMover`] once at load. Unknown fields are refused, so a misspelt or stale
+/// field (`ends_after`) is an error, not a silent default (plan `2026-11-28-missile-movers-b52`
+/// D-2).
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct MissileMoverDef {
     /// Greatest edge-to-edge distance at the release that chooses this mover (`IfRangeLTE`);
     /// `None` admits any distance, only on the last mover.
@@ -1754,8 +1757,9 @@ pub(crate) struct MissileMoverDef {
 }
 
 /// An authored speed phase of a missile mover (`MotionPhases`): world units per tick and per
-/// tick squared, the path length in world units.
+/// tick squared, its end in world units. Unknown fields are refused.
 #[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct MissilePhaseDef {
     /// Start speed (`Speed`); `None` carries the speed in.
     pub(crate) speed: Option<f32>,
@@ -1763,9 +1767,37 @@ pub(crate) struct MissilePhaseDef {
     pub(crate) acceleration: f32,
     /// Greatest speed (`MaxSpeed`).
     pub(crate) max_speed: f32,
-    /// Path flown since the release at which the next phase starts (`Outro`'s midpoint); `None`
-    /// on the last phase.
-    pub(crate) ends_after: Option<f32>,
+    /// Where the next phase starts (`Outro`); `None` on the last phase.
+    pub(crate) ends: Option<PhaseEndDef>,
+}
+
+/// An authored phase end (plan `2026-11-28-missile-movers-b52` D-2), world units, converted to
+/// [`sim_types::PhaseEnd`] once at load: `Flown(x)` after a path flown since the release (a
+/// positive `Outro`, its midpoint), `Remaining(x)` once at most `x` is left to the impact (a
+/// negative `Outro`, its magnitude).
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+pub(crate) enum PhaseEndDef {
+    /// Path flown since the release.
+    Flown(f32),
+    /// Path left to the impact.
+    Remaining(f32),
+}
+
+impl PhaseEndDef {
+    /// The end's distance, whichever its reference.
+    pub(crate) const fn distance(self) -> f32 {
+        match self {
+            Self::Flown(distance) | Self::Remaining(distance) => distance,
+        }
+    }
+
+    /// The end in fixed point (`SimScalar::from_f32_lossy`, as every authored distance).
+    fn to_spec(self) -> PhaseEnd {
+        match self {
+            Self::Flown(distance) => PhaseEnd::Flown(SimScalar::from_f32_lossy(distance)),
+            Self::Remaining(distance) => PhaseEnd::Remaining(SimScalar::from_f32_lossy(distance)),
+        }
+    }
 }
 
 impl MissileMoverDef {
@@ -1780,7 +1812,7 @@ impl MissileMoverDef {
                     speed: phase.speed.map(SimScalar::from_f32_lossy),
                     acceleration: SimScalar::from_f32_lossy(phase.acceleration),
                     max_speed: SimScalar::from_f32_lossy(phase.max_speed),
-                    ends_after: phase.ends_after.map(SimScalar::from_f32_lossy),
+                    ends: phase.ends.map(PhaseEndDef::to_spec),
                 })
                 .collect(),
         }

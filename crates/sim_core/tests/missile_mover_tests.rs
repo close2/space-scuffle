@@ -9,7 +9,10 @@
 //! release, and it is kept when the target closes in (W-4); a mover missile fuels out as a
 //! constant one does (W-7) and, when its target is lost, flies its profile on to the last point
 //! (W-8); its renderer event lasts the flight the same integration gives over the drawn path
-//! (W-9).
+//! (W-9). Plan `2026-11-28-missile-movers-b52` D-2 adds target-relative ends: a phase ends once
+//! the path left to the impact is within its end, checked after each step against the target
+//! where it now stands (M-2, M-3) and once at the release (M-4), and the renderer event
+//! integrates the same rule (M-7).
 //!
 //! # How it fits
 //! The weapon is a scratch copy of a shipped ground missile weapon found by property (a ground
@@ -26,9 +29,9 @@
 use sim_core::{ActiveProjectile, SimWorld, UnitArchetype, WeaponSpec};
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
-    AttackVisibility, CombatEventVisual, EntityId, MissileMover, MissilePhase, MoverType, PlayerId,
-    PlayerView, ShapeKind, SimScalar, SimVec2, Tick, TickBundle, UnitOrder, UnitTypeId,
-    TICKS_PER_SECOND,
+    AbilityTargetKind, AttackVisibility, CombatEventVisual, EntityId, MissileMover, MissilePhase,
+    MoverType, PhaseEnd, PlayerId, PlayerView, ShapeKind, SimScalar, SimVec2, Tick, TickBundle,
+    UnitOrder, UnitTypeId, TICKS_PER_SECOND,
 };
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -58,13 +61,22 @@ fn value(s: SimScalar) -> f64 {
     raw / 4_294_967_296.0
 }
 
-/// A phase with the given values, world units per tick and per tick squared.
+/// A phase with the given values, world units per tick and per tick squared; its end, if any,
+/// a path flown.
 fn phase(speed: Option<f64>, acceleration: f64, max: f64, ends: Option<f64>) -> MissilePhase {
     MissilePhase {
         speed: speed.map(scalar),
         acceleration: scalar(acceleration),
         max_speed: scalar(max),
-        ends_after: ends.map(scalar),
+        ends: ends.map(|after| PhaseEnd::Flown(scalar(after))),
+    }
+}
+
+/// A phase ending once at most `within` world units are left to the impact.
+fn phase_within(speed: Option<f64>, acceleration: f64, max: f64, within: f64) -> MissilePhase {
+    MissilePhase {
+        ends: Some(PhaseEnd::Remaining(scalar(within))),
+        ..phase(speed, acceleration, max, None)
     }
 }
 
@@ -76,7 +88,9 @@ fn only(phases: Vec<MissilePhase>) -> Vec<MissileMover> {
     }]
 }
 
-/// A shipped mobile ground archetype whose ground weapon is a missile without an area.
+/// A shipped mobile ground archetype whose ground weapon is a constant missile (no movers)
+/// without an area: a template, any such archetype serves (its weapon is replaced or stripped),
+/// and no mover data can change which one it is (plan `2026-11-28-missile-movers-b52` M-14).
 fn missile_archetype(world: &SimWorld) -> Result<UnitArchetype, String> {
     world
         .catalog
@@ -84,10 +98,38 @@ fn missile_archetype(world: &SimWorld) -> Result<UnitArchetype, String> {
         .filter(|arch| arch.mover_type == MoverType::Ground && arch.max_speed > SimScalar::ZERO)
         .find(|arch| {
             arch.weapon_against(MoverType::Ground, None)
-                .is_some_and(|w| w.projectile_speed.is_some() && w.splash.is_none())
+                .is_some_and(|w| {
+                    w.projectile_speed.is_some()
+                        && w.missile_movers.is_empty()
+                        && w.splash.is_none()
+                })
         })
         .cloned()
-        .ok_or_else(|| "the shipped catalog has a ground missile weapon".to_owned())
+        .ok_or_else(|| "the shipped catalog has a constant ground missile weapon".to_owned())
+}
+
+/// The one shipped archetype for which `is` holds, or an error naming `what` and how many
+/// matched: a finder selects one unit by a property unique to it (plan
+/// `2026-11-28-missile-movers-b52` M-14), so an archetype that gains the property later makes
+/// the finder fail instead of silently testing another unit.
+fn one_archetype(
+    world: &SimWorld,
+    what: &str,
+    is: impl Fn(&UnitArchetype) -> bool,
+) -> Result<UnitArchetype, String> {
+    let found: Vec<&UnitArchetype> = world.catalog.archetypes().filter(|arch| is(arch)).collect();
+    match found.as_slice() {
+        [one] => Ok((*one).clone()),
+        other => Err(format!(
+            "{what}: one shipped archetype, found {:?}",
+            other.iter().map(|arch| &arch.slug).collect::<Vec<_>>()
+        )),
+    }
+}
+
+/// The movers of `weapon`, empty for none.
+fn movers_of(weapon: Option<&WeaponSpec>) -> &[MissileMover] {
+    weapon.map_or(&[], |w| w.missile_movers.as_slice())
 }
 
 /// The next free archetype identity.
@@ -277,14 +319,31 @@ impl Bench {
     }
 }
 
+/// Whether `phase`'s end is due after `travelled` of `path`, a target standing still (plan
+/// `2026-11-28-missile-movers-b52` D-2).
+fn due(phase: &MissilePhase, travelled: f64, path: f64) -> bool {
+    match phase.ends {
+        Some(PhaseEnd::Flown(after)) => travelled >= value(after),
+        Some(PhaseEnd::Remaining(within)) => path - travelled <= value(within),
+        None => false,
+    }
+}
+
 /// The oracle of D-2's integration in `f64` (exact for the dyadic values used here): the tick
-/// on which a missile flying `phases` covers `path`, the speed and phase rules as the plan
-/// states them, and the speed it reaches on each tick.
+/// on which a missile flying `phases` covers `path` towards a target standing still, the speed
+/// and phase rules as the plans state them (the ends checked once at the release and after
+/// each step), and the speed it reaches on each tick.
 fn oracle(phases: &[MissilePhase], path: f64) -> (u32, Vec<f64>) {
     let mut index = 0;
     let mut speed = phases[0].speed.map_or(0.0, value);
     let mut travelled = 0.0;
     let mut speeds = Vec::new();
+    while index + 1 < phases.len() && due(&phases[index], travelled, path) {
+        index += 1;
+        if let Some(start) = phases[index].speed {
+            speed = value(start);
+        }
+    }
     for tick in 1..=10_000 {
         let p = &phases[index];
         let next = (speed + value(p.acceleration)).min(value(p.max_speed));
@@ -294,11 +353,7 @@ fn oracle(phases: &[MissilePhase], path: f64) -> (u32, Vec<f64>) {
         }
         travelled += step;
         speed = next;
-        while index + 1 < phases.len()
-            && phases[index]
-                .ends_after
-                .is_some_and(|e| travelled >= value(e))
-        {
+        while index + 1 < phases.len() && due(&phases[index], travelled, path) {
             index += 1;
             if let Some(start) = phases[index].speed {
                 speed = value(start);
@@ -458,6 +513,154 @@ fn the_band_is_chosen_once_at_the_release() -> TestResult {
     Ok(())
 }
 
+/// The two-phase mover of M-2 to M-4 and M-7: a constant 0.25 until at most 4 world units are
+/// left to the impact, then accelerating from the speed carried in.
+fn kill_phase_mover() -> Vec<MissilePhase> {
+    vec![
+        phase_within(Some(0.25), 0.0, 0.25, 4.0),
+        phase(None, 0.25, 2.0, None),
+    ]
+}
+
+/// M-2 (plan `2026-11-28-missile-movers-b52` D-2): at a target standing still, the missile
+/// switches on the first tick after whose step the path left is at most the end's 4 world
+/// units, and lands on the oracle's tick, for a table of paths around the end.
+#[test]
+fn a_phase_ends_once_the_path_left_is_within_its_end() -> TestResult {
+    let phases = kill_phase_mover();
+    let probe = bench(0x5A0, scalar(6.0), only(phases.clone()), |_| {})?;
+    let radius = value(probe.shooter_radius);
+    // Paths 4.125 to 9: the switch at the release tick's step, a few ticks in, and far in.
+    for (seed, path) in (0x5A1_u64..).zip([4.125, 4.25, 4.5, 4.75, 5.0, 5.5, 6.25, 9.0]) {
+        let edge = path - radius;
+        let mut bench = bench(seed, scalar(edge), only(phases.clone()), |_| {})?;
+        let (expected, speeds) = oracle(&phases, path);
+        let flight = bench.fly(|_| Ok(()))?;
+        assert_eq!(flight.ticks(), Some(expected), "path {path}");
+        for (index, state) in flight.states.iter().enumerate() {
+            let left = path - value(state.travelled);
+            assert_eq!(
+                state.phase,
+                u8::from(left <= 4.0),
+                "path {path}, tick {index} of the flight, {left} left"
+            );
+            assert_eq!(
+                value(state.speed),
+                speeds[index],
+                "path {path}, tick {index}"
+            );
+        }
+        assert_eq!(
+            flight.states.first().map(|first| first.travelled),
+            Some(scalar(0.25)),
+            "path {path}: released outside the end, its first step is the first phase's"
+        );
+    }
+    Ok(())
+}
+
+/// The tick of the flight (0 the release tick's step) on which `flight`'s missile entered its
+/// second phase.
+fn switch_tick(flight: &Flight) -> Option<usize> {
+    flight.states.iter().position(|state| state.phase == 1)
+}
+
+/// M-3: the end follows the target. Released 9 world units of path away, the same missile at a
+/// target walking towards the launcher switches earlier, and at one walking away later, than
+/// at a target standing still; the band chosen at the release is kept throughout (W-4's rule).
+#[test]
+fn a_target_relative_end_follows_a_moving_target() -> TestResult {
+    let movers = vec![
+        MissileMover {
+            up_to_range: Some(SimScalar::ONE),
+            phases: vec![phase(Some(1.0), 0.0, 1.0, None)],
+        },
+        MissileMover {
+            up_to_range: None,
+            phases: kill_phase_mover(),
+        },
+    ];
+    let mut switches = Vec::new();
+    // Towards a point in front of the launcher, or away to the bench's far side.
+    for (seed, walk) in (0x5B0_u64..).zip([None, Some(SHOOTER.0 + 3), Some(30)]) {
+        let mut bench = bench(seed, scalar(8.5), movers.clone(), |_| {})?;
+        let flight = bench.fly(|bench| {
+            let Some(x) = walk else {
+                return Ok(());
+            };
+            let to = SimVec2::from_i32(x, SHOOTER.1);
+            bench
+                .world
+                .entities
+                .get_mut(&bench.target)
+                .ok_or("the target exists")?
+                .issue_order(UnitOrder::Move { target: to }, false)
+                .map_err(|error| format!("{error:?}"))?
+                .then_some(())
+                .ok_or_else(|| "the target took its move".to_owned())
+        })?;
+        assert!(
+            flight.states.iter().all(|state| state.mover == Some(1)),
+            "walk {walk:?}: the band chosen at the release is kept"
+        );
+        switches.push(switch_tick(&flight).ok_or("the missile reached its kill phase")?);
+    }
+    let (still, towards, away) = (switches[0], switches[1], switches[2]);
+    assert!(towards < still, "towards the launcher: {towards} < {still}");
+    assert!(away > still, "away from the launcher: {away} > {still}");
+    Ok(())
+}
+
+/// M-4: a missile released with at most the end's distance left starts in the next phase, its
+/// first step that phase's integration from the speed carried in; a positive `Flown` end is
+/// never entered at the release, however short.
+#[test]
+fn the_release_enters_a_phase_whose_end_is_already_due() -> TestResult {
+    let mut inside = bench(0x5C0, scalar(1.0), only(kill_phase_mover()), |_| {})?;
+    let flight = inside.fly(|_| Ok(()))?;
+    let first = flight.states.first().ok_or("the missile flew a tick")?;
+    // From 0.25 carried in, accelerating 0.25: the release tick's step is 0.375.
+    assert_eq!(
+        (first.phase, first.travelled, first.speed),
+        (1, scalar(0.375), scalar(0.5)),
+        "it starts in its kill phase"
+    );
+    let shortest = vec![
+        phase(Some(0.25), 0.0, 0.25, Some(1.0 / 64.0)),
+        phase(Some(1.0), 0.0, 1.0, None),
+    ];
+    let mut flown = bench(0x5C1, scalar(1.0), only(shortest), |_| {})?;
+    let flight = flown.fly(|_| Ok(()))?;
+    let first = flight.states.first().ok_or("the missile flew a tick")?;
+    assert_eq!(
+        first.travelled,
+        scalar(0.25),
+        "the first step is the first phase's"
+    );
+    assert_eq!(
+        (first.phase, first.speed),
+        (1, SimScalar::ONE),
+        "then its path-flown end is due"
+    );
+    Ok(())
+}
+
+/// M-7: the renderer event of a missile with a target-relative end lasts the flight the same
+/// integration gives over the drawn path, a launch inside the end distance included.
+#[test]
+fn a_target_relative_missiles_event_lasts_its_integrated_flight() -> TestResult {
+    let phases = kill_phase_mover();
+    for (seed, edge) in (0x5D0_u64..).zip([0.5, 2.0, 3.5, 4.0, 4.5, 5.0, 9.0]) {
+        let mut bench = bench(seed, scalar(edge), only(phases.clone()), |_| {})?;
+        let (ticks, _) = oracle(&phases, edge.max(0.05));
+        let flight = bench.fly(|_| Ok(()))?;
+        #[expect(clippy::cast_precision_loss, reason = "a small tick count")]
+        let expected = ticks.max(1) as f32 / f32::from(TICKS_PER_SECOND);
+        assert_eq!(flight.duration_secs, Some(expected), "edge {edge}");
+    }
+    Ok(())
+}
+
 /// W-7: a mover missile whose flight outlasts the weapon's lifetime fuels out on the tick a
 /// constant one does, and strikes nothing.
 #[test]
@@ -595,37 +798,24 @@ fn unarmed(sight: SimScalar) -> impl FnOnce(&mut UnitArchetype) {
     }
 }
 
-/// The shipped mobile air unit whose air weapon flies movers: the Phoenix analogue.
+/// The shipped mobile air unit whose air weapon's movers start with a bounded band (5.0.14's
+/// `MissileDefault` up to 1): the Phoenix analogue.
 fn air_mover_unit(world: &SimWorld) -> Result<UnitArchetype, String> {
-    world
-        .catalog
-        .archetypes()
-        .find(|arch| {
-            arch.mover_type == MoverType::Air
-                && arch.max_speed > SimScalar::ZERO
-                && arch
-                    .air_weapon
-                    .as_ref()
-                    .is_some_and(|w| !w.missile_movers.is_empty())
-        })
-        .cloned()
-        .ok_or_else(|| "the shipped catalog has an air weapon with movers".to_owned())
+    one_archetype(world, "the Phoenix analogue", |arch| {
+        arch.mover_type == MoverType::Air
+            && arch.max_speed > SimScalar::ZERO
+            && movers_of(arch.air_weapon.as_ref())
+                .first()
+                .is_some_and(|mover| mover.up_to_range.is_some())
+    })
 }
 
 /// The shipped structure whose ground weapon flies movers: the Spine Crawler analogue.
 fn ground_mover_structure(world: &SimWorld) -> Result<UnitArchetype, String> {
-    world
-        .catalog
-        .archetypes()
-        .find(|arch| {
-            matches!(arch.shape, ShapeKind::BuildingDome { .. })
-                && arch
-                    .ground_weapon
-                    .as_ref()
-                    .is_some_and(|w| !w.missile_movers.is_empty())
-        })
-        .cloned()
-        .ok_or_else(|| "the shipped catalog has a structure ground weapon with movers".to_owned())
+    one_archetype(world, "the Spine Crawler analogue", |arch| {
+        matches!(arch.shape, ShapeKind::BuildingDome { .. })
+            && !movers_of(arch.ground_weapon.as_ref()).is_empty()
+    })
 }
 
 /// A duel on open ground between the shipped `attacker` (a structure when it has a dome) of
@@ -1027,5 +1217,475 @@ fn a_mover_weapons_release_shows_its_attacker() -> TestResult {
             attacker.slug
         );
     }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------------------------
+// The High Templar analogue's bolt (M-9, plan `2026-11-28-missile-movers-b52` WP2)
+// ---------------------------------------------------------------------------------------------
+
+/// The shipped mobile ground caster whose only weapon is a constant missile and which casts an
+/// energy-costing spell at a position: the High Templar analogue (Psionic Storm). The Ravager
+/// analogue's bile costs no energy and the Queen analogue has an air weapon block.
+fn bolt_caster(world: &SimWorld) -> Result<UnitArchetype, String> {
+    one_archetype(world, "the High Templar analogue", |arch| {
+        arch.mover_type == MoverType::Ground
+            && arch.max_speed > SimScalar::ZERO
+            && arch.air_weapon.is_none()
+            && arch
+                .weapon
+                .as_ref()
+                .is_some_and(|w| w.projectile_speed.is_some() && w.missile_movers.is_empty())
+            && arch.abilities.iter().any(|ability| {
+                ability.target_kind == AbilityTargetKind::TargetPosition
+                    && ability.energy_cost > SimScalar::ZERO
+            })
+    })
+}
+
+/// M-9: the High Templar analogue's bolt, released at a held target 0.63 and 5.9 world units away
+/// edge to edge, lands after `ceil(path / 1.05)` ticks, `MissileDefault`'s 18.75 (S12), one tick
+/// before a bolt of 1.0 per tick would (§2.4: paths 1.005 and 6.275 with its radius 0.375).
+#[test]
+fn the_bolt_flies_missile_defaults_speed() -> TestResult {
+    let world = sim_fixtures::world(
+        GameMap::new(8, 8, MapCell::default_ground(CliffLevel(0)))?,
+        1,
+    );
+    let caster = bolt_caster(&world)?;
+    let victim = missile_archetype(&world)?;
+    for (seed, edge) in (0x600_u64..).zip([0.63, 5.9]) {
+        let mut bench = shipped_duel(seed, &caster, &victim, scalar(10.0), scalar(edge), |_| {})?;
+        let path = bench.shooter_radius + scalar(edge);
+        let ticks = |speed: SimScalar| (path / speed).saturating_ceil().saturating_to_u32();
+        assert!(
+            (value(bench.speed) - 1.05).abs() < 1e-6,
+            "MissileDefault's 18.75 x 0.056, not {:?}",
+            bench.speed
+        );
+        let flight = bench.fly(|_| Ok(()))?;
+        // At 0.63 the bolt lands on its release tick, so no state of its flight remains.
+        assert!(
+            flight.states.iter().all(|state| state.mover.is_none()),
+            "a constant missile"
+        );
+        assert_eq!(flight.ticks(), Some(ticks(bench.speed)), "edge {edge}");
+        assert_eq!(
+            flight.ticks(),
+            Some(ticks(SimScalar::ONE) - 1),
+            "edge {edge}: one tick before a bolt of 1.0"
+        );
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------------------------
+// The shipped movers of plan `2026-11-28-missile-movers-b52` (M-12, M-15, M-16; WP3 to WP5)
+// ---------------------------------------------------------------------------------------------
+
+/// The shipped mobile air unit whose air weapon flies movers and reaches 9 world units: the
+/// Viking analogue.
+fn viking(world: &SimWorld) -> Result<UnitArchetype, String> {
+    one_archetype(world, "the Viking analogue", |arch| {
+        arch.mover_type == MoverType::Air
+            && arch.max_speed > SimScalar::ZERO
+            && arch.air_weapon.as_ref().is_some_and(|w| {
+                !w.missile_movers.is_empty() && w.max_range == SimScalar::from_i32(9)
+            })
+    })
+}
+
+/// The shipped air unit whose air weapon flies movers and splashes: the Liberator analogue.
+fn liberator(world: &SimWorld) -> Result<UnitArchetype, String> {
+    one_archetype(world, "the Liberator analogue", |arch| {
+        arch.mover_type == MoverType::Air
+            && arch
+                .air_weapon
+                .as_ref()
+                .is_some_and(|w| !w.missile_movers.is_empty() && w.splash.is_some())
+    })
+}
+
+/// The shipped unit, not a structure, whose primary `weapon` flies movers: the Banshee analogue.
+fn banshee(world: &SimWorld) -> Result<UnitArchetype, String> {
+    one_archetype(world, "the Banshee analogue", |arch| {
+        !matches!(arch.shape, ShapeKind::BuildingDome { .. })
+            && !movers_of(arch.weapon.as_ref()).is_empty()
+    })
+}
+
+/// The shipped structure whose air weapon flies movers: the Missile Turret analogue.
+fn missile_turret(world: &SimWorld) -> Result<UnitArchetype, String> {
+    one_archetype(world, "the Missile Turret analogue", |arch| {
+        matches!(arch.shape, ShapeKind::BuildingDome { .. })
+            && !movers_of(arch.air_weapon.as_ref()).is_empty()
+    })
+}
+
+/// What a volley did: the ticks on which its missiles were released and on which its target's
+/// vitals dropped.
+struct Volley {
+    releases: Vec<u32>,
+    strikes: Vec<u32>,
+}
+
+/// Orders `bench`'s shooter to attack and steps until `strikes` drops of the target's life plus
+/// shields (a regenerating target's rise is not a strike), or 200 ticks; every renderer missile
+/// event counts as a release.
+fn volley(bench: &mut Bench, strikes: usize) -> Result<Volley, String> {
+    bench
+        .world
+        .entities
+        .get_mut(&bench.shooter)
+        .ok_or("the shooter exists")?
+        .issue_order(UnitOrder::attack(bench.target), false)
+        .map_err(|error| format!("{error:?}"))?;
+    let total = |bench: &Bench| bench.vitals(bench.target).map(|(hp, shields)| hp + shields);
+    let mut last = total(bench);
+    let mut seen = Volley {
+        releases: Vec::new(),
+        strikes: Vec::new(),
+    };
+    for tick in 1..=200 {
+        let snapshot = bench.world.step(&bundle(tick));
+        let released = snapshot
+            .combat_events
+            .iter()
+            .filter(|event| matches!(event, CombatEventVisual::ProjectileVisual { .. }))
+            .count();
+        seen.releases.extend(std::iter::repeat_n(tick, released));
+        let now = total(bench);
+        if now < last {
+            seen.strikes.push(tick);
+        }
+        last = now;
+        if seen.strikes.len() == strikes {
+            return Ok(seen);
+        }
+    }
+    Err(format!(
+        "{strikes} strikes within 200 ticks: {:?}",
+        seen.strikes
+    ))
+}
+
+/// Gives a copied attacker `sight` world units of sight, so a target at its full range is seen.
+fn seeing(sight: i32) -> impl FnOnce(&mut UnitArchetype) {
+    move |copy: &mut UnitArchetype| copy.sight_radius = SimScalar::from_i32(sight)
+}
+
+/// M-12: the Viking analogue's two torpedoes, released 4 ticks apart (`PeriodicPeriodArray 0,
+/// 0.21`), each land on §2.4's tick after their own release (`VikingFighterMissile`, S3), the
+/// release tick counted, and nothing lands on a release tick.
+#[test]
+fn the_viking_torpedoes_land_after_their_flight() -> TestResult {
+    let world = sim_fixtures::world(
+        GameMap::new(8, 8, MapCell::default_ground(CliffLevel(0)))?,
+        1,
+    );
+    let viking = viking(&world)?;
+    let table = [
+        (0.5, 9),
+        (2.0, 12),
+        (4.0, 14),
+        (6.0, 15),
+        (8.0, 16),
+        (9.0, 17),
+    ];
+    for (seed, (edge, expected)) in (0x700_u64..).zip(table) {
+        let mut bench = shipped_duel(
+            seed,
+            &viking,
+            &viking,
+            scalar(12.0),
+            scalar(edge),
+            seeing(12),
+        )?;
+        let seen = volley(&mut bench, 2)?;
+        let (first, second) = (seen.releases[0], seen.releases[1]);
+        assert_eq!(second - first, 4, "edge {edge}: the volley's interval");
+        assert_eq!(
+            seen.strikes,
+            vec![first + expected - 1, second + expected - 1],
+            "edge {edge}: each torpedo after its own {expected}-tick flight"
+        );
+        assert!(
+            seen.strikes
+                .iter()
+                .all(|tick| !seen.releases.contains(tick)),
+            "edge {edge}: no strike on a release tick"
+        );
+    }
+    Ok(())
+}
+
+/// M-12: `attacker`'s two missiles at an unarmed, held `victim`, at each `(edge, ticks)` of
+/// `table` (§2.4), each land `ticks` after their own release, the release tick counted, the
+/// second released the weapon's strike interval after the first, and no missile lands on its own
+/// release tick.
+fn volleys_land_on_the_table(
+    seed: u64,
+    attacker: &UnitArchetype,
+    victim: &UnitArchetype,
+    table: &[(f64, u32)],
+) -> TestResult {
+    let interval = attacker
+        .weapon_against(victim.mover_type, None)
+        .map(|w| u32::from(w.strike_interval_ticks))
+        .ok_or("armed against the victim")?;
+    for (seed, &(edge, expected)) in (seed..).zip(table) {
+        let mut bench = shipped_duel(
+            seed,
+            attacker,
+            victim,
+            scalar(12.0),
+            scalar(edge),
+            seeing(12),
+        )?;
+        let seen = volley(&mut bench, 2)?;
+        let (first, second) = (seen.releases[0], seen.releases[1]);
+        assert_eq!(
+            second - first,
+            interval,
+            "{}, edge {edge}: interval",
+            attacker.slug
+        );
+        assert_eq!(
+            seen.strikes,
+            vec![first + expected - 1, second + expected - 1],
+            "{}, edge {edge}: each missile after its own {expected}-tick flight",
+            attacker.slug
+        );
+        assert!(
+            seen.strikes[0] > first && seen.strikes[1] > second,
+            "{}, edge {edge}: no missile strikes on its own release tick",
+            attacker.slug
+        );
+    }
+    Ok(())
+}
+
+/// M-12: the Liberator analogue's rockets fly `LiberatorMissile` (S5, S6: thrown at 0.448 for
+/// 3, then 0.896) and the Banshee analogue's `BacklashRocketsLMWeapon` (S8: from 0.56
+/// accelerating 0.06272 to 2.8), landing on §2.4's ticks.
+#[test]
+fn the_liberator_and_banshee_rockets_land_after_their_flight() -> TestResult {
+    let world = sim_fixtures::world(
+        GameMap::new(8, 8, MapCell::default_ground(CliffLevel(0)))?,
+        1,
+    );
+    let liberator = liberator(&world)?;
+    let air_victim = viking(&world)?;
+    volleys_land_on_the_table(
+        0x730,
+        &liberator,
+        &air_victim,
+        &[(0.5, 3), (1.0, 4), (2.0, 7), (3.0, 8), (4.0, 9), (5.0, 10)],
+    )?;
+    let banshee = banshee(&world)?;
+    let ground_victim = missile_archetype(&world)?;
+    volleys_land_on_the_table(
+        0x740,
+        &banshee,
+        &ground_victim,
+        &[
+            (0.5, 3),
+            (1.0, 3),
+            (2.0, 5),
+            (3.0, 6),
+            (4.0, 7),
+            (5.0, 8),
+            (6.0, 9),
+        ],
+    )
+}
+
+/// M-12: the Missile Turret analogue's missiles fly `LongboltMissileWeapon` (S9, S10: 0.56 until
+/// 4 is left to the target, then accelerating 0.6272 to 1.12), landing on §2.4's ticks over its
+/// radius 1.125.
+#[test]
+fn the_missile_turret_missiles_land_after_their_flight() -> TestResult {
+    let world = sim_fixtures::world(
+        GameMap::new(8, 8, MapCell::default_ground(CliffLevel(0)))?,
+        1,
+    );
+    let turret = missile_turret(&world)?;
+    assert_eq!(
+        turret.collision_radius,
+        scalar(1.125),
+        "§2.4's attacker radius"
+    );
+    let air_victim = viking(&world)?;
+    volleys_land_on_the_table(
+        0x750,
+        &turret,
+        &air_victim,
+        &[
+            (0.5, 2),
+            (1.0, 3),
+            (2.0, 4),
+            (3.0, 5),
+            (4.0, 7),
+            (5.0, 8),
+            (6.0, 10),
+            (7.0, 12),
+        ],
+    )
+}
+
+/// The path left from `state`'s position to its aim point, less the target's `radius`: the
+/// quantity a target-relative end reads after each step (D-2).
+fn left(state: &ActiveProjectile, radius: SimScalar) -> SimScalar {
+    (state.target_pos - state.current_pos).length() - radius
+}
+
+/// M-13: the Missile Turret analogue's missile switches to its kill phase on the first tick
+/// after whose step at most 4 world units are left, at an air target holding 6 away and at one
+/// flying at the Turret from beyond its range (released at most 7 away); the approaching target
+/// is struck earlier than a target standing at its release distance would be (the oracle over
+/// the shipped phases).
+#[test]
+fn the_missile_turret_kill_phase_starts_4_from_the_target() -> TestResult {
+    let world = sim_fixtures::world(
+        GameMap::new(8, 8, MapCell::default_ground(CliffLevel(0)))?,
+        1,
+    );
+    let turret = missile_turret(&world)?;
+    let phases = movers_of(turret.air_weapon.as_ref())
+        .first()
+        .ok_or("the Turret's mover")?
+        .phases
+        .clone();
+    let air_victim = viking(&world)?;
+    let within = scalar(4.0);
+    for (seed, (edge, approach)) in (0x760_u64..).zip([(6.0, false), (10.0, true)]) {
+        let mut bench = shipped_duel(
+            seed,
+            &turret,
+            &air_victim,
+            scalar(12.0),
+            scalar(edge),
+            seeing(12),
+        )?;
+        let radius = bench.target_radius;
+        let turret_at = bench.world.entities[&bench.shooter].position;
+        if approach {
+            bench
+                .world
+                .entities
+                .get_mut(&bench.target)
+                .ok_or("the target exists")?
+                .issue_order(UnitOrder::Move { target: turret_at }, false)
+                .map_err(|error| format!("{error:?}"))?;
+        }
+        let mut released_at = None;
+        let flight = bench.fly(|bench| {
+            let target = bench.world.entities[&bench.target].position;
+            released_at = Some((target - turret_at).length() - bench.shooter_radius - radius);
+            Ok(())
+        })?;
+        assert!(
+            flight.states.iter().any(|state| state.phase == 1),
+            "edge {edge}: the kill phase is reached"
+        );
+        for (index, state) in flight.states.iter().enumerate() {
+            assert_eq!(
+                state.phase,
+                u8::from(left(state, radius) <= within),
+                "edge {edge}, tick {index} of the flight: {:?} left",
+                left(state, radius)
+            );
+        }
+        if approach {
+            let release = released_at.ok_or("released")?;
+            assert!(release <= scalar(7.0), "released within range: {release:?}");
+            let (still, _) = oracle(&phases, value(bench.shooter_radius + release));
+            let ticks = flight.ticks().ok_or("the approaching target is struck")?;
+            assert!(
+                ticks < still,
+                "approaching from {release:?}: struck after {ticks} ticks, a still target after {still}"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// M-15: a Viking or Missile Turret analogue's missile whose target dies or cloaks undetected in
+/// flight is missed on the last point, its phases running out on the lost target (W-13's rule).
+#[test]
+fn a_viking_torpedos_lost_target_is_missed_on_the_last_point() -> TestResult {
+    let world = sim_fixtures::world(
+        GameMap::new(8, 8, MapCell::default_ground(CliffLevel(0)))?,
+        1,
+    );
+    let viking = viking(&world)?;
+    let losses: [(&str, Loss); 2] = [("dies", dies), ("cloaks", cloaks)];
+    for (seed, (case, loss)) in (0x710_u64..).zip(losses) {
+        let bench = shipped_duel(seed, &viking, &viking, scalar(10.0), scalar(6.0), |_| {})?;
+        lands_on_the_last_point(bench, loss, &format!("Viking, {case}"))?;
+    }
+    // The Missile Turret analogue's missile, released 6 away, its target lost while it is still
+    // outside its kill phase: the phases run out on the lost target's last point.
+    // The Turret analogue detects (as 5.0.14's does), so its copy here does not: a cloaked
+    // target is then undetected.
+    let turret = missile_turret(&world)?;
+    let blind = |copy: &mut UnitArchetype| copy.detection_radius = None;
+    for (seed, (case, loss)) in (0x718_u64..).zip(losses) {
+        let bench = shipped_duel(seed, &turret, &viking, scalar(10.0), scalar(6.0), blind)?;
+        lands_on_the_last_point(bench, loss, &format!("Missile Turret, {case}"))?;
+    }
+    Ok(())
+}
+
+/// M-16: the Viking analogue's next volley follows its period from the release, not from the
+/// impact, though each torpedo flies 15 ticks of a 36-tick period (W-14's rule).
+#[test]
+fn the_viking_cooldown_runs_from_the_release() -> TestResult {
+    let world = sim_fixtures::world(
+        GameMap::new(8, 8, MapCell::default_ground(CliffLevel(0)))?,
+        1,
+    );
+    let viking = viking(&world)?;
+    let weapon = viking.air_weapon.clone().ok_or("armed")?;
+    let mut bench = shipped_duel(0x720, &viking, &viking, scalar(10.0), scalar(6.0), |copy| {
+        if let Some(weapon) = copy.air_weapon.as_mut() {
+            weapon.random_delay_min = SimScalar::ZERO;
+            weapon.random_delay_max = SimScalar::ZERO;
+        }
+    })?;
+    let seen = volley(&mut bench, 6)?;
+    let interval = u32::from(weapon.strike_interval_ticks);
+    let period = u32::from(weapon.period_ticks);
+    let r = &seen.releases;
+    assert!(r.len() >= 5, "three volleys released: {r:?}");
+    assert_eq!(
+        (r[1] - r[0], r[2] - r[0], r[3] - r[2], r[4] - r[2]),
+        (interval, period, interval, period),
+        "volleys one period apart from their releases: {r:?}"
+    );
+    Ok(())
+}
+
+/// M-14 (plan `2026-11-28-missile-movers-b52`): every analogue finder of this file matches
+/// exactly one shipped archetype, so a weapon that gains movers never redirects another test.
+#[test]
+fn every_finder_matches_exactly_one_shipped_archetype() -> TestResult {
+    let world = sim_fixtures::world(
+        GameMap::new(8, 8, MapCell::default_ground(CliffLevel(0)))?,
+        1,
+    );
+    let found = [
+        air_mover_unit(&world)?,
+        ground_mover_structure(&world)?,
+        bolt_caster(&world)?,
+        viking(&world)?,
+        liberator(&world)?,
+        banshee(&world)?,
+        missile_turret(&world)?,
+    ];
+    let mut slugs: Vec<&str> = found.iter().map(|arch| arch.slug.as_str()).collect();
+    slugs.sort_unstable();
+    slugs.dedup();
+    assert_eq!(slugs.len(), found.len(), "each finder names its own unit");
     Ok(())
 }

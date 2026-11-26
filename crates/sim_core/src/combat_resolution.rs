@@ -1099,7 +1099,10 @@ impl SimWorld {
     /// A weapon with movers chooses its mover here, once, by the edge distance its range check
     /// reads (centre distance less both collision radii), and the missile starts at that mover's
     /// first speed; a weapon without movers flies at `speed`, its `projectile_speed` (plan
-    /// `2026-11-27-weapon-delivery` D-2).
+    /// `2026-11-27-weapon-delivery` D-2). A mover missile's phase ends are checked once here,
+    /// with nothing flown and its whole path to the impact left (the centre distance less the
+    /// target's radius), so a release inside a target-relative end starts in the next phase
+    /// (plan `2026-11-28-missile-movers-b52` D-2).
     fn launch_projectile(&mut self, shot: PreparedShot, speed: SimScalar) {
         let target_pos = self
             .entities
@@ -1125,7 +1128,8 @@ impl SimWorld {
             });
 
         let delta = target_pos - shot.origin;
-        let edge_distance = delta.length() - target_radius - attacker_radius;
+        let centre_distance = delta.length();
+        let edge_distance = centre_distance - target_radius - attacker_radius;
         let mover = missile_flight::choose_mover(&shot.weapon.missile_movers, edge_distance);
         let chosen = mover.and_then(|index| shot.weapon.missile_movers.get(usize::from(index)));
         let profile = chosen.map_or(FlightProfile::Constant(speed), FlightProfile::Mover);
@@ -1137,7 +1141,17 @@ impl SimWorld {
             shot.weapon.max_projectile_lifetime_ticks,
         )
         .max(1);
-        let speed = chosen.map_or(speed, missile_flight::launch_speed);
+        let mut speed = chosen.map_or(speed, missile_flight::launch_speed);
+        let mut phase = 0;
+        if let Some(mover) = chosen {
+            missile_flight::enter_due_phases(
+                mover,
+                &mut phase,
+                SimScalar::ZERO,
+                centre_distance - target_radius,
+                &mut speed,
+            );
+        }
         self.emit_projectile_visual(
             &shot,
             target_pos,
@@ -1168,7 +1182,7 @@ impl SimWorld {
             strikes: shot.strikes,
             target_teleport_count,
             mover,
-            phase: 0,
+            phase,
             travelled: SimScalar::ZERO,
         });
         self.record_attack_presentation(cause, aimed_at);
@@ -1944,10 +1958,14 @@ impl SimWorld {
         if let Some((mover, tick)) = flown {
             proj.travelled += tick.step;
             proj.speed = tick.next;
+            // The path left after the move, to this tick's aim point (plan
+            // `2026-11-28-missile-movers-b52` D-2): a target-relative end follows the target.
+            let remaining = (proj.target_pos - proj.current_pos).length() - target_radius;
             missile_flight::enter_due_phases(
                 mover,
                 &mut proj.phase,
                 proj.travelled,
+                remaining,
                 &mut proj.speed,
             );
         }

@@ -306,7 +306,7 @@ fn mover() -> sim_types::MissileMover {
             speed: None,
             acceleration: SimScalar::HALF,
             max_speed: SimScalar::from_i32(2),
-            ends_after: None,
+            ends: None,
         }],
     }
 }
@@ -318,6 +318,33 @@ fn with_phase(edit: fn(&mut sim_types::MissilePhase)) -> sim_types::MissileMover
         edit(phase);
     }
     changed
+}
+
+/// M-6 (plan `2026-11-28-missile-movers-b52` D-5): two projectiles whose weapons differ only in
+/// one phase end's variant, `Flown(1)` against `Remaining(1)`, give different world checksums.
+#[test]
+fn a_phase_ends_variant_alone_changes_the_world_checksum() {
+    let mut world = world();
+    let mut checksum = |end: sim_types::PhaseEnd| {
+        let mut flying = projectile();
+        let mut mover = mover();
+        mover.phases.insert(
+            0,
+            sim_types::MissilePhase {
+                ends: Some(end),
+                ..mover.phases[0]
+            },
+        );
+        flying.weapon_spec.missile_movers = vec![mover];
+        flying.mover = Some(0);
+        world.projectiles = vec![flying];
+        world.compute_checksum()
+    };
+    assert_ne!(
+        checksum(sim_types::PhaseEnd::Flown(SimScalar::ONE)),
+        checksum(sim_types::PhaseEnd::Remaining(SimScalar::ONE)),
+        "the variant tag is hashed"
+    );
 }
 
 #[test]
@@ -633,7 +660,9 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
                 missile_movers => vec![with_phase(|p| p.speed = Some(SimScalar::ZERO))],
                 missile_movers => vec![with_phase(|p| p.acceleration = SimScalar::ONE)],
                 missile_movers => vec![with_phase(|p| p.max_speed = SimScalar::from_i32(3))],
-                missile_movers => vec![with_phase(|p| p.ends_after = Some(SimScalar::ONE))],
+                missile_movers => vec![with_phase(|p| p.ends = Some(sim_types::PhaseEnd::Flown(SimScalar::ONE)))],
+                // M-6 (plan `2026-11-28-missile-movers-b52` D-5): the end's variant alone.
+                missile_movers => vec![with_phase(|p| p.ends = Some(sim_types::PhaseEnd::Remaining(SimScalar::ONE)))],
             },
         |weapon| {
             world

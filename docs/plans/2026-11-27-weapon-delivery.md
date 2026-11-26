@@ -705,7 +705,7 @@ fixed. Commit `docs: close B-227 (plan 2026-11-27-weapon-delivery WP4)`.
 
 | Risk | Effect | Mitigation |
 |---|---|---|
-| R-1: the throw phases' sideways path makes the game's flights longer than ours | Phoenix and short-range tentacle flights up to about 2 ticks short (**verify**) | Recorded in D-3; a later path model would change only `flight_ticks` and the step; no outside measurement exists (Q0008 searched) |
+| R-1: the throw phases' sideways path makes the game's flights longer than ours (now B-231) | Phoenix and short-range tentacle flights up to about 2 ticks short (**verify**) | Recorded in D-3; a later path model would change only `flight_ticks` and the step; no outside measurement exists (Q0008 searched) |
 | R-2: the band distance is centre to centre in the game | Bands switch about 1.7 units (Phoenix) or 1.6 (Spine Crawler against a small unit) further out | §2.3 argues edge to edge; W-4 pins ours; a one-line change if disproved |
 | R-3: the Phoenix's strikes, now delayed, change a world unexpectedly (AI armies) | A measured world moves | WP0's probe lists every world that fires it; stop rule 2 for any other |
 | R-4: Spine Crawler defence weaker against melee (5–7 tick flight) | Skirmish balance shifts | It is the game's mover (S11); recorded; no matrix battle carries it |
@@ -722,7 +722,8 @@ fixed. Commit `docs: close B-227 (plan 2026-11-27-weapon-delivery WP4)`.
   `Hidden` launch; the identity is B-228 and Q0129.
 - **B-52's other rows** (Viking, Liberator, Banshee, Missile Turret, High Templar): their movers become data changes
   on this mechanism, but each moves battles (12c, 19, 35 for the Viking) and needs its own close-battle list and
-  restatements. A follow-up plan, reusing WP0's census output.
+  restatements. A follow-up plan, reusing WP0's census output. *Taken up by plan
+  [`2026-11-28-missile-movers-b52`](2026-11-28-missile-movers-b52.md).*
 - **Spell missiles** (`LaunchMissileDef::speed`, Abduct's tongue, Fungal Growth): both are constant in 5.0.14
   (`YoinkMissile`, `FungalGrowthWeapon`, single fast or constant guidance phases), so they need no movers.
 - **Negative acceleration** (D-4) and **minimum speed** (`MinSpeed`): no shipped mover uses them.
