@@ -357,7 +357,8 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-234 | Zerg structures spawn no Broodlings on death: 5.0.14 creates 6 or 9 when one dies (`ZergBuildingDies6`/`9`, `liberty` BehaviorData:1270–1285; `ZergBuildingSpawnBroodling6`/`9`, EffectData:1581–1592, 2791–2808), each with the 8 Normal s `BroodlingFate`. Found while planning (number provisional, next free at merge) | deferred to a plan that adds death responses; plan [`2026-11-28-broodlings`](docs/plans/2026-11-28-broodlings.md) §14 (its spawn and timed-life mechanisms serve it) |
 | B-235 | The Brood Lord analogue's escorts are not drawn: 5.0.14 shows its two escorts orbiting it behind, at ±150° (`ExternalAngle`, `liberty` AbilData:3808–3824); here the magazine is a count with no entity. Found while planning (number provisional, next free at merge) | deferred (presentation); plan [`2026-11-28-broodlings`](docs/plans/2026-11-28-broodlings.md) D-1, D-11 A-3, §14 |
 | B-236 | A missile's spawn is placed by terrain and structures only; whether other units block a 5.0.14 `CEffectCreateUnit` place is not in the data (**verify**); overlaps are separated by the next tick's movement. Found while planning (number provisional, next free at merge) | deferred; plan [`2026-11-28-broodlings`](docs/plans/2026-11-28-broodlings.md) D-11 A-6, §14 |
-| B-237 | Units that arrive or leave during a battle allocate in the client: `sync_live_battle_system` (`scene_controller.rs`) spawns a render entity with its own `BubbleDomeMaterial` for each arrival and despawns it on departure, and `RenderEntityMap` inserts and removes a node, so a battle where Broodlings or interceptors cycle is not allocation-free in steady state (charter §3.3). Measured by the broodlings plan's B-19 (6 materials added and 6 removed in a 300-tick window; test kept as `~/scratch/broodlings/b19-test.patch`); the Carrier plan's H-20 needs the same fix (number provisional, next free at merge) | open; a render-entity pool (hide and reuse departed bubbles with their materials, retained map storage), plan to follow; plans [`2026-11-28-broodlings`](docs/plans/2026-11-28-broodlings.md) D-12, [`2026-11-28-carrier-interceptors`](docs/plans/2026-11-28-carrier-interceptors.md) H-20 |
+| B-237 | Units that arrive or leave during a battle allocate in the client: `sync_live_battle_system` (`scene_controller.rs`) spawns a render entity with its own `BubbleDomeMaterial` for each arrival and despawns it on departure, and `RenderEntityMap` inserts and removes a node, so a battle where Broodlings or interceptors cycle is not allocation-free in steady state (charter §3.3). Measured by the broodlings plan's B-19 (6 materials added and 6 removed in a 300-tick window; test kept as `~/scratch/broodlings/b19-test.patch`); the Carrier plan's H-20 needs the same fix (number provisional, next free at merge) | fixed; H-20 confirmation pending the Carrier's media: plan [`2026-11-29-render-entity-pool`](docs/plans/2026-11-29-render-entity-pool.md) (a departed unit's render entity is parked and reused by the next arrival, restyled from its record; `RenderEntityMap` is a retained sorted vector reserved to a bound derived from the catalog; B-19 is R-1 and R-1v); the Carrier media package runs H-20 |
+| B-238 | The air shadow and tether keep their spawn height: `attach_bubble_indicators` (`indicators.rs`) places them from the record's altitude at spawn (now `IndicatorPose::of`, at arrival) and nothing moves them afterwards, so a unit whose altitude changes after its arrival (or that flies over a cliff) draws its shadow and tether at the wrong height | open; deferred by plan [`2026-11-29-render-entity-pool`](docs/plans/2026-11-29-render-entity-pool.md) §12 |
 
 ---
 
@@ -467,6 +468,16 @@ The 400-unit fight cost stays above the plan's 2 ms trigger, so C-18 is partly f
 a worker thread is left for a later plan:
 [`docs/evidence/2026-11-04-c18-smog-solver.md`](docs/evidence/2026-11-04-c18-smog-solver.md) §7 and §8, and
 [`docs/evidence/2026-11-03-c17-combat-fx-pool.md`](docs/evidence/2026-11-03-c17-combat-fx-pool.md).
+
+**Render-entity pool.** Plan `2026-11-29-render-entity-pool` parks the render entity of a unit that leaves the battle
+and reuses it for the next arrival (B-237). An A/B on 2026-11-26 against `main` at `0f0608cd`, release `frame_budget`
+binaries of both trees on the RX 580 through headless KWin, three interleaved pairs at 200 and 400 units, each run
+under its own `with-gpu-lock`: medians of three, frame interval p50 10.06 → 9.63 ms at 200 units and 16.91 → 12.56 ms
+at 400, main update p50 8.13 → 7.85 and 12.60 → 9.76 ms. The plan's bar (the pool's p50 no more than the larger of
+2 % and the base's own spread above the base's) holds at both. Other agents loaded this user's CPUs to 38 to 61 %
+during every run, so the 400-unit difference is noise in the pool's favour, not a saving, and the tails (p95, p99)
+moved both ways; these are not figures of record
+([evidence](docs/evidence/2026-11-29-render-entity-pool.md), frame budget).
 
 **Battle flipbook animation.** Plan `2026-11-04-battle-flipbook-animation` added the GPU flipbook clock and frame
 blending (`4bd48cf`, `ec04bf4`, `d5779f7`). An A/B against `d5779f7` with those three merges reverted, at 400 units on

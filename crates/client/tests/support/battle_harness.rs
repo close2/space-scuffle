@@ -90,37 +90,67 @@ impl Harness {
         scenario: &str,
         configure: impl FnOnce(&mut App),
     ) -> Self {
+        Self::boot_root_on(
+            directory,
+            mode,
+            scenario,
+            WgpuSettings {
+                backends: None,
+                ..default()
+            },
+            configure,
+        )
+    }
+
+    /// Boots the production client on `scenario` with a real renderer on the adapter the
+    /// environment selects (`WGPU_BACKEND`, `VK_ICD_FILENAMES`), for a GPU test child. The window
+    /// still has no surface (there is no winit), so a camera draws only into an image target,
+    /// such as an offscreen canvas (`client::offscreen`).
+    pub fn boot_on_gpu(mode: client::ClientMode, scenario: &str) -> Self {
+        Self::boot_root_on(&assets(), mode, scenario, WgpuSettings::default(), |_| {})
+    }
+
+    /// Boots as [`Self::boot_root_with`] with the renderer `settings`.
+    pub fn boot_root_on(
+        directory: &Path,
+        mode: client::ClientMode,
+        scenario: &str,
+        settings: WgpuSettings,
+        configure: impl FnOnce(&mut App),
+    ) -> Self {
         let root = ResolvedAssetsRoot::from_directory(directory).expect("assets root");
         let definition =
             BattleDefinition::load(root.as_path(), scenario.as_ref()).expect("battle scenario");
+        // A renderer's child logs, so the GPU harness can read which adapter rendered.
+        let renders = settings.backends.is_some();
+        let plugins = client::presentation::GamePresentationPlugins
+            .set(RenderPlugin {
+                render_creation: RenderCreation::Automatic(settings),
+                ..default()
+            })
+            .set(AssetPlugin {
+                file_path: root.bevy_file_path().expect("asset path").into(),
+                ..default()
+            })
+            .set(WindowPlugin {
+                primary_window: Some(Window {
+                    resolution: (1280.0_f32, 720.0_f32).into(),
+                    ..default()
+                }),
+                ..default()
+            })
+            .disable::<WinitPlugin>();
+        let plugins = if renders {
+            plugins
+        } else {
+            plugins.disable::<bevy::log::LogPlugin>()
+        };
         let mut app = App::new();
         app.insert_resource(client::CatalogResource(definition.catalogs.units.clone()))
             .insert_resource(definition.palette.clone())
             .insert_resource(definition)
             .insert_resource(root.clone())
-            .add_plugins(
-                client::presentation::GamePresentationPlugins
-                    .set(RenderPlugin {
-                        render_creation: RenderCreation::Automatic(WgpuSettings {
-                            backends: None,
-                            ..default()
-                        }),
-                        ..default()
-                    })
-                    .set(AssetPlugin {
-                        file_path: root.bevy_file_path().expect("asset path").into(),
-                        ..default()
-                    })
-                    .set(WindowPlugin {
-                        primary_window: Some(Window {
-                            resolution: (1280.0_f32, 720.0_f32).into(),
-                            ..default()
-                        }),
-                        ..default()
-                    })
-                    .disable::<WinitPlugin>()
-                    .disable::<bevy::log::LogPlugin>(),
-            )
+            .add_plugins(plugins)
             .add_plugins(bevy_egui::EguiPlugin)
             .add_plugins(client::ClientAppPlugin {
                 mode,

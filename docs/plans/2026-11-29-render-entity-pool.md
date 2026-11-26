@@ -621,3 +621,65 @@ very many structures. What should happen then?
 
 ## Answer
 ```
+
+## As built
+
+Built on branch `render-pool-plan` from `35f9905a` (`main` `0f0608cd`, the broodlings plan merged; `main` did not move
+during the work); evidence in
+[`docs/evidence/2026-11-29-render-entity-pool.md`](../evidence/2026-11-29-render-entity-pool.md).
+
+- **WP0** (`f2aafa12`): the base of record (the B-19 patch as is: 6 bubble materials added and 6 removed); probe P-0
+  under DHAT, 0 blocks per marker swap in 64 and 128 frames (planted control 128 and 256), so D-2 stands; the
+  schedule claim of §1 as a test (`system_ownership_tests::bubble_consumers_run_after_the_live_synchroniser`); the red
+  tests R-1, R-2 and R-1v on today's API, staged through `tests/support/unit_cycling.rs` (R-1 and R-2 never reach the
+  regime, 49 and 66 spawns; R-1v 17 blocks over 188 ticks beyond the tick driver's).
+- **WP1** (`4e5ac204`): `client::render_pool` (`RenderEntityMap` as retained sorted vectors, `RenderPoolBound`,
+  `RenderPoolStats`, `ParkedBattleBubble`), the synchroniser's two merges, `retire_all` at the three retire sites,
+  the tests' map access through methods, the valgrind test's triggers. R-9 and R-10: 22 unit tests.
+- **WP2** (`15b1723f`): parking and reuse (D-2, D-5), `IndicatorPose` and one indicator layout (D-6),
+  `IndicatorWriter`, the consumer filters of §5 (indicators, smog), the live brood child's no-spawn check. R-3 to R-7,
+  R-11; `round2_visual_tests`' changed assertion.
+- **WP3** (the commit after `15b1723f`): R-8 (`render_pool_gpu_tests`, bit-identical on radv), the acceptance
+  runs, the frame-budget pairs and these records.
+
+Decisions and deviations, each recorded:
+
+- **Q0134 not filed** (the orchestrator's decision): its default (a), grow and warn, is built. A spawn beyond the
+  bound is counted in `RenderPoolStats::beyond_bound` and the first one of a session logs one `warn!` naming the
+  bound and its terms; R-6 pins it.
+- **The bound** counts each host's weapons and its modes' override weapons once each (the `weapon` field mirrors
+  `ground_weapon`), with a magazine's charges taken as the maximum over its spawning weapons and the magazine-free
+  form summed, as D-3 writes. A session presented without a world (none today) is bound by its start records alone
+  (`RenderPoolBound::without_catalog`).
+- **`RenderEntityMap::follow`** also despawns any entity the map still holds when the generation changes, so a
+  missed retirement cannot leak (normally a no-op: the three retire sites call `retire_all` first). `retire_all`
+  unbinds the map, so a tab change back to the battle binds the bound again from the first snapshot.
+- **The reuse path reaches the reused entity through the parked query, or through the live query when its unit left
+  on the same frame** (its park is queued, not applied); `ReuseAccess` groups the parked query, the bubbles' children
+  and `IndicatorWriter`. `IndicatorWriter` holds the children's query and `IndicatorAssets`; the three material
+  stores stay in `BubbleSceneAssets` (one system cannot hold them mutably twice) and are passed to it.
+- **A reused material's shell** is reset to the shell the stance system writes for a unit with no look
+  (`ShellSum::default().uniform(..)`, the all-zero default with its `driven` lane set), not to
+  `ShellUniformGpu::default()` (D-5's table): the stance system rewrites every bubble's shell to it on the bubble's
+  first frame, so the all-zero reset cost a second modification per arrival (R-1 measured 6 for 6 arrivals beyond
+  its bound, R-2 12 for 12), against D-5's "a reuse modifies at most one bubble material". No look of the departed
+  unit survives either way, and R-3 and R-8 compare after the stance system's frame.
+- **R-2's stage** cycles each player's unarmed air unit beside its own base, not at the map's centre: a map object
+  there changes its tint as units of either side come and go, a `StandardMaterial` modification that is not the
+  pool's. The fresh-spawn twins of R-3 kill their decoy at least 3 ticks before the arrival (the presented snapshot
+  lags the simulation by a tick), so the arrival is spawned on the same tick in both harnesses.
+- **The hidden air shadow and tether of a ground bubble** are placed at the least airborne height (0.5 world units),
+  so their transforms never collapse to a zero scale; visible ones keep today's transforms.
+- **Tests.** R-1 and R-2 warm up on `stats().spawned`; on WP1, which still spawns, they fail on the regime, not on
+  materials (the plan's WP1 acceptance expected materials). R-9 and R-10 were written with the module (red only as a
+  failing build). R-3 to R-7 and R-11 were written before the WP2 code but not run red against WP1. R-5's
+  sustained-beam half is not built: every shipped unit whose weapon holds a beam (`prism_weaver`,
+  `prismatic_saucer`, `saucer_interceptor`, `tripod_annihilator`) has no media, so it waits for H-20, whose
+  interceptors hold `prism_beam`. R-11's playtest exit is `editor_app_tests::escape_after_a_death_retires_the_render_pool`.
+  R-7's capture-verifier half is checked through the mechanism the verifier reads (every parked entity and child has
+  `InheritedVisibility` false), not by running the verifier. R-8 runs the production client offscreen through the
+  battle harness with a renderer (`Harness::boot_on_gpu`): the window has no surface, the RTS camera renders into an
+  `OffscreenCanvas`, and captures are taken with virtual time paused.
+- **Frame budget (§7.4).** The pool's `stats()` at the end of a run are not reported: `frame_budget`'s report has no
+  field for them, and adding one would change `client_diagnostics`, which §11 does not list. The A/B itself is in
+  the evidence file.

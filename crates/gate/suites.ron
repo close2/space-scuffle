@@ -114,6 +114,11 @@ SuiteCatalog(
         // A selected structure's rally (plan 2026-11-23-production-queue WP5): one child, three
         // shots.
         "client/rally_gpu_tests": (class: Gpu),
+        // A reused render entity renders as a fresh one (plan 2026-11-29-render-entity-pool R-8):
+        // two offscreen children, three shots each, compared bit for bit.
+        "client/render_pool_gpu_tests": (class: Gpu, triggers: [
+            "crates/client/src/{scene_controller.rs,render_pool.rs,indicators.rs,bubble_shader.rs}",
+        ]),
         // Mode atlases in a real battle (plan 2026-11-09-effect-visualization WP13): one child,
         // three shots.
         "client/mode_atlas_gpu_tests": (class: Gpu),
