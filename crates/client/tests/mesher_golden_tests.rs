@@ -35,6 +35,11 @@
 //!   low side is ground, toe on the edge, and by `WALL_JITTER_AMPLITUDE` where it is void (B-243,
 //!   W1); review capture `~/scratch/terrain-indicators/review/wp1/`. The pick hashes and hit
 //!   counts did not change.
+//! - The `showcase_canyon` and synthetic mesh and ramp-free chunk hashes were re-recorded at
+//!   `6c47fc4d`, plan `2026-11-30-terrain-and-air-indicators` WP3: concave cliff corners square
+//!   and mitred, saddles low-connected (B-245, Q0136 default (a)); review capture
+//!   `~/scratch/terrain-indicators/review/wp3/`. `default_arena` has no concave corner, and no pick
+//!   hash changed.
 //! - A golden may only change together with a deliberate, documented change in terrain output.
 
 #![allow(
@@ -253,7 +258,7 @@ fn showcase_canyon_mesh_and_picking_are_bit_exact() {
         "showcase_canyon",
         mesh_hash(&map),
         pick_hash(&map),
-        (0x6f77_f6d8_bb8b_1da5, 0xd059_17a4_edfe_bf3a, 2262),
+        (0x2fab_86d9_7173_3ced, 0xd059_17a4_edfe_bf3a, 2262),
     );
 }
 
@@ -264,14 +269,14 @@ fn synthetic_map_mesh_and_picking_are_bit_exact() {
         "synthetic",
         mesh_hash(&map),
         pick_hash(&map),
-        (0xf965_b1e1_69bf_91ef, 0xe991_3ab4_d9ba_9745, 1532),
+        (0x45d3_0dce_9779_890c, 0xe991_3ab4_d9ba_9745, 1532),
     );
 }
 
 /// Chunks with no ramp corner in any dual cell are untouched by ramp geometry: their hashes were
 /// recorded before plan `2026-11-09-ramp-geometry` WP1 changed the mesher's ramp handling, and
 /// must not move with any later ramp change (plan section 4, D-3 and D-5). They move with cliff
-/// changes, and were re-recorded by plan `2026-11-30-terrain-and-air-indicators` WP1.
+/// changes, and were re-recorded by plan `2026-11-30-terrain-and-air-indicators` WP1 and WP3.
 #[test]
 fn ramp_free_chunks_are_bit_exact() {
     let maps = [
@@ -283,9 +288,9 @@ fn ramp_free_chunks_are_bit_exact() {
         (
             "showcase_canyon",
             load_shipped_map("showcase_canyon.scmap.ron"),
-            (0x4021_f804_8011_f672, 21),
+            (0x9ade_734d_d7dd_651c, 21),
         ),
-        ("synthetic", synthetic_map(), (0xc8d5_46f4_ba87_a3d7, 1)),
+        ("synthetic", synthetic_map(), (0x7155_c56a_b6ce_594b, 1)),
     ];
     let mut changed = Vec::new();
     for (name, map, expected) in maps {
