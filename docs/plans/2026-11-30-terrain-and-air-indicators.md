@@ -662,7 +662,7 @@ For `DESIGN.md` §4. Numbers are provisional, next free at merge.
 
 ---
 
-## 13. Question draft
+## 13. Owner question (filed as [Q0136](../questions/open/0136-concave-cliff-corners.md))
 
 Not filed by this commit. The default is what WP3 builds; filing it is the orchestrator's call.
 
