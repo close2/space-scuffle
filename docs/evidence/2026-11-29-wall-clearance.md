@@ -404,11 +404,11 @@ the 144 scenes, 1,586 (S), 1,563 (R) and 1,138 (L) hand-offs on the base whose l
 where the body stands (1,278, 1,261 and 435 of them by a body within 2⁻¹⁴ of the wall), and **0** under WP1 in
 every arm (`trace/crowd*/`). The remaining M-5a are of the kinds traced on the showcase (fresh routes, group lane
 joins, landing passes, legs read after the step). M-5b walk ticks fall in 16 of 18 cells (S). "Not worse beyond
-noise" per geometry and size (8 seeds, the base's 95 % interval of the mean): under S nine of 108 cell-figures lie
-above it (M-3 at corner90 12 and 24 and hairpin 12, 0.0 → 0.2 to 1.1 → 2.1 reversals a scene; M-2 at choke3 48 and
-hairpin 24; M-4 at hairpin 48 and staircase45 24) and five below; under R eight above and three below; under L
-eight above (M-3 at choke2 24, corner90 24, hairpin 12 and 48; hairpin 48 stopped short 13.4 → 15.5) and eight
-below. Reported for the orchestrator's judgement (many comparisons; most moves are fractions of a reversal a scene).
+noise" per geometry and size (8 seeds, the base's 95 % interval of the mean; M-1 to M-4, longest episode and
+stopped short, 108 cell-figures an arm): under S seven lie above it (M-3 at corner90 12 and 24 and hairpin 12, 0.0
+→ 0.2 to 1.1 → 2.1 reversals a scene; M-2 at choke3 48 and hairpin 24; M-4 at hairpin 48 and staircase45 24) and
+five below; under R seven above and two below; under L six above (M-3 at choke2 24, corner90 24, hairpin 12 and 48;
+hairpin 48 stopped short 13.4 → 15.5) and seven below. Reported for the orchestrator's judgement (many comparisons; most moves are fractions of a reversal a scene).
 
 **Matrix** (S, 24 seeds, `wp1/matrix_S.md`). One battle moved: **40** (sieged tanks above a ramp, Class D), 7 of 24
 seeds, no winner flipped (red wins every one), give-ups 14 → 14, expectation failures 2 / 32 → 2 / 32. First
@@ -419,3 +419,95 @@ difference (seed of record 3,203,386,110): tick 43, unit 8 at (43.51, 47.08) on 
 three crowd tables (`trace/r/`, `trace/crowd/`), and with the rule off the base's (`trace/sc/`, `trace/crowd0/`).
 
 **Cost** (prediction, §6.7): none beyond noise; measured with window W's throughput below.
+
+## WP2: the held leg is the step's too (B-241) — stopped on two existing tests
+
+**Code** (branch `wall-clearance-plan`, `496bd00d`, not on this branch). `route_is_usable`'s first-leg test and
+`propose_step`'s refusal test ask `probe_permits` (plan D-2 items 1 and 2). Red runs
+(`~/scratch/wall-clearance/red/wp2-red-on-wp1-2b26a63d.log`, `wp2-red-cooled-on-wp1.log`): both red tests fail on
+WP1's tree and pass with WP2; the narrow-gap and fresh-route guards pass on both. The two red scenes place the
+walker on the tick of its order, while its re-search cooldown (12 ticks) still runs, so no route can be dropped
+before it expires (the existing gate of `upkeep_route` and `propose_step`); the scenes now end the cooldown first,
+as for a body pushed long after its search (case A's rhino drifted for 112 ticks), and the assertions are
+unchanged. Goldens re-recorded (first change: `golden_replay` tick 397, `golden_replay_orders` tick 110), native
+debug and release and `wasm32-wasip1` release and debug green on the tree merged with `main` `e5ebc043`; the scratch
+build reproduces WP1's checksums with the rule off and WP2's with it on.
+
+**Why it stopped.** `cargo gate quick` on WP2's tree fails two existing guard tests, both on the showcase canyon's
+march (seed 1,592,639,215, `battle_automaton` loadouts):
+`solver_pipeline_tests::the_canyon_march_has_no_zig_zag_under_the_solver` (pulse bot 11, tick 114) and
+`collision_and_immobility_tests::battlefield_bubble_trajectories_are_smooth_without_micro_jitter` (one zig-zag).
+Both pass on WP1's tree. Trace (`trees/wctr`, the test with the unit's velocity printed): WP2 drops rhino 13's
+cutting leg at tick 107 (case A, as intended); its new route rounds the ramp-top corner (26, 12) by the arc
+point (26.0, 11.45), so the rhino's body passes south of where the base's did, beside pulse bot 11. Contact with it
+turns pulse bot 11's velocity 13° right on tick 113 and 12° back on tick 114 (velocity (0.1116, 0.0199) →
+(0.0955, −0.0025) → (0.1191, 0.0217)). WP2's rule never acts on pulse bot 11; the wiggle is the contact and
+steering of a neighbour on a new, correct route. Making the tests pass would need a change to contact or steering
+(plan §7 rule 10) or to the tests' threshold (a tolerance chosen after a trace, rule 6), so no amendment is made
+and WP2 is stopped for the orchestrator's decision with its figures. Window W's measurement and `Gated`'s re-base
+were therefore taken on WP1's tree (below), as plan §5.2 allows ("a merged WP1 alone is a valid re-base point").
+
+**WP2's figures, for the decision** (`wp2/compare.md`, `wp2/crowd_compare.md`, `wp2/matrix_S.md`; base `c46b080d`):
+- **Targets.** No reversal for rhino 13 in the ramp W channel over ticks 100 to 160 (base: 117 / 118). M-5b on the
+  showcase: the longest held cutting walk episode 122 → 8 ticks on every seed of `showcase.ron`, 118 → 5 on
+  `showcase_effects.ron`. Crowd scenes: **no held leg is held longer than 19 ticks** (the longest is exactly 19
+  in every arm; base 107, 122, 93 under S, R, L; scratch tool `crowd_legs`, per leg), but the meter's M-5b episode,
+  which runs across a re-search, reaches 28 ticks (S and R, choke3 24 seed 2) in 8 (S), 10 (R) and 4 (L) of the 432
+  scene-arms: a dropped leg is followed by a re-searched first leg that itself fails the test from where the body
+  stands (plan D-2 item 5's case; the re-search of choke3 24 seed 2's pulse bot 24 at tick 87 dips 5 × 10⁻⁴).
+- **Showcase** (`showcase.ron`, nine seeds): M-5a 2 to 4 a seed; M-3 whole map 260 → 98; M-4 3,336 → 2,431; every
+  battle ends earlier (default 2,228 → 1,754; seeds 2, 7 and 8, in progress at 3,000 on the base, end at 1,724 to
+  1,908), player 1 winning each; reversals per owner on the default seed [64, 121] → [31, 41]. 33 paired seeds:
+  better beyond noise in the block (M-1, M-3, M-4, longest episode) and the whole map (M-1, M-3, M-4); worse in the
+  ramp W channel (M-1 37.0 → 37.6, M-2 144 → 161, M-4 26.0 → 29.3) and elsewhere (M-2 154 → 160, M-4 16.2 → 18.2).
+  Route box ramp W foot: owner 1's ratio max 1.517 → 1.653, turn mean 110° → 146°. `showcase_effects.ron`: M-5a 7 →
+  0; M-1 186 → 225 and M-4 65.0 → 69.5 (block M-1 104 → 142), with zero-width intervals.
+- **H-W1 / H-W2.** The deepest body 2.1 × 10⁻⁶ → 1.8 × 10⁻⁵ (seed 5, pulse bot 9 held tangent to the block's west
+  face at x = 25.625 for 25 ticks under crowd pressure; within H-W1's 2.4 × 10⁻⁵), and the overlap meter's deeper
+  unit-ticks 5 → 16 over 33 seeds (2 → 4 over the nine). No WP2 decision touches pulse bot 9 in those ticks; the
+  depth grows through the settle's tolerance under pushes. Reported against H-W2.
+- **Crowd scenes**: every move ends and every depth is within H-W1 in 432 of 432; M-5a and M-5b walk ticks fall in
+  most cells; beyond noise per geometry and size, under S 10 cell-figures worse and 9 better, R 9 and 5, L 11 and 15.
+- **Matrix** (S, 24 seeds): only battle 40 moves (24 of 24 seeds, no flip, red wins every one; first difference
+  tick 40, unit at (43.50, 47.00) on the ramp drops its cutting leg); give-ups 14 → 14.
+- **Cost** (instructions, base → WP2): +0.13 % to +0.45 % on the flat scenarios, canyon S +2.71 %, R +2.63 %, L
+  +6.63 %, G +4.70 %, against the predicted +0.6 % plus re-searches. Callgrind on the canyon (S): `search_route`
+  4.51 G → 5.21 G (+0.70 G, about 700 re-searches of dropped routes at 1 M Ir each), `probe_permits` 0.55 G → 0.78 G
+  (+0.23 G, the held-leg tests); the rest unchanged within noise.
+
+## Window W's measurement on WP1's tree (`Gated`'s re-base; partial at hand-back)
+
+**Trees.** `main` moved during the window (`e5ebc043`, brood-lord-cost: `units.ron` cost, supply and time only). It
+is merged into both branches: `wall-clearance-wp1` `0c8969e9` (WP1) and `wall-clearance-plan` `4be9009f` (WP1, WP2).
+The base is `c46b080d` with `main`'s `units.ron` (`trees/bm-src`). Binaries were rebuilt for the merged trees, each in
+a fresh target directory (`wc-m-base`, `wc-m-wp1`, `wc-m-wp1g`, `wc-m-head`, `wc-m-headg`, `wc-m-wp1bench`), arm
+catalogs `~/scratch/gated-movement/assets/{S,R,L,G}-wcm`. **The merge moves nothing this plan measures**: the meter
+on both showcases (33 seeds) and the crowd scenes (S, R, L) are byte-identical before and after it for the base,
+WP1 and WP2 (2,376 files, standard outputs apart from the output path they print, and nine crowd tables), and so are the base's S and R matrices.
+
+**Matrix** (24 seeds, `wp1/worldsm/{S,R,L,G}/matrix`): under S and R battle 40 moves on 7 of 24 seeds, under L on 3;
+no winner flips, give-ups unchanged (14, 15, 0), expectation failures unchanged (2 / 32, 1 / 30, 3 / 22). No Class R
+battle moves. Battles 31 (100 seeds) and 33 (64 seeds) and both clashes are byte-identical to the base under S, R
+and L. Showcases (1,500 ticks): under S the seeds whose first difference falls before tick 1,500 move (default, 1,
+3, 5, 6) and every `showcase_effects` seed; under L every run.
+
+**Arm G** (`Gated` latent, hard checks only; H-W5): matrix totals H-1 holding 432 (all battle 37a, Abduct's pull),
+H-1b out of band 24 (all battle 20, Broodling spawn placement), H-2 pair 0, enemy overlap within E-2's bound outside
+the two excluded battles — the figures of `Gated` WP1's merge (evidence `2026-11-27-gated-movement` §11.3). Clashes:
+H-1 0, H-1b out of band 0, H-2 0, enemy overlap 0 %, attackers moved 53,814 and 23,783 (identical to §11.3). Battle
+40 moves on 7 seeds under G (its seed of record now meets its expectation). The harness under G is in the queue.
+
+**Throughput** (instructions:u, median of 3, `window/perf`, `wp1/perf_table.md`; base `c46b080d` against WP1
+merged): every scenario and arm within ±0.005 % except the canyon: S −1.01 %, R −0.19 %, L +0.87 %, G −0.66 %
+(prediction: none beyond noise). The machine's 1-minute load stayed between 14 and 120 throughout, so no ticks-per-
+second reading is of record (C-0 needs load below 8). By instructions, the canyon under R, the tightest, projects
+to 55 ticks/s × 39.04 / 39.14 ≈ 54.9 ticks/s from `Gated` WP0b's 55 (WP2's tree: 40.25 G, ≈ 53.4). Measured under
+load 16: canyon R 54, 49, 54; G 57, 58, 57; every other scenario and arm above 100.
+
+**Still running at hand-back** (`scripts/window_queue_w1.sh`, log `window/logs/queue_w1.log`, stage markers
+`window/logs/q1-*.done`): the harness (13 families and the mirror, seeds 1 to 1,000) for the base and WP1 under S,
+R and L and for WP1 under G; then the held-out set HA (showcase seeds 1,001 to 1,024 and crowd 1,001 to 1,008 with
+the meter, the matrix tool's first 92 non-record seeds, of which the 69th to 92nd are HA's, and the harness on
+9,200,001 to 9,201,000 under S, R and L, base and WP1). Their tables, the harness step rule (`movement_harness
+--aggregate`) and `Gated`'s re-base harness tables are to be read from `window/basem/` and `wp1/worldsm/` when the
+markers appear.
