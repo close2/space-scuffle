@@ -17,7 +17,7 @@
 //! | `hallway` | both files complete; M1 ≤ 1.0; no give-up; no pair changes the side it passes on | — |
 //! | `stutter` | — | lag 1 on every move-back; displacement along it at least 0.9 · v · (ticks − 1); fire resumes within one weapon period of being in range |
 //! | `surround-moving` | the fill reaches `min(k, C)` within 250 ticks of first contact; M1 ≤ 1.0 | — |
-//! | `lanes` | each gap passes at least a quarter of the group; the group's final hull at most twice its packed area | — |
+//! | `lanes` | the group's final hull at most twice its packed area; the walkers per gap are reported, not judged (plan Amendment 2: group routing gives the group its leader's lane) | — |
 //!
 //! # How it fits
 //! The generator ([`super::corpus`]) attaches a [`KnownAnswer`] to every scene of a new family;
@@ -253,17 +253,9 @@ fn parts(known: KnownAnswer, base: &ScenarioRow, row: &KnownRow) -> Vec<Part> {
             ("fill", false, row.fill_time.is_some()),
             ("M1", false, m1(base) <= M1_BOUND),
         ],
-        KnownAnswer::Lanes { .. } => {
-            let group: u32 = row.lanes.0.iter().sum::<u32>().max(base.expected);
-            vec![
-                (
-                    "lanes",
-                    false,
-                    row.lanes.0.iter().all(|&count| 4 * count >= group),
-                ),
-                ("clump", false, row.hull_ratio <= CLUMP_FACTOR),
-            ]
-        }
+        // Plan Amendment 2 (`WP0b`): the gap each walker takes is group routing's (D-7: the
+        // leader's lane), so it is reported in the `lanes` column and not judged.
+        KnownAnswer::Lanes { .. } => vec![("clump", false, row.hull_ratio <= CLUMP_FACTOR)],
     }
 }
 

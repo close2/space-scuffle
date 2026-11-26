@@ -227,6 +227,27 @@ impl RunOptions {
             order_rotation: 0,
         })
     }
+
+    /// These options with C-3′'s crowd cap (`contact.crowd_iterations`, plan
+    /// `2026-11-26-friend-crowd-overlap` §4.1) set to `cap` averaged iterations per tick; every
+    /// other rule is kept. The arm R of plan `2026-11-27-gated-movement` §6.1 is `Solver` with
+    /// `cap` 151. A cap equal to the rules' `iterations` is the extension switched off, which is
+    /// the shipped value, so the shipped cap plays exactly as [`RunOptions::default`].
+    ///
+    /// # Errors
+    /// [`HarnessError::Usage`] when the contact rules refuse `cap` (below `iterations`, or above
+    /// the validation's ceiling).
+    pub fn with_crowd_iterations(self, cap: u16) -> Result<Self, HarnessError> {
+        let contact = sim_core::catalog::ContactRules {
+            crowd_iterations: cap,
+            ..self.rules.contact()
+        };
+        let rules = self
+            .rules
+            .with_contact(contact)
+            .map_err(|e| HarnessError::Usage(e.to_string()))?;
+        Ok(Self { rules, ..self })
+    }
 }
 
 /// The shipped movement rules.
@@ -642,12 +663,15 @@ pub mod cli {
     //! ```text
     //! movement_harness --family gap --from 1 --count 1000 [--relabel] [--jobs 4] --out gap.csv
     //! movement_harness --family gap --from 1 --count 1000 --permute 7 --out gap-permute.csv
+    //! movement_harness --family gap --from 1 --count 1000 --pipeline solver \
+    //!     --crowd-iterations 151 --out r/gap.csv
     //! movement_harness --aggregate today=<dir> [label=<dir> ...]
     //! ```
     //! The first form plays one family's range and writes its CSV; the second plays each scene
     //! twice, the second time with the processing order rotated by the offset (plan
     //! `2026-11-27-gated-movement`'s permutation mode), and writes where the plays part; the
-    //! third prints §5's tables of the runs in the directories and the verdicts of every run after
+    //! third sets C-3′'s crowd cap on top of the chosen pipeline (that plan's arm R); the last
+    //! prints §5's tables of the runs in the directories and the verdicts of every run after
     //! the first against it.
 
     use super::{permutation, report, run_range, Family, HarnessError, RunOptions};
@@ -673,6 +697,9 @@ pub mod cli {
             pipeline: Option<MovementPipeline>,
             /// The permutation mode's rotation offset; `None` plays the scenes once.
             permute: Option<u32>,
+            /// C-3′'s crowd cap (`contact.crowd_iterations`) to play under; the chosen rules'
+            /// own when `None`.
+            crowd_iterations: Option<u16>,
         },
         /// Aggregate run directories, each `label=dir`.
         Aggregate(Vec<(String, PathBuf)>),
@@ -700,7 +727,7 @@ pub mod cli {
         }
         let (mut family, mut from, mut count, mut relabel, mut jobs, mut out) =
             (None, 1_u64, 1_u64, false, 1_usize, None);
-        let (mut pipeline, mut permute) = (None, None);
+        let (mut pipeline, mut permute, mut crowd_iterations) = (None, None, None);
         let mut iter = args.iter();
         while let Some(flag) = iter.next() {
             let mut value = || {
@@ -737,6 +764,13 @@ pub mod cli {
                         _ => return Err(usage("--pipeline legacy|solver")),
                     });
                 }
+                "--crowd-iterations" => {
+                    crowd_iterations = Some(
+                        value()?
+                            .parse()
+                            .map_err(|_| usage("--crowd-iterations takes a cap"))?,
+                    );
+                }
                 other => return Err(usage(&format!("unknown argument {other}"))),
             }
         }
@@ -753,6 +787,7 @@ pub mod cli {
             out: out.ok_or_else(|| usage("--out <file.csv>"))?,
             pipeline,
             permute,
+            crowd_iterations,
         })
     }
 
@@ -770,10 +805,15 @@ pub mod cli {
                 out,
                 pipeline,
                 permute,
+                crowd_iterations,
             } => {
-                let chosen = match pipeline {
+                let piped = match pipeline {
                     Some(pipeline) => RunOptions::with_pipeline(*pipeline)?,
                     None => *options,
+                };
+                let chosen = match crowd_iterations {
+                    Some(cap) => piped.with_crowd_iterations(*cap)?,
+                    None => piped,
                 };
                 let text = match permute {
                     Some(offset) => permutation::permutation_csv(&permutation::permutation_range(
