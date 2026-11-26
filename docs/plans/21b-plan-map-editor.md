@@ -630,6 +630,10 @@ Constants (`mesher.rs`, each documented): `CHUNK_DUAL_CELLS = 16`, `RIM_WIDTH = 
   staircase of single-cell steps renders as a straight 45° cliff — the SC2 look, from a rule.
 - Case index for threshold `t`: bits `BL=1, BR=2, TR=4, TL=8` set when corner level ≥ t.
   Saddles 5 and 10 resolve **high-connected** (both high corners joined; warning `DiagonalPinch`).
+  *Superseded by plan [`2026-11-30-terrain-and-air-indicators`](2026-11-30-terrain-and-air-indicators.md)
+  D-3 (Q0136 default (a)): saddles resolve low-connected, so a `DiagonalPinch` draws two plateaus meeting at a
+  point, as the simulation's cells do, and a concave corner keeps its low cell's whole quadrant (square,
+  mitred); only convex corners keep the 45° cut.*
   Region polygons (convex, CCW seen from +Y, local coords, corners `bl tr …`, edge midpoints
   `b r t l`) — the implementer writes the full 16-entry table as a `const` array with a doc table.
 - **Threshold runs:** for a dual cell with corner levels in `[lo, hi]`, consider `t = lo+1 ..= hi`.
