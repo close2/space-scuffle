@@ -628,22 +628,6 @@ fn ground_mover_structure(world: &SimWorld) -> Result<UnitArchetype, String> {
         .ok_or_else(|| "the shipped catalog has a structure ground weapon with movers".to_owned())
 }
 
-/// The shipped unit whose ground weapon's release shows nothing (`launch_visibility: Hidden`):
-/// the Mothership Carrier analogue, whose game counterpart launches no missile (D-7).
-fn hidden_launch_unit(world: &SimWorld) -> Result<UnitArchetype, String> {
-    world
-        .catalog
-        .archetypes()
-        .find(|arch| {
-            arch.weapon_against(MoverType::Ground, None)
-                .is_some_and(|w| {
-                    w.projectile_speed.is_some() && w.launch_visibility == AttackVisibility::Hidden
-                })
-        })
-        .cloned()
-        .ok_or_else(|| "the shipped catalog has a missile weapon with a hidden launch".to_owned())
-}
-
 /// A duel on open ground between the shipped `attacker` (a structure when it has a dome) of
 /// player 0 and an unarmed copy of `victim` of player 1 seeing `sight`, `edge` world units
 /// apart edge to edge along the x axis; `edit` changes the attacker's copy first.
@@ -960,16 +944,29 @@ fn a_mover_weapons_cooldown_runs_from_the_release() -> TestResult {
     Ok(())
 }
 
-/// W-15: the Mothership Carrier analogue's salvo, released at a unit whose owner does not see
-/// it, leaves that owner no image (`Hidden`, D-7); its `Visible` impact reveals it as before.
+/// W-15: a missile weapon with a `Hidden` launch, released at a unit whose owner does not see
+/// it, leaves that owner no image (D-7); its `Visible` impact reveals it as before. The shipped
+/// catalog's one such weapon, the Mothership Carrier analogue's salvo, became a launch weapon
+/// (plan `2026-11-28-carrier-interceptors` WP3, B-22), so the rule is checked on a copy of the
+/// shipped ground missile weapon with its launch made `Hidden`.
 #[test]
 fn the_launchless_salvo_shows_nothing_at_its_release() -> TestResult {
     let world = sim_fixtures::world(
         GameMap::new(8, 8, MapCell::default_ground(CliffLevel(0)))?,
         1,
     );
-    let carrier = hidden_launch_unit(&world)?;
     let victim = missile_archetype(&world)?;
+    let mut carrier = victim.clone();
+    for weapon in [
+        carrier.weapon.as_mut(),
+        carrier.ground_weapon.as_mut(),
+        carrier.air_weapon.as_mut(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        weapon.launch_visibility = AttackVisibility::Hidden;
+    }
     let mut bench = shipped_duel(
         0x560,
         &carrier,

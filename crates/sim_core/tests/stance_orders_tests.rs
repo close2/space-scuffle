@@ -313,6 +313,9 @@ fn the_simulation_gives_stop_and_hold_only_to_a_stance_that_takes_them(
         .units
         .archetypes()
         .filter(|arch| !needs_a_geyser(arch))
+        // A unit no player selects (a hangar's member) takes no player command at all, whatever
+        // its stance: admission drops it (plan `2026-11-28-carrier-interceptors` D-8, H-9).
+        .filter(|arch| arch.selectable)
     {
         let switches = switches_of(arch);
         for stance in stances(&switches) {
@@ -499,6 +502,9 @@ fn armed_in_a_stance_means_the_live_unit_has_a_weapon() -> Result<(), Box<dyn st
         .units
         .archetypes()
         .filter(|arch| !needs_a_geyser(arch))
+        // A unit no player selects (a hangar's member) takes no player command at all, whatever
+        // its stance: admission drops it (plan `2026-11-28-carrier-interceptors` D-8, H-9).
+        .filter(|arch| arch.selectable)
     {
         let switches = switches_of(arch);
         let settled = std::iter::once(Stance::Default)
@@ -662,6 +668,9 @@ fn the_simulation_gives_an_attack_only_to_a_unit_that_can_attack_its_target(
         .units
         .archetypes()
         .filter(|arch| !needs_a_geyser(arch))
+        // A unit no player selects (a hangar's member) takes no player command at all, whatever
+        // its stance: admission drops it (plan `2026-11-28-carrier-interceptors` D-8, H-9).
+        .filter(|arch| arch.selectable)
     {
         let switches = switches_of(arch);
         for stance in stances(&switches) {
