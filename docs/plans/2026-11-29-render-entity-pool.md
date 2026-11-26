@@ -639,8 +639,20 @@ during the work); evidence in
 - **WP2** (`15b1723f`): parking and reuse (D-2, D-5), `IndicatorPose` and one indicator layout (D-6),
   `IndicatorWriter`, the consumer filters of §5 (indicators, smog), the live brood child's no-spawn check. R-3 to R-7,
   R-11; `round2_visual_tests`' changed assertion.
-- **WP3** (the commit after `15b1723f`): R-8 (`render_pool_gpu_tests`, bit-identical on radv), the acceptance
-  runs, the frame-budget pairs and these records.
+- **WP3** (`758dbe74`, `735f5fa3`): R-8 (`render_pool_gpu_tests`, bit-identical on radv), the acceptance runs, the
+  frame-budget pairs and these records; then charter checks C21 (the GPU boot lives in the GPU test's own file) and
+  C18 (the index row).
+- **WP4** (after merging `main` at `db805c7a`, the Carrier's media): H-20 per §9, run here because the media landed
+  before this plan's package gate. `tests/support/unit_cycling.rs` stages two hangar units (found by their hangar) of
+  the local player beside its base, against a durable unarmed enemy air unit with media, and `HangarCycle::advance`
+  drives the cycle from the presented snapshot: launch until no hangar has a member docked or building and every
+  launched member is presented, then the target is killed and the members fly home until none is presented, then a
+  new target. `sync_steady_state_tests::hangar_members_cycling_create_and_remove_nothing` measures one cycle during
+  warm-up, warms to the regime and checks a window of three cycles (at least 600 ticks) with R-1's rules;
+  `sync_allocation_count_tests::hangar_cycle_frames_allocate_nothing` is the `HangarCycleLive`/`HangarCycleBaseline`
+  pair (both run the cycle's driver, a system before the tick), three warm-up cycles and windows of two and four
+  cycles of the last warm-up cycle's length, with the live child's no-spawn check. R-5's beam half too. B-237 is
+  fixed. The gate's selection test that pinned the valgrind test's old triggers is updated (`ee3ae0ae`).
 
 Decisions and deviations, each recorded:
 
@@ -673,9 +685,9 @@ Decisions and deviations, each recorded:
 - **Tests.** R-1 and R-2 warm up on `stats().spawned`; on WP1, which still spawns, they fail on the regime, not on
   materials (the plan's WP1 acceptance expected materials). R-9 and R-10 were written with the module (red only as a
   failing build). R-3 to R-7 and R-11 were written before the WP2 code but not run red against WP1. R-5's
-  sustained-beam half is not built: every shipped unit whose weapon holds a beam (`prism_weaver`,
-  `prismatic_saucer`, `saucer_interceptor`, `tripod_annihilator`) has no media, so it waits for H-20, whose
-  interceptors hold `prism_beam`. R-11's playtest exit is `editor_app_tests::escape_after_a_death_retires_the_render_pool`.
+  sustained-beam half waited for WP4: until the Carrier's media landed, no shipped unit whose weapon holds a beam had
+  media; it is now `render_pool_tests::a_departed_members_beam_ends_and_never_follows_the_reused_bubble`, with an
+  interceptor holding `prism_beam`. R-11's playtest exit is `editor_app_tests::escape_after_a_death_retires_the_render_pool`.
   R-7's capture-verifier half is checked through the mechanism the verifier reads (every parked entity and child has
   `InheritedVisibility` false), not by running the verifier. R-8 runs the production client offscreen, booted as
   the battle harness boots it but with a renderer (`render_pool_gpu_tests::boot_on_gpu`, in the GPU test's own file,

@@ -61,7 +61,7 @@ each target run on its own (never a workspace `cargo test`):
 | The existing valgrind pairs | `sync_allocation_count_tests::steady_state_frames_allocate_nothing` | pass: every live pair's difference equals its baseline's (paused 0 and 0, running 3 and 3, effect stream 0 and 0); planted control 64 over 64 frames |
 | R-3 (headless, field by field) | `render_pool_tests`, five variants | passes: same frame, after 5 hidden ticks, ground → air, air → ground, dome → sphere |
 | R-4 (picking) | `render_pool_tests::a_parked_bubble_is_never_picked_or_selected` | passes |
-| R-5 (looks released) | `render_pool_tests::a_departed_units_looks_are_released_and_never_reach_the_reused_bubble` | passes; the beam half waits for H-20 (no shipped unit with media holds a sustained beam) |
+| R-5 (looks released) | `render_pool_tests::a_departed_units_looks_are_released_and_never_reach_the_reused_bubble` | passes; the beam half is in WP4 below |
 | R-6 (beyond the bound) | `render_pool_tests::a_battle_beyond_its_bound_draws_every_unit_and_says_so_once` and the unit tests | passes: every record drawn, `beyond_bound == 3`, one warning |
 | R-7 (consumers) | `render_pool_tests::every_consumer_leaves_a_parked_bubble_alone` | passes |
 | R-8 (GPU, bit-identical) | `render_pool_gpu_tests::a_reused_render_entity_renders_as_a_fresh_one` | passes on radv (RX 580): the two `after` captures, 1280 × 720, are bit-identical; the reused child reused 2 entities and the fresh child spawned 2; each arrival changed at least 20 % of its footprint from `before` and differs from its decoy's last frame |
@@ -143,3 +143,28 @@ base's spread 0.61 ms), −4.34 ms at 400 (bar 6.50 ms, the base's spread); main
 −2.84 ms (bar 7.04). No stop rule 4. The host was loaded throughout, so the differences, including the 400-unit
 one in the pool's favour, are within the noise of these runs and are not a saving; the tails moved both ways. The
 pool's counters at the end of a run are not reported: the tool's report has no field for them (As built).
+
+## WP4: H-20 and R-5's beam half (after merging `main` at `db805c7a`)
+
+The Carrier's media landed on `main` (`mothership_carrier` and `saucer_interceptor` in `required_set.ron`, the
+Carrier presented), so H-20 runs here (§9). The cycle is driven from the presented snapshot
+(`tests/support/unit_cycling.rs`, `HangarCycle`): two Carriers of the local player beside its base attack a durable
+unarmed enemy air unit with media; once no hangar has a member docked or building and every launched interceptor is
+presented, the target is killed, the interceptors fly home and dock, and once none is presented a new target is
+spawned and attacked. Each target holds its position: the first try left it drifting under attack, the hangar units
+chased it, and a launch phase stalled for over 1,000 ticks (found by running the hangar child natively).
+
+| Test | Result |
+|---|---|
+| H-20 steady state (`sync_steady_state_tests::hangar_members_cycling_create_and_remove_nothing`) | passes: one cycle took 61 ticks at warm-up; window 600 ticks (13 cycles in all); no asset added or removed, bubble, ring and standard materials within their bounds, no entity spawned or despawned, no buffer moved, every arrival reused; pool `{ spawned: 26, reused: 240, parked_now: 5, high_water: 26, beyond_bound: 0 }` |
+| H-20 valgrind (`sync_allocation_count_tests::hangar_cycle_frames_allocate_nothing`, `HangarCycleLive`/`HangarCycleBaseline`) | passes: three warm-up cycles, windows of two and four cycles; live 132 and 266 blocks, baseline 132 and 266: **0** beyond the drivers'; the live child spawned no render entity in its window |
+| R-5 beam half (`render_pool_tests::a_departed_members_beam_ends_and_never_follows_the_reused_bubble`) | passes: an interceptor holding `prism_beam` departs and a plain unit arrives on the same tick; the beam ends, no beam names the arrival, and the arrival is drawn by a parked entity |
+
+The identity check after the merge: `git diff origin/main..HEAD -- crates/sim_types crates/sim_map crates/sim_core
+assets/catalog assets/scenarios` is empty.
+
+After the merge, on the final tree (logs in `~/scratch/render-pool/final2/`): the client's unit tests (570), every
+test of §7.3 again, `battle_presentation_tests`, `runtime_media_tests`, `runtime_assets_tests`,
+`weapon_battle_gpu_tests` (5 passed, 2 ignored children), `effect_catalog_tests`, the gate's `selection_tests`,
+goldens, the matchup matrix, R-8, and `sync_allocation_count_tests` with both pairs of this plan (brood: live and
+baseline 70 and 144) all pass.
