@@ -27,7 +27,25 @@
 //! - **R5 (clipping):** a dual cell with a ramp corner clips its floors to its non-ramp
 //!   quadrants without allocating; a dual cell without one is emitted unchanged.
 //! - **R6 (walls and rims):** a straight contour is split at the dual cell's centre and its half
-//!   on a ramp edge dropped; a contour midpoint on a ramp edge gets no rim, foot or jitter.
+//!   on a ramp edge dropped; a contour midpoint on a ramp edge gets no rim, foot, jitter or
+//!   setback (W1's setback is 0 there).
+//!
+//! # Walkable Columns (W1)
+//! The simulation's boundary between two plateaus is the cell edge, and both sides are walkable
+//! (plan `docs/plans/2026-11-30-terrain-and-air-indicators.md`, tested by
+//! `tests/cliff_boundary_tests.rs` and `tests/cliff_contact_gpu_tests.rs`):
+//! - **W1:** inside the footprint of a walkable cell (a non-abyss plateau or a ramp), no terrain
+//!   triangle rises above the cell's simulation surface, except a ramp's guard rail within
+//!   [`RAIL_WIDTH`] of its side edge and [`RAIL_HEIGHT`] above the surface. Rims and convex 45°
+//!   cuts remove solid below a plateau's floor and are allowed.
+//! - **Setback:** on an edge whose low corner is ground, every wall profile is moved
+//!   [`FOOT_WIDTH`] into the high cell and its toe is the edge midpoint itself, so the foot ends
+//!   on the edge and the jitter ([`WALL_JITTER_AMPLITUDE`] at most [`FOOT_WIDTH`]) stays behind
+//!   it. The high floor polygon is inset by the same setback. The setback depends only on the
+//!   edge's two corner levels and its ramp flag, which both dual cells sharing the edge compute
+//!   alike, so chunk seams and stacked runs stay watertight. An edge whose low side is void (the
+//!   abyss or the map's border) is set back by [`WALL_JITTER_AMPLITUDE`] only, so no wall row of
+//!   any edge lies on its low side.
 //!
 //! # Coordinate Conventions
 //! - Simulation X maps to Bevy X.
@@ -57,7 +75,10 @@ pub const RIM_WIDTH: f32 = 0.15;
 /// Vertical drop from cliff plateau height to rim bottom in world units.
 pub const RIM_DROP: f32 = 0.20;
 
-/// Horizontal outward foot spread width at cliff bases in world units.
+/// Horizontal spread of the foot at a cliff base, world units. It is also the setback of every
+/// wall profile on an edge whose low side is ground: the profile is moved this far into the high
+/// cell, so the foot's toe lies on the edge (invariant W1, plan
+/// `docs/plans/2026-11-30-terrain-and-air-indicators.md` D-1).
 pub const FOOT_WIDTH: f32 = 0.22;
 
 /// Vertical rise from lower plateau height to foot top in world units.
@@ -69,7 +90,8 @@ pub const WALL_ROW_SPACING: f32 = 0.75;
 /// World altitude of abyss chasm wall bottoms.
 pub const ABYSS_WALL_BOTTOM_Y: f32 = -6.0;
 
-/// Horizontal displacement amplitude for canonical wall row pseudo-random jitter.
+/// Horizontal displacement amplitude for canonical wall row pseudo-random jitter, world units. At
+/// most [`FOOT_WIDTH`], so a jittered row of a set-back profile stays behind its edge (W1).
 pub const WALL_JITTER_AMPLITUDE: f32 = 0.06;
 
 /// Vertical height of ramp guard rails in world units.
@@ -629,7 +651,31 @@ pub struct WallProfileRow {
     pub ao: f32,
 }
 
-/// Generates the wall profile rows for an edge midpoint crossing.
+/// The setback of a wall profile, world units: [`FOOT_WIDTH`] on an edge whose low corner
+/// (level `level_b`) is ground, [`WALL_JITTER_AMPLITUDE`] where it is void, and 0 on a ramp's
+/// edge (`suppressed`, rule R6), whose rows carry no jitter.
+///
+/// A void edge is set back by the jitter so that no wall row of any edge lies on its low side: a
+/// straight contour whose two low corners differ (one void, one ground) runs one wall strip
+/// between a void-side profile and a ground-side one, and a void-side row jittered onto the low
+/// side would carry the strip into the ground cell's quadrant.
+fn edge_setback(level_b: i32, suppressed: bool) -> f32 {
+    if suppressed {
+        0.0
+    } else if level_b >= 0 {
+        FOOT_WIDTH
+    } else {
+        WALL_JITTER_AMPLITUDE
+    }
+}
+
+/// Generates the wall profile rows of a threshold run `ta..=tb` at edge midpoint `p` (world XZ),
+/// top to bottom, for an edge whose high corner has level `level_a` and low corner `level_b`;
+/// `d` is the axis unit vector from the high side to the low side. `suppressed` marks a ramp's
+/// edge (rule R6).
+///
+/// Every row lies at `p + d·k` with `k <= 0`: the profile is set back by [`edge_setback`], at
+/// least the jitter's amplitude, and the foot's toe is `p` itself (invariant W1).
 #[must_use]
 #[expect(
     clippy::cast_possible_truncation,
@@ -658,18 +704,23 @@ pub fn generate_wall_profile(
     let norm_rim = (d3 * RIM_DROP + Vec3::Y * RIM_WIDTH).normalize();
     let norm_foot = (d3 * FOOT_RISE + Vec3::Y * FOOT_WIDTH).normalize();
 
+    // A row at signed offset `k` along `d` from the edge; `k <= 0` lies behind the edge. Each
+    // offset is formed as one scalar first, so `k <= 0` in exact arithmetic stays `<= 0` in `f32`.
+    let setback = edge_setback(level_b, suppressed);
+    let at = |k: f32| p + d * k;
+
     // 1. Rim top
     if rim_present {
         rows.push(WallProfileRow {
             y: y_top,
-            xz: p - d * RIM_WIDTH,
+            xz: at(-(setback + RIM_WIDTH)),
             normal: norm_rim,
             ao: 1.0,
         });
         // 2. Rim bottom
         rows.push(WallProfileRow {
             y: y_top - RIM_DROP,
-            xz: p,
+            xz: at(-setback),
             normal: (norm_rim + d3).normalize(),
             ao: 1.0,
         });
@@ -702,7 +753,7 @@ pub fn generate_wall_profile(
 
             rows.push(WallProfileRow {
                 y: y_k,
-                xz: p + d * disp,
+                xz: at(disp - setback),
                 normal: d3,
                 ao,
             });
@@ -715,20 +766,21 @@ pub fn generate_wall_profile(
         let ao_ft = WALL_FOOT_AO + (1.0 - WALL_FOOT_AO) * t_ft;
         rows.push(WallProfileRow {
             y: y_bottom + FOOT_RISE,
-            xz: p,
+            xz: at(-setback),
             normal: (norm_foot + d3).normalize(),
             ao: ao_ft,
         });
+        // The toe is the edge midpoint itself, bit for bit (W1).
         rows.push(WallProfileRow {
             y: y_bottom,
-            xz: p + d * FOOT_WIDTH,
+            xz: p,
             normal: norm_foot,
             ao: WALL_FOOT_AO,
         });
     } else {
         rows.push(WallProfileRow {
             y: y_bottom,
-            xz: p,
+            xz: at(-setback),
             normal: d3,
             ao: WALL_FOOT_AO,
         });
@@ -1030,6 +1082,20 @@ impl DualCell {
         idx
     }
 
+    /// How far the high floor at threshold `tb` stops short of midpoint `m`, along the edge's
+    /// `d`, world units: the wall's setback ([`edge_setback`]), and [`RIM_WIDTH`] more where the
+    /// wall has a rim (the rim top row lies exactly there).
+    fn floor_inset(&self, m: EdgeMidpoint, tb: i32) -> f32 {
+        let (la, lb) = self.midpoint_levels(m, tb);
+        let suppressed = self.midpoint_suppressed(m);
+        let rim = if la == tb && !suppressed {
+            RIM_WIDTH
+        } else {
+            0.0
+        };
+        edge_setback(lb, suppressed) + rim
+    }
+
     /// The wall profile of a contour midpoint for the threshold run `ta..=tb`. A midpoint on a
     /// ramp edge has neither rim nor foot, and no jitter, so that the wall ends exactly on the
     /// ramp edge (rule R6).
@@ -1094,19 +1160,12 @@ fn emit_dual_cell(
             if curr_case != 0 && curr_case != 15 {
                 let mcase = &MARCHING_CASES[curr_case];
 
-                // Emit region polygon as floor at H(tb), contour vertices inset by the rim
+                // Emit region polygon as floor at H(tb), contour vertices inset by the wall's
+                // setback and, where the rim is, the rim (W1).
                 let polygon = region_polygon(&cell, mcase.region, |vref| match vref {
                     DualVertexRef::Corner(c) => cell.corner_coord(c),
                     DualVertexRef::Midpoint(m) => {
-                        let (la, _) = cell.midpoint_levels(m, tb);
-                        let rim_present = la == tb && !cell.midpoint_suppressed(m);
-                        let base_coord = cell.midpoint_coord(m);
-                        if rim_present {
-                            let d = cell.midpoint_d(m, tb);
-                            base_coord - d * RIM_WIDTH
-                        } else {
-                            base_coord
-                        }
+                        cell.midpoint_coord(m) - cell.midpoint_d(m, tb) * cell.floor_inset(m, tb)
                     }
                 });
                 emit_dual_floor(map, &cell, &polygon, cliff_level_height(tb), scratch, stats);
@@ -2013,7 +2072,8 @@ mod tests {
 
     /// T-A (plan `2026-11-30-terrain-and-air-indicators` §5.1): on an edge whose low side is
     /// ground, no wall profile row lies on the low side of the edge, and the foot's toe is the
-    /// edge midpoint bit for bit.
+    /// edge midpoint bit for bit. The sweep covers void low corners too (`level_b = -1`), which
+    /// are set back by the jitter's amplitude.
     ///
     /// Tolerance 0, derived: every row is `p + d·k` with `k <= 0` in exact arithmetic
     /// (`k = disp − setback`, `disp <= WALL_JITTER_AMPLITUDE <= FOOT_WIDTH`), and `f32` rounding
@@ -2023,7 +2083,7 @@ mod tests {
         let mut failures = Vec::new();
         let mut checked = 0_usize;
         for level_a in 0..=4 {
-            for level_b in 0..level_a {
+            for level_b in -1..level_a {
                 for ta in (level_b + 1)..=level_a {
                     for tb in ta..=level_a {
                         for d in AXIS_DIRECTIONS {
@@ -2041,7 +2101,7 @@ mod tests {
                                         ));
                                     }
                                 }
-                                let foot = level_b == ta - 1;
+                                let foot = level_b >= 0 && level_b == ta - 1;
                                 let toe = rows.last().map(|row| row.xz);
                                 if foot
                                     && toe.map(|t| (t.x.to_bits(), t.y.to_bits()))

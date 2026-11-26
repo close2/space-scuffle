@@ -179,8 +179,8 @@ fn nook_corners(map: &GameMap, x: u32, y: u32) -> Vec<Vec2> {
         .collect()
 }
 
-/// Every violation of W1 in `map`'s mesh.
-fn violations(map: &GameMap) -> Vec<Violation> {
+/// Every violation of W1 in `map`'s mesh, and the tolerances it was checked with.
+fn violations(map: &GameMap) -> (Vec<Violation>, Tolerances) {
     let mesh = MapMesh::build(map);
     let tol = Tolerances::of(map, &mesh);
     let mut found = Vec::new();
@@ -197,7 +197,7 @@ fn violations(map: &GameMap) -> Vec<Violation> {
             }
         }
     }
-    found
+    (found, tol)
 }
 
 /// Checks triangle `t` against walkable cell `cell` with surface `surface`.
@@ -257,12 +257,14 @@ fn check_triangle(
 
 /// Fails with a report of the violations `classes` select.
 fn assert_no_violations(name: &str, map: &GameMap, classes: &[Class]) {
-    let all = violations(map);
+    let (all, tol) = violations(map);
     let selected: Vec<&Violation> = all.iter().filter(|v| classes.contains(&v.class)).collect();
     if selected.is_empty() {
         println!(
-            "{name}: no {classes:?} violation of W1 ({} of other classes)",
-            all.len()
+            "{name}: no {classes:?} violation of W1 ({} of other classes); tau {:e}, epsilon {:e}",
+            all.len(),
+            tol.tau,
+            tol.epsilon
         );
         return;
     }
