@@ -1225,7 +1225,8 @@ fn a_held_beams_burns_follow_its_end() {
 /// W-20 (plan `2026-11-27-weapon-delivery` D-8): the shipped weapons whose missiles fly movers
 /// (found by their movers, never by name) publish a projectile event that asks for their unit's
 /// travel along the flight, a travel that flies (a layer lasting the flight), and for their
-/// impact delayed by the flight, so the strike lands where and when the missile does.
+/// impact delayed by the flight, so the strike lands where and when the missile does; a look
+/// without an impact draws its landing with its splash (plan `2026-11-28-missile-movers-b52`).
 #[test]
 fn a_mover_weapons_projectile_flies_its_travel_and_lands_its_impact_after_the_flight() {
     let (catalog, units, tables) = shipped();
@@ -1277,6 +1278,23 @@ fn a_mover_weapons_projectile_flies_its_travel_and_lands_its_impact_after_the_fl
                 "{}'s travel flies the missile's path",
                 archetype.slug
             );
+            // A look without an impact draws the landing with its splash, whose event the
+            // simulation publishes when the missile lands (the Liberator analogue's, plan
+            // `2026-11-28-missile-movers-b52` WP4): the projectile event then spawns no impact.
+            if tables.impact(source).is_none() {
+                assert!(
+                    tables.splash(source).is_some(),
+                    "{}: a mover weapon's landing is drawn",
+                    archetype.slug
+                );
+                assert!(
+                    spawn_request(&event, &tables, &catalog).is_none(),
+                    "{}",
+                    archetype.slug
+                );
+                checked += 1;
+                continue;
+            }
             let impact = spawn_request(&event, &tables, &catalog)
                 .unwrap_or_else(|| panic!("{} names an impact", archetype.slug));
             assert_eq!(
