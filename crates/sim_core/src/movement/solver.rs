@@ -152,13 +152,13 @@ pub struct ShareRules {
 /// The shares of the pair `(a, b)`, first matching row wins (plan `2026-11-20-contact-solver`
 /// C-2, the push table of plan `2026-11-09-friendly-blocking` D-4 as inverse-mass weights), under
 /// `rules`. One table answers for both solver pipelines; under `Gated` (C′ of plan
-/// `2026-11-27-gated-movement` §3.1) only D-δ's row differs, and new enemy contact is bounded by
-/// E-2 in the solve, not here.
+/// `2026-11-27-gated-movement` §3.1, Amendment 3a) a holding body takes nothing from a fixed one
+/// either, and new enemy contact is bounded by E-2 in the solve, not here.
 ///
 /// | Case | a | b |
 /// |---|---|---|
 /// | both fixed | none | |
-/// | one fixed | 0 | 1 |
+/// | one fixed | 0 | 1 (under `Gated`: none when the other is holding) |
 /// | enemies, both holding | none | |
 /// | enemies, one holding | 0 | 1 |
 /// | enemies | ½ | ½ (under `Gated`: an overlap that exists already; new contact is bounded by E-2) |
@@ -170,15 +170,20 @@ pub struct ShareRules {
 /// | friends, both moving, D-β off | by approach | |
 /// | friends, otherwise | ½ | ½ |
 ///
-/// An engaged unit with a [`ContactParty::nudge`] counts as not engaged against friends under
-/// `Solver` (D-δ); under `Gated` it is anchored like any engaged unit, and two anchored friends
-/// (attacking or holding) take no correction from each other (Amendment 3, item 2).
+/// An engaged unit with a [`ContactParty::nudge`] counts as not engaged against friends (D-δ): it
+/// is shared as if not engaged, and only the part of its correction along its ring is taken.
+/// Under `Solver` melee attackers carry one by the data switch; under `Gated` every attacking unit
+/// does (Amendment 3a, item 2), and the solve also keeps it at its distance from its target.
 #[must_use]
 pub fn contact_shares(a: &ContactParty, b: &ContactParty, rules: ShareRules) -> PairShares {
     let (zero, half, one) = (SimScalar::ZERO, SimScalar::HALF, SimScalar::ONE);
     let weights = |x, y| PairShares::Weights(x, y);
     match (a.fixed, b.fixed) {
         (true, true) => return PairShares::None,
+        // C′ (plan `2026-11-27-gated-movement` Amendment 3a, item 1): under `Gated` a holding
+        // body is moved by nothing, a fixed body included.
+        (true, false) if rules.gated && b.holding => return PairShares::None,
+        (false, true) if rules.gated && a.holding => return PairShares::None,
         (true, false) => return weights(zero, one),
         (false, true) => return weights(one, zero),
         (false, false) => {}
@@ -191,11 +196,6 @@ pub fn contact_shares(a: &ContactParty, b: &ContactParty, rules: ShareRules) -> 
             (false, false) => weights(half, half),
         };
     }
-    // C′ (plan `2026-11-27-gated-movement` Amendment 3, item 2): under `Gated` two anchored
-    // friends (attacking or holding) never correct each other.
-    if rules.gated && a.anchored() && b.anchored() {
-        return PairShares::None;
-    }
     match (a.holding, b.holding) {
         (true, true) => return PairShares::None,
         (true, false) => return weights(zero, one),
@@ -205,8 +205,8 @@ pub fn contact_shares(a: &ContactParty, b: &ContactParty, rules: ShareRules) -> 
     // D-δ: an engaged unit allies may nudge is shared with them as if not engaged; the radial
     // part of its correction is removed when the pair is built. Never under `Gated` (C′-1).
     match (
-        a.engaged && (rules.gated || a.nudge.is_none()),
-        b.engaged && (rules.gated || b.nudge.is_none()),
+        a.engaged && a.nudge.is_none(),
+        b.engaged && b.nudge.is_none(),
     ) {
         (true, true) => return weights(half, half),
         (true, false) => return weights(zero, one),
@@ -508,6 +508,13 @@ pub(crate) struct ContactSolver {
     /// step the body took in this solve, the probe of H-2 (plan `2026-11-27-gated-movement`
     /// Amendment 3, item 4). Derived output, never read by the solve.
     pub enemy_push: Vec<SimScalar>,
+    /// `Gated` only, parallel to [`Self::bodies`] and filled by the caller: for an attacking unit,
+    /// the slot of its target among the bodies (Amendment 3a, item 2); the solve keeps the unit
+    /// at its distance from that body's position, so a friend's nudge never takes it out of its
+    /// weapon band.
+    pub rings: Vec<Option<u32>>,
+    /// `Gated` only: the caller's scratch for finding a body's slot by its entity id.
+    pub slots: Vec<(EntityId, u32)>,
     /// `Gated` only: friend pairs, over the solve's applications, in which a body held by
     /// terrain counted as fixed (C′-3), the probe `terrain_transfers`.
     pub transfers: u32,
@@ -684,8 +691,8 @@ impl ContactSolver {
                 || share_a == SimScalar::ZERO
                 || share_b == SimScalar::ZERO,
             last: a.party.owner != b.party.owner || a.party.fixed || b.party.fixed,
-            nudge_a: a.party.nudge.filter(|_| friends && !G),
-            nudge_b: b.party.nudge.filter(|_| friends && !G),
+            nudge_a: a.party.nudge.filter(|_| friends),
+            nudge_b: b.party.nudge.filter(|_| friends),
             radius_sum,
             dead_band,
             moving_bound,
@@ -1046,6 +1053,7 @@ impl ContactSolver {
             if !self.enemy_pairs.is_empty() {
                 self.bound_enemy_steps(report);
             }
+            self.keep_rings(report);
             let longest = self.planned.iter().map(|&p| l1_raw(planned_step(p))).max();
             let longest = longest.unwrap_or(0);
             if !self.reach_is_short(longest) {
@@ -1152,6 +1160,30 @@ impl ContactSolver {
                 .iter()
                 .zip(&self.anchors)
                 .any(|(body, &anchor)| !super::math::within_distance(body.position, anchor, margin))
+    }
+
+    /// Amendment 3a, item 2: turns each attacking unit's planned step so that it ends at the unit's
+    /// present distance from its target ([`Self::rings`]), the target read where it stands at
+    /// the application's start: the unit moves round its target and never out of its band.
+    fn keep_rings(&mut self, report: &mut impl FnMut(MovementInvariant)) {
+        for (slot, planned) in self.planned.iter_mut().enumerate() {
+            let (Some(Ok(step)), Some(Some(target))) = (*planned, self.rings.get(slot)) else {
+                continue;
+            };
+            let (Some(body), Some(centre)) =
+                (self.bodies.get(slot), self.bodies.get(*target as usize))
+            else {
+                continue;
+            };
+            match ring_step(body.position, step, centre.position) {
+                Ok(kept) => *planned = Some(Ok(kept)),
+                Err(source) => report(MovementInvariant::Arithmetic {
+                    entity: body.id,
+                    operation: "contact solver ring",
+                    source,
+                }),
+            }
+        }
     }
 
     /// Fills [`Self::planned`] with each body's step of this application: none for a body without
@@ -1379,9 +1411,10 @@ impl ContactSolver {
 /// C′-3 (`Gated`, B-220): the shares the friend pair `pair` of `a` and `b` takes when a body
 /// terrain holds (`held`, from each body's previous terrain step) has a positive share in it: the
 /// held body counts as fixed, so its partner takes the whole correction (C-2's "one fixed" row),
-/// or none when the partner is held as well or cannot be moved by friends at all (fixed, holding
-/// or engaged; C-2's "both fixed" row, so that the transfer never moves an attacking or holding
-/// unit). `None` when no transfer applies: an enemy pair, or no held body with a positive share.
+/// or none when the partner is held as well or cannot be moved at all (fixed or holding; C-2's
+/// "both fixed" row, so that the transfer never moves a holding unit; an attacking partner takes
+/// it along its ring, Amendment 3a). `None` when no transfer applies: an enemy pair, or no held
+/// body with a positive share.
 fn transferred_shares(
     pair: &Pair,
     (a, b): (&SolverBody, &SolverBody),
@@ -1391,7 +1424,7 @@ fn transferred_shares(
     pair.moving_bound?;
     let held_a = held.0 && pair.share_a > SimScalar::ZERO;
     let held_b = held.1 && pair.share_b > SimScalar::ZERO;
-    let unmovable = |party: &ContactParty| party.fixed || party.anchored();
+    let unmovable = |party: &ContactParty| party.fixed || party.holding;
     let (zero, one) = (SimScalar::ZERO, SimScalar::ONE);
     match (held_a, held_b) {
         (false, false) => None,
@@ -1430,6 +1463,40 @@ fn refused_by_terrain(from: SimVec2, target: Option<SimVec2>, next: Option<SimVe
         (Some(moved), Some(wanted)) => moved.checked_mul(4).is_none_or(|four| four < wanted),
         _ => true,
     }
+}
+
+/// The step from `from` that ends where `from + step` lies seen from `centre`, at `from`'s own
+/// distance from `centre` (Amendment 3a, item 2): `centre + v · |from − centre| / |v|` with
+/// `v = from + step − centre`, truncated toward `centre`, so the distance never grows. A step
+/// from the centre itself, or to it, is left as it is.
+///
+/// # Errors
+/// An unrepresentable product or position.
+fn ring_step(from: SimVec2, step: SimVec2, centre: SimVec2) -> Result<SimVec2, MovementMathError> {
+    let raw = |v: SimVec2| (i128::from(v.x.raw()), i128::from(v.y.raw()));
+    let length = |(x, y): (i128, i128)| {
+        x.checked_mul(x)
+            .zip(y.checked_mul(y))
+            .and_then(|(xx, yy)| xx.checked_add(yy))
+            .and_then(|sq| u128::try_from(sq).ok())
+            .map(|sq| i128::try_from(super::integer_sqrt(sq)).unwrap_or(i128::MAX))
+            .ok_or(MovementMathError::Unrepresentable)
+    };
+    let to = checked_vec_add(from, step)?;
+    let v = raw(checked_vec_sub(to, centre)?);
+    let (radius, reach) = (length(raw(checked_vec_sub(from, centre)?))?, length(v)?);
+    if radius == 0 || reach == 0 {
+        return Ok(step);
+    }
+    let scaled = |c: i128| {
+        c.checked_mul(radius)
+            .map(|m| m / reach)
+            .and_then(|r| i64::try_from(r).ok())
+            .map(SimScalar::from_raw)
+            .ok_or(MovementMathError::Unrepresentable)
+    };
+    let end = checked_vec_add(centre, SimVec2::new(scaled(v.0)?, scaled(v.1)?))?;
+    checked_vec_sub(end, from)
 }
 
 /// Whether the move of the body in `slot` from `from` to `to` closes on an enemy of the
@@ -3268,8 +3335,8 @@ mod tests {
     /// E2-T9, under `Gated`: a crowd of one owner that touches no wall gives bit-identical
     /// positions under `Gated` and `Solver`, and so does the same crowd with an enemy beyond the
     /// reach of every walk (application zero then places every body at its committed position
-    /// exactly). No body of the crowd is engaged: two anchored friends are C′'s own rule
-    /// (Amendment 3, item 2, `anchored_friends_never_correct_each_other_under_gated`).
+    /// exactly). No body of the crowd is engaged or holding unless fixed: a holding body against a
+    /// fixed one is C′'s own rule (Amendment 3a, `a_holding_body_is_moved_by_nothing_under_gated`).
     #[test]
     fn a_scene_without_enemies_is_unchanged() -> Result<(), Box<dyn std::error::Error>> {
         let mut world = flat_world(Some(30))?;
@@ -3279,6 +3346,7 @@ mod tests {
                 .map(|mut body| {
                     body.party.owner = PlayerId(0);
                     body.party.engaged = false;
+                    body.party.holding = body.party.fixed;
                     body
                 })
                 .collect();
@@ -3515,48 +3583,118 @@ mod tests {
         Ok(())
     }
 
-    /// A3-T2 (plan `2026-11-27-gated-movement` Amendment 3, item 2): under `Gated` two attacking
-    /// friends, or an attacking and a holding one, that overlap take no correction from each other;
-    /// under `Solver` two attacking friends share it ½ / ½.
+    /// A3a-T1 (plan `2026-11-27-gated-movement` Amendment 3a, item 1): under `Gated` a holding body
+    /// is moved by nothing: not by a fixed body overlapping it (C-2's "one fixed" row moves it
+    /// under `Solver`), nor by a walking friend.
     #[test]
-    fn anchored_friends_never_correct_each_other_under_gated(
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn a_holding_body_is_moved_by_nothing_under_gated() -> Result<(), Box<dyn std::error::Error>> {
         let mut world = flat_world(None)?;
-        let engaged = ContactParty {
-            engaged: true,
-            ..party(0)
-        };
         let holding = ContactParty {
             holding: true,
             ..party(0)
         };
-        for other in [engaged, holding] {
-            let bodies = [
-                solver_body(1, engaged, 0.5, at(20.0, 20.0), at(20.0, 20.0)),
-                solver_body(2, other, 0.5, at(20.8, 20.0), at(20.8, 20.0)),
-            ];
-            let (gated, errors) = solve_on(&mut world, &bodies, GATED);
-            assert_eq!(errors, []);
-            assert_eq!(gated.bodies[0].position, bodies[0].position, "{other:?}");
-            assert_eq!(gated.bodies[1].position, bodies[1].position, "{other:?}");
-        }
-        let gated = ShareRules {
-            moving_friends_push: true,
-            gated: true,
+        let fixed = ContactParty {
+            fixed: true,
+            holding: true,
+            ..party(1)
         };
-        assert_eq!(contact_shares(&engaged, &engaged, gated), PairShares::None);
-        assert_eq!(contact_shares(&engaged, &holding, gated), PairShares::None);
-        assert_eq!(
-            contact_shares(&engaged, &engaged, rules(true)),
-            PairShares::Weights(HALF, HALF)
-        );
+        let walker = ContactParty {
+            moving: true,
+            ..party(0)
+        };
         let bodies = [
-            solver_body(1, engaged, 0.5, at(20.0, 20.0), at(20.0, 20.0)),
-            solver_body(2, engaged, 0.5, at(20.8, 20.0), at(20.8, 20.0)),
+            solver_body(1, holding, 0.5, at(20.0, 20.0), at(20.0, 20.0)),
+            solver_body(2, fixed, 0.5, at(20.8, 20.0), at(20.8, 20.0)),
+            solver_body(3, walker, 0.5, at(18.8, 20.0), at(19.3, 20.0)),
         ];
+        let (gated, errors) = solve_on(&mut world, &bodies, GATED);
+        assert_eq!(errors, []);
+        assert_eq!(gated.bodies[0].position, bodies[0].position);
         let (solver, _) = solve_on(&mut world, &bodies, SETTINGS);
         assert_ne!(solver.bodies[0].position, bodies[0].position);
         Ok(())
+    }
+
+    /// A3a-T2 (Amendment 3a, item 2): under `Gated` two attacking friends that overlap, each
+    /// nudgeable round its own target (D-δ), share their overlap, and each ends at its distance
+    /// from its target, so neither leaves its band.
+    #[test]
+    fn attacking_friends_share_round_their_targets_under_gated(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut world = flat_world(None)?;
+        let target = ContactParty {
+            fixed: true,
+            holding: true,
+            ..party(1)
+        };
+        let attacker = |radial: SimVec2| ContactParty {
+            engaged: true,
+            nudge: Some(radial),
+            ..party(0)
+        };
+        // Both on one ring of radius 1.05 round the target, at 90° and 60°: 0.54 apart.
+        let (north, slant) = (at(18.0, 21.05), at(18.525, 20.909_327));
+        let radial = |p: SimVec2| direction(p, at(18.0, 20.0));
+        let bodies = [
+            solver_body(1, target, 0.5, at(18.0, 20.0), at(18.0, 20.0)),
+            solver_body(2, target, 0.5, at(30.0, 20.0), at(30.0, 20.0)),
+            solver_body(3, attacker(radial(north)?), 0.5, north, north),
+            solver_body(4, attacker(radial(slant)?), 0.5, slant, slant),
+        ];
+        let distance = |a: SimVec2, b: SimVec2| f64::from(a.distance(b).to_f32());
+        let before = [
+            distance(bodies[2].position, bodies[0].position),
+            distance(bodies[3].position, bodies[0].position),
+        ];
+        let rings = [None, None, Some(0), Some(0)];
+        let (solved, _, errors) = solve_ringing(&mut world, &bodies, &rings, GATED);
+        assert_eq!(errors, []);
+        assert_ne!(solved.bodies[2].position, bodies[2].position);
+        assert_ne!(solved.bodies[3].position, bodies[3].position);
+        let after = [
+            distance(solved.bodies[2].position, solved.bodies[0].position),
+            distance(solved.bodies[3].position, solved.bodies[0].position),
+        ];
+        for (b, a) in before.iter().zip(&after) {
+            assert!(*a <= *b + 1e-6 && *a >= *b - 1e-3, "{b} -> {a}");
+        }
+        Ok(())
+    }
+
+    /// [`solve_reporting`] with `Gated`'s rings (each attacking body's target slot).
+    fn solve_ringing(
+        world: &mut crate::SimWorld,
+        bodies: &[SolverBody],
+        rings: &[Option<u32>],
+        settings: SolverSettings,
+    ) -> (ContactSolver, SolveReport, Vec<MovementInvariant>) {
+        let mut solver = ContactSolver::default();
+        solver.bodies.extend_from_slice(bodies);
+        solver.rings.extend_from_slice(rings);
+        solver.walks.extend(bodies.iter().map(|b| Walk {
+            committed: b.position,
+            from: b.start,
+        }));
+        let mut errors = Vec::new();
+        let mut report = |e| errors.push(e);
+        let map = &world.map;
+        let size = (map.width(), map.height());
+        let pathfinder = &mut world.pathfinder;
+        let done = solver.solve(
+            (settings, size),
+            |a, b| bodies_touch(map, a, b),
+            |body, target| {
+                terrain_step(
+                    map,
+                    pathfinder,
+                    body.policy,
+                    (body.start, body.position),
+                    target,
+                )
+            },
+            &mut report,
+        );
+        (solver, done, errors)
     }
 
     /// A3-T3 at the solver (Amendment 3, item 3): two standing enemies 0.4 apart, beyond the list's

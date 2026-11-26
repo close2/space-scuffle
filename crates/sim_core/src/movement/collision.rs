@@ -473,13 +473,25 @@ impl SimWorld {
     }
 
     /// The `Gated` pipeline's additions to the solver's bodies (plan `2026-11-27-gated-movement`
-    /// C′, Amendment 3): each body's walk for E-2 (where its committed walk began: its tick-start
-    /// position when the movement phase recorded a step for it this tick, its committed position
-    /// otherwise, as for a body a cast placed), and "attacking" read from the tick-start snapshot
-    /// ([`SimWorld::attacking_at_tick_start`]) instead of the committed positions, so a unit whose
-    /// target stepped out of its band during the tick is still never moved by others.
+    /// C′, Amendments 3 and 3a): each body's walk for E-2 (where its committed walk began: its
+    /// tick-start position when the movement phase recorded a step for it this tick, its
+    /// committed position otherwise, as for a body a cast placed); "attacking" read from the
+    /// tick-start snapshot ([`SimWorld::attacking_at_tick_start`]) instead of the committed
+    /// positions; and for an attacking unit D-δ's radial (the unit vector from its target to it)
+    /// and its target's slot, so friends nudge it round its target and never out of its band.
     fn gated_bodies(&self, solver: &mut super::solver::ContactSolver) {
         solver.walks.clear();
+        solver.rings.clear();
+        let mut slots = std::mem::take(&mut solver.slots);
+        slots.clear();
+        slots.extend(
+            solver
+                .bodies
+                .iter()
+                .enumerate()
+                .map(|(slot, body)| (body.id, u32::try_from(slot).unwrap_or(u32::MAX))),
+        );
+        slots.sort_unstable_by_key(|&(id, _)| id);
         for body in &mut solver.bodies {
             let from = if self.proposed_step(body.id).is_some() {
                 body.start
@@ -491,7 +503,25 @@ impl SimWorld {
                 from,
             });
             body.party.engaged = self.attacking_at_tick_start(body.id);
+            let target = (body.party.engaged && !body.party.holding)
+                .then(|| {
+                    self.entities
+                        .get(&body.id)
+                        .and_then(super::locomotion::engaged_target)
+                })
+                .flatten();
+            let ring = target.and_then(|id| {
+                let slot = slots
+                    .binary_search_by_key(&id, |&(entity, _)| entity)
+                    .ok()?;
+                let centre = self.entities.get(&id)?.position;
+                let radial = super::math::direction(body.position, centre).ok()?;
+                (radial != SimVec2::ZERO).then_some((slots[slot].1, radial))
+            });
+            body.party.nudge = ring.map(|(_, radial)| radial);
+            solver.rings.push(ring.map(|(slot, _)| slot));
         }
+        solver.slots = slots;
     }
 
     /// Records the `Gated` solve's probes: C′-3's transfers, and each body's push by enemy pairs

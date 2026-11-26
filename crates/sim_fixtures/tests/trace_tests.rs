@@ -766,7 +766,13 @@ fn the_matrix_mode_writes_every_battle_and_seed_and_compares_runs() -> TestResul
          solver_extended_iterations,blue_held_moved_ticks,red_held_moved_ticks,\
          blue_held_moved_max,red_held_moved_max,blue_moving_ticks,red_moving_ticks,\
          blue_reversals,red_reversals,blue_reversals_hi,red_reversals_hi,gate_rays,\
-         orbit_refusals,terrain_transfers"
+         orbit_refusals,terrain_transfers,blue_held_moved_first_contact_ticks,red_held_moved_first_contact_ticks,\
+         blue_held_moved_clean_ticks,red_held_moved_clean_ticks,blue_held_moved_clean_max,\
+         red_held_moved_clean_max,blue_shove_e_pair,red_shove_e_pair,blue_hold_moved_clean_ticks,\
+         red_hold_moved_clean_ticks,blue_hold_moved_clean_max,red_hold_moved_clean_max,\
+         blue_hold_moved_first_contact_ticks,red_hold_moved_first_contact_ticks,\
+         blue_attack_moved_ticks,red_attack_moved_ticks,blue_attack_moved_max,red_attack_moved_max,\
+         blue_attack_left_band_ticks,red_attack_left_band_ticks"
     );
     // The reversals split into proposal- and contact-caused ones that sum to them (plan
     // `2026-11-19-crowd-edge-steering` D-5).

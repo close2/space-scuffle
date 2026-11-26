@@ -1006,6 +1006,66 @@ fn the_repaired_h2_counts_only_what_enemy_pairs_moved() -> Result<(), Box<dyn Er
         "the original count saw no displacement"
     );
     assert_eq!(known.enemy_pair_moved_ticks, 0);
-    assert_eq!(known.held_moved_clean_ticks, 0);
+    // H-1 as Amendment 3a redefines it (holding units), and H-1b's band.
+    assert_eq!(known.hold_moved_clean_ticks, 0);
+    assert_eq!(known.attack_left_band_ticks, 0);
+    Ok(())
+}
+
+/// Plan `2026-11-27-gated-movement` Amendment 3a, H-1b: a unit others displaced has left its band
+/// when it is out of it where it ended but would have been in it where it started (against its
+/// target where the target ended); a target that walks out of the band itself is not the push's.
+#[test]
+fn left_band_blames_the_push_and_not_the_target() -> Result<(), Box<dyn Error>> {
+    use sim_fixtures::trace::contact_checks::left_band;
+    let map = sim_map::GameMap::new(
+        32,
+        32,
+        sim_map::MapCell::default_ground(sim_map::CliffLevel(0)),
+    )?;
+    let mut world = sim_fixtures::try_world(map, 0x0A3A_0001)?;
+    let (kind, radius, range) = world
+        .catalog
+        .archetypes()
+        .find(|a| {
+            a.mover_type == sim_types::MoverType::Ground
+                && !a.is_immobile_by_default()
+                && a.weapon
+                    .as_ref()
+                    .is_some_and(|w| w.min_range == SimScalar::ZERO)
+        })
+        .and_then(|a| {
+            Some((
+                a.unit_type_id,
+                a.collision_radius,
+                a.weapon.as_ref()?.max_range,
+            ))
+        })
+        .ok_or("an armed mobile ground archetype")?;
+    let y = SimScalar::from_num(16.0);
+    let edge = radius + radius + range;
+    let target_at = SimVec2::new(SimScalar::from_num(16.0), y);
+    let start = SimVec2::new(target_at.x - edge, y);
+    let attacker = world.spawn_unit(kind, sim_types::PlayerId(0), start)?;
+    let target = world.spawn_unit(kind, sim_types::PlayerId(1), target_at)?;
+    if let Some(unit) = world.entities.get_mut(&attacker) {
+        unit.order_queue.push_back(UnitOrder::AttackTarget {
+            target,
+            origin: sim_types::AttackOrigin::Explicit,
+        });
+    }
+    let nudge = SimScalar::from_num(0.25);
+    let set = |world: &mut sim_core::SimWorld, id, p| {
+        if let Some(unit) = world.entities.get_mut(&id) {
+            unit.position = p;
+        }
+    };
+    // Pushed outward by a quarter: out of the band, which it stood in.
+    set(&mut world, attacker, SimVec2::new(start.x - nudge, y));
+    assert!(left_band(&world, attacker, start));
+    // The target walked away instead: the attacker, back where it started, was not pushed out.
+    set(&mut world, attacker, start);
+    set(&mut world, target, SimVec2::new(target_at.x + nudge, y));
+    assert!(!left_band(&world, attacker, start));
     Ok(())
 }

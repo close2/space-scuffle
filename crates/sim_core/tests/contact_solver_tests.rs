@@ -575,9 +575,10 @@ fn gated_is_the_reference_where_no_c_prime_rule_applies() -> TestResult {
 
 /// The C1-T2 scene under `rules`: a melee attacker attacking an immobile enemy dummy from in its
 /// band (west of it), and a friendly walker that starts touching it on its north and walks due
-/// south through the attacker's position, along the tangent of the attacker's ring. Returns the attacker's largest displacement from
-/// where it stood once the order settled (tick 5) over the next 75 ticks, world units.
-fn pressed_attacker(rules: MovementRules) -> Result<f64, Box<dyn Error>> {
+/// south through the attacker's position, along the tangent of the attacker's ring. Returns the
+/// attacker's largest displacement from where it stood once the order settled (tick 5) over the
+/// next 75 ticks, and its largest centre distance from the dummy over them, world units.
+fn pressed_attacker(rules: MovementRules) -> Result<(f64, f64), Box<dyn Error>> {
     let mut world = scratch_world(rules, 0x0C1_0002)?;
     let r = world_units(SMALL);
     let dummy = world.spawn_unit(UnitTypeId(DUMMY), RED, at(CENTRE.0, CENTRE.1))?;
@@ -608,22 +609,34 @@ fn pressed_attacker(rules: MovementRules) -> Result<f64, Box<dyn Error>> {
         step(&mut world, vec![]);
     }
     let settled = position(&world, attacker)?;
-    let mut worst = 0.0_f64;
+    let (mut worst, mut farthest) = (0.0_f64, 0.0_f64);
     for _ in 0..75 {
         step(&mut world, vec![]);
-        worst = worst.max(exact_distance(position(&world, attacker)?, settled));
+        let at = position(&world, attacker)?;
+        worst = worst.max(exact_distance(at, settled));
+        farthest = farthest.max(exact_distance(at, position(&world, dummy)?));
     }
-    Ok(worst)
+    Ok((worst, farthest))
 }
 
-/// C1-T2 (C′-1, Q0121 (a)): under `Gated` a melee unit attacking in its band is never moved by a
-/// friend walking into it along its ring, though D-δ is on in the shipped data; under `Solver`
-/// the same press nudges it along the ring (the scene does press).
+/// C1-T2 as Amendment 3a restates it (the owner's guidance: attacking units may be pushed
+/// slightly by allies, never out of their band): under `Gated` a melee unit attacking in its band,
+/// pressed by a friend walking into it along its ring, is nudged round its target and never
+/// leaves its band (its centre never farther from the dummy than the band's outer edge); the
+/// scene does press (under `Solver` D-δ nudges it too).
 #[test]
-fn an_attacking_unit_is_never_nudged_under_gated() -> TestResult {
-    let gated = pressed_attacker(gated_rules()?)?;
-    assert!(gated == 0.0, "the attacker moved by {gated} under Gated");
-    let solver = pressed_attacker(rules_on(MovementPipeline::Solver)?)?;
+fn an_attacking_unit_is_nudged_only_round_its_target_under_gated() -> TestResult {
+    let edge = 2.0 * world_units(SMALL) + MELEE;
+    let (moved, farthest) = pressed_attacker(gated_rules()?)?;
+    assert!(
+        moved > 0.0,
+        "the walker never pressed the attacker under Gated"
+    );
+    assert!(
+        farthest <= edge + 1e-9,
+        "left its band: {farthest} > {edge}"
+    );
+    let (solver, _) = pressed_attacker(rules_on(MovementPipeline::Solver)?)?;
     assert!(solver > 0.0, "the walker never pressed the attacker");
     Ok(())
 }
@@ -1100,14 +1113,15 @@ fn the_gated_section_ships_with_the_derived_cap_and_stays_latent() {
     assert_eq!(rules.solver_crowd_iterations(), rules.crowd_iterations);
 }
 
-/// A3-T1 (plan `2026-11-27-gated-movement` Amendment 3, item 1): under `Gated` a melee attacker
-/// whose target walks away is never moved by a friend pressing into it on a tick that began with
-/// the target in its band, though the target leaves the band during that tick (the solver judges
-/// "attacking" from the tick-start snapshot, as H-1's meter does). The scene does reach such
-/// ticks: some tick begins with the attacker in band while its target steps out of it.
+/// A3-T1 (plan `2026-11-27-gated-movement` Amendment 3, item 1, as Amendment 3a restates it):
+/// under `Gated` a melee attacker whose target walks away is never pushed out of its band by the
+/// friends pressing into it on a tick that began with the target in its band, though the target
+/// leaves the band during that tick (the solver judges "attacking" from the tick-start snapshot,
+/// as H-1b's meter does, [`sim_fixtures::trace::contact_checks::left_band`]). The scene does
+/// reach such ticks: some tick begins with the attacker in band while its target steps out of it.
 #[test]
-fn an_attacker_whose_target_steps_away_is_not_moved_under_gated() -> TestResult {
-    use sim_fixtures::trace::contact_checks::standing_of;
+fn an_attacker_whose_target_steps_away_is_not_pushed_out_of_its_band_under_gated() -> TestResult {
+    use sim_fixtures::trace::contact_checks::{left_band, standing_of};
     let mut world = scratch_world(gated_rules()?, 0x0A3_0001)?;
     let r = world_units(SMALL);
     let target = world.spawn_unit(UnitTypeId(WALKER), RED, at(CENTRE.0, CENTRE.1))?;
@@ -1161,7 +1175,10 @@ fn an_attacker_whose_target_steps_away_is_not_moved_under_gated() -> TestResult 
         let unit = world.entities.get(&attacker).ok_or("the attacker")?;
         let proposed = world.proposed_step(attacker).unwrap_or(SimVec2::ZERO);
         if held && proposed == SimVec2::ZERO {
-            assert_eq!(unit.position, before, "tick {tick}: the attacker was moved");
+            assert!(
+                !left_band(&world, attacker, before),
+                "tick {tick}: a friend pushed the attacker out of its band"
+            );
             stepped_out += u32::from(!standing_of(&world, unit, &arch).held);
         }
     }

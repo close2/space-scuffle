@@ -74,7 +74,11 @@ red_held_moved_ticks,blue_held_moved_max,red_held_moved_max,blue_moving_ticks,re
 blue_reversals,red_reversals,blue_reversals_hi,red_reversals_hi,gate_rays,orbit_refusals,\
 terrain_transfers,blue_held_moved_first_contact_ticks,red_held_moved_first_contact_ticks,\
 blue_held_moved_clean_ticks,red_held_moved_clean_ticks,blue_held_moved_clean_max,\
-red_held_moved_clean_max,blue_shove_e_pair,red_shove_e_pair";
+red_held_moved_clean_max,blue_shove_e_pair,red_shove_e_pair,blue_hold_moved_clean_ticks,\
+red_hold_moved_clean_ticks,blue_hold_moved_clean_max,red_hold_moved_clean_max,\
+blue_hold_moved_first_contact_ticks,red_hold_moved_first_contact_ticks,blue_attack_moved_ticks,\
+red_attack_moved_ticks,blue_attack_moved_max,red_attack_moved_max,blue_attack_left_band_ticks,\
+red_attack_left_band_ticks";
 
 /// The header of a `matrix.csv` written before the columns of the plan's Amendment 3 (`WP0a`'s
 /// [`MovementChecks`] without the first-contact split and the repaired H-2). Still read; the
@@ -158,7 +162,10 @@ const CHECK_COLUMNS: usize = CONTACT_COLUMNS + CROWD_COLUMNS;
 const CHECKED_COLUMNS: usize = SPLIT_COLUMNS + CHECK_COLUMNS;
 
 /// Columns of plan `2026-11-27-gated-movement` at the end of a current row ([`MovementChecks`]).
-pub const MOVEMENT_COLUMNS: usize = 21;
+pub const MOVEMENT_COLUMNS: usize = 33;
+
+/// The columns of [`MOVEMENT_COLUMNS`] a row written before the plan's Amendment 3a has.
+pub const A3_MOVEMENT_COLUMNS: usize = 21;
 
 /// The columns of [`MOVEMENT_COLUMNS`] a row written before the plan's Amendment 3 has.
 pub const WP0A_MOVEMENT_COLUMNS: usize = 13;
@@ -257,6 +264,7 @@ impl MatrixRow {
         let cells: Vec<&str> = line.split(',').collect();
         let columns = [
             CSV_COLUMNS,
+            CHECKED_COLUMNS + A3_MOVEMENT_COLUMNS,
             CHECKED_COLUMNS + WP0A_MOVEMENT_COLUMNS,
             CHECKED_COLUMNS,
             SPLIT_COLUMNS + CONTACT_COLUMNS,
@@ -269,7 +277,8 @@ impl MatrixRow {
         }
         let movement = match cells.get(CHECKED_COLUMNS..) {
             Some(rest)
-                if (rest.len() == MOVEMENT_COLUMNS || rest.len() == WP0A_MOVEMENT_COLUMNS)
+                if [MOVEMENT_COLUMNS, A3_MOVEMENT_COLUMNS, WP0A_MOVEMENT_COLUMNS]
+                    .contains(&rest.len())
                     && rest.iter().any(|c| !c.is_empty()) =>
             {
                 Some(parse_movement(rest)?)
@@ -461,6 +470,21 @@ pub(crate) fn movement_cells(movement: &MovementChecks) -> String {
     cells.push(format!("{:.9}", red.held_moved_clean_max));
     cells.push(format!("{:.4}", blue.shove_e_pair));
     cells.push(format!("{:.4}", red.shove_e_pair));
+    cells.push(blue.hold_moved_clean_ticks.to_string());
+    cells.push(red.hold_moved_clean_ticks.to_string());
+    cells.push(format!("{:.9}", blue.hold_moved_clean_max));
+    cells.push(format!("{:.9}", red.hold_moved_clean_max));
+    for pick in [
+        |s: &MovementSide| s.hold_moved_first_contact_ticks,
+        |s: &MovementSide| s.attack_moved_ticks,
+    ] {
+        cells.push(pick(blue).to_string());
+        cells.push(pick(red).to_string());
+    }
+    cells.push(format!("{:.9}", blue.attack_moved_max));
+    cells.push(format!("{:.9}", red.attack_moved_max));
+    cells.push(blue.attack_left_band_ticks.to_string());
+    cells.push(red.attack_left_band_ticks.to_string());
     cells.join(",")
 }
 
@@ -470,7 +494,8 @@ fn parse_movement(cells: &[&str]) -> Result<MovementChecks, String> {
     let int = |index: usize| cell::<u32>(cells[index], "movement checks");
     let long = |index: usize| cell::<u64>(cells[index], "movement checks");
     let real = |index: usize| cell::<f64>(cells[index], "movement checks");
-    let amended = cells.len() == MOVEMENT_COLUMNS;
+    let amended = cells.len() >= A3_MOVEMENT_COLUMNS;
+    let owner_guided = cells.len() == MOVEMENT_COLUMNS;
     let mut sides = [MovementSide::default(); 2];
     for (side, counts) in sides.iter_mut().enumerate() {
         counts.held_moved_ticks = int(side)?;
@@ -483,6 +508,14 @@ fn parse_movement(cells: &[&str]) -> Result<MovementChecks, String> {
             counts.held_moved_clean_ticks = int(15 + side)?;
             counts.held_moved_clean_max = real(17 + side)?;
             counts.shove_e_pair = real(19 + side)?;
+        }
+        if owner_guided {
+            counts.hold_moved_clean_ticks = int(21 + side)?;
+            counts.hold_moved_clean_max = real(23 + side)?;
+            counts.hold_moved_first_contact_ticks = int(25 + side)?;
+            counts.attack_moved_ticks = int(27 + side)?;
+            counts.attack_moved_max = real(29 + side)?;
+            counts.attack_left_band_ticks = int(31 + side)?;
         }
     }
     Ok(MovementChecks {
@@ -1173,6 +1206,10 @@ mod tests {
                         held_moved_clean_ticks: 2,
                         held_moved_clean_max: 0.031_25,
                         shove_e_pair: 0.25,
+                        hold_moved_clean_ticks: 1,
+                        attack_moved_ticks: 2,
+                        attack_moved_max: 0.015_625,
+                        ..MovementSide::default()
                     },
                     MovementSide {
                         held_moved_ticks: 0,

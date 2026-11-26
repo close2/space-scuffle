@@ -1357,3 +1357,30 @@ of any hard check stops the package for the owner.
 Acceptance is otherwise unchanged: H-1..H-7 under `Gated` (H-1 and H-2 now must be 0 except H-1's first-contact
 exclusion, which WP1 builds now as Amendment 1 deferred it), H-6 identity, C-2, friend overlap reported. Battle
 outcomes under `Gated` are not judged at WP1.
+
+## Amendment 3a (owner guidance, 2026-11-29): holding units never move; attacking units may be nudged within their band
+
+**Source: the owner, not figures.** The owner watched StarCraft II footage: marines in combat are pushed slightly by
+allies, so "attacking units are never moved by other bodies" was wrong. Hold Position units never move. Enemies still
+never push each other. This changes Amendment 3, items 1 and 2, and §6.2's H-1. It is not WP1's failure amendment.
+
+1. **Holding units (Hold Position) are never moved by other bodies.** H-1 applies to holding units only and must be 0,
+   with the first-contact exclusion. Under `Gated` a holding body also takes no correction from a fixed one (C-2's
+   "one fixed" row would move it).
+2. **Attacking units may be moved by friends, but never out of their weapon band.** D-δ's constraint is kept under
+   `Gated` and applies to every attacking unit: its correction keeps only the part along its ring, and its new
+   position is kept at its distance from its target. "Attacking" is Amendment 3 item 1's snapshot-band set.
+   Amendment 3 item 2 is dropped: attacking friend pairs share normally, within the band constraint.
+3. **H-1b (reported):** attacking units moved by friends, with the count and the largest displacement per tick. It is
+   judged only by "never leaves its weapon band": an attacker pushed out of its band by a friend (in its band at the
+   end of the tick from where it started, out of it from where it ended, against its target's end position) is a hard
+   failure.
+4. Amendment 3 items 3, 4 and 5 stand.
+
+**Implementation decisions (Q0002), recorded:**
+- Under `Gated` D-δ is part of the pipeline, not read from `nudge_engaged_along_ring`, and covers ranged attackers as
+  well as melee ones (the owner's example is the marine). `Solver` keeps D-δ as it was (melee, by the switch).
+- The band is kept by placing a nudged unit, after each application, back at its distance from its target's position
+  in the solve, which also removes the second-order outward drift of a tangential step.
+- C′-3's transfer treats a held body's partner as unable to move only when it is fixed or holding; an attacking
+  partner takes the transfer along its ring.

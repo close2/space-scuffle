@@ -422,7 +422,7 @@ fn clamp_into_domain(policy: MotionPolicy, map: &SimMap, point: SimVec2) -> SimV
 /// The target `actor` fights: its current target, or else the target of its attack order. A
 /// target lost to fog, which the unit walks away from to its last seen point, is none (plan
 /// `2026-11-24-weapon-validation` Amendment 2): the unit is a walker, not engaged.
-fn engaged_target(actor: &Entity) -> Option<EntityId> {
+pub(super) fn engaged_target(actor: &Entity) -> Option<EntityId> {
     actor
         .current_target
         .or(match actor.order_queue.front() {

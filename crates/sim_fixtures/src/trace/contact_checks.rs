@@ -101,7 +101,7 @@
 //! - Counts are per side and never decrease; the enemy overlap is a running maximum.
 
 use super::activity::{classify, Activity, ActivityInput};
-use super::{attack_target, in_band, to_f64};
+use super::{attack_target, in_band, in_band_at, to_f64};
 use crate::harness::metrics::{reverses, Point};
 use crate::harness::room::{classify_room, RingQuery, RoomClass};
 use sim_core::movement::{CollisionClass, MovementLayer, MovementProbes};
@@ -147,6 +147,42 @@ pub struct MovementSide {
     /// H-2 as repaired (Amendment 3, item 4): D-SHOVE-E counted only on unit-ticks on which
     /// enemy pairs moved the unit and its tick-start state was outside the exclusion, world units.
     pub shove_e_pair: f64,
+    /// H-1 as Amendment 3a redefines it (holding units only), judged: unit-ticks a unit holding at
+    /// the tick's start, outside the first-contact exclusion, was displaced by others.
+    pub hold_moved_clean_ticks: u32,
+    /// The largest displacement of [`Self::hold_moved_clean_ticks`], world units.
+    pub hold_moved_clean_max: f64,
+    /// H-1's exclusion for holding units: such unit-ticks in a first-contact pair.
+    pub hold_moved_first_contact_ticks: u32,
+    /// H-1b (Amendment 3a, reported): unit-ticks a unit attacking at the tick's start, not
+    /// holding, was displaced by others.
+    pub attack_moved_ticks: u32,
+    /// H-1b: the largest such displacement, world units.
+    pub attack_moved_max: f64,
+    /// H-1b, judged: unit-ticks on which such a displacement took the unit out of its band
+    /// ([`left_band`]).
+    pub attack_left_band_ticks: u32,
+}
+
+/// H-1b's test (plan `2026-11-27-gated-movement` Amendment 3a): whether the unit `id`, which
+/// others displaced from `start`, ended the tick out of its weapon band against its attack
+/// target where it stands now, though from `start` it would have been in it.
+#[must_use]
+pub fn left_band(world: &SimWorld, id: EntityId, start: SimVec2) -> bool {
+    let Some(entity) = world.entities.get(&id) else {
+        return false;
+    };
+    let Ok(arch) = world.catalog.get(entity.unit_type_id) else {
+        return false;
+    };
+    let Some(target) = attack_target(entity)
+        .and_then(|t| world.entities.get(&t))
+        .filter(|t| t.is_alive())
+    else {
+        return false;
+    };
+    in_band_at(world, (entity, arch), start, target)
+        && !in_band(world, entity, arch, target, SimScalar::ZERO)
 }
 
 /// The pairs that already overlapped beyond the dead band when they first met: a pair of bodies
@@ -560,6 +596,21 @@ impl ContactMeter {
                     counts.held_moved_clean_ticks += 1;
                     counts.held_moved_clean_max = counts.held_moved_clean_max.max(displaced);
                 }
+            }
+            let held = moved_by_others(before.holding, proposed, moved);
+            if held > HELD_EPSILON {
+                if self.first.involves(id) {
+                    counts.hold_moved_first_contact_ticks += 1;
+                } else {
+                    counts.hold_moved_clean_ticks += 1;
+                    counts.hold_moved_clean_max = counts.hold_moved_clean_max.max(held);
+                }
+            }
+            let attack = moved_by_others(before.engaged && !before.holding, proposed, moved);
+            if attack > HELD_EPSILON {
+                counts.attack_moved_ticks += 1;
+                counts.attack_moved_max = counts.attack_moved_max.max(attack);
+                counts.attack_left_band_ticks += u32::from(left_band(world, id, before.position));
             }
             let speed = current.speed;
             if moved.0.hypot(moved.1) > speed / 8.0 {
