@@ -1234,6 +1234,31 @@ fn b47_corrected_costs_follow_starcraft() -> TestResult {
     Ok(())
 }
 
+/// Checks that the archetype whose analogue is `unit` carries `[minerals, gas, supply, build
+/// ticks]`: the morphed unit's whole cost, supply and time, because the analogue is trained whole
+/// (B-86, B-239). `source` names the 5.0.14 lines of each value.
+fn check_whole_morph(unit: &str, expected: [u32; 4], source: &str) -> TestResult {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let archetype = catalogs
+        .units
+        .archetypes()
+        .find(|archetype| analogue(archetype) == unit)
+        .ok_or(format!("an archetype with the analogue {unit}"))?;
+    assert_eq!(
+        [
+            archetype.mineral_cost,
+            archetype.gas_cost,
+            archetype.supply_cost,
+            archetype.build_time_ticks
+        ],
+        expected,
+        "{} ({unit}): minerals, gas, supply and build ticks as StarCraft II's parent plus its \
+         morph ({source})",
+        archetype.slug
+    );
+    Ok(())
+}
+
 /// B-239: the Brood Lord morphs from the Corruptor in the game, but its analogue is trained whole,
 /// so it carries the morphed unit's total, never the morph's increment. 5.0.14 values: the
 /// Brood Lord's `CostResource` 300 minerals and 250 gas (`liberty` UnitData:11155, :11156) and
@@ -1243,24 +1268,40 @@ fn b47_corrected_costs_follow_starcraft() -> TestResult {
 /// later layer overrides any of these.
 #[test]
 fn b239_the_brood_lord_carries_its_whole_cost_supply_and_time() -> TestResult {
-    let catalogs = sim_fixtures::shipped_catalogs();
-    let archetype = catalogs
-        .units
-        .archetypes()
-        .find(|archetype| analogue(archetype) == "Brood Lord")
-        .ok_or("an archetype with the analogue Brood Lord")?;
-    assert_eq!(
-        [
-            archetype.mineral_cost,
-            archetype.gas_cost,
-            archetype.supply_cost,
-            archetype.build_time_ticks
-        ],
+    check_whole_morph(
+        "Brood Lord",
         [300, 250, 4, 1318],
-        "{}: minerals, gas, supply and build ticks as StarCraft II's Corruptor plus its morph",
-        archetype.slug
-    );
-    Ok(())
+        "liberty UnitData:11155-11156, :11115; AbilData:2518, :2548",
+    )
+}
+
+/// B-86: the Ravager morphs from the Roach in the game; its analogue is trained whole. 5.0.14
+/// values: `CostResource` 100 minerals and 100 gas (`liberty` UnitData:1002, :1003), `Food` -3
+/// (:1000). Its time is the Roach's `LarvaTrain` `Train10` 27 Normal s (`liberty` AbilData:2510)
+/// plus the `MorphToRavager` Stats delay, 17 Normal s in `voidmulti` AbilData:744 (overriding
+/// `void` AbilData:239's 12): 44 x 25 / 1.4 = 785.7 ticks, rounded half up to 786.
+#[test]
+fn b86_the_ravager_carries_its_whole_cost_supply_and_time() -> TestResult {
+    check_whole_morph(
+        "Ravager",
+        [100, 100, 3, 786],
+        "liberty UnitData:1000-1003; liberty AbilData:2510; voidmulti AbilData:744",
+    )
+}
+
+/// B-86: the Lurker morphs from the Hydralisk in the game; its analogue is trained whole. 5.0.14
+/// values: `LurkerMP` `CostResource` 150 minerals and 150 gas (`liberty` UnitData:721, :722),
+/// `Food` -3 (:719). Its time is the Hydralisk's `LarvaTrain` `Train4` 33 Normal s (`liberty`
+/// AbilData:2494) plus the `MorphToLurker` Stats delay, 25.25 Normal s in `voidmulti`
+/// AbilData:724 (overriding `void` AbilData:269's 25): 58.25 x 25 / 1.4 = 1040.2 ticks, rounded
+/// half up to 1040.
+#[test]
+fn b86_the_lurker_carries_its_whole_cost_supply_and_time() -> TestResult {
+    check_whole_morph(
+        "Lurker",
+        [150, 150, 3, 1040],
+        "liberty UnitData:719-722; liberty AbilData:2494; voidmulti AbilData:724",
+    )
 }
 
 #[test]
