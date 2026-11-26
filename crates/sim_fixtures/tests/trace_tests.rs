@@ -1347,3 +1347,27 @@ fn the_clearance_meter_leaves_the_route_traces_other_outputs_byte_identical() ->
     }
     Ok(())
 }
+
+/// Plan `2026-11-29-wall-clearance` Amendment 1 (Q0134's answer): a crowd scene plays to its
+/// known answers under the shipped rules. Twelve units of three radii walk through the five-cell
+/// chokepoint: every move ends by the bound with none given up, no body lies deeper in a wall
+/// than the depth bound, and the clearance meter saw every unit walk.
+#[test]
+fn a_crowd_scene_plays_to_its_known_answers() -> TestResult {
+    use sim_fixtures::harness::RunOptions;
+    use sim_fixtures::trace::crowd::{play_crowd_scene, CrowdRow, CrowdScene, Geometry};
+    let scene = CrowdScene {
+        geometry: Geometry::Choke(5),
+        size: 12,
+        seed: 1,
+    };
+    let row = play_crowd_scene(&scene, &RunOptions::default())?;
+    assert!(row.all_end(), "{}", row.csv());
+    assert!(row.depth_ok(), "{}", row.csv());
+    assert!(row.figures.walking >= 12 * 100, "{}", row.csv());
+    assert_eq!(
+        row.csv().split(',').count(),
+        CrowdRow::HEADER.split(',').count()
+    );
+    Ok(())
+}
