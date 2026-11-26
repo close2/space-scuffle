@@ -337,9 +337,7 @@ impl HangarCycle {
                 if presented_members > 0 || launched > 0 {
                     return false;
                 }
-                self.target = world
-                    .spawn_unit(self.target_kind, PlayerId(1), self.target_at)
-                    .expect("open ground for a new target");
+                self.target = spawn_target(world, self.target_kind, self.target_at);
                 for host in self.hosts {
                     if let Some(unit) = world.entities.get_mut(&host) {
                         unit.issue_order(UnitOrder::attack(self.target), false)
@@ -362,6 +360,21 @@ impl HangarCycle {
             .filter(|bubble| bubble.unit_type == self.member)
             .count()
     }
+}
+
+/// Spawns a hangar target of `kind` for the enemy at `at`, holding its position, so the hangars
+/// and their members find it where they left it.
+fn spawn_target(world: &mut SimWorld, kind: UnitTypeId, at: SimVec2) -> EntityId {
+    let target = world
+        .spawn_unit(kind, PlayerId(1), at)
+        .expect("room for the target");
+    world
+        .entities
+        .get_mut(&target)
+        .expect("the target")
+        .issue_order(UnitOrder::HoldPosition, false)
+        .expect("a hold order");
+    target
 }
 
 /// Stages H-20 on `world` (see the module docs): every mobile unit is killed, the local player
@@ -432,9 +445,7 @@ pub fn stage_hangars(world: &mut SimWorld, assets: &Path) -> HangarCycle {
             .expect("room for a second hangar unit"),
     ];
     let target_at = at + toward * SimScalar::from_i32(6);
-    let target = world
-        .spawn_unit(target_kind, PlayerId(1), target_at)
-        .expect("room for the target");
+    let target = spawn_target(world, target_kind, target_at);
     for host in hosts {
         world
             .entities
