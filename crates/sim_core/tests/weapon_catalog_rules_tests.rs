@@ -410,11 +410,13 @@ fn an_instant_weapon_or_a_zero_reveal_authoring_launch_visibility_is_refused() {
 }
 
 /// How 5.0.14 delivers a weapon's damage: through a missile its launch effect creates
-/// (`CEffectLaunchMissile`), or at once.
+/// (`CEffectLaunchMissile`), at once, or not at all: a launch weapon spends its hangar
+/// (`CEffectUseMagazine`; plan `2026-11-28-carrier-interceptors` D-4).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Delivery {
     Missile,
     Instant,
+    Launch,
 }
 
 /// One row of the delivery census (W-10, plan `2026-11-27-weapon-delivery` D-1): a shipped
@@ -446,7 +448,7 @@ const fn row(
 }
 
 /// Every shipped weapon, unit and structure, mode overrides included (W-10).
-const DELIVERY_CENSUS: [DeliveryRow; 44] = [
+const DELIVERY_CENSUS: [DeliveryRow; 45] = [
     row("welder_drone", "Drill Slash", "FusionCutter, liberty WeaponData:195", Delivery::Instant),
     row("pulse_bot", "Pulse Carbine", "GuassRifle, liberty WeaponData:203", Delivery::Instant),
     row("rhino_beetle", "Acid Saliva", "AcidSaliva -> AcidSalivaLM, liberty EffectData:2136", Delivery::Missile),
@@ -487,15 +489,20 @@ const DELIVERY_CENSUS: [DeliveryRow; 44] = [
     row("void_goliath", "Phase Disruptor", "PhaseDisruptors, liberty WeaponData:507", Delivery::Instant),
     row("tripod_annihilator", "Thermal Lance Sweep", "ThermalLances, liberty WeaponData:493", Delivery::Instant),
     row("prismatic_saucer", "Prismatic Beam", "PrismaticBeam, liberty WeaponData:118", Delivery::Instant),
-    DeliveryRow {
-        slug: "mothership_carrier",
-        weapon: "Interceptor Fleet Salvo",
-        game: "InterceptorLaunch, liberty WeaponData:601, spends interceptors through CarrierInterceptor, a \
-               CEffectUseMagazine, liberty EffectData:1940; the Mothership's MothershipBeam is instant, \
-               voidmulti EffectData:2669",
-        delivery: Delivery::Instant,
-        known_bug: Some("B-22"),
-    },
+    row(
+        "mothership_carrier",
+        "Interceptor Launch",
+        "InterceptorLaunch -> InterceptorLaunchPersistent -> CarrierInterceptor, a CEffectUseMagazine, \
+         liberty WeaponData:601, EffectData:893, :1940",
+        Delivery::Launch,
+    ),
+    row(
+        "saucer_interceptor",
+        "Interceptor Beam",
+        "InterceptorBeam -> InterceptorBeamPersistent -> InterceptorBeamDamage, liberty WeaponData:626, \
+         EffectData:1943, :1953",
+        Delivery::Instant,
+    ),
     row("nectar_worker", "Mandible Bite", "Spines, liberty WeaponData:349", Delivery::Instant),
     row("razor_mantis", "Scythe Slash", "Claws, liberty WeaponData:357", Delivery::Instant),
     row("volatile_tick", "Volatile Burst", "VolatileBurst, liberty WeaponData:463", Delivery::Instant),
@@ -554,8 +561,8 @@ fn every_weapon(archetype: &UnitArchetype) -> impl Iterator<Item = &WeaponSpec> 
 
 /// W-10 (plan `2026-11-27-weapon-delivery` D-1, §2.2 rules 1, 2, 7): every shipped weapon is
 /// delivered as 5.0.14 delivers it, a missile exactly where the game's weapon launches one
-/// (`projectile_speed` set). A row under a registered bug pins today's delivery: the Mothership
-/// Carrier's salvo stays a missile until B-22 builds interceptors.
+/// (`projectile_speed` set), and a launch weapon exactly where it spends a hangar (H-13, plan
+/// `2026-11-28-carrier-interceptors`). A row under a registered bug pins today's delivery.
 #[test]
 fn every_weapon_is_delivered_as_starcraft_delivers_it() -> TestResult {
     let world = flat_world(16)?;
@@ -570,10 +577,14 @@ fn every_weapon_is_delivered_as_starcraft_delivers_it() -> TestResult {
             })?;
             seen.insert((row.slug, row.weapon));
             let missile = weapon.projectile_speed.is_some();
+            let launch = weapon.magazine_launch.is_some();
             match row.known_bug {
                 None => assert_eq!(
-                    missile,
-                    row.delivery == Delivery::Missile,
+                    (missile, launch),
+                    (
+                        row.delivery == Delivery::Missile,
+                        row.delivery == Delivery::Launch
+                    ),
                     "{}'s {} is delivered as {} ({:?})",
                     row.slug,
                     row.weapon,
@@ -603,8 +614,9 @@ fn every_weapon_is_delivered_as_starcraft_delivers_it() -> TestResult {
 /// `2026-11-27-weapon-delivery` D-7: every shipped missile weapon reads the engine default of
 /// `CEffectLaunchMissile`, a snapshot (`core` EffectData:102), which no 5.0.14 weapon launch
 /// overrides (the five launch overrides of the game data are spells); a weapon whose game
-/// counterpart launches no missile (the census row under B-22) shows nothing at its release
-/// (`Hidden`), until the bug replaces its missile. Mode weapons are included.
+/// counterpart launches no missile shows nothing at its release (`Hidden`): a launch weapon
+/// (plan `2026-11-28-carrier-interceptors` D-4), or a census row under a registered bug.
+/// Mode weapons are included.
 #[test]
 fn launch_visibility_follows_starcraft() -> TestResult {
     let world = flat_world(16)?;
@@ -612,8 +624,10 @@ fn launch_visibility_follows_starcraft() -> TestResult {
     for archetype in world.catalog.archetypes() {
         for weapon in every_weapon(archetype) {
             missiles += usize::from(weapon.projectile_speed.is_some());
-            let launchless = census_row(&archetype.slug, &weapon.name)
-                .is_some_and(|row| row.known_bug.is_some() && row.delivery == Delivery::Instant);
+            let launchless = weapon.magazine_launch.is_some()
+                || census_row(&archetype.slug, &weapon.name).is_some_and(|row| {
+                    row.known_bug.is_some() && row.delivery == Delivery::Instant
+                });
             let expected = if launchless {
                 sim_types::AttackVisibility::Hidden
             } else {
@@ -1237,7 +1251,7 @@ type BonusRow = (
 /// the catalog weapon a row is for when the analogue's weapons differ (plan
 /// `2026-11-05-sc2-deviation-fixes` WP6, B-14; evidence §6.1). A row whose source says "none" is
 /// an analogue whose damage effects set no `AttributeBonus` anywhere in the layer chain.
-const SC2_ATTRIBUTE_BONUSES: [BonusRow; 41] = [
+const SC2_ATTRIBUTE_BONUSES: [BonusRow; 42] = [
     ("SCV", None, &[], "none"),
     ("Marine", None, &[], "none"),
     ("Roach", None, &[], "none"),
@@ -1327,7 +1341,8 @@ const SC2_ATTRIBUTE_BONUSES: [BonusRow; 41] = [
         &[(Attribute::Armored, 4.0)],
         "PrismaticBeamMUx1, liberty EffectData:2050",
     ),
-    ("Carrier / Mothership", None, &[], "none"),
+    ("Carrier", None, &[], "none"),
+    ("Interceptor", None, &[], "none"),
     ("Drone", None, &[], "none"),
     ("Zergling", None, &[], "none"),
     (
@@ -2115,8 +2130,9 @@ fn b90_weapon_movement_follows_starcraft() -> TestResult {
 /// every damage effect of a unit on the air plane (air units and the Colossus, `liberty`
 /// EffectData:2421, :1715, :2229, :2589, :2788, :2566, :1984, :125, `void` :1807, :2935,
 /// `voidmulti` :2264, …), each revealing its attacker for `AttackReveal`'s 3 Normal s (`core`
-/// BehaviorData:237–240), 54 whole ticks; every other weapon keeps the `Snapshot` default, and no
-/// shipped weapon is `Hidden`.
+/// BehaviorData:237–240), 54 whole ticks; every other weapon keeps the `Snapshot` default; only a
+/// launch weapon, which strikes nothing (`InterceptorLaunch` `Options Hidden`, `liberty`
+/// WeaponData:601–614; plan `2026-11-28-carrier-interceptors` D-4), is `Hidden`.
 #[test]
 fn attack_visibility_follows_starcraft() -> TestResult {
     let catalog =
@@ -2137,7 +2153,9 @@ fn attack_visibility_follows_starcraft() -> TestResult {
                 .map(move |weapon| (mover, weapon))
         });
         for (mover, weapon) in own.chain(modes) {
-            let expected = if air_plane(mover) {
+            let expected = if weapon.magazine_launch.is_some() {
+                sim_types::AttackVisibility::Hidden
+            } else if air_plane(mover) {
                 visible += 1;
                 sim_types::AttackVisibility::Visible { reveal_ticks: 54 }
             } else {

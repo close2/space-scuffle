@@ -74,10 +74,11 @@ const FLOAT_ALLOWLIST: &[FloatAllowance] = &[
     },
     FloatAllowance {
         path: "crates/sim_core/src/catalog.rs",
-        count: 81,
+        count: 82,
         reason: "authoring: catalog RON fields are decimal and converted to fixed-point at load \
                  (the two detection radii: plan `2026-11-23-vision-and-detection` D-2; a missile \
-                 mover's bound and phases: plan `2026-11-27-weapon-delivery` D-2)",
+                 mover's bound and phases: plan `2026-11-27-weapon-delivery` D-2; a hangar's \
+                 leash: plan `2026-11-28-carrier-interceptors` D-2)",
     },
     FloatAllowance {
         path: "crates/sim_core/src/catalog/validation.rs",

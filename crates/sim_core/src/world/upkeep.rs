@@ -34,7 +34,7 @@
 //! - Regeneration never exceeds `max_hp` or `max_shields`.
 //! - A new entity's counter is `u16::MAX`, which satisfies every delay.
 
-use crate::catalog::UnitCatalog;
+use crate::catalog::{UnitArchetype, UnitCatalog};
 use crate::entity::Entity;
 use crate::SimWorld;
 use sim_types::SimScalar;
@@ -60,6 +60,31 @@ impl SimWorld {
         // Effects may have killed a ready producer; completion rechecks its life.
         self.complete_production();
     }
+}
+
+/// One tick of a docked hangar member's regeneration (plan `2026-11-28-carrier-interceptors`
+/// D-3): the clock rises, then life and shields regenerate by the member archetype `arch`'s own
+/// rules, as a completed entity's do in [`upkeep_entity`]. `max_hp` is the member's life maximum
+/// for its owner.
+pub(crate) fn regenerate_docked(
+    arch: &UnitArchetype,
+    max_hp: SimScalar,
+    member: &mut crate::hangar::DockedMember,
+) {
+    member.ticks_since_last_damage = member.ticks_since_last_damage.saturating_add(1);
+    if member.ticks_since_last_damage >= arch.hp_regen_delay_ticks {
+        member.hp = (member.hp + arch.hp_regen_per_tick).min(max_hp);
+    }
+    if shields_regenerate(arch, member.ticks_since_last_damage) {
+        member.shields = (member.shields + arch.shield_regen_per_tick).min(arch.max_shields);
+    }
+}
+
+/// Whether shields regenerate `ticks_since_last_damage` ticks after the last damage: the
+/// archetype has a shield regeneration delay and it has passed.
+fn shields_regenerate(arch: &UnitArchetype, ticks_since_last_damage: u16) -> bool {
+    arch.shield_regen_delay_ticks
+        .is_some_and(|delay| ticks_since_last_damage >= delay)
 }
 
 /// Advances one living entity's channel, cooldown, buff, damage-delay, life and energy
@@ -134,9 +159,7 @@ fn upkeep_entity(entity: &mut Entity, catalog: &UnitCatalog) {
             }
         }
 
-        let regenerates = arch
-            .shield_regen_delay_ticks
-            .is_some_and(|delay| entity.ticks_since_last_damage >= delay);
+        let regenerates = shields_regenerate(arch, entity.ticks_since_last_damage);
         if regenerates && entity.is_completed {
             entity.shields = (entity.shields + arch.shield_regen_per_tick).min(arch.max_shields);
         }

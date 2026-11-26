@@ -90,7 +90,7 @@ fn validate_mover_phases(
     Ok(top)
 }
 
-fn invalid(definition: &str, field: &str, reason: &'static str) -> SimCoreError {
+pub(super) fn invalid(definition: &str, field: &str, reason: &'static str) -> SimCoreError {
     SimCoreError::CatalogInvalidValue {
         definition: definition.to_owned(),
         field: field.to_owned(),
@@ -138,7 +138,7 @@ fn nonnegative(definition: &str, field: &str, value: f64) -> SimResult<()> {
 }
 
 /// Rejects a value that would not remain strictly positive once quantized to Q32.32.
-fn positive(definition: &str, field: &str, value: f32) -> SimResult<()> {
+pub(super) fn positive(definition: &str, field: &str, value: f32) -> SimResult<()> {
     scalar(definition, field, f64::from(value))?;
     if SimScalar::from_f32_lossy(value) <= SimScalar::ZERO {
         return Err(invalid(
@@ -734,6 +734,7 @@ impl UnitArchetypeDef {
         self.validate_harvester()?;
         self.validate_attack_dash()?;
         self.validate_overclock()?;
+        self.validate_hangar()?;
         ability_rates(&self.slug, "abilities", &self.abilities)?;
         ability_rates(
             &self.slug,
@@ -1090,7 +1091,11 @@ impl WeaponSpecDef {
                 "a visible launch reveals its attacker for at least one tick",
             ));
         }
-        if self.projectile_speed.is_none() && self.launch_visibility != AttackVisibility::default()
+        // A launch weapon (plan `2026-11-28-carrier-interceptors` D-4) is held to `Hidden` by
+        // its own rule.
+        if self.projectile_speed.is_none()
+            && self.magazine_launch.is_none()
+            && self.launch_visibility != AttackVisibility::default()
         {
             return Err(invalid(
                 definition,
@@ -1098,7 +1103,8 @@ impl WeaponSpecDef {
                 "an instant weapon launches no missile to show",
             ));
         }
-        self.validate_movers(definition, prefix)
+        self.validate_movers(definition, prefix)?;
+        self.validate_magazine_launch(definition, prefix)
     }
 
     /// The missile movers (plan `2026-11-27-weapon-delivery` D-4): only a missile weapon has

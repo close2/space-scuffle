@@ -213,15 +213,18 @@ struct ShippedWeapon {
 }
 
 /// Every weapon a shipped mobile unit can fire: its air weapon, the weapon its ground plane
-/// resolves to, and each mode's ground weapon override.
+/// resolves to, and each mode's ground weapon override. A launch weapon strikes nothing and
+/// publishes nothing: its members, shipped units themselves, are the ones that strike (plan
+/// `2026-11-28-carrier-interceptors` D-4, D-11 item 4), so it is left out.
 fn shipped_weapons(world: &SimWorld) -> Vec<ShippedWeapon> {
     let mut weapons = Vec::new();
     for arch in world.catalog.archetypes() {
         if matches!(arch.shape, ShapeKind::BuildingDome { .. }) {
             continue;
         }
+        let strikes = |weapon: &WeaponSpec| weapon.magazine_launch.is_none();
         let ground = arch.ground_weapon.clone().or_else(|| arch.weapon.clone());
-        if let Some(weapon) = ground {
+        if let Some(weapon) = ground.filter(strikes) {
             weapons.push(ShippedWeapon {
                 arch: arch.clone(),
                 weapon,
@@ -233,7 +236,7 @@ fn shipped_weapons(world: &SimWorld) -> Vec<ShippedWeapon> {
                 mode: None,
             });
         }
-        if let Some(weapon) = arch.air_weapon.clone() {
+        if let Some(weapon) = arch.air_weapon.clone().filter(strikes) {
             weapons.push(ShippedWeapon {
                 arch: arch.clone(),
                 weapon,

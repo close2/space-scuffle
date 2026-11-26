@@ -649,3 +649,57 @@ fn a_unit_whose_modes_ship_no_atlas_keeps_its_default_atlas() -> TestResult {
         .is_empty());
     Ok(())
 }
+
+/// H-16 (plan `2026-11-28-carrier-interceptors` D-11 item 1): a hangar unit launches its
+/// member into the battle, so it is presentable only when the member's media are admitted too.
+/// Two shipped mobile identities with real media, by id, stand in for the hangar unit and its
+/// member on an edited catalog; their real files are copied to a temporary root, the member's
+/// only in the second boot.
+#[test]
+fn a_hangar_unit_is_presentable_only_with_its_members_media() -> TestResult {
+    let mut catalog = bundle()?.catalogs.units;
+    let mut shipped: Vec<(UnitTypeId, String)> = catalog
+        .archetypes()
+        .filter(|arch| !matches!(arch.shape, ShapeKind::BuildingDome { .. }))
+        .filter(|arch| ships_media(&arch.slug))
+        .map(|arch| (arch.unit_type_id, arch.slug.clone()))
+        .collect();
+    shipped.sort();
+    let [(host, host_slug), (member, member_slug), ..] = shipped.as_slice() else {
+        return Err("two shipped mobile identities with media".into());
+    };
+    catalog.get_mut(*host)?.capabilities.hangar = Some(sim_types::HangarSpec {
+        member: *member,
+        max_count: 8,
+        start_count: 4,
+        build_ticks: 214,
+        queue_size: 5,
+        auto_build: true,
+        leash: sim_types::SimScalar::from_i32(12),
+        on_death: sim_types::HangarDeath::KillMembers,
+    });
+    for with_member in [false, true] {
+        let directory = temporary_root()?;
+        copy_media(directory.path(), host_slug, true)?;
+        if with_member {
+            copy_media(directory.path(), member_slug, true)?;
+        }
+        let mut app = app(
+            directory.path(),
+            catalog.clone(),
+            LabState::default(),
+            MediaFailurePolicy::default(),
+        )?;
+        app.update();
+        let result = presentable(&app, *host);
+        if with_member {
+            result?;
+        } else {
+            assert!(
+                matches!(result, Err(ClientMediaError::Unavailable { ref slug, .. }) if slug == member_slug),
+                "{result:?}"
+            );
+        }
+    }
+    Ok(())
+}

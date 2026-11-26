@@ -1052,6 +1052,12 @@ impl SimWorld {
     /// shooter or change its orders, but cannot move, change the owner of, or reap it before
     /// this dispatch phase finishes.
     fn dispatch_shot(&mut self, shot: PreparedShot) {
+        // A launch weapon starts its hangar's launch channel instead of striking (plan
+        // `2026-11-28-carrier-interceptors` D-4).
+        if let Some(launch) = shot.weapon.magazine_launch {
+            self.start_launch_channel(shot.attacker, shot.target, launch);
+            return;
+        }
         let attacker = shot.attacker;
         let suicide = shot.weapon.suicide_on_attack;
         if let Some(speed) = shot.weapon.projectile_speed {

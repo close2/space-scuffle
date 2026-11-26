@@ -289,3 +289,159 @@ fn candidate_definition_changes_do_not_relabel_committed_generation() -> TestRes
     );
     Ok(())
 }
+
+/// One tick of `world` and the snapshot it publishes.
+fn tick(world: &mut sim_core::SimWorld, tick: &mut u32) -> sim_types::snapshot::RenderSnapshot {
+    *tick += 1;
+    let mut out = sim_types::snapshot::RenderSnapshot::default();
+    world.step_into(
+        &sim_types::TickBundle {
+            tick: sim_types::Tick(*tick),
+            commands: Vec::new(),
+            state_checksum: None,
+        },
+        &mut out,
+    );
+    out
+}
+
+/// The death looks the client draws for `out`'s events of units of `kind`: the spawn the
+/// effect system asks for each `BubbleShatter` (the unit's `death` effect), or the legacy
+/// shatter where none replaces it. Each is one death drawn.
+fn deaths_drawn(
+    out: &sim_types::snapshot::RenderSnapshot,
+    kind: sim_types::UnitTypeId,
+    tables: &client::effects::catalog::UnitEffectTables,
+    effects: &client::effects::catalog::EffectCatalog,
+) -> usize {
+    use sim_types::snapshot::CombatEventVisual;
+    out.combat_events
+        .iter()
+        .filter(|event| {
+            matches!(event, CombatEventVisual::BubbleShatter { unit_type, .. } if *unit_type == kind)
+        })
+        .filter(|event| {
+            client::effects::systems::spawn_request(event, tables, effects).is_some_and(|request| {
+                Some(request.effect) == tables.death(kind)
+            }) || !client::effects::systems::replaces_shatter(Some(tables), kind)
+        })
+        .count()
+}
+
+/// H-19 (plan `2026-11-28-carrier-interceptors` D-11 item 3): a hangar's member that docks
+/// leaves the snapshot with no death drawn, while a member that is killed draws its death. The
+/// shipped hangar unit, found by property, launches at a passive air enemy; the enemy is
+/// removed, the members fly home and dock; then a relaunched member is killed.
+#[test]
+#[allow(clippy::too_many_lines, reason = "one scenario, step by step")]
+fn a_docking_member_draws_no_death_and_a_killed_one_does() -> TestResult {
+    use sim_map::{CliffLevel, GameMap, MapCell};
+    use sim_types::{MoverType, SimScalar, SimVec2, UnitOrder};
+    let root = client::ResolvedAssetsRoot::from_directory(
+        &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets"),
+    )?;
+    let effects = client::effects::catalog::EffectCatalog::load(
+        &root
+            .as_path()
+            .join(client::effects::catalog::EFFECTS_CATALOG_PATH),
+        root.as_path(),
+    )?;
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let tables = client::effects::catalog::UnitEffectTables::build(&catalogs.units, &effects)?;
+    let map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0)))?;
+    let mut world =
+        sim_core::SimWorld::with_catalogs(map, 0x19, catalogs.units, catalogs.upgrades)?;
+    let (host, member) = world
+        .catalog
+        .archetypes()
+        .find_map(|arch| {
+            arch.capabilities
+                .hangar
+                .map(|hangar| (arch.unit_type_id, hangar.member))
+        })
+        .ok_or("the shipped catalog has a hangar unit")?;
+    assert!(
+        tables.death(member).is_some()
+            || !client::effects::systems::replaces_shatter(Some(&tables), member),
+        "a member's death is drawn"
+    );
+    let mut air: Vec<_> = world
+        .catalog
+        .archetypes()
+        .filter(|arch| arch.mover_type == MoverType::Air && arch.max_speed > SimScalar::ZERO)
+        .filter(|arch| arch.capabilities.hangar.is_none() && arch.selectable)
+        .filter(|arch| arch.weapon.is_some() || arch.air_weapon.is_some())
+        .map(|arch| arch.unit_type_id)
+        .collect();
+    air.sort();
+    let target_kind = *air.first().ok_or("a plain air unit")?;
+    {
+        let arch = world.catalog.get_mut(target_kind)?;
+        arch.weapon = None;
+        arch.ground_weapon = None;
+        arch.air_weapon = None;
+        arch.max_hp = SimScalar::from_i32(5000);
+    }
+    let (me, foe) = (PlayerId(0), PlayerId(1));
+    let carrier = world.spawn_unit(host, me, SimVec2::from_i32(20, 32))?;
+    let mut target = world.spawn_unit(target_kind, foe, SimVec2::from_i32(26, 32))?;
+    world
+        .entities
+        .get_mut(&carrier)
+        .ok_or("carrier")?
+        .issue_order(UnitOrder::attack(target), false)?;
+    let linked = |world: &sim_core::SimWorld| -> Vec<sim_types::EntityId> {
+        world
+            .entities
+            .values()
+            .filter(|e| e.hangar_link().is_some_and(|link| link.hangar == carrier))
+            .map(|e| e.id)
+            .collect()
+    };
+    let mut now = 0;
+    while linked(&world).len() < 4 && now < 200 {
+        tick(&mut world, &mut now);
+    }
+    let launched = linked(&world);
+    assert_eq!(launched.len(), 4, "the start members are launched");
+    // The target dies (its own death is of another kind): every member flies home and docks,
+    // leaving the snapshot undrawn.
+    world.entities.get_mut(&target).ok_or("target")?.hp = SimScalar::ZERO;
+    let mut docked_deaths = 0;
+    let mut out = tick(&mut world, &mut now);
+    for _ in 0..300 {
+        docked_deaths += deaths_drawn(&out, member, &tables, &effects);
+        if linked(&world).is_empty() {
+            break;
+        }
+        out = tick(&mut world, &mut now);
+    }
+    assert!(linked(&world).is_empty(), "every member docked");
+    assert_eq!(docked_deaths, 0, "a dock draws no death");
+    assert!(
+        out.bubbles
+            .iter()
+            .all(|bubble| !launched.contains(&bubble.entity_id)),
+        "docked members leave the snapshot"
+    );
+    // A new target: a member relaunches and is killed, and its death is drawn.
+    target = world.spawn_unit(target_kind, foe, SimVec2::from_i32(26, 32))?;
+    world
+        .entities
+        .get_mut(&carrier)
+        .ok_or("carrier")?
+        .issue_order(UnitOrder::attack(target), false)?;
+    while linked(&world).is_empty() && now < 1000 {
+        tick(&mut world, &mut now);
+    }
+    let victim = *linked(&world).first().ok_or("a relaunched member")?;
+    world.entities.get_mut(&victim).ok_or("victim")?.hp = SimScalar::ZERO;
+    let out = tick(&mut world, &mut now);
+    assert_eq!(
+        deaths_drawn(&out, member, &tables, &effects),
+        1,
+        "a killed member's death is drawn"
+    );
+    assert!(!world.entities.contains_key(&victim));
+    Ok(())
+}

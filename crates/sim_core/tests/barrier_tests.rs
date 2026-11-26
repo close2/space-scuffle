@@ -76,6 +76,7 @@ fn weapon(damage: i32, period: u16) -> WeaponSpec {
         missile_validation: sim_types::MissileValidation::default(),
         launch_visibility: sim_types::AttackVisibility::Snapshot,
         missile_movers: Vec::new(),
+        magazine_launch: None,
     }
 }
 

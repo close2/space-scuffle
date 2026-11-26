@@ -392,6 +392,7 @@ impl SimWorld {
         let mut entity = Entity::from_archetype(id, owner, pos, arch);
         entity.max_hp = SimScalar::from_raw(hp);
         entity.hp = entity.max_hp;
+        self.stock_hangar(&mut entity, arch)?;
         Ok(PreparedSpawn {
             entity,
             entity_shape: arch.shape,
@@ -400,6 +401,33 @@ impl SimWorld {
             slot,
             economy,
         })
+    }
+
+    /// Docks a new hangar unit's free start members at their full vitals for its owner (plan
+    /// `2026-11-28-carrier-interceptors` D-3); a unit without a hangar is left as it is.
+    ///
+    /// # Errors
+    /// [`ProductionInvariant::MissingArchetype`] when the hangar's member is not in the catalog.
+    fn stock_hangar(
+        &self,
+        entity: &mut Entity,
+        arch: &UnitArchetype,
+    ) -> Result<(), ProductionInvariant> {
+        let (Some(spec), Some(state)) = (arch.capabilities.hangar, entity.hangar.as_mut()) else {
+            return Ok(());
+        };
+        let member =
+            self.catalog
+                .get(spec.member)
+                .map_err(|_| ProductionInvariant::MissingArchetype {
+                    entity: entity.id,
+                    unit_type: spec.member,
+                })?;
+        let full = self.full_member(entity.owner, member);
+        state
+            .docked
+            .extend(std::iter::repeat_n(full, usize::from(spec.start_count)));
+        Ok(())
     }
 
     pub(crate) fn commit_spawn(&mut self, prepared: PreparedSpawn) -> EntityId {

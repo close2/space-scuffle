@@ -303,6 +303,7 @@ fn test_dual_weapon_ground_air_and_cliffwalker_selection() {
         missile_validation: sim_types::MissileValidation::default(),
         launch_visibility: sim_types::AttackVisibility::Snapshot,
         missile_movers: Vec::new(),
+        magazine_launch: None,
     };
 
     let air_weapon_high_dps = WeaponSpec {
@@ -347,6 +348,7 @@ fn test_dual_weapon_ground_air_and_cliffwalker_selection() {
         missile_validation: sim_types::MissileValidation::default(),
         launch_visibility: sim_types::AttackVisibility::Snapshot,
         missile_movers: Vec::new(),
+        magazine_launch: None,
     };
 
     let arch = UnitArchetype {
@@ -417,6 +419,8 @@ fn test_dual_weapon_ground_air_and_cliffwalker_selection() {
         placement_excludes: sim_types::PlacementFlags::empty(),
         default_stance_orders: None,
         collision_class: None,
+        selectable: true,
+        order_targetable: true,
     };
 
     // 1. Target Ground -> Chooses Ground weapon

@@ -141,7 +141,15 @@ use std::collections::BTreeMap;
 /// `ActiveProjectile::{mover, phase, travelled}`, after `target_teleport_count` (plan
 /// `2026-11-27-weapon-delivery` D-6). The number is the next free at merge: 54 and 55 are
 /// reserved for the Gated movement plan.
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 56;
+/// Schema 57 adds each entity's hangar, `Entity::hangar` (an option tag, then its docked records'
+/// count and each record's life, shields and regeneration clock, its launched and queued counts,
+/// its build progress, its target and its launch channel's tries and countdown), and each
+/// launched member's link home, `Entity::hangar_link` (an option tag, then the hangar unit's id
+/// and the returning flag), after `teleport_count`; and each weapon's magazine launch,
+/// `WeaponSpec::magazine_launch` (an option tag, then its tries and interval), after
+/// `missile_movers` (plan `2026-11-28-carrier-interceptors` D-3, D-4, §5). The number is the next
+/// free at merge: 54 and 55 are reserved for the Gated movement plan.
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 57;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.

@@ -1156,6 +1156,11 @@ fn can_raise_matches_admission_for_every_catalog_pair() -> TestResult {
             (100, 2)
         };
         for &(member_type, member) in &members {
+            // A unit no player selects (a hangar's member) takes no player command at all:
+            // admission drops it (plan `2026-11-28-carrier-interceptors` D-8, H-9).
+            if !world.catalog.get(member_type)?.selectable {
+                continue;
+            }
             pairs.push((member_type, structure));
             commands.push(command(HOME, vec![member], build_at(structure, site)));
         }

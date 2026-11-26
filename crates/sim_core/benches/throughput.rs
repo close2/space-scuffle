@@ -83,10 +83,17 @@ struct Scenario {
     /// cadence at the second army (plan `2026-11-10-spellcaster-mechanics` WP6).
     #[serde(default)]
     spells: Vec<SpellLoad>,
-    /// Ticks stepped, casts included, before the measured ticks, so a spell load is in its
-    /// steady state when the clock starts.
+    /// Ticks stepped, casts included, before the measured ticks, so a spell load (or a hangar
+    /// load) is in its steady state when the clock starts.
     #[serde(default)]
     warm_ticks: u32,
+    /// Hangar units added to the first army on a flat map, attack-moving with it (plan
+    /// `2026-11-28-carrier-interceptors` §5): the first archetype of the catalog, by id, whose
+    /// capabilities carry a hangar, found by property. Their owner can pay for every member
+    /// build, so the magazines refill as members die and the measured ticks include launches,
+    /// members fighting, docking and rebuilding.
+    #[serde(default)]
+    hangar_units: u32,
 }
 
 /// One kind of spellcaster in a spell scenario: `casters` units of `caster_slug` for the
@@ -119,7 +126,9 @@ impl Scenario {
             .map_file
             .clone()
             .unwrap_or_else(|| format!("{0}x{0}", self.map_cells));
-        if self.spells.is_empty() {
+        if self.hangar_units > 0 {
+            format!("{map}, {} hangar units", self.hangar_units)
+        } else if self.spells.is_empty() {
             map
         } else {
             let casters: u32 = self.spells.iter().map(|load| load.casters).sum();
@@ -201,6 +210,7 @@ fn build_world(
             red.push(world.spawn_unit(unit_type, PlayerId(1), spawn)?);
         }
     }
+    blue.extend(spawn_hangar_units(&mut world, scenario.hangar_units)?);
     let far_target = scenario.map_cells - ORDER_MARGIN;
     let mut tick = 0;
     step_with(
@@ -218,6 +228,48 @@ fn build_world(
         )],
     );
     Ok((world, tick, red))
+}
+
+/// Cells between two hangar units in their row below the first army.
+const HANGAR_SPACING: u32 = 3;
+
+/// Row of the hangar units, below the first army's formation.
+const HANGAR_ROW: u32 = 2;
+
+/// Minerals given to the first player of a hangar scenario: enough for every member build of
+/// the measured run, so auto-build never waits for income (which the benchmark has none of).
+const HANGAR_MINERALS: u32 = 1_000_000;
+
+/// Spawns `count` hangar units for the first player in a row below its formation and gives the
+/// player the minerals for their builds; none when `count` is 0.
+fn spawn_hangar_units(world: &mut SimWorld, count: u32) -> Result<Vec<EntityId>, Box<dyn Error>> {
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+    let kind = world
+        .catalog
+        .archetypes()
+        .filter(|arch| arch.capabilities.hangar.is_some())
+        .map(|arch| arch.unit_type_id)
+        .min()
+        .ok_or("a hangar scenario needs a catalog with a hangar unit")?;
+    let slot = PlayerId(0).slot().ok_or("the first player has a slot")?;
+    world.player_resources[slot].minerals = HANGAR_MINERALS;
+    (0..count)
+        .map(|index| {
+            let spawn = position(FORMATION_MARGIN + index * HANGAR_SPACING, HANGAR_ROW)?;
+            Ok(world.spawn_unit(kind, PlayerId(0), spawn)?)
+        })
+        .collect()
+}
+
+/// The launched hangar members alive in `world`.
+fn launched_members(world: &SimWorld) -> usize {
+    world
+        .entities
+        .values()
+        .filter(|entity| entity.hangar_link().is_some())
+        .count()
 }
 
 /// A spell scenario's mean live areas and statuses per measured tick.
@@ -358,6 +410,15 @@ impl SpellDriver {
     }
 }
 
+/// `sum / samples` as a reported mean.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "a reported mean of counts far below 2^52"
+)]
+fn mean(sum: usize, samples: u32) -> f64 {
+    sum as f64 / f64::from(samples.max(1))
+}
+
 /// The mean position of the living `units`, if any lives.
 fn centroid(world: &SimWorld, units: &[EntityId]) -> Option<SimVec2> {
     let (mut x, mut y, mut count) = (SimScalar::ZERO, SimScalar::ZERO, 0_i32);
@@ -469,13 +530,21 @@ fn measure(
 ) -> Result<(f64, Option<SpellLoadMeans>), Box<dyn Error>> {
     let (mut world, mut tick, red) = build_world(config, catalogs, scenario)?;
     if scenario.spells.is_empty() {
+        for _ in 0..scenario.warm_ticks {
+            step_with(&mut world, &mut tick, Vec::new());
+        }
+        let mut members = 0;
         let started = Instant::now();
         for _ in 0..config.ticks {
             step_with(&mut world, &mut tick, Vec::new());
+            if scenario.hangar_units > 0 {
+                members += launched_members(&world);
+            }
         }
+        let rate = f64::from(config.ticks) / started.elapsed().as_secs_f64();
         return Ok((
-            f64::from(config.ticks) / started.elapsed().as_secs_f64(),
-            None,
+            rate,
+            (scenario.hangar_units > 0).then(|| (mean(members, config.ticks), 0.0)),
         ));
     }
     if scenario.map_file.is_some() {
@@ -534,11 +603,18 @@ fn main() -> Result<(), Box<dyn Error>> {
         for _ in 0..config.repeats {
             let (rate, load) = measure(&config, &catalogs, scenario)?;
             samples.push(rate);
-            if let Some((areas, statuses)) = load {
-                loads.push(format!(
-                    "{}: {areas:.1} live areas and {statuses:.1} statuses per measured tick",
-                    scenario.label()
-                ));
+            if let Some((first, second)) = load {
+                loads.push(if scenario.hangar_units > 0 {
+                    format!(
+                        "{}: {first:.1} launched members per measured tick (the clock includes counting them)",
+                        scenario.label()
+                    )
+                } else {
+                    format!(
+                        "{}: {first:.1} live areas and {second:.1} statuses per measured tick",
+                        scenario.label()
+                    )
+                });
             }
         }
         samples.sort_by(f64::total_cmp);

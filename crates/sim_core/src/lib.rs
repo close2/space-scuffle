@@ -26,6 +26,7 @@ pub mod economy;
 pub mod effects;
 pub mod entity;
 pub mod error;
+pub mod hangar;
 pub mod match_state;
 pub mod movement;
 pub mod player_view;
