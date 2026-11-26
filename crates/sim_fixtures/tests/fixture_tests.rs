@@ -160,7 +160,11 @@ use std::path::PathBuf;
 /// of the final tree reproduces `10_676_883_327_660_124_161` on all four builds. Behaviour: none
 /// (no weapon of the plan fires). (60 is provisional, the next free at merge: 58 and 59 are
 /// reserved for the Gated movement plan.)
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 14_163_679_094_600_060_237;
+/// Re-recorded for plan 2026-11-28-broodlings (checksum schema 60 -> 61): each entity encodes its
+/// strike magazine and timed life, each weapon its impact spawn; with those left out at schema 60
+/// a copy of the final tree reproduces `14_163_679_094_600_060_237` on all four builds.
+/// Behaviour: none (no Brood Lord analogue appears). (61 is provisional, the next free at merge.)
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 15_139_787_397_984_595_262;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")
