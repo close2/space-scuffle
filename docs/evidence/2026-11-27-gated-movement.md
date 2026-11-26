@@ -721,3 +721,59 @@ committed; enemy-press seeds 1, 8, 10, 294, 606):
 Harness, the older families (G against S and R): gap M1 2.28 (S 1.09, R 1.12), give-ups 47 (50, 43), largest friend
 overlap 57.7 % (95.8 %); corner give-ups 0 (7, 9), largest friend overlap 25.0 % (52.0 %, 69.1 %); arc, cross and
 corridor as R. G's matrix fails its expectation 8 times on the seeds of record and 60 times over 24 seeds (S: 2, 32).
+
+## 10. WP1 after Amendments 3 and 3a: stopped on C-2, and on H-1b and H-2 under Amendment 3a
+
+Code: `ebf03da4` (Amendment 3 items 1, 2, 3, 5 and the H-2 probe), `c5a673f8` (the meters: first-contact exclusion,
+H-2 repaired to enemy-pair pushes), `7b815dd7` (merge of `main` `0f0608cd`, Broodlings, schema 61), `7e864355`
+(Amendment 3a). Amendment 3a is **the owner's guidance of 2026-11-29 (footage of StarCraft II), not a reading of
+figures**. Material: `~/scratch/gated/wp1/{r2,r3,perf,red/a3,red/a3a,swap}`.
+
+### 10.1 Red runs
+
+- Amendment 3: `an_attacker_whose_target_steps_away…` and `enemies_pushed_together_by_friends_never_overlap_under_gated`
+  (seed 606, 19.55 % before) red on `be82c97b`; the two solver tests red by mutation; the meter tests red by
+  compilation and by mutation (`red/a3/`).
+- Amendment 3a: `a_holding_body_is_moved_by_nothing_under_gated` and `an_attacking_unit_is_nudged_only_round_its_target_under_gated`
+  red by mutation (the holding-against-fixed row removed, attackers without a nudge); `attacking_friends_share_round_their_targets_under_gated`
+  red with Amendment 3 item 2 restored (`red/a3a/`).
+
+### 10.2 Under Amendment 3 (`7b815dd7`; superseded by 3a, kept for the record)
+
+H-1 (attacking or holding) and H-2 (repaired) were 0 in every harness family on seeds 1 to 1,000 but one
+`enemy-press` scene (seed 288, 2 unit-ticks): at tick 507 an enemy and its fleeing friend ended 1.29 world units into
+each other beside the map edge with 11 terrain transfers that tick, and the enemy was thrown 0.82 into two attackers.
+Enemy overlap was 0 everywhere in the harness.
+
+### 10.3 Under Amendment 3a (`7e864355`), development seeds 1 to 1,000, matrix 24 seeds, clashes
+
+| Where | H-1 holding (judged) | H-1b attackers moved (ticks; largest) | H-1b out of band (judged) | H-2 repaired | largest enemy overlap |
+|---|---|---|---|---|---|
+| hold-line, deep-queue, wedge, hallway, stutter, surround-moving, lanes | 0 | 0 to 109,145; ≤ 0.33 | 0 | 0 | 0 % |
+| enemy-press | 0 | 3,717,733; 0.64 | **252 in 89 scenes** | **1,250,540 in 761 scenes** | **36.5 %** |
+| matrix | **432 (battle 37a: Abduct's pull of a holding tank, not contact)** | 277,023 / 71,670; 2.05 | **37 / 2 (battles 20, 27 to 29, 31)** | **D-SHOVE-E pair 13.05 / 52.55 (battles 10, 26 to 29, 33, 38a, 38b)** | **100 % (20: Broodlings spawning on impact), 97 % (37a), 65 %, 63 %, 34 % (29, 26, 28)** |
+| clashes | 0 | 26,445 / 26,368 (`pulse_bot`) | **1 to 2 per side** | razor_mantis 4.5 / 6.0 | 7.3 % (razor_mantis) |
+
+Older families: enemy overlap 0, terrain penetration ≤ 2⁻¹⁰. H-7: lag 1 everywhere.
+
+**The cause, traced:** the ring step (Amendment 3a item 2) turns an attacker's step after E-2 has bounded it, so the
+turned step can close on an enemy beyond its allowance. A scratch build applying E-2 after the ring step
+(`swap/`, never committed; enemy-press seeds 1 to 200) removes the H-2 failures (0, enemy overlap 0 %) but raises the
+out-of-band count from 39 unit-ticks in 23 scenes to 1,888 in 138: E-2 then projects off the ring step's inward turn
+toward the target (an enemy) and the attacker drifts outward. Under `Gated` "enemies never push" and "never out of the
+band" conflict at an attacker beside its enemy target; resolving it needs a rule this package may not choose (§6.6).
+
+### 10.4 C-2 (against `main` `0f0608cd`)
+
+| flat64, 400 `pulse_bot`, 300 ticks | `main` | codegen controls (C-a: an unexecuted function; C-b: the catalog shape) | head `7b815dd7` (Amendment 3) | head with Amendment 3a (working tree) |
+|---|---|---|---|---|
+| Solver | 16.4137 G | −12.7 k, −13.6 k | +10.2 M (+0.062 %) | +40.2 M (+0.245 %) |
+| Legacy | 9.8046 G | −21 k, −17 k | −20.1 M (−0.205 %) | −20.0 M |
+
+The band of the controls is about 21 k; both arms are outside it, so **C-2 fails** as Amendment 3 item 5 states it.
+Attribution is exact (callgrind, `perf/cg/`; `perf record` on this VM samples only about a sixth of the run): the
+solver's functions cost what they cost on `main` (2,359.6 M against 2,359.8 M in the head with Amendment 3a; inlining
+moved cost between `accumulate`, `pair_correction`, `build_pairs` and the terrain closure), and the difference lies
+in locomotion's code generation: `step_toward` with `intent_heading` inlined into it, +51.5 M, whose source is
+unchanged. Keeping `intent_heading` out of line (`#[inline(never)]`, a scratch trial) changed nothing (−2 M).
+Making the share table monomorphic (a trial) cost more (+64 M); both were reverted.
