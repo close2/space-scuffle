@@ -313,6 +313,7 @@ mod tests {
     /// The well-formed spawner row is accepted, and each broken row rule of D-3 and D-4 is
     /// refused naming its field.
     #[test]
+    #[allow(clippy::too_many_lines, reason = "one table of cases, each a rule")]
     fn every_row_rule_is_refused_naming_its_field() {
         type Edit = fn(&mut UnitArchetypeDef);
         let row = spawner_row("x");
@@ -341,7 +342,7 @@ mod tests {
                         .strike_magazine
                         .as_mut()
                         .expect("m")
-                        .arming_ticks = 45
+                        .arming_ticks = 45;
                 },
                 "capabilities.strike_magazine.arming_ticks".to_owned(),
             ),

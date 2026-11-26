@@ -1680,16 +1680,16 @@ fn every_finder_matches_exactly_one_shipped_archetype() -> TestResult {
         1,
     );
     let found = [
-        air_mover_unit(&world)?,
-        ground_mover_structure(&world)?,
-        bolt_caster(&world)?,
-        viking(&world)?,
-        liberator(&world)?,
-        banshee(&world)?,
-        missile_turret(&world)?,
-        brood_lord(&world)?,
+        air_mover_unit(&world)?.slug,
+        ground_mover_structure(&world)?.slug,
+        bolt_caster(&world)?.slug,
+        viking(&world)?.slug,
+        liberator(&world)?.slug,
+        banshee(&world)?.slug,
+        missile_turret(&world)?.slug,
+        brood_lord(&world)?.slug,
     ];
-    let mut slugs: Vec<&str> = found.iter().map(|arch| arch.slug.as_str()).collect();
+    let mut slugs: Vec<&str> = found.iter().map(String::as_str).collect();
     slugs.sort_unstable();
     slugs.dedup();
     assert_eq!(slugs.len(), found.len(), "each finder names its own unit");
