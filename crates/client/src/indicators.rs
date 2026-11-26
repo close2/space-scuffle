@@ -219,6 +219,11 @@ pub fn setup_indicator_assets_system(
 /// shadow and tether.
 const AIRBORNE_HEIGHT: f32 = 0.5;
 
+/// Height of the air shadow disc's centre above its record's ground, world units (plan
+/// `2026-11-30-terrain-and-air-indicators` D-5). The disc is `0.02` radii thick and centred, so its
+/// underside stays above the ground for every drawn radius below `2`.
+pub const SHADOW_LIFT: f32 = 0.02;
+
 /// Scale of the selection reticle plane relative to its bubble.
 const RING_SCALE: f32 = 2.8;
 
@@ -697,5 +702,144 @@ pub fn update_indicators_system(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sim_types::enums::{AnimState, SilhouetteClass, WeaponVisualKind};
+    use sim_types::{EntityId, FootprintShape, PlayerId, UnitTypeId};
+
+    /// Height of the tether line mesh (`Cylinder::new(0.02, 1.0)`), in its local units.
+    const TETHER_MESH_HEIGHT: f32 = 1.0;
+
+    /// Agreement of composed world heights, world units: a few `f32` roundings of values below 16.
+    const HEIGHT_TOLERANCE: f32 = 1e-5;
+
+    /// A record of shape `shape`, drawn radius `radius`, `height` above ground `ground_z`.
+    fn record(shape: ShapeKind, radius: f32, height: f32, ground_z: f32) -> BubbleRenderInstance {
+        BubbleRenderInstance {
+            entity_id: EntityId(1),
+            shape,
+            silhouette: SilhouetteClass::LightProngs,
+            unit_type: UnitTypeId(1),
+            owner: PlayerId(0),
+            world_pos: [3.0, 4.0, ground_z + height],
+            ground_z,
+            radius,
+            velocity: [0.0, 0.0],
+            heading_angle_rad: 0.0,
+            aim_angle_rad: 0.0,
+            is_attacking: false,
+            weapon_visual: WeaponVisualKind::Hitscan,
+            attack_target_pos: None,
+            anim_state: AnimState::Idle,
+            attack_swing: None,
+            hp_ratio: 1.0,
+            shield_ratio: 1.0,
+            shield_hit_flash: 0.0,
+            hull_hit_angle_rad: 0.0,
+            hull_hit_flash: 0.0,
+            build_or_queue_progress: None,
+            selected: false,
+            concealment: sim_types::Concealment::None,
+            speed_boosted: false,
+            stance: sim_types::StanceView::default(),
+            status: sim_types::StatusFlags::default(),
+            construction_hp_ratio: None,
+            barrier_ratio: 0.0,
+            housed: false,
+        }
+    }
+
+    /// The bubble's transform as the live synchroniser writes it (`LiveBubbleFrame::new`,
+    /// `update_live_instance`): a sphere's centre one radius above its altitude, a dome's at it.
+    fn parent_of(instance: &BubbleRenderInstance) -> Transform {
+        let is_dome = matches!(instance.shape, ShapeKind::BuildingDome { .. });
+        let lift = if is_dome { 0.0 } else { instance.radius };
+        Transform::from_xyz(
+            instance.world_pos[0],
+            instance.world_pos[2] + lift,
+            instance.world_pos[1],
+        )
+        .with_scale(Vec3::splat(instance.radius))
+    }
+
+    fn style() -> crate::player_presentation::PlayerStyle {
+        crate::player_presentation::PlayerStyle {
+            srgb: [1.0, 1.0, 1.0],
+            linear: Vec4::ONE,
+            ui: bevy_egui::egui::Color32::WHITE,
+        }
+    }
+
+    /// U-1 (plan `2026-11-30-terrain-and-air-indicators` §5.3): composed with the bubble's
+    /// transform, the shadow lies `SHADOW_LIFT` above the record's ground for every radius,
+    /// height, shape and ground, the tether runs from the bubble's centre to the shadow, the air
+    /// indicators show exactly when airborne, and no scale is zero.
+    #[test]
+    fn the_air_shadow_lies_on_the_ground_for_every_radius() {
+        let shapes = [
+            ShapeKind::UnitSphere,
+            ShapeKind::BuildingDome {
+                footprint_w: 2,
+                footprint_h: 2,
+                shape: FootprintShape::full(2, 2),
+            },
+        ];
+        let mut failures = Vec::new();
+        for shape in shapes {
+            for radius in [0.15, 0.25, 0.4, 1.25] {
+                for height in [0.0, 0.4, 0.6, 2.5, 5.0] {
+                    for ground_z in [0.0, 3.0, 6.0] {
+                        let instance = record(shape, radius, height, ground_z);
+                        let parent = parent_of(&instance);
+                        let pose = IndicatorPose::of(&instance, style());
+                        let shadow = parent.mul_transform(pose.shadow);
+                        let tether = parent.mul_transform(pose.tether);
+                        let half = 0.5 * TETHER_MESH_HEIGHT * tether.scale.y;
+                        let (top, bottom) =
+                            (tether.translation.y + half, tether.translation.y - half);
+                        let ground = ground_z + SHADOW_LIFT;
+                        let case = format!("{shape:?} r {radius} h {height} ground {ground_z}");
+                        if (shadow.translation.y - ground).abs() > HEIGHT_TOLERANCE {
+                            failures.push(format!(
+                                "{case}: shadow at {}, ground + lift {ground}",
+                                shadow.translation.y
+                            ));
+                        }
+                        if (top - parent.translation.y).abs() > HEIGHT_TOLERANCE
+                            || (bottom - shadow.translation.y).abs() > HEIGHT_TOLERANCE
+                        {
+                            failures.push(format!(
+                                "{case}: tether {bottom}..{top}, centre {}, shadow {}",
+                                parent.translation.y, shadow.translation.y
+                            ));
+                        }
+                        let shown = pose.air != Visibility::Hidden;
+                        if shown != (height > AIRBORNE_HEIGHT) {
+                            failures.push(format!("{case}: air indicators shown = {shown}"));
+                        }
+                        for scale in [pose.shadow.scale, pose.tether.scale] {
+                            if scale.cmpeq(Vec3::ZERO).any() {
+                                failures.push(format!("{case}: zero scale {scale}"));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "{} air pose failures, e.g.:\n{}",
+            failures.len(),
+            failures
+                .iter()
+                .take(12)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
     }
 }

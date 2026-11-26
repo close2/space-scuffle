@@ -16,7 +16,7 @@
 //! # Inputs
 //! - The two shipped maps, `assets/maps/default_arena.scmap.ron` and `showcase_canyon.scmap.ron`,
 //!   loaded through the real `MapFile` loader.
-//! - One seeded synthetic map whose cells cover what the shipped maps do not: all eight ramp
+//! - One seeded synthetic map (`support/terrain_mesh.rs`) whose cells cover what the shipped maps do not: all eight ramp
 //!   directions (including the diagonal ones the mesher skips walls for), ramps beside abyss,
 //!   saddle cases and multi-level cliff stacks, at a size that is not a multiple of the chunk size.
 //! - For the texture arrays: the shipped first theme of `assets/catalog/terrain_themes.ron`,
@@ -42,7 +42,12 @@
     clippy::many_single_char_names
 )]
 
-use std::path::PathBuf;
+#[allow(
+    dead_code,
+    reason = "shared by several test binaries that each use a subset"
+)]
+#[path = "support/terrain_mesh.rs"]
+mod terrain_mesh;
 
 use asset_baker::terrain_theme::{TerrainTheme, TerrainThemeCatalog, TerrainThemeError};
 use bevy::image::{Image, ImageSampler};
@@ -53,8 +58,8 @@ use client::terrain::picking::pick_terrain;
 use client::terrain::theme_gpu::{
     load_theme_texture_arrays, terrain_anisotropy_clamp, TERRAIN_ANISOTROPY_OVERRIDE_ENV,
 };
-use sim_map::grid::{CellFlags, CliffLevel, GameMap, MapCell, RampDir, TerrainKind};
-use sim_map::map_format::MapFile;
+use sim_map::grid::GameMap;
+use terrain_mesh::{load_shipped_map, synthetic_map, SplitMix64};
 
 /// Rays cast per map axis; the picker golden casts `RAY_GRID * RAY_GRID` rays per map.
 const RAY_GRID: u32 = 64;
@@ -89,126 +94,6 @@ impl Fnv64 {
     fn f32(&mut self, v: f32) {
         self.u32(v.to_bits());
     }
-}
-
-fn resolve_map_path(relative: &str) -> PathBuf {
-    let assets = resolve_assets_dir();
-    let direct = assets.join("maps").join(relative);
-    if direct.exists() {
-        return direct;
-    }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../assets/maps")
-        .join(relative)
-}
-
-fn load_shipped_map(filename: &str) -> GameMap {
-    let path = resolve_map_path(filename);
-    MapFile::load(&path)
-        .unwrap_or_else(|e| panic!("failed to load {}: {e}", path.display()))
-        .decode()
-        .unwrap_or_else(|e| panic!("failed to decode {}: {e}", path.display()))
-        .to_game_map()
-        .unwrap_or_else(|e| panic!("failed to build GameMap from {}: {e}", path.display()))
-}
-
-/// `SplitMix64`: a tiny, fully specified generator for the synthetic map.
-struct SplitMix64(u64);
-
-impl SplitMix64 {
-    fn next(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        z ^ (z >> 31)
-    }
-
-    fn below(&mut self, n: u64) -> u64 {
-        self.next() % n
-    }
-}
-
-/// A 37x29 seeded map: 3x3 plateau blocks at levels 0..=3, scattered abyss, and ramps in all
-/// eight directions, some in straight runs of up to four cells.
-fn synthetic_map() -> GameMap {
-    const W: u32 = 37;
-    const H: u32 = 29;
-    const DIRS: [RampDir; 8] = [
-        RampDir::North,
-        RampDir::South,
-        RampDir::East,
-        RampDir::West,
-        RampDir::NorthEast,
-        RampDir::NorthWest,
-        RampDir::SouthEast,
-        RampDir::SouthWest,
-    ];
-    let base = MapCell {
-        terrain_kind: TerrainKind::MetalPlate,
-        cliff_level: CliffLevel(0),
-        flags: CellFlags::BUILDABLE | CellFlags::GROUND_PATHABLE,
-        ramp: None,
-        occupying_structure: None,
-        occupying_resource: None,
-    };
-    let mut map = GameMap::new(W, H, base).expect("synthetic map dimensions are non-zero");
-    let mut rng = SplitMix64(0x5ca1_ab1e_0009_0004);
-
-    let blocks_x = W.div_ceil(3) as usize;
-    let blocks_y = H.div_ceil(3) as usize;
-    let mut block_levels = vec![0u8; blocks_x * blocks_y];
-    for level in &mut block_levels {
-        *level = rng.below(4) as u8;
-    }
-    for y in 0..H {
-        for x in 0..W {
-            let level = block_levels[(y / 3) as usize * blocks_x + (x / 3) as usize];
-            let cell = map.cell_mut(x, y).expect("in bounds");
-            cell.cliff_level = CliffLevel(level);
-            cell.terrain_kind = if rng.below(100) < 7 {
-                TerrainKind::Abyss
-            } else {
-                TerrainKind::Grass
-            };
-        }
-    }
-
-    // Straight runs: a direction, a start cell and a length, all on one cliff level.
-    for _ in 0..14 {
-        let dir = DIRS[rng.below(8) as usize];
-        let (dx, dy): (i64, i64) = match dir {
-            RampDir::North => (0, 1),
-            RampDir::South => (0, -1),
-            RampDir::East => (1, 0),
-            RampDir::West => (-1, 0),
-            RampDir::NorthEast => (1, 1),
-            RampDir::NorthWest => (-1, 1),
-            RampDir::SouthEast => (1, -1),
-            RampDir::SouthWest => (-1, -1),
-        };
-        let len = 1 + rng.below(4) as i64;
-        let start_x = rng.below(u64::from(W)) as i64;
-        let start_y = rng.below(u64::from(H)) as i64;
-        let level = rng.below(3) as u8;
-        // Ramps are two cells wide across the run, like the shipped maps.
-        let (wx, wy) = if dx == 0 { (1, 0) } else { (0, 1) };
-        for k in 0..len {
-            for w in 0..2 {
-                let x = start_x + k * dx + w * wx;
-                let y = start_y + k * dy + w * wy;
-                let (Ok(ux), Ok(uy)) = (u32::try_from(x), u32::try_from(y)) else {
-                    continue;
-                };
-                if let Ok(cell) = map.cell_mut(ux, uy) {
-                    cell.ramp = Some(dir);
-                    cell.cliff_level = CliffLevel(level);
-                    cell.terrain_kind = TerrainKind::Dirt;
-                }
-            }
-        }
-    }
-    map
 }
 
 fn hash_stats(h: &mut Fnv64, s: &MeshStats) {

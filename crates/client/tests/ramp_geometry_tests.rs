@@ -15,7 +15,7 @@
 //!
 //! # Inputs
 //! - The two shipped maps, loaded through the real `MapFile` loader.
-//! - A synthetic fixture (T0) of ramp "stations", each a ramp run inside its own box of low and
+//! - A synthetic fixture (T0, built in `support/terrain_mesh.rs`) of ramp "stations", each a ramp run inside its own box of low and
 //!   high ground: protruding ramps in all four directions with run lengths 1 to
 //!   `MAX_RAMP_RUN_CELLS` and widths 1 to 4, ramps beside the abyss, recessed and half-recessed
 //!   ramps, ramps beside a plateau two levels up, two runs side by side with different low
@@ -42,19 +42,20 @@
     clippy::many_single_char_names
 )]
 
-use std::path::PathBuf;
+#[allow(
+    dead_code,
+    reason = "shared by several test binaries that each use a subset"
+)]
+#[path = "support/terrain_mesh.rs"]
+mod terrain_mesh;
 
 use bevy::prelude::{Vec2, Vec3};
-use client::resolve_assets_dir;
-use client::terrain::mesher::{
-    build_chunk_mesh, MesherScratch, ABYSS_WALL_BOTTOM_Y, CHUNK_DUAL_CELLS, RAIL_WIDTH,
-};
-use sim_map::grid::{
-    CellFlags, CliffLevel, GameMap, MapCell, RampDir, RampProfile, TerrainKind, MAX_RAMP_RUN_CELLS,
-};
-use sim_map::map_format::{MapDocument, MapFile, MapMetadata};
+use client::terrain::mesher::ABYSS_WALL_BOTTOM_Y;
+use sim_map::grid::{GameMap, RampDir, RampProfile, MAX_RAMP_RUN_CELLS};
+use sim_map::map_format::{MapDocument, MapMetadata};
 use sim_map::validation::{validate_map, MapValidationError};
 use sim_types::{SimScalar, SimVec2};
+use terrain_mesh::{fixture_map, load_shipped_map, ramp_cells, MapMesh};
 
 /// Height tolerance of the top-surface check (T1).
 const SURFACE_TOLERANCE: f32 = 1e-4;
@@ -66,325 +67,7 @@ const EDGE_EPSILON: f32 = 1e-3;
 // Maps
 // -----------------------------------------------------------------------------
 
-fn load_shipped_map(filename: &str) -> GameMap {
-    let direct = resolve_assets_dir().join("maps").join(filename);
-    let path = if direct.exists() {
-        direct
-    } else {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../assets/maps")
-            .join(filename)
-    };
-    MapFile::load(&path)
-        .unwrap_or_else(|e| panic!("failed to load {}: {e}", path.display()))
-        .decode()
-        .unwrap_or_else(|e| panic!("failed to decode {}: {e}", path.display()))
-        .to_game_map()
-        .unwrap_or_else(|e| panic!("failed to build GameMap from {}: {e}", path.display()))
-}
-
-/// What lies beside a ramp run across its lateral edges.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Side {
-    /// Ground at the ramp's low level: a protruding ramp.
-    Low,
-    /// Ground at the ramp's high level: a recessed ramp on this side.
-    High,
-    /// Ground two levels above the ramp's low level.
-    High2,
-    /// Bottomless abyss.
-    Abyss,
-    /// A second ramp run of the same direction and width 2, one level higher.
-    Twin,
-}
-
-/// One ramp run inside its own box of ground.
-#[derive(Debug, Clone, Copy)]
-struct Station {
-    dir: RampDir,
-    run: u32,
-    width: u32,
-    low: u8,
-    left: Side,
-    right: Side,
-}
-
-/// Cells of ground around a station's ramp on every side.
-const STATION_MARGIN: u32 = 3;
-
-/// Width of the second run of a [`Side::Twin`] station.
-const TWIN_WIDTH: u32 = 2;
-
-impl Station {
-    /// Lateral extent of the station's ramps, without margins.
-    fn lateral_cells(&self) -> u32 {
-        self.width
-            + if self.right == Side::Twin {
-                TWIN_WIDTH
-            } else {
-                0
-            }
-    }
-
-    /// Box size `(along the run, across it)` in cells.
-    fn box_size(&self) -> (u32, u32) {
-        (
-            self.run + 2 * STATION_MARGIN,
-            self.lateral_cells() + 2 * STATION_MARGIN,
-        )
-    }
-
-    /// Box size in world cells `(x, y)`.
-    fn world_size(&self) -> (u32, u32) {
-        let (along, across) = self.box_size();
-        match self.dir {
-            RampDir::North | RampDir::South => (across, along),
-            _ => (along, across),
-        }
-    }
-
-    /// World cell of box-local cell `(along, across)` for a box whose lower-left cell is `origin`.
-    fn world_cell(&self, origin: (u32, u32), along: u32, across: u32) -> (u32, u32) {
-        let (len, _) = self.box_size();
-        match self.dir {
-            RampDir::North => (origin.0 + across, origin.1 + along),
-            RampDir::South => (origin.0 + across, origin.1 + len - 1 - along),
-            RampDir::East => (origin.0 + along, origin.1 + across),
-            RampDir::West => (origin.0 + len - 1 - along, origin.1 + across),
-            _ => panic!("stations use cardinal ramps only"),
-        }
-    }
-
-    /// The cell at run coordinate `u` (0 = the run's first cell) and lateral coordinate `v`
-    /// (0 = the first lateral cell of the ramp).
-    fn cell(&self, u: i64, v: i64) -> MapCell {
-        let run = i64::from(self.run);
-        let width = i64::from(self.width);
-        let in_run = (0..run).contains(&u);
-        let twin = self.right == Side::Twin && v >= width;
-        let (low, v_local, width_local) = if twin {
-            (self.low + 1, v - width, i64::from(TWIN_WIDTH))
-        } else {
-            (self.low, v, width)
-        };
-        if in_run && (0..width_local).contains(&v_local) {
-            return ramp_cell(low, self.dir);
-        }
-        if in_run {
-            let side = if v_local < 0 {
-                self.left
-            } else if twin {
-                Side::Low
-            } else {
-                self.right
-            };
-            return match side {
-                Side::Low | Side::Twin => ground(low),
-                Side::High => ground(low + 1),
-                Side::High2 => ground(low + 2),
-                Side::Abyss => abyss(),
-            };
-        }
-        if u < 0 {
-            ground(low)
-        } else {
-            ground(low + 1)
-        }
-    }
-}
-
-fn ground(level: u8) -> MapCell {
-    MapCell {
-        terrain_kind: if level.is_multiple_of(2) {
-            TerrainKind::Grass
-        } else {
-            TerrainKind::MetalPlate
-        },
-        cliff_level: CliffLevel(level),
-        flags: CellFlags::BUILDABLE | CellFlags::GROUND_PATHABLE,
-        ramp: None,
-        occupying_structure: None,
-        occupying_resource: None,
-    }
-}
-
-fn abyss() -> MapCell {
-    MapCell {
-        terrain_kind: TerrainKind::Abyss,
-        cliff_level: CliffLevel(0),
-        flags: CellFlags::UNPASSABLE_CLIFF,
-        ramp: None,
-        occupying_structure: None,
-        occupying_resource: None,
-    }
-}
-
-fn ramp_cell(low: u8, dir: RampDir) -> MapCell {
-    MapCell {
-        terrain_kind: TerrainKind::Dirt,
-        cliff_level: CliffLevel(low),
-        flags: CellFlags::GROUND_PATHABLE.union(CellFlags::RAMP),
-        ramp: Some(dir),
-        occupying_structure: None,
-        occupying_resource: None,
-    }
-}
-
-/// The stations of the fixture. The first one is placed so that its head lies on a chunk border.
-fn stations() -> Vec<Station> {
-    use RampDir::{East, North, South, West};
-    use Side::{Abyss, High, High2, Low, Twin};
-    let dirs = [North, East, South, West];
-    let mut list = vec![Station {
-        dir: East,
-        run: 3,
-        width: 2,
-        low: 1,
-        left: Low,
-        right: Low,
-    }];
-    for run in 1..=u32::from(MAX_RAMP_RUN_CELLS) {
-        list.push(Station {
-            dir: dirs[run as usize % 4],
-            run,
-            width: 1 + run % 4,
-            low: (run % 3) as u8,
-            left: Low,
-            right: Low,
-        });
-    }
-    list.push(Station {
-        dir: North,
-        run: 4,
-        width: 2,
-        low: 1,
-        left: Abyss,
-        right: Abyss,
-    });
-    list.push(Station {
-        dir: West,
-        run: 2,
-        width: 3,
-        low: 0,
-        left: Abyss,
-        right: Low,
-    });
-    list.push(Station {
-        dir: South,
-        run: 3,
-        width: 2,
-        low: 0,
-        left: High,
-        right: High,
-    });
-    list.push(Station {
-        dir: East,
-        run: 4,
-        width: 3,
-        low: 1,
-        left: High,
-        right: High,
-    });
-    list.push(Station {
-        dir: West,
-        run: 3,
-        width: 2,
-        low: 1,
-        left: High,
-        right: Low,
-    });
-    list.push(Station {
-        dir: North,
-        run: 2,
-        width: 1,
-        low: 0,
-        left: Low,
-        right: High,
-    });
-    list.push(Station {
-        dir: East,
-        run: 3,
-        width: 2,
-        low: 0,
-        left: High2,
-        right: Low,
-    });
-    list.push(Station {
-        dir: North,
-        run: 4,
-        width: 2,
-        low: 1,
-        left: Low,
-        right: High2,
-    });
-    list.push(Station {
-        dir: South,
-        run: 3,
-        width: 2,
-        low: 0,
-        left: Low,
-        right: Twin,
-    });
-    list.push(Station {
-        dir: West,
-        run: 2,
-        width: 1,
-        low: 1,
-        left: Abyss,
-        right: Twin,
-    });
-    list
-}
-
-/// Width of the fixture map in cells (not a multiple of `CHUNK_DUAL_CELLS`).
-const FIXTURE_WIDTH: u32 = 77;
-
-/// Builds the T0 fixture: stations packed in shelves on level-0 ground, one cell apart.
-fn fixture_map() -> GameMap {
-    let list = stations();
-    // Shelf packing; the first station starts at x = 10 so that its head (the last ramp cell,
-    // x = 10 + margin + run - 1 = 15) and its upper landing (x = 16) lie in different chunks.
-    let mut origins = Vec::with_capacity(list.len());
-    let (mut x, mut y, mut shelf_height) = (10, 1, 0);
-    for st in &list {
-        let (w, h) = st.world_size();
-        if x + w + 1 > FIXTURE_WIDTH {
-            x = 1;
-            y += shelf_height + 1;
-            shelf_height = 0;
-        }
-        origins.push((x, y));
-        x += w + 1;
-        shelf_height = shelf_height.max(h);
-    }
-    let mut height = y + shelf_height + 1;
-    if height % CHUNK_DUAL_CELLS == 0 {
-        height += 1;
-    }
-    assert_ne!(FIXTURE_WIDTH % CHUNK_DUAL_CELLS, 0);
-
-    let mut map = GameMap::new(FIXTURE_WIDTH, height, ground(0)).expect("fixture size is valid");
-    for (st, &origin) in list.iter().zip(&origins) {
-        let (along_len, across_len) = st.box_size();
-        for along in 0..along_len {
-            for across in 0..across_len {
-                let (cx, cy) = st.world_cell(origin, along, across);
-                let u = i64::from(along) - i64::from(STATION_MARGIN);
-                let v = i64::from(across) - i64::from(STATION_MARGIN);
-                *map.cell_mut(cx, cy)
-                    .expect("station boxes lie inside the map") = st.cell(u, v);
-            }
-        }
-    }
-
-    let head = map.ramp_profile(15, origins[0].1 + STATION_MARGIN);
-    assert!(
-        head.is_some_and(|p| p.index + 1 == p.run_len)
-            && map.ramp_profile(16, origins[0].1 + 3).is_none(),
-        "the first station's head must be the last cell of chunk column 0"
-    );
-    map
-}
+// The shipped maps, the T0 fixture and the mesh access live in `support/terrain_mesh.rs`.
 
 #[test]
 fn t0_fixture_is_a_valid_map_with_every_ramp_kind() {
@@ -443,84 +126,6 @@ fn t0_fixture_is_a_valid_map_with_every_ramp_kind() {
 // Mesh access
 // -----------------------------------------------------------------------------
 
-/// Every triangle of every chunk of a map, bucketed by the cells its XZ bounding box overlaps.
-struct MapMesh {
-    tris: Vec<[Vec3; 3]>,
-    width: u32,
-    buckets: Vec<Vec<u32>>,
-}
-
-impl MapMesh {
-    fn build(map: &GameMap) -> Self {
-        let mut tris = Vec::new();
-        let mut scratch = MesherScratch::default();
-        let cols = (map.width() + 1).div_ceil(CHUNK_DUAL_CELLS);
-        let rows = (map.height() + 1).div_ceil(CHUNK_DUAL_CELLS);
-        for cy in 0..rows {
-            for cx in 0..cols {
-                build_chunk_mesh(map, cx, cy, &mut scratch);
-                for t in scratch.indices.as_chunks::<3>().0 {
-                    tris.push(t.map(|i| Vec3::from(scratch.positions[i as usize])));
-                }
-            }
-        }
-        let (width, height) = (map.width(), map.height());
-        let mut buckets = vec![Vec::new(); (width * height) as usize];
-        for (i, t) in tris.iter().enumerate() {
-            let min_x = t.iter().map(|p| p.x).fold(f32::INFINITY, f32::min) - 1e-3;
-            let max_x = t.iter().map(|p| p.x).fold(f32::NEG_INFINITY, f32::max) + 1e-3;
-            let min_z = t.iter().map(|p| p.z).fold(f32::INFINITY, f32::min) - 1e-3;
-            let max_z = t.iter().map(|p| p.z).fold(f32::NEG_INFINITY, f32::max) + 1e-3;
-            let x0 = min_x.floor().max(0.0) as u32;
-            let x1 = (max_x.floor() as i64).clamp(0, i64::from(width) - 1) as u32;
-            let z0 = min_z.floor().max(0.0) as u32;
-            let z1 = (max_z.floor() as i64).clamp(0, i64::from(height) - 1) as u32;
-            if x0 >= width || z0 >= height {
-                continue;
-            }
-            for z in z0..=z1 {
-                for x in x0..=x1 {
-                    buckets[(z * width + x) as usize].push(i as u32);
-                }
-            }
-        }
-        Self {
-            tris,
-            width,
-            buckets,
-        }
-    }
-
-    /// Triangles whose bounding box overlaps cell `(x, y)`.
-    fn near(&self, x: u32, y: u32) -> impl Iterator<Item = &[Vec3; 3]> + '_ {
-        self.buckets[(y * self.width + x) as usize]
-            .iter()
-            .map(|&i| &self.tris[i as usize])
-    }
-
-    /// Highest altitude at which a vertical line through `(px, pz)` meets a non-vertical
-    /// triangle near cell `(x, y)`.
-    fn top_at(&self, x: u32, y: u32, px: f32, pz: f32) -> Option<f32> {
-        self.near(x, y)
-            .filter_map(|t| vertical_hit(px, pz, t))
-            .reduce(f32::max)
-    }
-}
-
-/// Height at which the vertical line through `(px, pz)` meets triangle `t`, edges included.
-fn vertical_hit(px: f32, pz: f32, t: &[Vec3; 3]) -> Option<f32> {
-    let [v0, v1, v2] = *t;
-    let det = (v1.z - v2.z) * (v0.x - v2.x) + (v2.x - v1.x) * (v0.z - v2.z);
-    if det.abs() < 1e-9 {
-        return None;
-    }
-    let w0 = ((v1.z - v2.z) * (px - v2.x) + (v2.x - v1.x) * (pz - v2.z)) / det;
-    let w1 = ((v2.z - v0.z) * (px - v2.x) + (v0.x - v2.x) * (pz - v2.z)) / det;
-    let w2 = 1.0 - w0 - w1;
-    let e = -1e-6;
-    (w0 >= e && w1 >= e && w2 >= e).then_some(w0 * v0.y + w1 * v1.y + w2 * v2.y)
-}
-
 /// Möller–Trumbore: distance along `dir` at which the ray from `origin` meets triangle `t`.
 fn ray_hit(origin: Vec3, dir: Vec3, t: &[Vec3; 3]) -> Option<f32> {
     let [v0, v1, v2] = *t;
@@ -543,18 +148,6 @@ fn ray_hit(origin: Vec3, dir: Vec3, t: &[Vec3; 3]) -> Option<f32> {
     Some(e2.dot(q) * inv)
 }
 
-fn ramp_cells(map: &GameMap) -> Vec<(u32, u32)> {
-    let mut cells = Vec::new();
-    for y in 0..map.height() {
-        for x in 0..map.width() {
-            if map.ramp_profile(x, y).is_some() {
-                cells.push((x, y));
-            }
-        }
-    }
-    cells
-}
-
 fn ramp_height(profile: RampProfile, fx: f32, fy: f32) -> f32 {
     profile
         .height_at(SimScalar::from_num(fx), SimScalar::from_num(fy))
@@ -564,12 +157,7 @@ fn ramp_height(profile: RampProfile, fx: f32, fy: f32) -> f32 {
 /// Lateral and run margins `(x, z)` of the footprint checks for a ramp direction: the guard
 /// rails ride on the edges parallel to the run.
 fn footprint_margins(dir: RampDir) -> (f32, f32) {
-    let rail = RAIL_WIDTH + EDGE_EPSILON;
-    match dir {
-        RampDir::North | RampDir::South => (rail, EDGE_EPSILON),
-        RampDir::East | RampDir::West => (EDGE_EPSILON, rail),
-        _ => (rail, rail),
-    }
+    terrain_mesh::footprint_margins(dir, EDGE_EPSILON)
 }
 
 // -----------------------------------------------------------------------------

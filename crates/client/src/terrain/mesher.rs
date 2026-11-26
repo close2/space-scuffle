@@ -1985,6 +1985,100 @@ mod tests {
         assert_eq!(cut_a, cut_b);
     }
 
+    /// The four axis directions a contour's `d` (high side to low side) can take.
+    const AXIS_DIRECTIONS: [Vec2; 4] = [
+        Vec2::new(1.0, 0.0),
+        Vec2::new(-1.0, 0.0),
+        Vec2::new(0.0, 1.0),
+        Vec2::new(0.0, -1.0),
+    ];
+
+    /// 64 edge midpoints for an edge whose low side is `d`: the coordinate along `d` is a cell
+    /// edge (an integer), the other a cell centre (a half-integer), over an 8 x 8 grid, so the
+    /// jitter hash takes 64 different keys.
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "the grid indices are below 8 and exact in f32"
+    )]
+    fn midpoints_across(d: Vec2) -> impl Iterator<Item = Vec2> {
+        (0..64_u32).map(move |k| {
+            let (i, j) = ((k % 8) as f32 * 3.0 + 1.0, (k / 8) as f32 * 5.0 + 2.0);
+            if d.x == 0.0 {
+                Vec2::new(i + 0.5, j)
+            } else {
+                Vec2::new(i, j + 0.5)
+            }
+        })
+    }
+
+    /// T-A (plan `2026-11-30-terrain-and-air-indicators` §5.1): on an edge whose low side is
+    /// ground, no wall profile row lies on the low side of the edge, and the foot's toe is the
+    /// edge midpoint bit for bit.
+    ///
+    /// Tolerance 0, derived: every row is `p + d·k` with `k <= 0` in exact arithmetic
+    /// (`k = disp − setback`, `disp <= WALL_JITTER_AMPLITUDE <= FOOT_WIDTH`), and `f32` rounding
+    /// is monotone, so `p.x + k <= p.x` for `d.x = 1` and `p.x − k >= p.x` for `d.x = −1`.
+    #[test]
+    fn wall_rows_never_cross_an_edge_towards_ground() {
+        let mut failures = Vec::new();
+        let mut checked = 0_usize;
+        for level_a in 0..=4 {
+            for level_b in 0..level_a {
+                for ta in (level_b + 1)..=level_a {
+                    for tb in ta..=level_a {
+                        for d in AXIS_DIRECTIONS {
+                            for p in midpoints_across(d) {
+                                let rows =
+                                    generate_wall_profile(p, d, level_a, level_b, ta, tb, false);
+                                for row in &rows {
+                                    checked += 1;
+                                    let across = (row.xz.x - p.x) * d.x + (row.xz.y - p.y) * d.y;
+                                    if across > 0.0 {
+                                        failures.push(format!(
+                                            "levels {level_a}/{level_b} run {ta}..={tb} d {d} \
+                                             p {p}: row at y {} lies {across} on the low side",
+                                            row.y
+                                        ));
+                                    }
+                                }
+                                let foot = level_b == ta - 1;
+                                let toe = rows.last().map(|row| row.xz);
+                                if foot
+                                    && toe.map(|t| (t.x.to_bits(), t.y.to_bits()))
+                                        != Some((p.x.to_bits(), p.y.to_bits()))
+                                {
+                                    failures.push(format!(
+                                        "levels {level_a}/{level_b} run {ta}..={tb} d {d} p {p}: \
+                                         toe at {toe:?}, not on the edge"
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(checked > 0, "the sweep checked no row");
+        assert!(
+            failures.is_empty(),
+            "{} of {checked} rows or toes cross towards walkable ground, e.g.:\n{}",
+            failures.len(),
+            failures
+                .iter()
+                .take(12)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
+
+    /// T-A2: the jitter fits behind the setback, the premise of T-A and of plan
+    /// `2026-11-30-terrain-and-air-indicators` D-1.
+    #[test]
+    fn jitter_amplitude_fits_behind_the_setback() {
+        const { assert!(WALL_JITTER_AMPLITUDE <= FOOT_WIDTH) };
+    }
+
     #[test]
     fn clipping_away_everything_leaves_an_empty_polygon() {
         let outside = square().clip(Vec2::new(-1.0, 0.0), Vec2::new(0.5, 0.0));
