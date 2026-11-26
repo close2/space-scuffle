@@ -247,7 +247,11 @@ fn a_renderer_change_runs_every_client_gpu_binary_and_the_frame_budget() -> Resu
         "a client GPU binary (WP11's staged battle), by its class"
     );
     assert_every_gpu_binary(&repo, &selection);
-    assert!(!has(&selection, "client/sync_allocation_count_tests"));
+    assert!(
+        has(&selection, "client/sync_allocation_count_tests"),
+        "the bubble material the live synchroniser writes is the valgrind test's subject (plan \
+         2026-11-29-render-entity-pool §6.1)"
+    );
     Ok(())
 }
 
