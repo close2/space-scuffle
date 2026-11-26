@@ -794,7 +794,13 @@ impl SimWorld {
     /// only contact reads it: the contact shares (C-2) and the idle-yield test of intent, which
     /// asks whether contact would push the body aside.
     pub(crate) fn engaged(&self, entry: MotionEntry, actor: &Entity) -> bool {
-        if self.catalog.movement_rules().contact().pipeline == MovementPipeline::Solver {
+        if self
+            .catalog
+            .movement_rules()
+            .contact()
+            .pipeline
+            .runs_solver()
+        {
             self.in_range_of_live_target(entry, actor)
         } else {
             self.is_anchored_in_combat(actor)
@@ -824,7 +830,9 @@ impl SimWorld {
     /// Deviation D-δ (Q0095, plan Amendment 15, N): when the catalog's
     /// `contact.nudge_engaged_along_ring` is on, the unit vector from `actor`'s target to it if
     /// `actor` is a melee attacker in range of a live target that allies may nudge along its
-    /// ring: never on Hold Position (nor immobile or unpushable). `None` otherwise.
+    /// ring: never on Hold Position (nor immobile or unpushable), and only under the `Solver`
+    /// pipeline: under `Gated` no ally ever nudges an attacking unit (C′-1 of plan
+    /// `2026-11-27-gated-movement`, Q0121 (a)), whatever the switch says. `None` otherwise.
     pub(crate) fn nudge_radial(&self, entry: MotionEntry, actor: &Entity) -> Option<SimVec2> {
         let rules = self.catalog.movement_rules().contact();
         if !rules.nudge_engaged_along_ring
@@ -1342,7 +1350,13 @@ impl SimWorld {
             PursuitStart::Settled(proposal) => return Ok(proposal),
             PursuitStart::Chase(proposal, pursuit) => (proposal, pursuit),
         };
-        if self.catalog.movement_rules().contact().pipeline == MovementPipeline::Solver {
+        if self
+            .catalog
+            .movement_rules()
+            .contact()
+            .pipeline
+            .runs_solver()
+        {
             let position = self
                 .entities
                 .get(&entry.id)
@@ -1499,7 +1513,13 @@ impl SimWorld {
     /// (plan `2026-11-20-contact-solver` WP5, §5.4), so a pursuer processed after its target does
     /// not see where the target went this tick; under the legacy pipeline the live entity.
     fn pursued_motion(&self, target_id: EntityId, target: &Entity) -> (SimVec2, SimVec2) {
-        if self.catalog.movement_rules().contact().pipeline == MovementPipeline::Solver {
+        if self
+            .catalog
+            .movement_rules()
+            .contact()
+            .pipeline
+            .runs_solver()
+        {
             self.tick_start_motion(target_id)
         } else {
             (target.position, target.velocity)
@@ -1677,7 +1697,9 @@ impl MotionScene<'_> {
 
     /// The side rule's horizon factor under the solver pipeline, `None` under the legacy one.
     fn intent(&self) -> Option<u8> {
-        (self.contact.pipeline == MovementPipeline::Solver)
+        self.contact
+            .pipeline
+            .runs_solver()
             .then_some(self.contact.side_horizon_factor)
     }
 }

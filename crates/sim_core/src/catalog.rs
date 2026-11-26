@@ -49,7 +49,7 @@ mod validation;
 pub use effects::{ArchetypeEffects, ModeEffects, WeaponEffects};
 pub use factions::{ArmorClassDef, FactionCatalog, FactionDef, WeaponClassDef};
 pub use movement_rules::{
-    ContactRules, MovementPipeline, MovementRules, MAX_CROWD_ITERATIONS,
+    ContactRules, GatedRules, MovementPipeline, MovementRules, MAX_CROWD_ITERATIONS,
     MAX_LANE_TOLERANCE_PERMILLE, REFERENCE_CROWD_DEPTH,
 };
 pub use placement_rules::{PlacementRules, ResourceHarvest, ResourceReach, MAX_REACH_SIDE};

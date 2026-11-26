@@ -321,7 +321,13 @@ impl SimWorld {
                 }
             }
         }
-        if self.catalog.movement_rules().contact().pipeline == MovementPipeline::Solver {
+        if self
+            .catalog
+            .movement_rules()
+            .contact()
+            .pipeline
+            .runs_solver()
+        {
             self.solve_contacts(&entries);
             self.movement.entries = entries;
             return;
@@ -408,6 +414,7 @@ impl SimWorld {
     /// step of the legacy phase, and each body's velocity becomes what it achieved this tick.
     fn solve_contacts(&mut self, entries: &[MotionEntry]) {
         let contact = self.catalog.movement_rules().contact();
+        let gated = contact.pipeline == MovementPipeline::Gated;
         let mut solver = std::mem::take(&mut self.movement.solver);
         solver.bodies.clear();
         // The determinism probe (`set_movement_order_rotation`): the fill starts `offset` places
@@ -416,15 +423,16 @@ impl SimWorld {
             super::rotated(entries, self.movement.order_rotation).filter(|entry| !entry.foundation)
         {
             if let Some(actor) = self.entities.get(&entry.id) {
-                solver.bodies.push(self.solver_body(*entry, actor));
+                solver.bodies.push(self.solver_body(*entry, actor, gated));
             }
         }
         let settings = SolverSettings {
             iterations: contact.iterations,
-            crowd_iterations: contact.crowd_iterations,
+            crowd_iterations: contact.solver_crowd_iterations(),
             dead_band_permille: contact.dead_band_permille,
             moving_overlap_permille: contact.moving_overlap_permille,
             moving_friends_push: contact.moving_friends_push,
+            gated,
         };
         let (map, pathfinder) = (&self.map, &mut self.pathfinder);
         let diagnostics = &mut self.tick_diagnostics;
@@ -447,6 +455,7 @@ impl SimWorld {
         );
         self.movement.contact_iterations = solved.iterations;
         self.movement.contact_rebuilds = solved.rebuilds;
+        self.movement.probes.terrain_transfers = solved.terrain_transfers;
         for body in &solver.bodies {
             if let Some(actor) = self.entities.get_mut(&body.id) {
                 actor.position = body.position;
@@ -458,8 +467,11 @@ impl SimWorld {
         self.movement.solver = solver;
     }
 
-    /// One body as the contact solver sees it (C-2's parties).
-    fn solver_body(&self, entry: MotionEntry, actor: &Entity) -> SolverBody {
+    /// One body as the contact solver sees it (C-2's parties). Under `gated` (plan
+    /// `2026-11-27-gated-movement` C′) the body also carries where its own committed walk began,
+    /// for E-2: its tick-start position when the movement phase recorded a step for it this tick,
+    /// its committed position otherwise (a body a cast placed: a teleport is no walk).
+    fn solver_body(&self, entry: MotionEntry, actor: &Entity, gated: bool) -> SolverBody {
         let step = i128::from(STANDING_DRIFT.raw());
         SolverBody {
             id: entry.id,
@@ -476,6 +488,12 @@ impl SimWorld {
             policy: entry.policy,
             start: actor.pos_at_tick_start,
             position: actor.position,
+            committed: actor.position,
+            walk_from: if gated && self.proposed_step(entry.id).is_some() {
+                actor.pos_at_tick_start
+            } else {
+                actor.position
+            },
             ghost: actor.passes_through_units(),
         }
     }
@@ -562,7 +580,7 @@ mod tests {
                     .iter()
                     .map(|body| body.entry.id)
                     .collect(),
-                MovementPipeline::Solver => world
+                MovementPipeline::Solver | MovementPipeline::Gated => world
                     .movement
                     .solver
                     .bodies

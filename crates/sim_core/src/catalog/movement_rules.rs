@@ -6,16 +6,19 @@
 //! `FollowRangeSlop`, plan `2026-11-26-follow-order` D-4) and the contact rules of plan
 //! `2026-11-20-contact-solver` (§3.6): which movement pipeline runs, the contact solver's
 //! iteration count, its dead band and moving-overlap bound (sanctioned deviation D-α), the side
-//! rule's horizon factor, the D-β switch, and the crowd extension C-3′ of plan
-//! `2026-11-26-friend-crowd-overlap` (`crowd_iterations`, `crowd_depth`). It is parsed into [`MovementRules`], validated, and
-//! carried by the [`UnitCatalog`](super::UnitCatalog) the world is built with. Like every catalog
-//! it is not hashed; lockstep peers must load equal files.
+//! rule's horizon factor, the D-β switch, the crowd extension C-3′ of plan
+//! `2026-11-26-friend-crowd-overlap` (`crowd_iterations`, `crowd_depth`), and the `gated` section
+//! of the `Gated` pipeline of plan `2026-11-27-gated-movement` ([`GatedRules`]). It is parsed
+//! into [`MovementRules`], validated, and carried by the [`UnitCatalog`](super::UnitCatalog) the
+//! world is built with. Like every catalog it is not hashed; lockstep peers must load equal files.
 //!
 //! Invariants: a [`MovementRules`] value always has a tolerance in `0..=1000` permille, a leash
 //! radius of at least one world unit, a whole follow slop of at least zero world units, and
 //! [`ContactRules`] with at least one iteration,
 //! `0 < dead_band_permille < moving_overlap_permille < 1000`, a horizon factor of at least 1,
-//! `iterations ≤ crowd_iterations ≤ 1000` and a crowd depth of at least 1.
+//! `iterations ≤ crowd_iterations ≤ 1000`, a crowd depth of at least 1, and a `gated` section
+//! whenever the pipeline is `Gated`, with `iterations ≤ gated.crowd_iterations ≤ 1000` whenever
+//! it is present.
 
 use crate::error::{SimCoreError, SimResult};
 use serde::Deserialize;
@@ -53,6 +56,30 @@ pub enum MovementPipeline {
     /// The plan's pipeline: intent steering with one time-to-collision side rule, and one
     /// position-based contact solver after every unit moved.
     Solver,
+    /// Plan `2026-11-27-gated-movement`: [`Self::Solver`] with the contact rules C′ (attacking
+    /// and holding units are never moved by other bodies, enemies block (E-2), a body terrain
+    /// holds passes its share to its partner, and C-3′ on at [`GatedRules::crowd_iterations`]).
+    /// Latent until the plan's switch-over (WP4); the file must then carry a `gated` section.
+    Gated,
+}
+
+impl MovementPipeline {
+    /// Whether the tick runs intent steering and the contact solver: [`Self::Solver`] and
+    /// [`Self::Gated`], which is the solver pipeline with the contact rules C′.
+    #[must_use]
+    pub const fn runs_solver(self) -> bool {
+        matches!(self, Self::Solver | Self::Gated)
+    }
+}
+
+/// The `gated` section of the contact rules (plan `2026-11-27-gated-movement` §3.4): the values
+/// the `Gated` pipeline reads and no other pipeline does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GatedRules {
+    /// C-3′ under `Gated` (the plan's §3.1.3, §4.1): the most averaged iterations per tick in
+    /// all, past which the crowd extension never runs; P-1's derived cap on the shipped catalog.
+    pub crowd_iterations: u16,
 }
 
 /// The contact rules of `movement_rules.ron` (plan `2026-11-20-contact-solver` §3.3, §3.6).
@@ -89,6 +116,9 @@ pub struct ContactRules {
     /// `crowd_iterations` is derived; [`REFERENCE_CROWD_DEPTH`] when the file omits it. Read by
     /// the derivation test only.
     pub crowd_depth: u16,
+    /// The `Gated` pipeline's own values (plan `2026-11-27-gated-movement` §3.4): required when
+    /// `pipeline` is `Gated`, validated whenever present, read by no other pipeline.
+    pub gated: Option<GatedRules>,
 }
 
 /// The contact section as `movement_rules.ron` writes it: `nudge_engaged_along_ring`,
@@ -108,6 +138,8 @@ struct ContactRulesFile {
     crowd_iterations: Option<u16>,
     #[serde(default = "crowd_depth_default")]
     crowd_depth: u16,
+    #[serde(default, deserialize_with = "present_section")]
+    gated: Option<GatedRules>,
 }
 
 impl From<ContactRulesFile> for ContactRules {
@@ -122,6 +154,7 @@ impl From<ContactRulesFile> for ContactRules {
             nudge_engaged_along_ring: file.nudge_engaged_along_ring,
             crowd_iterations: file.crowd_iterations.unwrap_or(u16::from(file.iterations)),
             crowd_depth: file.crowd_depth,
+            gated: file.gated,
         }
     }
 }
@@ -134,6 +167,13 @@ const fn nudge_default() -> bool {
 /// A field the file writes as a plain value, `None` only when it is absent (`serde(default)`).
 fn present<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<u16>, D::Error> {
     u16::deserialize(deserializer).map(Some)
+}
+
+/// The `gated` section, written as a plain record, `None` only when it is absent.
+fn present_section<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<GatedRules>, D::Error> {
+    GatedRules::deserialize(deserializer).map(Some)
 }
 
 /// C-3′a's depth when the file omits it.
@@ -154,6 +194,7 @@ impl ContactRules {
         nudge_engaged_along_ring: true,
         crowd_iterations: 21,
         crowd_depth: REFERENCE_CROWD_DEPTH,
+        gated: None,
     };
 
     /// Whether C-3′ is switched on: `crowd_iterations` above `iterations`.
@@ -162,10 +203,22 @@ impl ContactRules {
         self.crowd_iterations > u16::from(self.iterations)
     }
 
-    /// These rules if they are valid (§3.6).
+    /// The contact solver's cap on averaged iterations per tick under these rules: the `gated`
+    /// section's `crowd_iterations` under `Gated` (C-3′ on, plan `2026-11-27-gated-movement`
+    /// §3.1.3), `crowd_iterations` under every other pipeline.
+    #[must_use]
+    pub fn solver_crowd_iterations(&self) -> u16 {
+        match (self.pipeline, self.gated) {
+            (MovementPipeline::Gated, Some(gated)) => gated.crowd_iterations,
+            _ => self.crowd_iterations,
+        }
+    }
+
+    /// These rules if they are valid (§3.6; plan `2026-11-27-gated-movement` §3.4).
     ///
     /// # Errors
-    /// [`SimCoreError::CatalogInvalidValue`] naming the first field out of range.
+    /// [`SimCoreError::CatalogInvalidValue`] naming the first field out of range, or `gated`
+    /// when the pipeline is `Gated` and the section is absent.
     pub fn validated(self) -> SimResult<Self> {
         let invalid = |field: &str, reason| SimCoreError::CatalogInvalidValue {
             definition: "contact".to_owned(),
@@ -195,6 +248,21 @@ impl ContactRules {
         }
         if self.crowd_depth == 0 {
             return Err(invalid("crowd_depth", "must be at least 1"));
+        }
+        match self.gated {
+            None if self.pipeline == MovementPipeline::Gated => {
+                return Err(invalid("gated", "is required under the Gated pipeline"));
+            }
+            Some(gated) if gated.crowd_iterations < u16::from(self.iterations) => {
+                return Err(invalid(
+                    "gated.crowd_iterations",
+                    "must be at least iterations",
+                ));
+            }
+            Some(gated) if gated.crowd_iterations > MAX_CROWD_ITERATIONS => {
+                return Err(invalid("gated.crowd_iterations", "must be at most 1000"));
+            }
+            _ => {}
         }
         Ok(self)
     }
@@ -561,6 +629,76 @@ mod tests {
         let off = CONTACT.replace("true)", "true, nudge_engaged_along_ring: false)");
         let rules = MovementRules::from_ron_str(&text(21, &off))?;
         assert!(!rules.contact().nudge_engaged_along_ring);
+        Ok(())
+    }
+
+    /// C1-T15 (plan `2026-11-27-gated-movement` §3.4): the `Gated` pipeline parses with a `gated`
+    /// section and reads its cap; the section is required under `Gated` and optional otherwise;
+    /// a cap below `iterations` or above 1,000 and an unknown field are refused with typed errors.
+    #[test]
+    fn the_gated_section_is_required_under_gated_and_validated() -> SimResult<()> {
+        let gated = |section: &str| {
+            CONTACT
+                .replace("Legacy", "Gated")
+                .replace("true)", &format!("true{section})"))
+        };
+        let rules =
+            MovementRules::from_ron_str(&text(21, &gated(", gated: (crowd_iterations: 151)")))?
+                .contact();
+        assert_eq!(rules.pipeline, MovementPipeline::Gated);
+        assert!(rules.pipeline.runs_solver());
+        assert_eq!(
+            rules.gated,
+            Some(GatedRules {
+                crowd_iterations: 151
+            })
+        );
+        assert_eq!(rules.solver_crowd_iterations(), 151);
+        assert_eq!(rules.crowd_iterations, 21);
+        let legacy = MovementRules::from_ron_str(&text(
+            21,
+            &CONTACT.replace("true)", "true, gated: (crowd_iterations: 151))"),
+        ))?
+        .contact();
+        assert_eq!(legacy.solver_crowd_iterations(), 21);
+        assert!(!MovementPipeline::Legacy.runs_solver());
+        assert!(MovementPipeline::Solver.runs_solver());
+        for (section, field) in [
+            ("", "gated"),
+            (", gated: (crowd_iterations: 20)", "gated.crowd_iterations"),
+            (
+                ", gated: (crowd_iterations: 1001)",
+                "gated.crowd_iterations",
+            ),
+        ] {
+            let result = MovementRules::from_ron_str(&text(21, &gated(section)));
+            assert!(
+                matches!(
+                    &result,
+                    Err(SimCoreError::CatalogInvalidValue { field: named, .. }) if named == field
+                ),
+                "{section}: {result:?}"
+            );
+        }
+        let solver = CONTACT
+            .replace("Legacy", "Solver")
+            .replace("true)", "true, gated: (crowd_iterations: 20))");
+        assert!(matches!(
+            MovementRules::from_ron_str(&text(21, &solver)),
+            Err(SimCoreError::CatalogInvalidValue { .. })
+        ));
+        for broken in [
+            gated(", gated: (crowd_iterations: 151, extra: 1)"),
+            gated(", gated: ()"),
+        ] {
+            assert!(
+                matches!(
+                    MovementRules::from_ron_str(&text(21, &broken)),
+                    Err(SimCoreError::RonDeserializationError(_))
+                ),
+                "{broken}"
+            );
+        }
         Ok(())
     }
 }

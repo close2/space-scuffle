@@ -24,8 +24,12 @@
 // `contact`: the contact rules of plan `docs/plans/2026-11-20-contact-solver.md` (§3.6; owner
 // answer Q0092 (a); sanctioned deviations D-alpha and D-beta of
 // `docs/questions/closed/0052-sanctioned-sc2-deviations.md`).
-// - `pipeline`: the migration switch, Legacy (today's local movement) or Solver (intent steering
-//   and the contact solver). Removed when the legacy pipeline is deleted (the plan's WP7).
+// - `pipeline`: the migration switch, Legacy (today's local movement), Solver (intent steering
+//   and the contact solver) or Gated (plan `docs/plans/2026-11-27-gated-movement.md`: Solver with
+//   the contact rules C': attacking and holding units are never moved by other bodies, D-delta
+//   is never applied (owner answer Q0121 (a)), enemies block (E-2, B-193), a body terrain holds
+//   passes its share to its partner (B-220), and C-3' runs at `gated.crowd_iterations`). Gated
+//   needs the `gated` section; it stays latent until that plan's WP4 ships it.
 // - `iterations` (C-3, plan Amendments 1 and 2): Jacobi iterations of the contact solver per tick:
 //   the smallest count with at most 2 of 2,000 generated crowds ending with a friendly pair above
 //   the moving bound and none above 8 %, each crowd a 9 x 9 hexagonal crowd standing in contact with
@@ -55,8 +59,16 @@
 // - `crowd_depth` (C-3'a): the depth, in bodies, of the deepest crowd behind a front that
 //   `crowd_iterations` is derived for: the 400-unit throughput reference army packed as a disc,
 //   ceil(sqrt(400 / pi)) = 12. Absent reads 12.
+// - `gated` (plan `docs/plans/2026-11-27-gated-movement.md` §3.4): the values only the Gated
+//   pipeline reads; required when `pipeline` is Gated.
+//   - `gated.crowd_iterations` (C-3' under Gated, the plan's §3.1.3 and §4.1): the same crowd
+//     extension as `crowd_iterations`, switched on under Gated as part of its contact layer;
+//     151 is the friend-crowd plan's P-1 derivation on this catalog (the test
+//     `the_gated_crowd_cap_covers_the_catalogs_crowd` fails if the catalog's crowd needs more).
+//     Under Solver `crowd_iterations` above stays the cap.
 // Validated at load: iterations >= 1, 0 < dead_band_permille < moving_overlap_permille < 1000,
-// side_horizon_factor >= 1, iterations <= crowd_iterations <= 1000, crowd_depth >= 1.
+// side_horizon_factor >= 1, iterations <= crowd_iterations <= 1000, crowd_depth >= 1, and
+// iterations <= gated.crowd_iterations <= 1000.
 (
     group_routing: (
         lane_tolerance_permille: 75,
@@ -75,5 +87,8 @@
         nudge_engaged_along_ring: true,
         crowd_iterations: 21,
         crowd_depth: 12,
+        gated: (
+            crowd_iterations: 151,
+        ),
     ),
 )
