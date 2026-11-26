@@ -67,7 +67,16 @@
 //!   ([`crate::harness::metrics::reverses`]): a moving unit-tick is a step above `v / 8`; a
 //!   reversal two consecutive steps of at least `v / 4` (`v / 2` for M1-hi) whose cosine is
 //!   below −0.5;
-//! - the cost probes of the world ([`sim_core::movement::MovementProbes`]), summed over the run.
+//! - the cost probes of the world ([`sim_core::movement::MovementProbes`]), summed over the run;
+//! - Amendment 3 of that plan (items 4 and 6): H-1 split by the first-contact exclusion
+//!   ([`MovementSide::held_moved_first_contact_ticks`], [`MovementSide::held_moved_clean_ticks`],
+//!   [`MovementSide::held_moved_clean_max`]: a displacement of a unit that, at the tick's start,
+//!   was in a pair that already overlapped beyond the dead band when it first met, a spawn or an
+//!   unload, [`FirstContactPairs`], is excluded and counted apart), and H-2 as repaired
+//!   ([`MovementSide::shove_e_pair`]: D-SHOVE-E counted only on ticks on which enemy pairs moved
+//!   the unit, [`SimWorld::enemy_pair_push`], outside the exclusion; the original D-SHOVE-E stays
+//!   reported). The world's enemy-pair probe exists under the `Gated` pipeline only, so the
+//!   repaired H-2 reads 0 under every other pipeline and is defined for `Gated`.
 //!
 //! A body, for the overlaps and for "touching", is a living unit that does not pass through
 //! units (`Entity::passes_through_units`: hidden, mineral walking or collision suppressed) and
@@ -128,6 +137,77 @@ pub struct MovementSide {
     pub reversals: u32,
     /// M1-hi: reversals of steps of at least `v / 2`.
     pub reversals_hi: u32,
+    /// H-1's first-contact exclusion: unit-ticks of [`Self::held_moved_ticks`] whose unit was, at
+    /// the tick's start, in a pair of [`FirstContactPairs`].
+    pub held_moved_first_contact_ticks: u32,
+    /// H-1 as judged: [`Self::held_moved_ticks`] less the excluded ones.
+    pub held_moved_clean_ticks: u32,
+    /// H-1 as judged: the largest displacement of [`Self::held_moved_clean_ticks`], world units.
+    pub held_moved_clean_max: f64,
+    /// H-2 as repaired (Amendment 3, item 4): D-SHOVE-E counted only on unit-ticks on which
+    /// enemy pairs moved the unit and its tick-start state was outside the exclusion, world units.
+    pub shove_e_pair: f64,
+}
+
+/// The pairs that already overlapped beyond the dead band when they first met: a pair of bodies
+/// of which one was first observed while overlapping the other by more than
+/// `dead_band_permille` of their radius sum (a spawn, an unload). A pair stays in the set while
+/// its bodies stay in contact (overlapping) and alive. H-1 and H-2 exclude a displacement of a
+/// unit in such a pair at the tick's start (plan `2026-11-27-gated-movement` §6.2, built by its
+/// Amendment 3, item 6) and count it apart.
+#[derive(Debug, Clone, Default)]
+pub struct FirstContactPairs {
+    /// Every body observed last time, with its position and radius.
+    seen: BTreeMap<EntityId, (Point, f64)>,
+    /// The pairs, lower id first.
+    pairs: std::collections::BTreeSet<(EntityId, EntityId)>,
+}
+
+impl FirstContactPairs {
+    /// An empty set, before any observation.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Whether `id` is in a pair of the set, as of the latest observation.
+    #[must_use]
+    pub fn involves(&self, id: EntityId) -> bool {
+        self.pairs.iter().any(|&(a, b)| a == id || b == id)
+    }
+
+    /// Observes `world` after a tick (or its starting state): a body seen for the first time
+    /// joins a pair with every body it overlaps beyond the dead band; a pair that no longer
+    /// overlaps, or lost a body, leaves the set.
+    pub fn observe(&mut self, world: &SimWorld) {
+        let band = f64::from(world.catalog.movement_rules().contact().dead_band_permille) / 1000.0;
+        let mut now = BTreeMap::new();
+        for (&id, entity) in &world.entities {
+            let Ok(arch) = world.catalog.get(entity.unit_type_id) else {
+                continue;
+            };
+            if entity.is_alive() && !entity.passes_through_units() && !arch.is_immobile_by_default()
+            {
+                now.insert(id, (point(entity.position), to_f64(arch.collision_radius)));
+            }
+        }
+        let overlap = |(pa, ra): (Point, f64), (pb, rb): (Point, f64)| {
+            let sum = ra + rb;
+            (sum - (pa.0 - pb.0).hypot(pa.1 - pb.1)) / sum
+        };
+        self.pairs.retain(|(a, b)| match (now.get(a), now.get(b)) {
+            (Some(&one), Some(&two)) => overlap(one, two) > 0.0,
+            _ => false,
+        });
+        for (&id, &body) in now.iter().filter(|(id, _)| !self.seen.contains_key(id)) {
+            for (&other, &them) in &now {
+                if other != id && overlap(body, them) > band {
+                    self.pairs.insert((id.min(other), id.max(other)));
+                }
+            }
+        }
+        self.seen = now;
+    }
 }
 
 /// Both sides' columns of plan `2026-11-27-gated-movement`, and the cost probes, over a run.
@@ -386,6 +466,8 @@ pub struct ContactMeter {
     /// Each unit's step of the latest tick, for M1.
     steps: BTreeMap<EntityId, Point>,
     movement: MovementChecks,
+    /// H-1's and H-2's first-contact exclusion, as of the latest observation.
+    first: FirstContactPairs,
 }
 
 impl ContactMeter {
@@ -451,6 +533,7 @@ impl ContactMeter {
             self.movement.terrain_transfers += u64::from(probes.terrain_transfers);
         }
         self.count_movement(world, &now);
+        self.first.observe(world);
         self.seen = now;
         self.tick += 1;
     }
@@ -471,6 +554,12 @@ impl ContactMeter {
             if displaced > HELD_EPSILON {
                 counts.held_moved_ticks += 1;
                 counts.held_moved_max = counts.held_moved_max.max(displaced);
+                if self.first.involves(id) {
+                    counts.held_moved_first_contact_ticks += 1;
+                } else {
+                    counts.held_moved_clean_ticks += 1;
+                    counts.held_moved_clean_max = counts.held_moved_clean_max.max(displaced);
+                }
             }
             let speed = current.speed;
             if moved.0.hypot(moved.1) > speed / 8.0 {
@@ -510,7 +599,12 @@ impl ContactMeter {
             !away.is_empty(),
             moved,
         );
-        checks.shove_e += shove_e_of(before.proposed_none, before.holding, delta, away);
+        let shove_e = shove_e_of(before.proposed_none, before.holding, delta, away);
+        checks.shove_e += shove_e;
+        let pushed = to_f64(world.enemy_pair_push(id)) > HELD_EPSILON;
+        if pushed && !self.first.involves(id) {
+            self.movement.sides[side].shove_e_pair += shove_e;
+        }
         checks.shots += u32::from(entity.weapon_cooldown_remaining > before.cooldown);
         checks.blocked += u32::from(is_blocked(world, entity, arch));
         let still = entity.position == before.position && entity.heading == before.heading;

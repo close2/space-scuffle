@@ -72,6 +72,25 @@ friend_overlap_corrected_ticks,blue_standing_able,red_standing_able,blue_standin
 red_standing_able_cross,solver_extended_ticks,solver_extended_iterations,blue_held_moved_ticks,\
 red_held_moved_ticks,blue_held_moved_max,red_held_moved_max,blue_moving_ticks,red_moving_ticks,\
 blue_reversals,red_reversals,blue_reversals_hi,red_reversals_hi,gate_rays,orbit_refusals,\
+terrain_transfers,blue_held_moved_first_contact_ticks,red_held_moved_first_contact_ticks,\
+blue_held_moved_clean_ticks,red_held_moved_clean_ticks,blue_held_moved_clean_max,\
+red_held_moved_clean_max,blue_shove_e_pair,red_shove_e_pair";
+
+/// The header of a `matrix.csv` written before the columns of the plan's Amendment 3 (`WP0a`'s
+/// [`MovementChecks`] without the first-contact split and the repaired H-2). Still read; the
+/// later columns then read as zero.
+pub const WP0A_CSV_HEADER: &str = "battle,seed,of_record,end_tick,blue_survivors,red_survivors,\
+blue_lead_hull,red_lead_hull,expectation_met,blocked_attacker_ticks,reversals,stall_giveups,\
+proposal_reversals,contact_reversals,blue_shove,red_shove,blue_r10_leash,blue_r10_terrain,\
+blue_r10_unruled,blue_r10_free,red_r10_leash,red_r10_terrain,red_r10_unruled,red_r10_free,\
+blue_churn_explained,blue_churn_unexplained,red_churn_explained,red_churn_unexplained,\
+blue_blocked,red_blocked,blue_shots,red_shots,blue_unit_ticks,red_unit_ticks,enemy_overlap,\
+blue_shove_e,red_shove_e,blue_engaged_ticks,red_engaged_ticks,enemy_overlap_ticks,friend_overlap,\
+friend_overlap_ticks,friend_overlap_with_spawn,friend_overlap_corrected,\
+friend_overlap_corrected_ticks,blue_standing_able,red_standing_able,blue_standing_able_cross,\
+red_standing_able_cross,solver_extended_ticks,solver_extended_iterations,blue_held_moved_ticks,\
+red_held_moved_ticks,blue_held_moved_max,red_held_moved_max,blue_moving_ticks,red_moving_ticks,\
+blue_reversals,red_reversals,blue_reversals_hi,red_reversals_hi,gate_rays,orbit_refusals,\
 terrain_transfers";
 
 /// The header of a `matrix.csv` written before the columns of plan `2026-11-27-gated-movement`:
@@ -139,7 +158,10 @@ const CHECK_COLUMNS: usize = CONTACT_COLUMNS + CROWD_COLUMNS;
 const CHECKED_COLUMNS: usize = SPLIT_COLUMNS + CHECK_COLUMNS;
 
 /// Columns of plan `2026-11-27-gated-movement` at the end of a current row ([`MovementChecks`]).
-pub const MOVEMENT_COLUMNS: usize = 13;
+pub const MOVEMENT_COLUMNS: usize = 21;
+
+/// The columns of [`MOVEMENT_COLUMNS`] a row written before the plan's Amendment 3 has.
+pub const WP0A_MOVEMENT_COLUMNS: usize = 13;
 
 /// Columns of `matrix.csv`: [`CHECKED_COLUMNS`], then the columns of plan
 /// `2026-11-27-gated-movement`.
@@ -235,6 +257,7 @@ impl MatrixRow {
         let cells: Vec<&str> = line.split(',').collect();
         let columns = [
             CSV_COLUMNS,
+            CHECKED_COLUMNS + WP0A_MOVEMENT_COLUMNS,
             CHECKED_COLUMNS,
             SPLIT_COLUMNS + CONTACT_COLUMNS,
             SPLIT_COLUMNS,
@@ -245,7 +268,10 @@ impl MatrixRow {
             return Err(format!("{} cells, expected {CSV_COLUMNS}", cells.len()));
         }
         let movement = match cells.get(CHECKED_COLUMNS..) {
-            Some(rest) if rest.len() == MOVEMENT_COLUMNS && rest.iter().any(|c| !c.is_empty()) => {
+            Some(rest)
+                if (rest.len() == MOVEMENT_COLUMNS || rest.len() == WP0A_MOVEMENT_COLUMNS)
+                    && rest.iter().any(|c| !c.is_empty()) =>
+            {
                 Some(parse_movement(rest)?)
             }
             _ => None,
@@ -424,20 +450,40 @@ pub(crate) fn movement_cells(movement: &MovementChecks) -> String {
     cells.push(movement.gate_rays.to_string());
     cells.push(movement.orbit_refusals.to_string());
     cells.push(movement.terrain_transfers.to_string());
+    for pick in [
+        |s: &MovementSide| s.held_moved_first_contact_ticks,
+        |s: &MovementSide| s.held_moved_clean_ticks,
+    ] {
+        cells.push(pick(blue).to_string());
+        cells.push(pick(red).to_string());
+    }
+    cells.push(format!("{:.9}", blue.held_moved_clean_max));
+    cells.push(format!("{:.9}", red.held_moved_clean_max));
+    cells.push(format!("{:.4}", blue.shove_e_pair));
+    cells.push(format!("{:.4}", red.shove_e_pair));
     cells.join(",")
 }
 
-/// Parses the [`MOVEMENT_COLUMNS`] cells of plan `2026-11-27-gated-movement` of a row.
+/// Parses the [`MOVEMENT_COLUMNS`] cells of plan `2026-11-27-gated-movement` of a row, or the
+/// [`WP0A_MOVEMENT_COLUMNS`] of a row written before its Amendment 3 (the later ones zero).
 fn parse_movement(cells: &[&str]) -> Result<MovementChecks, String> {
     let int = |index: usize| cell::<u32>(cells[index], "movement checks");
     let long = |index: usize| cell::<u64>(cells[index], "movement checks");
+    let real = |index: usize| cell::<f64>(cells[index], "movement checks");
+    let amended = cells.len() == MOVEMENT_COLUMNS;
     let mut sides = [MovementSide::default(); 2];
     for (side, counts) in sides.iter_mut().enumerate() {
         counts.held_moved_ticks = int(side)?;
-        counts.held_moved_max = cell::<f64>(cells[2 + side], "movement checks")?;
+        counts.held_moved_max = real(2 + side)?;
         counts.moving_ticks = int(4 + side)?;
         counts.reversals = int(6 + side)?;
         counts.reversals_hi = int(8 + side)?;
+        if amended {
+            counts.held_moved_first_contact_ticks = int(13 + side)?;
+            counts.held_moved_clean_ticks = int(15 + side)?;
+            counts.held_moved_clean_max = real(17 + side)?;
+            counts.shove_e_pair = real(19 + side)?;
+        }
     }
     Ok(MovementChecks {
         sides,
@@ -492,6 +538,7 @@ pub fn parse_matrix_csv(path: &Path, text: &str) -> Result<Vec<MatrixRow>, RunEr
         lines.next(),
         Some(
             CSV_HEADER
+                | WP0A_CSV_HEADER
                 | CROWD_CSV_HEADER
                 | CONTACT_CSV_HEADER
                 | SPLIT_CSV_HEADER
@@ -1122,6 +1169,10 @@ mod tests {
                         moving_ticks: 400,
                         reversals: 2,
                         reversals_hi: 1,
+                        held_moved_first_contact_ticks: 1,
+                        held_moved_clean_ticks: 2,
+                        held_moved_clean_max: 0.031_25,
+                        shove_e_pair: 0.25,
                     },
                     MovementSide {
                         held_moved_ticks: 0,
@@ -1129,6 +1180,7 @@ mod tests {
                         moving_ticks: 300,
                         reversals: 0,
                         reversals_hi: 0,
+                        ..MovementSide::default()
                     },
                 ],
                 gate_rays: 0,
@@ -1287,6 +1339,34 @@ mod tests {
         let rows = parse_matrix_csv(path, &table).map_err(|e| e.to_string())?;
         let comparison = Comparison::new(PathBuf::from("m.csv"), rows, &[current]);
         assert_eq!(comparison.moved, Vec::<String>::new());
+        Ok(())
+    }
+
+    /// Plan `2026-11-27-gated-movement` Amendment 3: a table written by `WP0a`'s meter (13
+    /// movement columns) still parses; its first-contact split and repaired H-2 read as zero.
+    #[test]
+    fn a_row_written_before_amendment_3_reads_with_its_columns_zero() -> Result<(), String> {
+        let current = row("a_b", 5, 2, Some(SimScalar::from_i32(45)));
+        let line = current.csv_line();
+        let old_line = line
+            .split(',')
+            .take(CHECKED_COLUMNS + WP0A_MOVEMENT_COLUMNS)
+            .collect::<Vec<_>>()
+            .join(",");
+        let old = MatrixRow::from_csv_line(&old_line)?;
+        let (Some(old_movement), Some(movement)) = (old.movement, current.movement) else {
+            return Err("both rows carry movement columns".to_owned());
+        };
+        assert_eq!(
+            old_movement.sides[0].held_moved_ticks,
+            movement.sides[0].held_moved_ticks
+        );
+        assert_eq!(old_movement.sides[0].held_moved_clean_ticks, 0);
+        assert_eq!(old_movement.sides[0].shove_e_pair, 0.0);
+        assert!(CSV_HEADER.starts_with(WP0A_CSV_HEADER));
+        let table = format!("{WP0A_CSV_HEADER}\n{old_line}\n");
+        let rows = parse_matrix_csv(Path::new("m.csv"), &table).map_err(|e| e.to_string())?;
+        assert_eq!(rows.len(), 1);
         Ok(())
     }
 

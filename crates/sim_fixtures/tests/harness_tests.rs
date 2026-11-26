@@ -943,3 +943,69 @@ fn the_command_line_takes_a_crowd_cap() -> TestResult {
     assert!(parse(&args("--family arc --crowd-iterations many --out a.csv")).is_err());
     Ok(())
 }
+
+/// Plan `2026-11-27-gated-movement` Amendment 3, item 6: two bodies that overlap beyond the dead
+/// band when first observed (a spawn) form a first-contact pair until they part; two bodies that
+/// first meet after both were observed do not.
+#[test]
+fn first_contact_pairs_hold_a_spawn_overlap_until_it_parts() -> Result<(), Box<dyn Error>> {
+    use sim_fixtures::trace::contact_checks::FirstContactPairs;
+    let map = sim_map::GameMap::new(
+        32,
+        32,
+        sim_map::MapCell::default_ground(sim_map::CliffLevel(0)),
+    )?;
+    let mut world = sim_fixtures::try_world(map, 0x0A3_0006)?;
+    let kind = world
+        .catalog
+        .archetypes()
+        .find(|a| a.mover_type == sim_types::MoverType::Ground && !a.is_immobile_by_default())
+        .map(|a| (a.unit_type_id, a.collision_radius))
+        .ok_or("a mobile ground archetype")?;
+    let r = kind.1;
+    let at = |x: SimScalar, y: f64| SimVec2::new(x, SimScalar::from_num(y));
+    let centre = SimScalar::from_num(16.0);
+    let one = world.spawn_unit(kind.0, sim_types::PlayerId(0), at(centre, 16.0))?;
+    let two = world.spawn_unit(kind.0, sim_types::PlayerId(0), at(centre + r, 16.0))?;
+    let far = world.spawn_unit(kind.0, sim_types::PlayerId(0), at(centre, 24.0))?;
+    let mut pairs = FirstContactPairs::new();
+    pairs.observe(&world);
+    assert!(pairs.involves(one) && pairs.involves(two) && !pairs.involves(far));
+    // A body that first meets another after both were seen forms no pair.
+    if let Some(entity) = world.entities.get_mut(&far) {
+        entity.position = at(centre - r, 16.0);
+    }
+    pairs.observe(&world);
+    assert!(!pairs.involves(far));
+    // Once the spawned pair stops overlapping, it leaves the set for good.
+    if let Some(entity) = world.entities.get_mut(&two) {
+        entity.position = at(centre + r * 4, 16.0);
+    }
+    pairs.observe(&world);
+    assert!(!pairs.involves(one) && !pairs.involves(two));
+    if let Some(entity) = world.entities.get_mut(&two) {
+        entity.position = at(centre + r, 16.0);
+    }
+    pairs.observe(&world);
+    assert!(!pairs.involves(two));
+    Ok(())
+}
+
+/// Plan `2026-11-27-gated-movement` Amendment 3, item 4: in `enemy-press` seed 1 under `Gated` the
+/// unarmed enemies flee and push their standing friends, which the original H-2 count records
+/// (`enemy_moved_ticks`); the repaired count (`enemy_pair_moved_ticks`) records only what enemy
+/// pairs moved, and reads 0.
+#[test]
+fn the_repaired_h2_counts_only_what_enemy_pairs_moved() -> Result<(), Box<dyn Error>> {
+    let scenario = generate(Family::EnemyPress, 1, false);
+    let options = RunOptions::with_pipeline(sim_core::catalog::MovementPipeline::Gated)?;
+    let row = sim_fixtures::harness::run_scenario(&scenario, &options)?;
+    let (_, known) = row.known.ok_or("enemy-press has a known answer")?;
+    assert!(
+        known.enemy_moved_ticks > 0,
+        "the original count saw no displacement"
+    );
+    assert_eq!(known.enemy_pair_moved_ticks, 0);
+    assert_eq!(known.held_moved_clean_ticks, 0);
+    Ok(())
+}
