@@ -31,3 +31,4 @@ Recommended: (c) now, then (a) together with the Carrier once Q0131 is answered 
 
 ## Answer
 
+- **Try up to 4 more seeds (using per-identity negative terms as in Q0131 (a), or a clean start still if needed for framing), then take the best available seed** within the remaining batch budget. Accept faint light shafts / minor staging imperfections as a temporary exception so `spore_matriarch` and `brood_mite` unlock in the client now; unsatisfactory videos across the roster will be redone in a polish pass once the game is finished.
