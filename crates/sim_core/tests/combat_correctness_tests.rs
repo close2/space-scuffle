@@ -166,6 +166,10 @@ fn s4_projectile_weapon_applies_every_strike() {
         .clone();
     let shooter = arena.spawn(&shooter_slug, BLUE, 10.0, 10.0);
     let victim = arena.spawn("shock_golem", RED, 13.0, 10.0);
+    // It holds, so both missiles fly the same distance (an unanswered target would otherwise
+    // walk off between the releases, and a missile that accelerates, plan
+    // `2026-11-28-missile-movers-b52` WP4, then lands more than one interval later).
+    arena.order(RED, &[victim], UnitOrder::HoldPosition);
     let unit_type = arena.world.entities[&shooter].unit_type_id;
     let weapon = arena
         .world
