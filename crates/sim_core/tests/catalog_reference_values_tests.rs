@@ -5688,7 +5688,7 @@ const SC2_MISSILE_MOVERS: [(&str, &str, &[MoverRow], f32, &str); 6] = [
                 None,
                 &[
                     (Some(0.112), 0.0, 0.112, Some(End::Flown(0.6875))),
-                    (Some(0.112), 0.175616, 1.568, None),
+                    (Some(0.112), 0.175_616, 1.568, None),
                 ],
             ),
         ],
