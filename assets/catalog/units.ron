@@ -2810,7 +2810,7 @@
                 weapons: [],
             ),
             veo_prompts: {
-                Idle: "Mothership Carrier: a single large golden carrier aircraft, a wide flat round disc with a low dome, a ring of glowing amber docking bays around its rim and a small cyan energy core glowing in the dome, floating still, seen from high above at a three-quarter angle, its front toward the lower right, whole in the middle of the frame, softly lit from the front; nothing shines down on it or below it, no other aircraft.",
+                Idle: "Mothership Carrier: a single large golden carrier aircraft, a wide flat round disc with a low dome, a ring of glowing amber docking bays around its rim and a small cyan energy core glowing in the dome, held still, seen from above at a three-quarter angle looking down on its top, front toward the lower right, the whole carrier in the middle of the frame with wide margins, plain dark backdrop, lit softly from the front.",
                 Walk: "Mothership Carrier: the same large golden saucer carrier in slow, heavy level forward flight, its rim bays glowing, flying in place in the middle of the frame and fully visible, no other aircraft.",
                 Attack: "Mothership Carrier: the same large golden saucer carrier launches tiny golden saucer drones from the glowing docking bays on its front rim.",
             },
@@ -2959,7 +2959,7 @@
                 ],
             ),
             veo_prompts: {
-                Idle: "Saucer Interceptor: a single small golden drone aircraft, a smooth flat round disc with a small domed top, a glowing amber core in the dome and a ring of small fixed amber lights around its rim, floating still, seen from high above at a three-quarter angle, its front toward the lower right, whole in the middle of the frame, softly lit from the front; nothing shines down on it or below it, no other aircraft.",
+                Idle: "Saucer Interceptor: a single small golden drone aircraft, a smooth flat round disc with a small domed top, a glowing amber core in the dome and a ring of small fixed amber lights around its rim, held still, seen from above at a three-quarter angle looking down on its top, front toward the lower right, the whole drone in the middle of the frame with wide margins, plain dark backdrop, lit softly from the front.",
                 Walk: "Saucer Interceptor: the same small golden saucer drone in fast level forward flight, its rim lights glowing bright, flying in place in the middle of the frame and fully visible, no other aircraft.",
                 Attack: "Saucer Interceptor: the same small golden saucer drone fires two short amber energy beams forward from the front of its rim.",
             },

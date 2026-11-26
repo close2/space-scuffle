@@ -182,8 +182,15 @@ rather than red. Logs `~/scratch/carrier/logs/wp4b-tests.log`, `wp4c-tests.log`.
 [`docs/evidence/veo/2026-11-26-batch-carrier.md`](veo/2026-11-26-batch-carrier.md): the preflight gave its usual
 Express-mode 404 (Q0042); four seeds of each identity, 8 generations, $3.20 at list price ($116.85 of $230.00 spent),
 all drew diagonal light shafts across the backdrop (the owner's no-rays rule) and were rejected; stop rule 8, and the
-owner is asked ([Q0131](../questions/open/0131-carrier-media-light-shafts.md), default: no more spend, the Carrier
+owner is asked ([Q0131](../questions/closed/0131-carrier-media-light-shafts.md), default: no more spend, the Carrier
 stays locked by `NoMedia`). H-21 is not met; nothing was installed, baked or added to the required set.
+
+**Continued after the owner's answer to Q0131** (2026-11-26, branch `carrier-media`): per-identity negative terms and
+up to four more seeds per identity, then the best available. 13 more generations, $5.20 (the batch 21, $8.40 of
+$10.00; the ledger $128.45 of $230.00); six clips installed and baked, both identities in the required set,
+`audit-media --strict` 34 of 34, so H-21 is met and the client unlocks the Carrier. The accepted flaws are in the
+[batch evidence](veo/2026-11-26-batch-carrier.md). H-20 still waits: a battle with interceptors cycling allocates
+render entities in the client (B-237), which the render-entity pool package fixes.
 
 ## WP6: confirmation, re-record, throughput
 

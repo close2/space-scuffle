@@ -1,0 +1,72 @@
+(
+    format_version: 1,
+    name: "saucer_interceptor",
+    atlas_sha256: "f09f2f589a26a46b0a2869a6ccc5bc2168dd2bdd6db7eca992c2a358e24a986a",
+    manifest_sha256: "9fef30bde041bf7e9e1be46c051c77777de42ea862ab643b34425acd955ad0ac",
+    bake: (
+        frame_size: 512,
+        fps: 15,
+        max_frames_per_state: 10,
+        ffmpeg_version: "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+        framing: Letterbox(
+            feather_permille: 30,
+        ),
+    ),
+    states: {
+        Idle: (
+            clip: "saucer_interceptor_idle.mp4",
+            clip_sha256: "eca736b16a73f0b7c4d49148cee3568863751c42748f5b3d28a591d24b7fea24",
+            start_frame: 0,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/b9cb72f1-ac0f-4923-a848-bc18f094f2ea",
+                prompt_sha256: "56a2bea1740da1ba57a7a557b0f6092b0cfd8a4aac542c9d98613411af218f11",
+                keyframe_sha256: Some("b303d4b9b1e505eaad762958931da0f82b1a46a595d240dfc01094ffde0ff95b"),
+                last_frame_sha256: Some("b303d4b9b1e505eaad762958931da0f82b1a46a595d240dfc01094ffde0ff95b"),
+                ledger_line: 1579,
+            ),
+            bar_rgb: Some((27, 33, 42)),
+            seam: Some((
+                sampling: Loop,
+                scale_permille: 0,
+                crossfade_frames: 2,
+            )),
+        ),
+        Walk: (
+            clip: "saucer_interceptor_walk.mp4",
+            clip_sha256: "d181fb8d7cc4022bfca616dd89ebb974b5d172135e45e2a334406c65b2c2ff99",
+            start_frame: 10,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/323525cb-9f07-4a84-8c5c-4a1fa0213721",
+                prompt_sha256: "7aa51c260cc85efe42a0fe00bff11f84763583eef929b56def5e7f6bfcb286d4",
+                keyframe_sha256: Some("b303d4b9b1e505eaad762958931da0f82b1a46a595d240dfc01094ffde0ff95b"),
+                last_frame_sha256: Some("b303d4b9b1e505eaad762958931da0f82b1a46a595d240dfc01094ffde0ff95b"),
+                ledger_line: 1583,
+            ),
+            bar_rgb: Some((27, 33, 42)),
+            seam: Some((
+                sampling: Loop,
+                scale_permille: 0,
+                crossfade_frames: 2,
+            )),
+        ),
+        Attack: (
+            clip: "saucer_interceptor_attack.mp4",
+            clip_sha256: "1fe46c4736a93fb8ad12f939e6443e3c588da7cdfc0bb175c039fabea2dcce72",
+            start_frame: 20,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/7f78344e-1a14-43c3-94dd-8ae6f282edd7",
+                prompt_sha256: "ffef78ce91823897eadcf2af655d163a52263a0ee69720641f8fa010772e1451",
+                keyframe_sha256: Some("b303d4b9b1e505eaad762958931da0f82b1a46a595d240dfc01094ffde0ff95b"),
+                last_frame_sha256: Some("b303d4b9b1e505eaad762958931da0f82b1a46a595d240dfc01094ffde0ff95b"),
+                ledger_line: 1587,
+            ),
+            bar_rgb: Some((27, 34, 42)),
+        ),
+    },
+)
