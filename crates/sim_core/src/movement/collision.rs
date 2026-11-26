@@ -321,7 +321,13 @@ impl SimWorld {
                 }
             }
         }
-        if self.catalog.movement_rules().contact().pipeline == MovementPipeline::Solver {
+        if self
+            .catalog
+            .movement_rules()
+            .contact()
+            .pipeline
+            .runs_solver()
+        {
             self.solve_contacts(&entries);
             self.movement.entries = entries;
             return;
@@ -408,6 +414,7 @@ impl SimWorld {
     /// step of the legacy phase, and each body's velocity becomes what it achieved this tick.
     fn solve_contacts(&mut self, entries: &[MotionEntry]) {
         let contact = self.catalog.movement_rules().contact();
+        let gated = contact.pipeline == MovementPipeline::Gated;
         let mut solver = std::mem::take(&mut self.movement.solver);
         solver.bodies.clear();
         // The determinism probe (`set_movement_order_rotation`): the fill starts `offset` places
@@ -419,12 +426,16 @@ impl SimWorld {
                 solver.bodies.push(self.solver_body(*entry, actor));
             }
         }
+        if gated {
+            self.gated_bodies(&mut solver);
+        }
         let settings = SolverSettings {
             iterations: contact.iterations,
-            crowd_iterations: contact.crowd_iterations,
+            crowd_iterations: contact.solver_crowd_iterations(),
             dead_band_permille: contact.dead_band_permille,
             moving_overlap_permille: contact.moving_overlap_permille,
             moving_friends_push: contact.moving_friends_push,
+            gated,
         };
         let (map, pathfinder) = (&self.map, &mut self.pathfinder);
         let diagnostics = &mut self.tick_diagnostics;
@@ -447,6 +458,9 @@ impl SimWorld {
         );
         self.movement.contact_iterations = solved.iterations;
         self.movement.contact_rebuilds = solved.rebuilds;
+        if gated {
+            self.record_gated_probes(&solver);
+        }
         for body in &solver.bodies {
             if let Some(actor) = self.entities.get_mut(&body.id) {
                 actor.position = body.position;
@@ -456,6 +470,77 @@ impl SimWorld {
             }
         }
         self.movement.solver = solver;
+    }
+
+    /// The `Gated` pipeline's additions to the solver's bodies (plan `2026-11-27-gated-movement`
+    /// C′, Amendments 3 and 3a): each body's walk for E-2 (where its committed walk began: its
+    /// tick-start position when the movement phase recorded a step for it this tick, its
+    /// committed position otherwise, as for a body a cast placed); "attacking" read from the
+    /// tick-start snapshot ([`SimWorld::attack_band_at_tick_start`]) instead of the committed
+    /// positions; and for an attacking unit D-δ's radial (the unit vector from its target to it)
+    /// and its ring ([`super::solver::Ring`]: its target's slot and its weapon band, Amendment
+    /// 3b), so friends nudge it round its target and never out of its band.
+    fn gated_bodies(&self, solver: &mut super::solver::ContactSolver) {
+        solver.walks.clear();
+        solver.rings.clear();
+        let mut slots = std::mem::take(&mut solver.slots);
+        slots.clear();
+        slots.extend(
+            solver
+                .bodies
+                .iter()
+                .enumerate()
+                .map(|(slot, body)| (body.id, u32::try_from(slot).unwrap_or(u32::MAX))),
+        );
+        slots.sort_unstable_by_key(|&(id, _)| id);
+        for body in &mut solver.bodies {
+            let from = if self.proposed_step(body.id).is_some() {
+                body.start
+            } else {
+                body.position
+            };
+            solver.walks.push(super::solver::Walk {
+                committed: body.position,
+                from,
+            });
+            let band = self.attack_band_at_tick_start(body.id);
+            body.party.engaged = band.is_some();
+            let ring = band
+                .filter(|band| !body.party.holding && band.min <= band.max)
+                .and_then(|band| {
+                    let slot = slots
+                        .binary_search_by_key(&band.target, |&(entity, _)| entity)
+                        .ok()?;
+                    let centre = self.entities.get(&band.target)?.position;
+                    let radial = super::math::direction(body.position, centre).ok()?;
+                    let ring = super::solver::Ring {
+                        target: slots[slot].1,
+                        min: band.min,
+                        max: band.max,
+                    };
+                    (radial != SimVec2::ZERO).then_some((ring, radial))
+                });
+            body.party.nudge = ring.map(|(_, radial)| radial);
+            solver.rings.push(ring.map(|(ring, _)| ring));
+        }
+        solver.slots = slots;
+    }
+
+    /// Records the `Gated` solve's probes: C′-3's transfers, and each body's push by enemy pairs
+    /// (H-2's probe, [`SimWorld::enemy_pair_push`]), by entity id.
+    fn record_gated_probes(&mut self, solver: &super::solver::ContactSolver) {
+        self.movement.probes.terrain_transfers = solver.transfers;
+        let pushes = &mut self.movement.enemy_pushes;
+        pushes.clear();
+        pushes.extend(
+            solver
+                .bodies
+                .iter()
+                .zip(&solver.enemy_push)
+                .filter(|(_, &push)| push > SimScalar::ZERO)
+                .map(|(body, &push)| (body.id, push)),
+        );
+        pushes.sort_unstable_by_key(|&(id, _)| id);
     }
 
     /// One body as the contact solver sees it (C-2's parties).
@@ -562,7 +647,7 @@ mod tests {
                     .iter()
                     .map(|body| body.entry.id)
                     .collect(),
-                MovementPipeline::Solver => world
+                MovementPipeline::Solver | MovementPipeline::Gated => world
                     .movement
                     .solver
                     .bodies

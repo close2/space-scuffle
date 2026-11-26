@@ -312,6 +312,29 @@ pub(crate) struct MovementWorkspace {
     order_rotation: u32,
     /// The cost probes of the latest movement and collision phases ([`MovementProbes`]).
     probes: MovementProbes,
+    /// `Gated` only (plan `2026-11-27-gated-movement` Amendment 3, item 1): the units attacking at
+    /// the tick's start, whose attack target stood in their weapon band in the tick-start
+    /// snapshot, sorted by id; built once per tick by the movement phase before any body moves.
+    /// Each carries its target and weapon band ([`AttackBand`], Amendment 3b), by which the
+    /// contact solver keeps it in its band. Empty under every other pipeline.
+    attacking_at_start: Vec<(EntityId, AttackBand)>,
+    /// `Gated` only: H-2's probe of the latest collision phase, each body's push by enemy pairs
+    /// (the L1 length of the enemy pairs' part of its steps, world units), by entity id, for the
+    /// bodies with one ([`SimWorld::enemy_pair_push`]). Never hashed, snapshotted or replayed.
+    enemy_pushes: Vec<(EntityId, SimScalar)>,
+}
+
+/// An attacking unit's target and weapon band at the tick's start (`Gated` only, plan
+/// `2026-11-27-gated-movement` Amendment 3b): the centre distances, world units, between which
+/// its weapon reaches that target, both radii included, as the pursuit measures them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AttackBand {
+    /// The unit's attack target.
+    pub target: EntityId,
+    /// The nearest centre distance the weapon reaches, world units; zero when it has no minimum.
+    pub min: SimScalar,
+    /// The farthest centre distance the weapon reaches, world units.
+    pub max: SimScalar,
 }
 
 /// Cost probes of plan `2026-11-27-gated-movement` (§5.2, `WP0a`), counted over the latest
@@ -558,6 +581,31 @@ impl SimWorld {
     #[must_use]
     pub fn movement_probes(&self) -> MovementProbes {
         self.movement.probes
+    }
+
+    /// H-2's probe (plan `2026-11-27-gated-movement` Amendment 3, item 4): how far, world units
+    /// (L1), enemy pairs' corrections moved `id` in the latest collision phase under the `Gated`
+    /// pipeline; zero for a body no enemy pair moved, and under every other pipeline. Derived
+    /// output for the measurement tools, excluded from checksums and never consulted by the
+    /// simulation.
+    #[must_use]
+    pub fn enemy_pair_push(&self, id: EntityId) -> SimScalar {
+        let pushes = &self.movement.enemy_pushes;
+        pushes
+            .binary_search_by_key(&id, |&(entity, _)| entity)
+            .map_or(SimScalar::ZERO, |index| pushes[index].1)
+    }
+
+    /// The target and weapon band of `id` when it was attacking at the tick's start under the
+    /// `Gated` pipeline: its attack target stood in its weapon band in the tick-start snapshot
+    /// (C′-1 as Amendment 3 of plan `2026-11-27-gated-movement` reads it; the band is Amendment
+    /// 3b's). `None` otherwise, and under every other pipeline.
+    pub(crate) fn attack_band_at_tick_start(&self, id: EntityId) -> Option<AttackBand> {
+        let attacking = &self.movement.attacking_at_start;
+        attacking
+            .binary_search_by_key(&id, |&(entity, _)| entity)
+            .ok()
+            .map(|index| attacking[index].1)
     }
 
     /// Returns command-level movement results since the latest tick clear/drain.

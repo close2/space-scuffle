@@ -6,7 +6,10 @@
 //! - **4-Hero Visual Lab Preview:** Dynamically queries `CatalogResource` for hero showcase archetypes,
 //!   animating and rendering them with zero hardcoded unit IDs or creature names.
 //! - **Live Combat Sandbox Synchronizer:** Applies immutable displayed snapshots and synchronizes
-//!   3D Bevy entities using retained snapshots and persistent [`RenderEntityMap`] storage.
+//!   3D Bevy entities using retained snapshots and persistent [`RenderEntityMap`] storage. A unit
+//!   that leaves parks its render entity, and an arriving unit reuses a parked one, restyled
+//!   completely from its own record, before a new one is spawned (plan
+//!   `2026-11-29-render-entity-pool`, [`crate::render_pool`]).
 //! - **200-Bubble Swarm Stress Test:** High-density collision and rendering stress test.
 //!
 //! # Invariants
@@ -31,7 +34,10 @@ use crate::bubble_shader::{
 use crate::flipbook_clock::{
     battle_uniform, displayed_action, elapsed_clock, scene_lanes, shown_stance, FlipbookPhase,
 };
-use crate::indicators::{attach_bubble_indicators, IndicatorAssets, SelectionRingMaterial};
+use crate::indicators::{
+    attach_bubble_indicators, IndicatorAssets, IndicatorPose, IndicatorWriter,
+    SelectionRingMaterial,
+};
 use crate::lab_ui::{LabState, LabTab};
 use crate::selection::{HeroLineupIndex, SelectionState};
 use crate::CatalogResource;
@@ -41,7 +47,10 @@ use sim_core::catalog::{UnitArchetype, UnitCatalog};
 use sim_types::enums::{AnimState, ShapeKind, WeaponVisualKind};
 use sim_types::ids::{EntityId, PlayerId, Tick, UnitTypeId};
 use sim_types::snapshot::BubbleRenderInstance;
-use std::collections::BTreeMap;
+
+pub use crate::render_pool::RenderEntityMap;
+use crate::render_pool::{Arrival, ParkedBattleBubble, RenderPoolBound};
+use bevy::render::batching::NoAutomaticBatching;
 
 /// Marker component for close-up hero showcase preview bubbles in the Visual Lab.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
@@ -126,16 +135,6 @@ impl PreviewPhase {
         }
     }
 }
-
-/// Persistent mapping from authoritative simulation [`EntityId`] to Bevy render [`Entity`].
-///
-/// PERFORMANCE RATIONALE:
-/// Why: Allocating a `HashMap` on every frame produces GC-like cache churn and memory fragmentation.
-/// What: We retain a persistent map in a Bevy resource, inserting only when entities spawn and
-/// removing only when entities despawn, resulting in zero allocations during steady-state ticks.
-/// Trade-off: Minimal persistent resource state in exchange for zero heap allocations per frame.
-#[derive(Resource, Default, Debug, Deref, DerefMut)]
-pub struct RenderEntityMap(pub BTreeMap<EntityId, Entity>);
 
 /// Catalog identities flagged `showcase_hero`, sorted by `showcase_order`.
 ///
@@ -712,19 +711,37 @@ pub fn sync_lab_preview_system(
     }
 }
 
-type LiveBattleQuery<'w, 's> = Query<
-    'w,
-    's,
-    (
-        Entity,
-        &'static mut Transform,
-        &'static mut BubbleInstance,
-        &'static mut Mesh3d,
-        &'static MeshMaterial3d<BubbleDomeMaterial>,
-        &'static mut FlipbookPhase,
-    ),
-    With<LiveBattleBubble>,
->;
+/// The components of a battle bubble the live synchroniser writes.
+type BattleBubbleData = (
+    Entity,
+    &'static mut Transform,
+    &'static mut BubbleInstance,
+    &'static mut Mesh3d,
+    &'static MeshMaterial3d<BubbleDomeMaterial>,
+    &'static mut FlipbookPhase,
+);
+
+type LiveBattleQuery<'w, 's> = Query<'w, 's, BattleBubbleData, With<LiveBattleBubble>>;
+
+/// The parked render entities of the pool, disjoint from [`LiveBattleQuery`].
+type ParkedBattleQuery<'w, 's> =
+    Query<'w, 's, BattleBubbleData, (With<ParkedBattleBubble>, Without<LiveBattleBubble>)>;
+
+/// The indicator children of every battle bubble, live or parked, read only.
+type BattleChildrenQuery<'w, 's> =
+    Query<'w, 's, &'static Children, Or<(With<LiveBattleBubble>, With<ParkedBattleBubble>)>>;
+
+/// What the live synchroniser restyles a reused render entity with: its parked twin's
+/// components, its children, and their writer.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct ReuseAccess<'w, 's> {
+    /// Parked render entities.
+    parked: ParkedBattleQuery<'w, 's>,
+    /// Every battle bubble's indicator children, read only.
+    children: BattleChildrenQuery<'w, 's>,
+    /// Writer of the indicator children.
+    indicators: IndicatorWriter<'w, 's>,
+}
 
 /// One live bubble's components, as [`LiveBattleQuery`] yields them.
 type LiveBattleItem<'a> = (
@@ -935,31 +952,201 @@ fn spawn_live_instance(
     )
 }
 
-/// Despawns every render entity whose simulation entity left `live`, and forgets its selection.
+/// Restyles `item`, a parked render entity (or one whose unit left on this frame), into the
+/// bubble a fresh spawn of `frame` would be: every component and child written from the
+/// record through the same functions a spawn uses ([`LiveBubbleFrame::new`] with no previous
+/// phase, [`IndicatorPose::of`]), compared first so only what differs changes; the material's
+/// optics lanes are kept (they are the session's, which `sync_optics` writes into every
+/// bubble), and its shell is reset to that of a unit with no look ([`restyle_material`]).
+/// The marker swap back to a live bubble is queued on `commands` (plan
+/// `2026-11-29-render-entity-pool` D-2, D-5).
+fn reuse_live_instance(
+    commands: &mut Commands<'_, '_>,
+    assets: &mut BubbleSceneAssets<'_>,
+    children: &BattleChildrenQuery<'_, '_>,
+    indicators: &mut IndicatorWriter<'_, '_>,
+    item: LiveBattleItem<'_>,
+    frame: &LiveBubbleFrame<'_>,
+    style: crate::player_presentation::PlayerStyle,
+) {
+    let (entity, mut transform, mut bubble, mut mesh, material, mut phase) = item;
+    let instance = BubbleRenderInstance {
+        selected: frame.selected,
+        ..frame.instance.clone()
+    };
+    phase.set_if_neq(frame.phase);
+    transform.set_if_neq(
+        Transform::from_translation(frame.translation).with_scale(Vec3::splat(instance.radius)),
+    );
+    let target_mesh = assets.mesh(frame.is_dome);
+    if mesh.0 != *target_mesh {
+        mesh.0.clone_from(target_mesh);
+    }
+    restyle_material(&mut assets.bubble_materials, &material.0, frame);
+    if let Ok(children) = children.get(entity) {
+        indicators.restyle(
+            children,
+            &IndicatorPose::of(&instance, style),
+            &mut assets.materials,
+            &mut assets.ring_materials,
+        );
+    }
+    let marker = LiveBattleBubble {
+        entity_id: instance.entity_id,
+    };
+    bubble.0 = instance;
+    commands
+        .entity(entity)
+        .remove::<ParkedBattleBubble>()
+        .insert((marker, Visibility::Inherited));
+}
+
+/// Writes a fresh bubble's material values for `frame` into the material `handle` in one
+/// modification, only if any differs: the record's uniform (with the material's optics lanes
+/// kept), its atlas and the shell of a unit that holds no look.
 ///
-/// `live` must be sorted by `entity_id`, as the authoritative snapshot is.
-fn despawn_departed(
+/// The shell is the one the stance system writes for a unit it sees with no look
+/// ([`ShellSum::default`](crate::effects::stance::ShellSum)'s uniform, which marks the shell as
+/// driven), not the all-zero default a new material starts with: the stance system rewrites a
+/// new bubble's shell to it on the bubble's first frame, so writing it here keeps a reuse to one
+/// modification of the material, and no look of the departed unit survives either way.
+fn restyle_material(
+    materials: &mut Assets<BubbleDomeMaterial>,
+    handle: &Handle<BubbleDomeMaterial>,
+    frame: &LiveBubbleFrame<'_>,
+) {
+    let shell = crate::effects::stance::ShellSum::default()
+        .uniform(frame.instance.radius, frame.instance.ground_z);
+    let fresh = |material: &BubbleDomeMaterial| {
+        let mut uniform = material.uniform;
+        uniform.apply_snapshot(&frame.uniform);
+        (uniform, frame.texture.clone(), shell)
+    };
+    let differs = materials.get(handle).is_some_and(|material| {
+        let (uniform, texture, shell) = fresh(material);
+        material.uniform != uniform || material.video_texture != texture || material.shell != shell
+    });
+    if !differs {
+        return;
+    }
+    if let Some(material) = materials.get_mut(handle) {
+        let (uniform, texture, shell) = fresh(material);
+        material.uniform = uniform;
+        material.video_texture = texture;
+        material.shell = shell;
+    }
+}
+
+/// Parks `entity`, the render entity of a unit that left: it stops being a live bubble, is
+/// hidden, and loses its client-local presentation state; removing its [`StanceTrack`]
+/// releases every look the unit held (plan `2026-11-29-render-entity-pool` D-2, D-7).
+///
+/// [`StanceTrack`]: crate::effects::stance::StanceTrack
+fn park(commands: &mut Commands<'_, '_>, entity: Entity) {
+    commands
+        .entity(entity)
+        .remove::<(
+            LiveBattleBubble,
+            crate::effects::stance::StanceTrack,
+            NoAutomaticBatching,
+        )>()
+        .insert((ParkedBattleBubble, Visibility::Hidden));
+}
+
+/// The render-pool bound of the presented `session` whose first presented snapshot has `start`
+/// records (plan `2026-11-29-render-entity-pool` D-3), read from the session's catalog. A session
+/// without a world has no catalog to read, so its bound is its start alone.
+fn session_bound(
+    session: &crate::battle_pipeline::session::BattleSession,
+    start: usize,
+) -> RenderPoolBound {
+    let players = session.metadata.players.len();
+    session.world().map_or_else(
+        || RenderPoolBound::without_catalog(players, start),
+        |world| RenderPoolBound::for_session(&world.catalog, players, start),
+    )
+}
+
+/// Read-only inputs every record of one live frame shares.
+struct LiveSyncFrame<'a> {
+    /// Committed owners' styles.
+    palette: &'a crate::player_presentation::PlayerPalette,
+    /// The presented session, for its metadata.
+    session: &'a crate::battle_pipeline::session::BattleSession,
+    /// The local player's selection.
+    selection: &'a BattleSelection,
+    /// Loaded flipbooks.
+    registry: &'a FlipbookRegistry,
+    /// Tick of the presented snapshot.
+    presented: Tick,
+}
+
+/// Brings every record of `records` (the presented snapshot, sorted by id) to its render entity:
+/// a record [`RenderEntityMap::find_from`] finds is updated in place ([`update_live_instance`]),
+/// any other is an arrival, which takes a parked entity ([`reuse_live_instance`]) or, when none
+/// is parked, is spawned ([`spawn_live_instance`]), and is noted with
+/// [`RenderEntityMap::arrive`]. The caller merges the arrivals afterwards, also on failure.
+///
+/// # Errors
+/// The first [`PresentationError`](crate::player_presentation::PresentationError) of a record:
+/// an owner without a style, or a slice the flipbook clock cannot play. Records after it are
+/// left as they were.
+fn present_records(
     commands: &mut Commands<'_, '_>,
     render_entities: &mut RenderEntityMap,
-    selection: &mut BattleSelection,
-    live: &[BubbleRenderInstance],
-) {
-    // PERFORMANCE RATIONALE:
-    // Why: Scanning the entire snapshot for each renderer is quadratic.
-    // What: Merge the sorted entity map and sorted snapshot membership once.
-    // Trade-off: Requires the authoritative snapshot's stable ID ordering.
-    let mut live = live.iter().peekable();
-    render_entities.0.retain(|&id, &mut entity| {
-        while live.peek().is_some_and(|record| record.entity_id < id) {
-            live.next();
+    assets: &mut BubbleSceneAssets<'_>,
+    query: &mut LiveBattleQuery<'_, '_>,
+    reuse: &mut ReuseAccess<'_, '_>,
+    frame: &LiveSyncFrame<'_>,
+    records: &[BubbleRenderInstance],
+) -> Result<(), crate::player_presentation::PresentationError> {
+    let presented = frame.presented;
+    let mut cursor = 0;
+    for instance in records {
+        let style = frame
+            .palette
+            .battle_style(instance.owner, &frame.session.metadata)?;
+        let selected = frame.selection.contains(instance.entity_id);
+        let found = render_entities.find_from(&mut cursor, instance.entity_id);
+        let existing = found.and_then(|entity| query.get_mut(entity).ok());
+        if found.is_some() && existing.is_none() {
+            // Spawned this frame's commands ago and not yet applied: nothing to update.
+            continue;
         }
-        let is_alive = live.peek().is_some_and(|record| record.entity_id == id);
-        if !is_alive {
-            commands.entity(entity).despawn_recursive();
-            selection.forget(id);
+        if let Some(item) = existing {
+            let phase = Some(*item.5);
+            let live =
+                LiveBubbleFrame::new(instance, frame.registry, style, selected, presented, phase)?;
+            update_live_instance(item, live, assets);
+            continue;
         }
-        is_alive
-    });
+        // An arrival starts its own clock: the frame is built with no previous phase.
+        let fresh =
+            LiveBubbleFrame::new(instance, frame.registry, style, selected, presented, None)?;
+        let parked = render_entities.take_parked();
+        // A parked entity is reached as parked, or as live when its unit left on this frame
+        // (its park is queued, not yet applied).
+        let ReuseAccess {
+            parked: parked_query,
+            children,
+            indicators,
+        } = &mut *reuse;
+        let item = parked.and_then(|entity| {
+            parked_query
+                .get_mut(entity)
+                .or_else(|_| query.get_mut(entity))
+                .ok()
+        });
+        if let Some(item) = item {
+            let entity = item.0;
+            reuse_live_instance(commands, assets, children, indicators, item, &fresh, style);
+            render_entities.arrive(instance.entity_id, entity, Arrival::Reused);
+        } else {
+            let entity = spawn_live_instance(commands, assets, fresh, style);
+            render_entities.arrive(instance.entity_id, entity, Arrival::Spawned);
+        }
+    }
+    Ok(())
 }
 
 /// Applies the retained displayed snapshot; never executes simulation or consumes output.
@@ -968,9 +1155,10 @@ fn despawn_departed(
 /// The snapshot has no notion of selection, so this is where [`BattleSelection`] reaches each
 /// bubble, its material and its indicators. A unit that left the snapshot is forgotten here too.
 ///
-/// Per record, in snapshot order, an existing entity is updated in place
-/// ([`update_live_instance`]) and a new one is spawned ([`spawn_live_instance`]). Entities whose
-/// record left the snapshot are then despawned in one sorted merge ([`despawn_departed`]).
+/// The render-entity map follows the presented session ([`RenderEntityMap::follow`]), then walks
+/// the sorted snapshot in two merges: departures first, each parked ([`RenderEntityMap::depart`],
+/// [`park`]), then each record is updated in place or arrives ([`present_records`]); the frame's
+/// arrivals are merged into the map last ([`RenderEntityMap::merge_arrivals`]).
 #[expect(
     clippy::needless_pass_by_value,
     reason = "Bevy passes system parameters by value"
@@ -990,67 +1178,46 @@ pub fn sync_live_battle_system(
     registry: Res<'_, FlipbookRegistry>,
     mut assets: BubbleSceneAssets<'_>,
     mut query: LiveBattleQuery<'_, '_>,
+    mut reuse: ReuseAccess<'_, '_>,
 ) {
     // Entity IDs restart with each session, so this runs before anything reads the selection.
     selection.bind_generation(session.commands.generation());
     if lab_state.current_tab != LabTab::LiveBattle {
-        for (entity, ..) in &query {
-            commands.entity(entity).despawn_recursive();
-        }
-        render_entities.0.clear();
+        render_entities.retire_all(&mut commands);
         return;
     }
     if !session.is_ready() {
         return;
     }
     let snapshot = session.frames.presented();
-    let presented = snapshot.tick;
-
-    // Reuse existing materials and instances; spawn/despawn are separate lifecycle work.
-    for instance in &snapshot.bubbles {
-        let style = match owners
-            .palette
-            .battle_style(instance.owner, &session.metadata)
-        {
-            Ok(style) => style,
-            Err(error) => {
-                owners.reject(error, &mut exit_events);
-                return;
-            }
-        };
-        let selected = selection.contains(instance.entity_id);
-        let existing = render_entities
-            .0
-            .get(&instance.entity_id)
-            .and_then(|&entity| query.get_mut(entity).ok());
-        let phase = existing.as_ref().map(|item| *item.5);
-        let frame =
-            match LiveBubbleFrame::new(instance, &registry, style, selected, presented, phase) {
-                Ok(frame) => frame,
-                Err(error) => {
-                    owners.reject(error, &mut exit_events);
-                    return;
-                }
-            };
-        if let Some(item) = existing {
-            update_live_instance(item, frame, &mut assets);
-        } else if let std::collections::btree_map::Entry::Vacant(slot) =
-            render_entities.0.entry(instance.entity_id)
-        {
-            slot.insert(spawn_live_instance(
-                &mut commands,
-                &mut assets,
-                frame,
-                style,
-            ));
-        }
-    }
-    despawn_departed(
+    render_entities.follow(&mut commands, session.commands.generation(), || {
+        session_bound(&session, snapshot.bubbles.len())
+    });
+    render_entities.depart(&snapshot.bubbles, |id, entity| {
+        park(&mut commands, entity);
+        selection.forget(id);
+        true
+    });
+    let frame = LiveSyncFrame {
+        palette: &owners.palette,
+        session: &session,
+        selection: &selection,
+        registry: &registry,
+        presented: snapshot.tick,
+    };
+    let presented = present_records(
         &mut commands,
         &mut render_entities,
-        &mut selection,
+        &mut assets,
+        &mut query,
+        &mut reuse,
+        &frame,
         &snapshot.bubbles,
     );
+    render_entities.merge_arrivals();
+    if let Err(error) = presented {
+        owners.reject(error, &mut exit_events);
+    }
 }
 
 /// Smallest world X a swarm bubble centre reaches before bouncing.

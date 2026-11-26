@@ -629,3 +629,270 @@ tree.
     with `4ff8402f`;
   - `sim_fixtures`' `harness_tests`: 26 passed;
   - repeated on the final tree before the hand-back.
+
+## 9. WP1: C′, the contact layer, latent under `Gated` — stopped on H-1 and H-2
+
+**Tree.** Branch `gated-wp1`, cut from `main` `0da8194e` (the WP0b base of record). Code commits `8bb72f64` (C′) and
+`8ee746dd` (clippy, no behaviour change); `main` `00330fcc` (weapon-spec borrow, behaviour unchanged) merged as
+`41899bb7`. The worlds below are played by release binaries of `8bb72f64` (`…/cargo-target/gated-wp1-rel`); the G
+arm's harness by the same tree with `pipeline: Gated` in the embedded catalog (`…/gated-wp1-relg`), its matrix and
+clashes by a scratch catalog directory with `pipeline: Gated` (`assets/G-w1`). Scratch material is under
+`~/scratch/gated/wp1/` (scripts, worlds, red logs, perf, the probe and trace trees).
+
+### 9.1 What was built (plan §3.1, §3.4)
+
+- `MovementPipeline::Gated` and `runs_solver()`; `contact.gated` (`GatedRules { crowd_iterations }`, 151 in the shipped
+  file), required under `Gated`, validated when present; the shipped pipeline stays `Solver`.
+- The solve is generic over the pipeline (`solve_with::<G>`), so `Solver` runs its previous code.
+- C′-1: `ShareRules { moving_friends_push, gated }` replaces the D-β bool of `contact_shares`; under `Gated` an engaged
+  body is anchored whatever its nudge, no pair carries a nudge, and `nudge_radial` fills nothing.
+- C′-2, E-2 ported from `74202e48` without its switch (application zero from `walk_from`, frozen gap shares, projection
+  with `PROJECTION_SLACK` and guard in every application, the terrain-slide refusal, the enemy-only list of reach `2M`).
+  F-1 is not ported (S-7).
+- C′-3: `BodyStep::held_by_terrain`, set by each terrain step of a correction (another target, and less than half of
+  it travelled); a held body with a positive share counts as fixed in its friend pairs (partner 1, or none when the
+  partner is held, fixed, holding or engaged); a change of the flag counts as a move for the pair cache and the early
+  stop; each transferred pair is counted in `MovementProbes::terrain_transfers`.
+- C-3′ under `Gated` at `gated.crowd_iterations` (`ContactRules::solver_crowd_iterations`).
+
+### 9.2 Tests and red runs (`~/scratch/gated/wp1/red/`)
+
+- **Red 1, the base** (`main` `0da8194e` with the new `contact_solver_tests.rs`): does not compile (5 errors: no
+  `Gated`, no `ShareRules`, no `gated` field, no `solver_crowd_iterations`): `base-contact_solver_tests.log`.
+- **Red 2, by mutation** (the package's tree with C′ cut out: `solve` never dispatches to the `Gated` solve, and D-δ is
+  read and filled under `Gated`; `stage1-MUTATION.txt`): red are C1-T2 `an_attacking_unit_is_never_nudged_under_gated`,
+  E2-T1, E2-T2, E2-T3, E2-T5, E2-T6, E2-T7, `a_placed_body_is_not_bounded`, `two_walkers_share_the_gap_by_their_walks`,
+  C1-T11, C1-T12 and C1-T13 (`stage1-lib.log`, `stage1-contact_solver_tests.log`). Green under the mutation, as
+  expected: C1-T1 (red only by compilation: the mutation keeps the 151 cap, which is R), C1-T3 (a guard: holding units
+  are never moved under `Solver` either), E2-T4 in the world, E2-T9 (an identity), C1-T14 (P-5 for the `gated` value)
+  and C1-T15 (parsing, red only by compilation).
+- **E2-T5** asserts the enemy part only (the post unmoved, the friend stops at its surface, no enemy overlap) and
+  prints the friend overlap, which the plan registers as RC-1's residual for WP1: corridor 97.3 %, open field 0.8 %.
+- The whole `sim_core` suite passes in release on the head (108 test targets: goldens, push priority, collision and
+  immobility, fixed-body transactions, follow order, C-3′'s P-1 to P-7); `workspace_checks` passes.
+
+### 9.3 Hard checks under `Gated` (development seeds 1 to 1,000; matrix 24 seeds; clashes)
+
+Tables: `~/scratch/gated/wp1/hard-G.md` (G) and `hard-S.md` (S, the base's worlds).
+
+| Where | H-1 held_moved unit-ticks (scenes or rows; largest) G | S | H-2 enemy_moved / D-SHOVE-E G | S | largest enemy overlap G | S | H-5 G |
+|---|---|---|---|---|---|---|---|
+| gap, arc, cross, corridor, corner, hold-line, wedge, hallway, lanes | 0 | 0 (wedge's H-2 6,120 under S) | 0 | — | 0 | 0 | ≤ 2⁻¹⁰ (largest 0.00001) |
+| enemy-press | **94,194 (575; 0.817)** | 612,834 (614; 1.815) | **85,921 (335; 2.459)** | 116,921 (345; 3.936) | **19.55 %** (6 scenes above 0.5 %) | 31.67 % (159 scenes) | 0 |
+| deep-queue | **14 (14; 0.094)** | 12 (12; 0.094) | 0 | 0 | 0 | 0 | 0 |
+| stutter | **280 (130; 0.117)** | 280 (130; 0.117) | 0 | 0 | 0 | 0 | 0 |
+| surround-moving | **41,004 (993; 0.246)** | 953,692 (1,000; 0.417) | 0 | 0 | 0 | 0.75 % | 0 |
+| matrix (1,464 runs) | **7,635 / 1,584 b / r (398 runs, 22 battles; 1.237)** | 200,318 / 30,498 (530) | **D-SHOVE-E 7.40 / 0.42 (135 runs)** | 236.4 / 277.0 (188) | 0.00 % | 2.12 % | — |
+| clash `pulse_bot` | **110 / 209 (5; 0.080)** | 2,165 / 1,642 | 0 | 0 | 0 | 0 | — |
+| clash `razor_mantis` | **116 / 145 (5; 0.080)** | 13,580 / 13,579 | **D-SHOVE-E 0.34 / 0.21** | 32.1 / 28.6 | 0 | 0.51 % | — |
+
+H-7 (judged from WP2): the stutter lag is 1 in every scene under G, as under S.
+
+**Stop (plan §6.6 rule 2).** H-1 and H-2 fail under `Gated`. Per the orchestrator's instruction and the plan, no
+amendment is tried. What the traces show (scratch `trees/probeG`, examples `trace_wp1` and `trace_wp1b`, never
+committed; enemy-press seeds 1, 8, 10, 294, 606):
+
+1. **H-1: the solver's "attacking" is not the meter's.** Every H-1 event traced is an attacker whose target was in its
+   band at the tick's start (the meter, and the plan's definition in C′-1 and I′-1: "its attack target is in its band
+   in the snapshot") but whose target stepped out of it during the tick (a fleeing unarmed enemy, the moving target of
+   `surround-moving`): `SimWorld::engaged` judges the band at the **committed** positions, so the solver sees the unit
+   as not engaged and a moving friend pushes it (example: seed 1, tick 74, unit 65 in backswing, target edge gap 0.513
+   at the start against range 0.5, its target having stepped 0.156). This is the cause the B-225 row suspected. The
+   rest of H-1 comes from C′'s own "two friends attacking, ½ / ½" row, which the plan keeps.
+2. **H-2 as metered counts an enemy pushed by its own friends.** In `enemy-press` the unarmed enemies flee with `Move`
+   orders and push their standing friends (C-2's moving-against-idle row). Of the enemy displacements traced in five
+   seeds, the bodies in contact were the enemy's own friends in 3,153 cases and attackers in 333.
+3. **The 19.6 % enemy overlap is an E-2 gap, ported as written.** Two bodies, each proposing no step and 0.34 apart
+   at the tick's start (beyond the pair list's reach `r_a + r_b + 1/4`), both pushed by friends, end overlapping: E-2
+   bounds only listed enemy pairs, and the summed passes move bodies with no Verlet rebuild after them (seed 606,
+   ticks 665 to 667).
+
+### 9.4 Reported, not judged (RC-3): friend overlap under `Gated`
+
+| Battle or clash | S: corrected pair-ticks > 5 % per seed, largest | R | G |
+|---|---|---|---|
+| 26 | 1,008.4, 43.6 % (blue wins 20 / 24) | 10.1, 7.9 % (17 / 24) | 31.4, 10.1 % (0 / 24) |
+| 27 | 413.4, 28.9 % | 4.6, 11.0 % | 31.3, 24.5 % |
+| 28 | 253.2, 28.4 % (6 / 24) | 3.3, 8.8 % (8 / 24) | 17.1, 9.0 % (1 / 24) |
+| 29 | 514.0, 26.7 % | 5.7, 7.3 % | 39.4, 10.4 % |
+| clash `pulse_bot` | 58,927, 49.1 % | 597, 11.7 % | 597, 11.7 % (as R) |
+| clash `razor_mantis` | 3,353, 15.7 % | 122, 8.6 % | 315, 10.4 % |
+
+Harness, the older families (G against S and R): gap M1 2.28 (S 1.09, R 1.12), give-ups 47 (50, 43), largest friend
+overlap 57.7 % (95.8 %); corner give-ups 0 (7, 9), largest friend overlap 25.0 % (52.0 %, 69.1 %); arc, cross and
+corridor as R. G's matrix fails its expectation 8 times on the seeds of record and 60 times over 24 seeds (S: 2, 32).
+
+## 10. WP1 after Amendments 3 and 3a: stopped on C-2, and on H-1b and H-2 under Amendment 3a
+
+Code: `ebf03da4` (Amendment 3 items 1, 2, 3, 5 and the H-2 probe), `c5a673f8` (the meters: first-contact exclusion,
+H-2 repaired to enemy-pair pushes), `7b815dd7` (merge of `main` `0f0608cd`, Broodlings, schema 61), `7e864355`
+(Amendment 3a). Amendment 3a is **the owner's guidance of 2026-11-29 (footage of StarCraft II), not a reading of
+figures**. Material: `~/scratch/gated/wp1/{r2,r3,perf,red/a3,red/a3a,swap}`.
+
+### 10.1 Red runs
+
+- Amendment 3: `an_attacker_whose_target_steps_away…` and `enemies_pushed_together_by_friends_never_overlap_under_gated`
+  (seed 606, 19.55 % before) red on `be82c97b`; the two solver tests red by mutation; the meter tests red by
+  compilation and by mutation (`red/a3/`).
+- Amendment 3a: `a_holding_body_is_moved_by_nothing_under_gated` and `an_attacking_unit_is_nudged_only_round_its_target_under_gated`
+  red by mutation (the holding-against-fixed row removed, attackers without a nudge); `attacking_friends_share_round_their_targets_under_gated`
+  red with Amendment 3 item 2 restored (`red/a3a/`).
+
+### 10.2 Under Amendment 3 (`7b815dd7`; superseded by 3a, kept for the record)
+
+H-1 (attacking or holding) and H-2 (repaired) were 0 in every harness family on seeds 1 to 1,000 but one
+`enemy-press` scene (seed 288, 2 unit-ticks): at tick 507 an enemy and its fleeing friend ended 1.29 world units into
+each other beside the map edge with 11 terrain transfers that tick, and the enemy was thrown 0.82 into two attackers.
+Enemy overlap was 0 everywhere in the harness.
+
+### 10.3 Under Amendment 3a (`7e864355`), development seeds 1 to 1,000, matrix 24 seeds, clashes
+
+| Where | H-1 holding (judged) | H-1b attackers moved (ticks; largest) | H-1b out of band (judged) | H-2 repaired | largest enemy overlap |
+|---|---|---|---|---|---|
+| hold-line, deep-queue, wedge, hallway, stutter, surround-moving, lanes | 0 | 0 to 109,145; ≤ 0.33 | 0 | 0 | 0 % |
+| enemy-press | 0 | 3,717,733; 0.64 | **252 in 89 scenes** | **1,250,540 in 761 scenes** | **36.5 %** |
+| matrix | **432 (battle 37a: Abduct's pull of a holding tank, not contact)** | 277,023 / 71,670; 2.05 | **37 / 2 (battles 20, 27 to 29, 31)** | **D-SHOVE-E pair 13.05 / 52.55 (battles 10, 26 to 29, 33, 38a, 38b)** | **100 % (20: Broodlings spawning on impact), 97 % (37a), 65 %, 63 %, 34 % (29, 26, 28)** |
+| clashes | 0 | 26,445 / 26,368 (`pulse_bot`) | **1 to 2 per side** | razor_mantis 4.5 / 6.0 | 7.3 % (razor_mantis) |
+
+Older families: enemy overlap 0, terrain penetration ≤ 2⁻¹⁰. H-7: lag 1 everywhere.
+
+**The cause, traced:** the ring step (Amendment 3a item 2) turns an attacker's step after E-2 has bounded it, so the
+turned step can close on an enemy beyond its allowance. A scratch build applying E-2 after the ring step
+(`swap/`, never committed; enemy-press seeds 1 to 200) removes the H-2 failures (0, enemy overlap 0 %) but raises the
+out-of-band count from 39 unit-ticks in 23 scenes to 1,888 in 138: E-2 then projects off the ring step's inward turn
+toward the target (an enemy) and the attacker drifts outward. Under `Gated` "enemies never push" and "never out of the
+band" conflict at an attacker beside its enemy target; resolving it needs a rule this package may not choose (§6.6).
+
+### 10.4 C-2 (against `main` `0f0608cd`)
+
+| flat64, 400 `pulse_bot`, 300 ticks | `main` | codegen controls (C-a: an unexecuted function; C-b: the catalog shape) | head `7b815dd7` (Amendment 3) | head with Amendment 3a (working tree) |
+|---|---|---|---|---|
+| Solver | 16.4137 G | −12.7 k, −13.6 k | +10.2 M (+0.062 %) | +40.2 M (+0.245 %) |
+| Legacy | 9.8046 G | −21 k, −17 k | −20.1 M (−0.205 %) | −20.0 M |
+
+The band of the controls is about 21 k; both arms are outside it, so **C-2 fails** as Amendment 3 item 5 states it.
+Attribution is exact (callgrind, `perf/cg/`; `perf record` on this VM samples only about a sixth of the run): the
+solver's functions cost what they cost on `main` (2,359.6 M against 2,359.8 M in the head with Amendment 3a; inlining
+moved cost between `accumulate`, `pair_correction`, `build_pairs` and the terrain closure), and the difference lies
+in locomotion's code generation: `step_toward` with `intent_heading` inlined into it, +51.5 M, whose source is
+unchanged. Keeping `intent_heading` out of line (`#[inline(never)]`, a scratch trial) changed nothing (−2 M).
+Making the share table monomorphic (a trial) cost more (+64 M); both were reverted.
+
+## 11. WP1 after Amendment 3b: precedence for attacking units, the pin, E-2's projections never turned back
+
+Code: `37820d82` (Amendment 3b), `78192056` (merge of `main` `404a5672`: carrier media, docs; no simulation code, the
+catalog changes only Veo prompt text), `bd509d0b` (the band restore steps round an enemy it touches). The worlds of
+record are played by release binaries of `bd509d0b` (tag `h3c`; G by its Gated twin `h3cg`); the S and L identity by
+`78192056` (tag `h3b`), whose S and L code paths `bd509d0b` does not change, with S and L's matrix and clashes
+re-checked on `bd509d0b`. Material: `~/scratch/gated/wp1/{a3b,r3b,r3c,red/a3b,perf/p3b,perf/cg3c}`. The run `r3` on
+`7e864355` was stopped (its worlds superseded).
+
+### 11.1 What was built (plan Amendment 3b and its recorded implementation decisions)
+
+- The tick-start snapshot records each attacking unit's target and weapon band (`AttackBand`, from the pursuit's band:
+  both radii, upgrades, status modifiers); the solver's `Ring` carries the target's slot and the band.
+- In each `Gated` application: D-δ's ring turns only the friend part of an attacking unit's step (`keep_rings`), E-2
+  bounds every step, and the band then only shortens a step along itself (`keep_bands`, `band_scale`, bisection to
+  2⁻¹⁶), round every place the target may end the tick (where it stands, where its bounded step takes it, where its
+  own walk began and ended). A shortened step stays within E-2's bound (every allowance is non-negative).
+- Attacking units move after the other bodies of an application and are judged again round where their targets then
+  stand; a terrain slide out of the band is refused, as one into an enemy.
+- After the last pass, an attacking unit left out of its band round its target's final position, though in it at its
+  committed position, steps back toward that position into the band narrowed halfway toward the committed distance,
+  through E-2 and the terrain step, for up to four rounds (`restore_bands`).
+- The pin: an attacking unit that took less than half of its friend correction counts as fixed in its friend pairs
+  from the next application (C′-3's flag, read by `transferred_shares`), its partner taking the whole correction.
+- Item 2: a step E-2 projects off several enemies is never lengthened or turned back (`contracts`); when the summed
+  projections would do either, the guard shortens the whole step instead, so a transferred correction that would close
+  a body on an enemy is not taken and the friend pair keeps its overlap (reported in the friend-overlap columns).
+
+### 11.2 Red runs (`~/scratch/gated/wp1/red/a3b/`, `NOTES.txt`)
+
+- A3b-T1 to T3 red on 3a's logic (`red-3a-logic-solver.log`: the enemy E pushed by the attacker's turned ring step);
+  A3b-T4 (`band_scale`) red on a stub.
+- By mutation: without the band after E-2 (3a's "E-2 last" order) A3b-T2 and T3 leave the band (1.0811 > 1.0500); without
+  the pin A3b-T3 leaves friend overlap 0.0375; without the contraction test A3b-T5 pushes the enemy N to 21.0748 and the
+  harness test fails H-2 on seed 288 (2 unit-ticks); without the restore A3b-T6 and the harness test fail (H-1b,
+  seed 201); with one restore round aimed at the band's edge A3b-T7 ends out of the band.
+- `enemy_press_scenes_of_record_keep_the_hard_checks_under_gated` (seeds 288, 268, 201): red on each mutation above and
+  on 3a's traces (268: 72 out-of-band unit-ticks; 288: one); green on the head.
+
+### 11.3 Hard checks under `Gated` (`bd509d0b`; development seeds 1 to 1,000, all families; matrix 24 seeds; clashes)
+
+Tables: `~/scratch/gated/wp1/r3c/hard-G.md` (script `scripts/hard3b.py`).
+
+| Where | H-1 holding (judged) | H-1b attackers moved (unit-ticks; largest) | H-1b out of band (judged) | H-2 repaired (judged) | largest enemy overlap | H-5 | H-7 lag |
+|---|---|---|---|---|---|---|---|
+| gap, arc, cross, corridor, corner, mirror | — (no holding or attacking unit) | — | — | — | 0 % | ≤ 2⁻¹⁰ | — |
+| hold-line, wedge, hallway, lanes | 0 | 0 | 0 | 0 | 0 % | ≤ 2⁻¹⁰ (largest 0.00001, lanes) | — |
+| enemy-press | 0 | 2,253,979; 0.828 | **0** (3a: 252 in 89 scenes) | **0** (3a: 1,250,540 in 761) | **0 %** (3a: 36.5 %) | 0 | — |
+| deep-queue | 0 | 5,558; 0.194 | 0 | 0 | 0 % | 0 | — |
+| stutter | 0 | 4,505; 0.142 | 0 | 0 | 0 % | 0 | 1 (every move-back) |
+| surround-moving | 0 | 119,463; 0.330 | 0 | 0 | 0 % | 0 | — |
+| matrix (1,464 runs), all battles but the two below | 0 | 315,963 in all; largest 0.937 outside them | 0 | 0 (D-SHOVE-E pair 0.0000) | 0.0004 % | — | — |
+| clash `pulse_bot` | 0 | 53,814 | 0 | 0 | 0 % | — | — |
+| clash `razor_mantis` | 0 | 23,783 | **0** (on `78192056`: 1, fixed by `bd509d0b`) | 0 (3a: 4.5 / 6.0) | 0 % (3a: 7.3 %) | — | — |
+
+**Excluded and reported apart (Amendment 3b):**
+- Battle 20 (Brood Lord analogue against roaches), every run: one unit-tick of H-1b out of band per run (24), each a
+  `brood_mite` spawned on impact exactly on its target (centre distance 0 at its first tick, a first-contact pair)
+  and separated from it by 1.619 (traced on all 24 seeds, `a3b/mt/allx-left.txt`); enemy overlap 100 % on the spawn
+  tick (96 ticks above the bound). Spawn placement, B-236.
+- Battle 37a: H-1 432 unit-ticks of the red holding tank, Abduct's pull (an ability's displacement, not contact), as
+  under 3a; enemy overlap 0 % under 3b (97 % under 3a).
+
+H-6: see 11.6. H-3: see 11.4.
+
+### 11.4 H-3, the permutation run under `Gated` (reported at WP1)
+
+The permutation mode (offset 7) played every family and the mirror on seeds 1 to 1,000 under `Gated` (`r3c/G/permute`):
+**14,000 scenes, all `identical`** (no tie-break and no unexplained difference). The restore, the pin and the
+attacking units' second move keep C-1a.
+
+### 11.5 Friend overlap under `Gated` (reported, not judged; RC-3)
+
+| Battle | G max (mean of runs) | G ticks above bound | S max (mean) | S ticks above bound |
+|---|---|---|---|---|
+| 26, 100 lings vs 6 colossi | 13.66 % (8.42 %) | 2,613 | 43.63 % (27.01 %) | 24,202 |
+| 27, 100 lings vs 8 ultralisks | 11.94 % (7.63 %) | 368 | 28.90 % (17.98 %) | 9,922 |
+| 28, 100 lings vs 10 immortals | 12.94 % (7.10 %) | 674 | 28.37 % (13.32 %) | 6,078 |
+| 29, 100 lings vs 12 stalkers | 12.15 % (7.89 %) | 743 | 26.74 % (17.34 %) | 12,335 |
+| clash `pulse_bot` | 10.18 % (8.81 %) | 540 | 49.15 % (46.65 %) | 294,634 |
+| clash `razor_mantis` | 8.80 % (7.92 %) | 568 | 15.71 % (14.72 %) | 16,765 |
+
+Pairs the pin or a refused transfer leave overlapping (item 2) are in these columns.
+
+### 11.6 H-6 and C-2 (against `main` `0f0608cd`; `main` `404a5672` changes no simulation code)
+
+**H-6.** S and L of `78192056` against `main`'s S and L (`r3b`): harness, 13 families and the mirror, seeds 1 to 200;
+the matrix (1,464 runs); both clashes; battles 31 (100 seeds) and 33 (64); the showcases (2 × 9 seeds, 1,500 ticks):
+471 of 492 files identical cell for cell, the other 21 differ only in the output paths they print. S and L's matrix
+and clashes on `bd509d0b` against `main`: identical cell for cell (the matrix summary differs only in the catalog path it prints).
+
+**C-2 (instructions:u, median of 3; `perf/p3b`):**
+
+| Scenario | main S | main R | main L | head S (Δ) | head R (Δ) | head L (Δ) | head G (G/S) |
+|---|---|---|---|---|---|---|---|
+| flat64 | 16.4137 G | 23.9969 G | 9.8046 G | 16.4475 G (+0.206 %) | 24.2405 G (+1.015 %) | 9.7404 G (-0.655 %) | 27.1206 G (1.649×) |
+| flat128 | 10.9628 G | 10.9628 G | 10.1806 G | 10.9501 G (-0.116 %) | 10.9501 G (-0.116 %) | 10.1615 G (-0.188 %) | 11.1436 G (1.018×) |
+| canyon | 27.3581 G | 38.9874 G | 17.4266 G | 27.4200 G (+0.226 %) | 39.2148 G (+0.583 %) | 17.3345 G (-0.529 %) | 37.3694 G (1.363×) |
+| casters | 21.8802 G | 26.0845 G | 15.2847 G | 21.9452 G (+0.297 %) | 26.2566 G (+0.660 %) | 15.1939 G (-0.594 %) | 29.3009 G (1.335×) |
+| hangar | 9.2074 G | 9.8184 G | 6.9185 G | 9.2296 G (+0.241 %) | 9.8571 G (+0.394 %) | 6.8850 G (-0.485 %) | 10.8621 G (1.177×) |
+| brood | 9.0475 G | 9.6865 G | 6.7400 G | 9.0679 G (+0.226 %) | 9.7239 G (+0.385 %) | 6.7102 G (-0.442 %) | 10.8884 G (1.201×) |
+
+Solver is +0.12 % to +0.30 % (flat128 −0.12 %), Legacy −0.19 % to −0.66 %. **Attribution (callgrind, flat64, S,
+`perf/cg3c`):** +33.8 M (+0.206 %) in all. The contact solver's own functions (`solver.rs`, `solve_contacts`) cost
+2,726.9 M against `main`'s 2,735.4 M (−8.5 M); the rest is code generation in locomotion functions whose source WP1
+does not change: `step_toward` with `intent_heading` inlined +51.9 M (as under 3a, §10.4), `slide_target` out of line
++90.1 M against `settled_step`, `unit_components`, `StepContext::admits` and neighbour gathering −98.6 M; everything
+outside `movement` +0.4 M. Legacy: −64.3 M, the same kind of inlining moves. H-6 holds, so C-2 is **accepted under
+Amendment 3b, item 3**; the cost of record is re-measured at WP4.
+
+**`Gated`'s own cost** (the G column above): 1.649× S on flat64, 1.018× on flat128, 1.363× canyon, 1.335× casters,
+1.177× hangar, 1.201× brood. Reported; WP4 measures it against its budget.
+
+### 11.7 Result
+
+Every hard check of Amendment 3b's acceptance holds under `Gated`: H-1 (holding) 0, H-1b out of band 0, H-2 (repaired)
+0, enemy overlap within E-2's bound everywhere, with the two exclusions reported apart; H-5 ≤ 2⁻¹⁰, H-7 lag 1, H-6
+identity. WP1 is ready for the package gate.

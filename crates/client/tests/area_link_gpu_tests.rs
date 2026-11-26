@@ -3134,8 +3134,8 @@ impl VictimShells<'_, '_> {
         let bubble = self
             .entities
             .as_deref()
-            .and_then(|map| map.get(&id))
-            .and_then(|entity| self.bubbles.get(*entity).ok());
+            .and_then(|map| map.get(id))
+            .and_then(|entity| self.bubbles.get(entity).ok());
         let rim = bubble
             .and_then(|(material, _)| {
                 self.materials

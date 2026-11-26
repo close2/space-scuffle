@@ -943,3 +943,157 @@ fn the_command_line_takes_a_crowd_cap() -> TestResult {
     assert!(parse(&args("--family arc --crowd-iterations many --out a.csv")).is_err());
     Ok(())
 }
+
+/// Plan `2026-11-27-gated-movement` Amendment 3, item 6: two bodies that overlap beyond the dead
+/// band when first observed (a spawn) form a first-contact pair until they part; two bodies that
+/// first meet after both were observed do not.
+#[test]
+fn first_contact_pairs_hold_a_spawn_overlap_until_it_parts() -> Result<(), Box<dyn Error>> {
+    use sim_fixtures::trace::contact_checks::FirstContactPairs;
+    let map = sim_map::GameMap::new(
+        32,
+        32,
+        sim_map::MapCell::default_ground(sim_map::CliffLevel(0)),
+    )?;
+    let mut world = sim_fixtures::try_world(map, 0x0A3_0006)?;
+    let kind = world
+        .catalog
+        .archetypes()
+        .find(|a| a.mover_type == sim_types::MoverType::Ground && !a.is_immobile_by_default())
+        .map(|a| (a.unit_type_id, a.collision_radius))
+        .ok_or("a mobile ground archetype")?;
+    let r = kind.1;
+    let at = |x: SimScalar, y: f64| SimVec2::new(x, SimScalar::from_num(y));
+    let centre = SimScalar::from_num(16.0);
+    let one = world.spawn_unit(kind.0, sim_types::PlayerId(0), at(centre, 16.0))?;
+    let two = world.spawn_unit(kind.0, sim_types::PlayerId(0), at(centre + r, 16.0))?;
+    let far = world.spawn_unit(kind.0, sim_types::PlayerId(0), at(centre, 24.0))?;
+    let mut pairs = FirstContactPairs::new();
+    pairs.observe(&world);
+    assert!(pairs.involves(one) && pairs.involves(two) && !pairs.involves(far));
+    // A body that first meets another after both were seen forms no pair.
+    if let Some(entity) = world.entities.get_mut(&far) {
+        entity.position = at(centre - r, 16.0);
+    }
+    pairs.observe(&world);
+    assert!(!pairs.involves(far));
+    // Once the spawned pair stops overlapping, it leaves the set for good.
+    if let Some(entity) = world.entities.get_mut(&two) {
+        entity.position = at(centre + r * 4, 16.0);
+    }
+    pairs.observe(&world);
+    assert!(!pairs.involves(one) && !pairs.involves(two));
+    if let Some(entity) = world.entities.get_mut(&two) {
+        entity.position = at(centre + r, 16.0);
+    }
+    pairs.observe(&world);
+    assert!(!pairs.involves(two));
+    Ok(())
+}
+
+/// Plan `2026-11-27-gated-movement` Amendment 3, item 4: in `enemy-press` seed 1 under `Gated` the
+/// unarmed enemies flee and push their standing friends, which the original H-2 count records
+/// (`enemy_moved_ticks`); the repaired count (`enemy_pair_moved_ticks`) records only what enemy
+/// pairs moved, and reads 0.
+#[test]
+fn the_repaired_h2_counts_only_what_enemy_pairs_moved() -> Result<(), Box<dyn Error>> {
+    let scenario = generate(Family::EnemyPress, 1, false);
+    let options = RunOptions::with_pipeline(sim_core::catalog::MovementPipeline::Gated)?;
+    let row = sim_fixtures::harness::run_scenario(&scenario, &options)?;
+    let (_, known) = row.known.ok_or("enemy-press has a known answer")?;
+    assert!(
+        known.enemy_moved_ticks > 0,
+        "the original count saw no displacement"
+    );
+    assert_eq!(known.enemy_pair_moved_ticks, 0);
+    // H-1 as Amendment 3a redefines it (holding units), and H-1b's band.
+    assert_eq!(known.hold_moved_clean_ticks, 0);
+    assert_eq!(known.attack_left_band_ticks, 0);
+    Ok(())
+}
+
+/// Plan `2026-11-27-gated-movement` Amendment 3a, H-1b: a unit others displaced has left its band
+/// when it is out of it where it ended but would have been in it where it started (against its
+/// target where the target ended); a target that walks out of the band itself is not the push's.
+#[test]
+fn left_band_blames_the_push_and_not_the_target() -> Result<(), Box<dyn Error>> {
+    use sim_fixtures::trace::contact_checks::left_band;
+    let map = sim_map::GameMap::new(
+        32,
+        32,
+        sim_map::MapCell::default_ground(sim_map::CliffLevel(0)),
+    )?;
+    let mut world = sim_fixtures::try_world(map, 0x0A3A_0001)?;
+    let (kind, radius, range) = world
+        .catalog
+        .archetypes()
+        .find(|a| {
+            a.mover_type == sim_types::MoverType::Ground
+                && !a.is_immobile_by_default()
+                && a.weapon
+                    .as_ref()
+                    .is_some_and(|w| w.min_range == SimScalar::ZERO)
+        })
+        .and_then(|a| {
+            Some((
+                a.unit_type_id,
+                a.collision_radius,
+                a.weapon.as_ref()?.max_range,
+            ))
+        })
+        .ok_or("an armed mobile ground archetype")?;
+    let y = SimScalar::from_num(16.0);
+    let edge = radius + radius + range;
+    let target_at = SimVec2::new(SimScalar::from_num(16.0), y);
+    let start = SimVec2::new(target_at.x - edge, y);
+    let attacker = world.spawn_unit(kind, sim_types::PlayerId(0), start)?;
+    let target = world.spawn_unit(kind, sim_types::PlayerId(1), target_at)?;
+    if let Some(unit) = world.entities.get_mut(&attacker) {
+        unit.order_queue.push_back(UnitOrder::AttackTarget {
+            target,
+            origin: sim_types::AttackOrigin::Explicit,
+        });
+    }
+    let nudge = SimScalar::from_num(0.25);
+    let set = |world: &mut sim_core::SimWorld, id, p| {
+        if let Some(unit) = world.entities.get_mut(&id) {
+            unit.position = p;
+        }
+    };
+    // Pushed outward by a quarter: out of the band, which it stood in.
+    set(&mut world, attacker, SimVec2::new(start.x - nudge, y));
+    assert!(left_band(&world, attacker, start));
+    // The target walked away instead: the attacker, back where it started, was not pushed out.
+    set(&mut world, attacker, start);
+    set(&mut world, target, SimVec2::new(target_at.x + nudge, y));
+    assert!(!left_band(&world, attacker, start));
+    Ok(())
+}
+
+/// Plan `2026-11-27-gated-movement` Amendment 3b: the `enemy-press` scenes of record under `Gated`
+/// keep every hard check: no holding unit moved (H-1), no attacking unit pushed out of its band
+/// (H-1b), no unit moved by an enemy pair (H-2 repaired), and no enemy overlap above T7's 0.5 %.
+/// Seed 288 is evidence §10's case (at the map edge, a fleeing enemy and its friend pressed into
+/// two attackers under Amendment 3; an attacker out of its band under Amendment 3a); seed 268's
+/// attackers stand against the map edge beside a target that walks and is put back each tick
+/// (72 unit-ticks out of the band under Amendment 3a); in seed 201 an attacker nudged round its
+/// target is left out of its band by the target's own later correction (one unit-tick, before
+/// the band was restored at the end of the solve).
+#[test]
+fn enemy_press_scenes_of_record_keep_the_hard_checks_under_gated() -> Result<(), Box<dyn Error>> {
+    let options = RunOptions::with_pipeline(sim_core::catalog::MovementPipeline::Gated)?;
+    for seed in [288, 268, 201] {
+        let scenario = generate(Family::EnemyPress, seed, false);
+        let row = sim_fixtures::harness::run_scenario(&scenario, &options)?;
+        let (_, known) = row.known.ok_or("enemy-press has a known answer")?;
+        assert_eq!(known.hold_moved_clean_ticks, 0, "H-1, seed {seed}");
+        assert_eq!(known.attack_left_band_ticks, 0, "H-1b, seed {seed}");
+        assert_eq!(known.enemy_pair_moved_ticks, 0, "H-2, seed {seed}");
+        assert!(
+            known.enemy_pair_ov_max <= 0.005,
+            "enemy overlap {} in seed {seed}",
+            known.enemy_pair_ov_max
+        );
+    }
+    Ok(())
+}

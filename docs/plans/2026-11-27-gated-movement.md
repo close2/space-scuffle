@@ -1322,3 +1322,118 @@ plan's `WP0b` rule provides for, and before any `Gated` code exists. No constant
 part was removed, not re-tuned. **Only the verdict columns of the `lanes` rows change** (`answer`, `hard`,
 `answer_failed`); every world, every metered column and every other family's CSV is unchanged (the lanes worlds of the
 first and corrected runs are compared column by column in the evidence, §2).
+
+## Amendment 3 (orchestrator, 2026-11-29): WP1's single amendment, after the H-1/H-2 stop
+
+WP1 stopped under §6.6 rule 2 (evidence §9.3): H-1 and H-2 fail under `Gated`, and C-2 fails on flat64 (Solver +0.78 %).
+The traces (evidence §9.5) give four causes. This amendment is WP1's one allowed amendment; after it, a further failure
+of any hard check stops the package for the owner.
+
+1. **"Attacking" is read from the tick-start snapshot (conformance, not a new rule).** The plan defines an attacking
+   body (C′-1, I′-1) as one whose current target is in its weapon band in the tick-start snapshot. The implementation
+   used `SimWorld::engaged`, which judges the band at committed positions, so an attacker whose target stepped out
+   during the tick was pushed by a moving friend (the cause B-225 suspected). Under `Gated` the solver's
+   "never moved by others" set is computed from the snapshot band, once per tick, before any body moves; `Solver` keeps
+   `engaged` unchanged (H-6).
+2. **Two attacking friends do not push each other.** The kept C′ row "attacking ↔ attacking: ½ / ½" contradicts the
+   owner's rule (Q0118: attacking units are not pushable). Under `Gated` a friend pair of two attacking or holding
+   bodies takes no correction; their overlap is left to intent (WP2 gates steps into bodies that will not give way)
+   and is reported in the friend-overlap columns, not hidden.
+3. **E-2's pair list covers every enemy pair that can close within the tick.** Enemy pairs beyond the list's reach
+   `r_a + r_b + 1/4` could be pressed together by their own friends in the summed passes, which have no rebuild after
+   them (seed 606, ticks 665–667: 19.6 %). Under `Gated` the enemy-only list is built with the reach
+   `r_a + r_b + |committed step_a| + |committed step_b| + max per-body friend correction bound` (or, equivalently, the
+   enemy pass is re-listed after the summed passes); the implementer picks the cheaper of the two with a proof that no
+   enemy pair can be missed, and a test reproducing seed 606.
+4. **H-2's meter is repaired (stated as made after the figures).** H-2 is "enemies never push each other": an enemy
+   displaced by **its own** friends (a fleeing unarmed enemy pushing its idle friends, which C-2 allows) is not an
+   H-2 event. The meter counts displacement of a body only where the contributing pair is an enemy pair. The original
+   count stays a reported column. This repair is recorded here because it was decided after reading WP1's figures.
+5. **C-2: `Solver` costs what the base costs.** The `Gated`-only fields (`committed`, `walk_from`, `gap_shares`,
+   `held_by_terrain`) must not widen the structs the `Solver` path copies: keep them in `Gated`-only side storage or in
+   types selected by the existing `const G: bool`, so the `Solver` instantiation's layout equals the base's. Acceptance:
+   Solver and Legacy instructions within noise of main `00330fcc` on every scenario, attributed with `perf record`.
+
+Acceptance is otherwise unchanged: H-1..H-7 under `Gated` (H-1 and H-2 now must be 0 except H-1's first-contact
+exclusion, which WP1 builds now as Amendment 1 deferred it), H-6 identity, C-2, friend overlap reported. Battle
+outcomes under `Gated` are not judged at WP1.
+
+## Amendment 3a (owner guidance, 2026-11-29): holding units never move; attacking units may be nudged within their band
+
+**Source: the owner, not figures.** The owner watched StarCraft II footage: marines in combat are pushed slightly by
+allies, so "attacking units are never moved by other bodies" was wrong. Hold Position units never move. Enemies still
+never push each other. This changes Amendment 3, items 1 and 2, and §6.2's H-1. It is not WP1's failure amendment.
+
+1. **Holding units (Hold Position) are never moved by other bodies.** H-1 applies to holding units only and must be 0,
+   with the first-contact exclusion. Under `Gated` a holding body also takes no correction from a fixed one (C-2's
+   "one fixed" row would move it).
+2. **Attacking units may be moved by friends, but never out of their weapon band.** D-δ's constraint is kept under
+   `Gated` and applies to every attacking unit: its correction keeps only the part along its ring, and its new
+   position is kept at its distance from its target. "Attacking" is Amendment 3 item 1's snapshot-band set.
+   Amendment 3 item 2 is dropped: attacking friend pairs share normally, within the band constraint.
+3. **H-1b (reported):** attacking units moved by friends, with the count and the largest displacement per tick. It is
+   judged only by "never leaves its weapon band": an attacker pushed out of its band by a friend (in its band at the
+   end of the tick from where it started, out of it from where it ended, against its target's end position) is a hard
+   failure.
+4. Amendment 3 items 3, 4 and 5 stand.
+
+**Implementation decisions (Q0002), recorded:**
+- Under `Gated` D-δ is part of the pipeline, not read from `nudge_engaged_along_ring`, and covers ranged attackers as
+  well as melee ones (the owner's example is the marine). `Solver` keeps D-δ as it was (melee, by the switch).
+- The band is kept by placing a nudged unit, after each application, back at its distance from its target's position
+  in the solve, which also removes the second-order outward drift of a tangential step.
+- C′-3's transfer treats a held body's partner as unable to move only when it is fixed or holding; an attacking
+  partner takes the transfer along its ring.
+
+## Amendment 3b (orchestrator, 2026-11-29): precedence under the owner's 3a guidance, and C-2
+
+Amendment 3a (owner guidance: attacking units may be nudged by allies; Hold Position never moves; enemies never push)
+exposed a conflict the stopped build resolved the wrong way (evidence §10): its ring step turned an attacker's step
+after E-2's bound, so the turned step could close on an enemy, and putting E-2 last pushed attackers out of their band.
+This amendment follows from the owner's change of rule mid-package; it is not a further failure amendment.
+
+1. **Precedence.** Being nudgeable is a permission, not a duty. For an attacking body the admissible correction is the
+   one that satisfies, in order: (i) E-2 (it closes on no enemy beyond its share), (ii) its weapon band (its distance to
+   its current target does not leave the band), (iii) D-δ's ring direction. The correction is the friend correction
+   projected onto that admissible set; if the set is empty (an attacker pinned between its target and an enemy), the
+   attacker is **fixed for its friend pairs on that application**, and its partner takes the whole correction, exactly
+   like a body held by terrain (C′-3). No step that has passed E-2 is modified afterwards (E-2 is the last word on any
+   enemy-facing component).
+2. **Terrain transfer respects E-2.** C′-3's transfer to a partner is itself bounded by E-2 for that partner; a
+   transfer that would close the partner on an enemy is projected, and if nothing is admissible the pair keeps its
+   overlap for that application (reported). This closes the `enemy-press` seed 288 case of evidence §10.
+3. **C-2 accepted with attribution.** Callgrind attributes the whole Solver delta (+0.245 %) to `intent_heading` being
+   inlined into `step_toward`, functions whose source WP1 does not change; the solver's own functions cost the same as
+   main's. Code-generation shifts in unchanged functions are accepted for a latent package when (a) callgrind attributes
+   them to unchanged source and (b) behaviour is byte-identical (H-6). Recorded as an orchestrator decision; the cost of
+   record is re-measured at WP4.
+
+Acceptance after 3b: H-1 (holding) = 0; H-1b out-of-band = 0; H-2 (repaired) = 0; enemy overlap within E-2's bound
+everywhere, Broodling spawn overlaps excluded as spawn-placement (B-236) and Abduct's pull excluded from H-1 as an
+ability displacement, both reported separately; H-5, H-7, H-6 as before. A failure after 3b stops the package for the
+owner (Q-draft).
+
+**Implementation decisions (Q0002), recorded with WP1's 3b build (evidence §11):**
+- **Order in an application:** D-δ's ring turns only the friend part of an attacking unit's step (the enemy pairs' part
+  is kept as it is); E-2 then bounds every step; the band last shortens an attacking unit's step along itself. A
+  shortened step stays within E-2's bound, since every allowance is non-negative, so the band never undoes E-2. The
+  set of item 1 is reached along the step, not by a Euclidean projection: the step is the longest part of the
+  E-2-bounded step that stays in the band (bisection to 2⁻¹⁶).
+- **Where the band is measured:** H-1b judges the band round where the target ends the tick, which no application
+  before the last knows. The band is kept round every place the target may end at (where it stands, where its
+  bounded step takes it, where its own walk began and ended); attacking units move after the other bodies of an
+  application and are judged again round where their targets then stand, a terrain slide out of the band being
+  refused as E-2 refuses one into an enemy; and after the last pass an attacking unit left out of its band round its
+  target's final position, though its committed position is in it, steps back toward that position by the least part
+  that puts it in the band, through E-2's bound and the terrain step (`restore_bands`).
+- **The pin:** "fixed for its friend pairs on that application" is built as C′-3's flag, which it is told to be like:
+  a unit that took less than half of its friend correction counts as fixed from the next application, until it takes
+  at least half of one again. It is judged only in an application that gave it a friend correction.
+- **Item 2 at E-2 itself:** the traces of `enemy-press` seed 288 show the transferred correction was bounded by E-2,
+  but E-2's projections off several enemies, summed, turned the step back and lengthened it (0.76 south became 1.13
+  north-east), past the reach the limits were found with, into attackers no limit examined. A projection onto E-2's
+  set (convex, holding the zero step) never does either, so a summed projection that does is not taken: the guard
+  shortens the whole step to what every examined enemy admits instead, nothing when it closes on one with no
+  allowance, and the friend pair keeps its overlap. This applies to every step under `Gated`, a transfer included.
+- **Attacking set data:** the snapshot records each attacking unit's target and band (`AttackBand`), so the solve
+  keeps the band the pursuit measures (both radii, upgrades and status modifiers included).

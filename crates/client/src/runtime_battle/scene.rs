@@ -9,7 +9,7 @@ use crate::lab_stage::LabStageMarker;
 use super::BattleDefinition;
 use crate::battle_pipeline::fog::BattleFog;
 use crate::camera::RtsCamera;
-use crate::scene_controller::{LiveBattleBubble, RenderEntityMap};
+use crate::scene_controller::RenderEntityMap;
 use crate::terrain::{spawn_terrain_owned, TerrainMaterial};
 use crate::{LabState, LabTab, ResolvedAssetsRoot, SelectionState};
 use bevy::prelude::*;
@@ -229,7 +229,6 @@ fn spawn_map_objects(
 fn retire_previous_battle(
     commands: &mut Commands<'_, '_>,
     scenes: &Query<'_, '_, Entity, With<BattleSceneRoot>>,
-    bubbles: &Query<'_, '_, Entity, With<LiveBattleBubble>>,
     effects: &Query<'_, '_, Entity, BattleEffectFilter>,
     render_entities: &mut RenderEntityMap,
     selection: &mut SelectionState,
@@ -237,13 +236,12 @@ fn retire_previous_battle(
     for root in scenes {
         commands.entity(root).despawn_recursive();
     }
-    for bubble in bubbles {
-        commands.entity(bubble).despawn_recursive();
-    }
+    // The render pool holds every live and parked bubble of the battle (plan
+    // `2026-11-29-render-entity-pool` D-9).
+    render_entities.retire_all(commands);
     for effect in effects {
         commands.entity(effect).despawn_recursive();
     }
-    render_entities.0.clear();
     selection.deselect();
 }
 
@@ -312,7 +310,6 @@ pub fn manage_battle_scene(
     mut materials: ResMut<'_, Assets<StandardMaterial>>,
     mut images: ResMut<'_, Assets<Image>>,
     scenes: Query<'_, '_, Entity, With<BattleSceneRoot>>,
-    bubbles: Query<'_, '_, Entity, With<LiveBattleBubble>>,
     mut cameras: Query<'_, '_, &mut RtsCamera>,
     effects: Query<'_, '_, Entity, BattleEffectFilter>,
     mut session: ResMut<'_, crate::battle_pipeline::session::BattleSession>,
@@ -380,7 +377,6 @@ pub fn manage_battle_scene(
     retire_previous_battle(
         &mut commands,
         &scenes,
-        &bubbles,
         &effects,
         &mut render_entities,
         &mut selection,

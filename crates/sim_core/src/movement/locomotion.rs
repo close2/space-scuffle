@@ -422,7 +422,7 @@ fn clamp_into_domain(policy: MotionPolicy, map: &SimMap, point: SimVec2) -> SimV
 /// The target `actor` fights: its current target, or else the target of its attack order. A
 /// target lost to fog, which the unit walks away from to its last seen point, is none (plan
 /// `2026-11-24-weapon-validation` Amendment 2): the unit is a walker, not engaged.
-fn engaged_target(actor: &Entity) -> Option<EntityId> {
+pub(super) fn engaged_target(actor: &Entity) -> Option<EntityId> {
     actor
         .current_target
         .or(match actor.order_queue.front() {
@@ -794,7 +794,13 @@ impl SimWorld {
     /// only contact reads it: the contact shares (C-2) and the idle-yield test of intent, which
     /// asks whether contact would push the body aside.
     pub(crate) fn engaged(&self, entry: MotionEntry, actor: &Entity) -> bool {
-        if self.catalog.movement_rules().contact().pipeline == MovementPipeline::Solver {
+        if self
+            .catalog
+            .movement_rules()
+            .contact()
+            .pipeline
+            .runs_solver()
+        {
             self.in_range_of_live_target(entry, actor)
         } else {
             self.is_anchored_in_combat(actor)
@@ -821,10 +827,42 @@ impl SimWorld {
             .is_ok_and(|d| d <= band.max && d >= band.min)
     }
 
+    /// The target and weapon band of `actor`, which stands in range of a live target
+    /// ([`Self::in_range_of_live_target`]), for the `Gated` contact solve (plan
+    /// `2026-11-27-gated-movement` Amendment 3b). A band that cannot be resolved (no weapon
+    /// against the target, a fault) is empty, `min` above `max`, and keeps no ring: the solve
+    /// then leaves the unit to no friend, as an anchored body.
+    fn attack_band(&self, entry: MotionEntry, actor: &Entity) -> super::AttackBand {
+        let target = engaged_target(actor);
+        let band = target
+            .and_then(|id| self.entities.get(&id).map(|t| (id, t)))
+            .and_then(|(id, t)| {
+                self.pursuit_band(entry, actor, t, id, AttackOrigin::Explicit)
+                    .ok()
+                    .flatten()
+            });
+        let scalar = |raw: i128| SimScalar::from_raw(i64::try_from(raw).unwrap_or(i64::MAX));
+        match (target, band) {
+            (Some(target), Some(band)) => super::AttackBand {
+                target,
+                min: scalar(band.min),
+                max: scalar(band.max),
+            },
+            (target, _) => super::AttackBand {
+                target: target.unwrap_or(entry.id),
+                min: SimScalar::ONE,
+                max: SimScalar::ZERO,
+            },
+        }
+    }
+
     /// Deviation D-δ (Q0095, plan Amendment 15, N): when the catalog's
     /// `contact.nudge_engaged_along_ring` is on, the unit vector from `actor`'s target to it if
     /// `actor` is a melee attacker in range of a live target that allies may nudge along its
-    /// ring: never on Hold Position (nor immobile or unpushable). `None` otherwise.
+    /// ring: never on Hold Position (nor immobile or unpushable), and only under the `Solver`
+    /// pipeline: under `Gated` the collision phase gives every attacking unit its ring and band
+    /// itself (C′-1 of plan `2026-11-27-gated-movement`, Amendments 3a and 3b), whatever the
+    /// switch says. `None` otherwise.
     pub(crate) fn nudge_radial(&self, entry: MotionEntry, actor: &Entity) -> Option<SimVec2> {
         let rules = self.catalog.movement_rules().contact();
         if !rules.nudge_engaged_along_ring
@@ -892,6 +930,8 @@ impl SimWorld {
         }
         // `ids` follow the entity table's order, so the record is sorted by id.
         self.movement.tick_start.clear();
+        self.movement.attacking_at_start.clear();
+        let gated = self.catalog.movement_rules().contact().pipeline == MovementPipeline::Gated;
         self.movement.ring_cache_used = 0;
         self.movement.ring_tagged.clear();
         for &id in &ids {
@@ -911,6 +951,13 @@ impl SimWorld {
                         .filter(|a| !entry.foundation && !a.passes_through_units())
                     {
                         let obstacle = self.obstacle_of(entry, actor);
+                        // C′-1 (Amendment 3, item 1): under `Gated`, "attacking" is read here,
+                        // from the snapshot, once per tick, before any body moves, with the
+                        // target and band the solve keeps it in (Amendment 3b).
+                        if gated && obstacle.anchored && !actor.cannot_be_pushed() {
+                            let band = self.attack_band(entry, actor);
+                            self.movement.attacking_at_start.push((id, band));
+                        }
                         let class = entry.policy.class.index();
                         self.movement.obstacles[class].push(obstacle);
                         self.movement.largest_radius[class] =
@@ -952,6 +999,7 @@ impl SimWorld {
         self.prepare_movement_snapshot(&mut entries);
         self.movement.proposed_steps.clear();
         self.movement.probes = super::MovementProbes::default();
+        self.movement.enemy_pushes.clear();
         // The determinism probe (`set_movement_order_rotation`): the visit starts `offset` places
         // in and wraps round; offset 0 visits in entity order, as shipped.
         for &entry in super::rotated(&entries, self.movement.order_rotation) {
@@ -1342,7 +1390,13 @@ impl SimWorld {
             PursuitStart::Settled(proposal) => return Ok(proposal),
             PursuitStart::Chase(proposal, pursuit) => (proposal, pursuit),
         };
-        if self.catalog.movement_rules().contact().pipeline == MovementPipeline::Solver {
+        if self
+            .catalog
+            .movement_rules()
+            .contact()
+            .pipeline
+            .runs_solver()
+        {
             let position = self
                 .entities
                 .get(&entry.id)
@@ -1499,7 +1553,13 @@ impl SimWorld {
     /// (plan `2026-11-20-contact-solver` WP5, §5.4), so a pursuer processed after its target does
     /// not see where the target went this tick; under the legacy pipeline the live entity.
     fn pursued_motion(&self, target_id: EntityId, target: &Entity) -> (SimVec2, SimVec2) {
-        if self.catalog.movement_rules().contact().pipeline == MovementPipeline::Solver {
+        if self
+            .catalog
+            .movement_rules()
+            .contact()
+            .pipeline
+            .runs_solver()
+        {
             self.tick_start_motion(target_id)
         } else {
             (target.position, target.velocity)
@@ -1677,7 +1737,9 @@ impl MotionScene<'_> {
 
     /// The side rule's horizon factor under the solver pipeline, `None` under the legacy one.
     fn intent(&self) -> Option<u8> {
-        (self.contact.pipeline == MovementPipeline::Solver)
+        self.contact
+            .pipeline
+            .runs_solver()
             .then_some(self.contact.side_horizon_factor)
     }
 }
