@@ -116,6 +116,9 @@ struct Entry {
     /// Actions the simulation can publish for this identity, from
     /// [`UnitCatalog::publishable_actions`]. Empty for the concept control.
     publishable: ActionSet,
+    /// The member a hangar unit of this identity launches (plan
+    /// `2026-11-28-carrier-interceptors` D-11 item 1): its media are required too.
+    member: Option<UnitTypeId>,
 }
 
 /// Persistent availability, provenance evidence and first fatal presentation error.
@@ -197,7 +200,9 @@ impl ClientMediaStatus {
     /// The tick driver refuses a snapshot action by action, so an identity is presentable only
     /// if no action of it could stop the match. Which actions those are is the simulation's
     /// rule, [`UnitCatalog::publishable_actions`], evaluated once at load: a structure is never
-    /// asked for a walk, so media without one does not disable it. Performs no I/O.
+    /// asked for a walk, so media without one does not disable it. A hangar unit is presentable
+    /// only if its member is too, since it launches the member into the battle (plan
+    /// `2026-11-28-carrier-interceptors` D-11 item 1). Performs no I/O.
     ///
     /// # Errors
     /// Returns [`ClientMediaError::UnknownIdentity`] for an identity outside the catalog, or the
@@ -214,7 +219,11 @@ impl ClientMediaStatus {
         entry
             .publishable
             .iter()
-            .try_for_each(|action| self.require(registry, unit_type, action))
+            .try_for_each(|action| self.require(registry, unit_type, action))?;
+        // A member has no hangar of its own (catalog validation), so this recurses once.
+        entry
+            .member
+            .map_or(Ok(()), |member| self.presentable(registry, member))
     }
 
     /// Admits the explicit concept-demo control without relabeling it as unit media.
@@ -305,6 +314,7 @@ pub(crate) fn load_registry(
             &mut registry,
         );
         entry.publishable = catalog.publishable_actions(archetype);
+        entry.member = archetype.capabilities.hangar.map(|hangar| hangar.member);
         if entry.admission.is_ok() {
             if let Err(error) = register_modes(directory, archetype, limits, images, &mut registry)
             {
@@ -352,6 +362,7 @@ fn register(
                 audit: MediaAuditRecord::failed(slug, &error),
                 admission: Err(Arc::new(error)),
                 publishable: ActionSet::EMPTY,
+                member: None,
             }
         }
     };
@@ -386,6 +397,7 @@ fn register(
             texture,
         }),
         publishable: ActionSet::EMPTY,
+        member: None,
     }
 }
 

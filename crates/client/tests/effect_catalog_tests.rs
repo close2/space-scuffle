@@ -2182,11 +2182,18 @@ enum Delivery {
     Melee,
     /// Nothing but its splash.
     Nothing,
+    /// A launch weapon's release (`magazine_launch`): it starts its hangar's launch channel
+    /// and strikes nothing, so it publishes no event; the members it launches are the visual
+    /// (plan `2026-11-28-carrier-interceptors` D-4, D-11 item 4).
+    Launch,
 }
 
 /// The delivery of `weapon`.
 fn delivery(weapon: &sim_types::WeaponSpec) -> Delivery {
     use sim_types::WeaponVisualKind as Kind;
+    if weapon.magazine_launch.is_some() {
+        return Delivery::Launch;
+    }
     if weapon.projectile_speed.is_some() {
         return Delivery::Projectile;
     }
@@ -2275,6 +2282,7 @@ fn every_shipped_weapon_names_the_looks_of_the_event_it_publishes() {
     };
     let mut report = Vec::new();
     let mut silent = Vec::new();
+    let mut launches = Vec::new();
     for archetype in units.archetypes() {
         assert!(
             tables.death(archetype.unit_type_id).is_some(),
@@ -2292,6 +2300,19 @@ fn every_shipped_weapon_names_the_looks_of_the_event_it_publishes() {
                 .weapons
                 .iter()
                 .find(|entry| entry.weapon == slot && entry.mode == mode);
+            if delivery == Delivery::Launch {
+                // Validation refuses a launch weapon with damage, splash or a visual kind.
+                assert!(
+                    spec.splash.is_none() && spec.visual_kind == sim_types::WeaponVisualKind::None,
+                    "{label}: a launch weapon strikes nothing"
+                );
+                assert!(
+                    entry.is_none(),
+                    "{label}: a launch weapon publishes no event, so it names no look"
+                );
+                launches.push(label);
+                continue;
+            }
             if delivery == Delivery::Nothing && spec.splash.is_none() {
                 assert!(
                     entry.is_none_or(|entry| entry.travel.is_none() && entry.impact.is_none()),
@@ -2351,7 +2372,7 @@ fn every_shipped_weapon_names_the_looks_of_the_event_it_publishes() {
                     assert!(travel.is_none(), "{label}: a melee strike has no travel");
                     assert!(impact.is_some() || splash.is_some(), "{label}: no impact");
                 }
-                Delivery::Nothing => {
+                Delivery::Nothing | Delivery::Launch => {
                     assert!(travel.is_none() && impact.is_none(), "{label}: no event");
                 }
             }
@@ -2404,6 +2425,19 @@ fn every_shipped_weapon_names_the_looks_of_the_event_it_publishes() {
         report.join("\n  "),
         silent.len(),
         silent.join("\n  ")
+    );
+    // Plan `2026-11-28-carrier-interceptors` D-11 item 4: the launch weapons are exactly the
+    // weapons of the hangar units, which name no look; their members are the visual.
+    let hangar_weapons: usize = units
+        .archetypes()
+        .filter(|archetype| archetype.capabilities.hangar.is_some())
+        .map(|archetype| tagged_weapons(archetype).len())
+        .sum();
+    assert!(hangar_weapons > 0, "the shipped catalog has a hangar unit");
+    assert_eq!(
+        launches.len(),
+        hangar_weapons,
+        "launch weapons: {launches:?}"
     );
     // B-123 (plan `2026-11-17-effect-snapshot-identity` WP3): every shipped weapon publishes a
     // delivery or splash event, so none is silent.
