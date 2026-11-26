@@ -3289,11 +3289,17 @@
             attack_target_priority: 20,
             primary_weapon: Either,
             acquire_tie_break: Closest,
-            mineral_cost: 25,
-            gas_cost: 75,
-            supply_cost: 1,
+            // 5.0.14 morphs the Ravager from the Roach; this analogue is trained whole, so it carries
+            // the morphed unit's total until a morph model exists (B-86): CostResource 100
+            // minerals, 100 gas (liberty UnitData:1002-1003; the Roach's 75/25 plus the morph's
+            // 25/75) and Food -3 (:1000). Its time is the Roach's LarvaTrain Train10 27 Normal s
+            // (liberty AbilData:2510) plus the MorphToRavager Stats delay 17 (voidmulti
+            // AbilData:744, overriding void AbilData:239's 12): 44 x 25 / 1.4 = 785.7, so 786 ticks.
+            mineral_cost: 100,
+            gas_cost: 100,
+            supply_cost: 3,
             supply_provided: 0,
-            build_time_ticks: 214,
+            build_time_ticks: 786,
             armor_class: Some("swarm_ground_carapace"),
             weapon: Some((
                 name: "Corrosive Bile",
@@ -3484,11 +3490,18 @@
             primary_weapon: Either,
             acquire_tie_break: Closest,
             always_a_threat: true,
-            mineral_cost: 50,
-            gas_cost: 100,
-            supply_cost: 1,
+            // 5.0.14 morphs the Lurker from the Hydralisk; this analogue is trained whole, so it
+            // carries the morphed unit's total until a morph model exists (B-86): LurkerMP
+            // CostResource 150 minerals, 150 gas (liberty UnitData:721-722; the Hydralisk's 100/50
+            // plus the morph's 50/100) and Food -3 (:719). Its time is the Hydralisk's LarvaTrain
+            // Train4 33 Normal s (liberty AbilData:2494) plus the MorphToLurker Stats delay 25.25
+            // (voidmulti AbilData:724, overriding void AbilData:269's 25): 58.25 x 25 / 1.4 =
+            // 1040.2, so 1040 ticks.
+            mineral_cost: 150,
+            gas_cost: 150,
+            supply_cost: 3,
             supply_provided: 0,
-            build_time_ticks: 446,
+            build_time_ticks: 1040,
             armor_class: Some("swarm_ground_carapace"),
             weapon: None,
             // LurkerMP carries stop and move (liberty UnitData:727-728), and 5.0.14 adds attack
@@ -3830,11 +3843,17 @@
             attack_target_priority: 20,
             primary_weapon: Either,
             acquire_tie_break: Closest,
-            mineral_cost: 150,
-            gas_cost: 150,
-            supply_cost: 2,
+            // 5.0.14 morphs the Brood Lord from the Corruptor; this analogue is trained whole, so it
+            // carries the morphed unit's total (B-239): CostResource 300 minerals, 250 gas (liberty
+            // UnitData:11155-11156; the Corruptor's 150/100 at :11266-11267 plus the morph's 150/150)
+            // and Food -4 (:11115). Its time is the Corruptor's LarvaTrain Train12 40 Normal s
+            // (liberty AbilData:2518) plus the MorphToBroodLord Stats delay 33.8332 (:2548):
+            // 73.8332 x 25 / 1.4 = 1318.4 ticks, rounded half up to 1318.
+            mineral_cost: 300,
+            gas_cost: 250,
+            supply_cost: 4,
             supply_provided: 0,
-            build_time_ticks: 604,
+            build_time_ticks: 1318,
             armor_class: Some("swarm_flyer_carapace"),
             ground_weapon: Some((
                 name: "Broodling Swarm",
