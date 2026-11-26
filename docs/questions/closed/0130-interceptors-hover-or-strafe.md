@@ -21,3 +21,8 @@ damage per second; it is easier to hit with splash and short-range weapons while
 ## Answer
 
 - **Option (a): Ship interceptors now, hovering at range 2**, with strafing fly-by passes tracked as bug `B-229` and implemented after the Gated movement redesign finishes.
+
+## Resolution
+
+Answered (a), the default built by plan `2026-11-28-carrier-interceptors` (merged `4ff8402f`): interceptors hover at
+range 2 under existing orders; the strafe (`CWeaponStrafe`) stays B-229, to be built after the Gated movement redesign.
