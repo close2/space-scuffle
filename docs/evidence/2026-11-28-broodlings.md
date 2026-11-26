@@ -242,3 +242,40 @@ costs about 2.3 % of the run's instructions**, through the weapon phase's per-en
 (`ResolvedWeapon::to_spec` in `advance_weapon_cycles`) and the projectile list's copies; boxing `impact_spawn` would
 not help. Rates are unchanged within noise. Fixing it means either removing the per-tick clone (a combat-phase change
 outside this plan) or moving `impact_spawn` off `WeaponSpec` (an amendment of D-4); both are left to the orchestrator.
+
+## After the weapon-spec-borrow merge (`main` `301d20d1`)
+
+`main` now borrows each weapon in the combat phase instead of cloning `WeaponSpec` per tick and boxes
+`Entity::siege_weapon`. Merged into the branch (`50462a75`; conflicts in `combat.rs`, where the swing gate keeps
+`may_start_swing` on the borrowed `ResolvedWeapon`, and `combat_resolution.rs`, where the magazine spend follows
+`begin_strikes(entity, weapon.spec, …)`); goldens and the sandbox still reproduce at schema 61.
+
+**Throughput, re-measured** (`scripts/remeasure.sh 301d20d1 6a7d3f86`; two interleaved rounds of `main`'s binary, the
+merged tree with `main`'s scenario table, and the merged tree with the `brood` row; load average 27 to 96):
+instructions `main` 296,588,891,466 and 296,588,910,131, merged with `main`'s table 296,709,229,108 and 296,709,251,042:
+**+0.041 %**, within +0.5 %. Stop rule 5 is cleared. Every scenario of the merged tree ran at 65 ticks/s or more under
+that load (`main` itself dropped to 49 on the canyon in the same rounds); the `brood` row ran at 392 and 355.
+
+**Worlds against `main`'s new baseline** (`wp.sh main 301d20d1`, `wp.sh merged 6a7d3f86 main`): 490 files, only
+`matrix.csv`/`matrix.md` differ, in battle 20 alone (20 of 20 seeds, no winner or expectation change; mean end 144.3 →
+164.4), as before the merge.
+
+**Golden proof on the merged tree** (`proofcopy.sh merged 6a7d3f86`): both goldens and `DEFAULT_SANDBOX_CHECKSUM` at
+schema 61 reproduce on native debug and release and `wasm32-wasip1` release and debug, **8 of 8**.
+
+## WP6 continued and B-19
+
+The media were generated after the owner's answer to Q0133
+([`veo/2026-11-28-batch-broodlings.md`](veo/2026-11-28-batch-broodlings.md), continuation): six clips installed and
+baked, strict audit 32 of 32, the Brood Lord analogue unlocked in the client.
+
+**B-19 fails: stop rule 7.** The steady-state test (`~/scratch/broodlings/b19-test.patch`, not committed:
+`broodlings_cycling_create_and_remove_no_bubble_material` in `sync_steady_state_tests.rs`) removes every other mobile
+unit of the default battle, has the shipped Brood Lord analogue attack a held, durable, unarmed enemy, warms 400
+ticks and observes 300: Broodlings come and go in the window (created and expired by their clocks), and the bubble
+materials show **6 added and 6 removed**. `sync_live_battle_system` (`scene_controller.rs`) spawns a render entity with
+its own `BubbleDomeMaterial` for every unit that enters the snapshot and despawns it (dropping the material) when the
+unit leaves, and `RenderEntityMap` (a `BTreeMap`) inserts and removes a node each time. D-12 item 3's pool (departed
+bubbles hidden and kept with their materials, reused by the next arrival; the map's storage retained at its
+high-water mark, with a PERFORMANCE RATIONALE) is the fix; the Carrier's H-20 needs the same. It touches the live
+sync path the allocation test measures, so it is left for the orchestrator to plan or assign.
