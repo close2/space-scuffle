@@ -20,3 +20,4 @@ damage per second; it is easier to hit with splash and short-range weapons while
 
 ## Answer
 
+- **Option (a): Ship interceptors now, hovering at range 2**, with strafing fly-by passes tracked as bug `B-229` and implemented after the Gated movement redesign finishes.

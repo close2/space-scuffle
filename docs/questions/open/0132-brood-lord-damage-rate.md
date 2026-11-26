@@ -22,3 +22,4 @@ data supports the second (`BroodLordHangar`: 2 at the start, one built per 2.5 g
 
 ## Answer
 
+- **Option (a): Follow StarCraft II 5.0.14 data.** Launch both stored escort Broodlings on the opening attack, then one per 45-tick rebuild period during continuous fire, with each hit spawning a Broodling.

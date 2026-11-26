@@ -28,3 +28,4 @@ Enclave's other saucers. The sheets are in `docs/evidence/veo/review/` (`saucer_
 
 ## Answer
 
+- **Option (a) with a hard cap of 4 more seeds, then fall back to Option (b) (take the best seed).** Add per-identity negative terms (e.g. `light shafts, tractor beam, beam of light from above`) and try up to 4 more seeds within the remaining `$6.80` of this batch. If none is completely shaft-free after 4 seeds, **take the best available seed** (accepting faint light shafts as a temporary exception) and proceed rather than blocking or spending more — the owner knows other videos also need rebuilding and plans to redo unsatisfactory videos in a polish pass once the game is finished.
