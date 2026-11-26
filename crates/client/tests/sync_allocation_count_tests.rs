@@ -308,15 +308,14 @@ struct BroodWatch {
 fn watch_broods(session: Res<'_, BattleSession>, mut watch: ResMut<'_, BroodWatch>) {
     let bubbles = &session.frames.current().bubbles;
     let mut now = [None; BROOD_SLOTS];
-    let mut count = 0;
     let kind = watch.kind;
-    for bubble in bubbles.iter().filter(|bubble| bubble.unit_type == kind) {
-        if count == BROOD_SLOTS {
+    let broods = bubbles.iter().filter(|bubble| bubble.unit_type == kind);
+    for (slot, bubble) in broods.enumerate() {
+        let Some(held) = now.get_mut(slot) else {
             watch.overflowed = true;
             break;
-        }
-        now[count] = Some(bubble.entity_id);
-        count += 1;
+        };
+        *held = Some(bubble.entity_id);
         if !watch.present.contains(&Some(bubble.entity_id)) {
             watch.arrived += 1;
         }
@@ -445,6 +444,33 @@ fn planted_allocation() {
     drop(std::hint::black_box(Vec::<u8>::with_capacity(64)));
 }
 
+/// Stages what `variant` needs in `simulation` before its session begins: the gas crew and the
+/// held images of the running children, or the Broodlings' battle of the brood children.
+fn stage_variant(
+    variant: Variant,
+    simulation: &mut sim_core::SimWorld,
+) -> Result<(Option<GasCrew>, Option<BroodWatch>), Box<dyn std::error::Error>> {
+    let crew = if variant.is_running() {
+        let crew = add_gas_crew(simulation)?;
+        hold_attack_snapshot(simulation)?;
+        Some(crew)
+    } else {
+        None
+    };
+    let brood = variant.cycles_broods().then(|| {
+        let stage = unit_cycling::stage_brood(simulation);
+        BroodWatch {
+            kind: stage.spawned,
+            lifetime: stage.lifetime,
+            present: [None; BROOD_SLOTS],
+            arrived: 0,
+            departed: 0,
+            overflowed: false,
+        }
+    });
+    Ok((crew, brood))
+}
+
 /// Builds the app of `variant` with a fixed time step: on the real default battle, paused, or
 /// for a running variant on the shipped skirmish, resumed.
 fn steady_state_app(variant: Variant) -> Result<App, Box<dyn std::error::Error>> {
@@ -459,24 +485,7 @@ fn steady_state_app(variant: Variant) -> Result<App, Box<dyn std::error::Error>>
     let ticking = variant.is_running() || variant.cycles_broods();
     let definition = BattleDefinition::load(root.as_path(), scenario.as_ref())?;
     let mut simulation = definition.instantiate()?;
-    let crew = if variant.is_running() {
-        let crew = add_gas_crew(&mut simulation)?;
-        hold_attack_snapshot(&mut simulation)?;
-        Some(crew)
-    } else {
-        None
-    };
-    let brood = variant.cycles_broods().then(|| {
-        let stage = unit_cycling::stage_brood(&mut simulation);
-        BroodWatch {
-            kind: stage.spawned,
-            lifetime: stage.lifetime,
-            present: [None; BROOD_SLOTS],
-            arrived: 0,
-            departed: 0,
-            overflowed: false,
-        }
-    });
+    let (crew, brood) = stage_variant(variant, &mut simulation)?;
     let session = BattleSession::prepare(
         SessionGeneration::FIRST,
         &mut simulation,
@@ -1062,6 +1071,26 @@ fn measured_steady_frames(app: &mut App, frames: u32) {
     }
 }
 
+/// Warms the child's app: [`WARM_FRAMES`] frames, or for the Broodlings' children `4 × L_max`
+/// ticks, one tick a frame, a number read from the data, so both children of the pair measure
+/// the same ticks. Fails if the battle failed or, for a presenting child, nothing is presented.
+fn warm_up(app: &mut App, variant: Variant) -> TestResult {
+    let warm = app
+        .world()
+        .get_resource::<BroodWatch>()
+        .map_or(WARM_FRAMES, |watch| 4 * watch.lifetime);
+    for _ in 0..warm {
+        app.update();
+    }
+    if let Some(failure) = &app.world().resource::<client::LabState>().battle_failure {
+        return Err(failure.clone().into());
+    }
+    if variant.presents() && app.world().resource::<client::RenderEntityMap>().is_empty() {
+        return Err("the live synchroniser presented nothing after warm-up".into());
+    }
+    Ok(())
+}
+
 /// Runs one child: returns at once without `FRAMES_ENV`, otherwise warms the app of `variant`
 /// and runs the requested number of frames, paused or, for a running variant, ticking.
 fn run_child(variant: Variant) -> TestResult {
@@ -1078,26 +1107,7 @@ fn run_child(variant: Variant) -> TestResult {
         .ok_or_else(|| format!("{FRAMES_ENV} is not UTF-8"))?
         .parse()?;
     let mut app = steady_state_app(variant)?;
-    // The Broodlings' children warm for 4 × `L_max` ticks, one tick a frame, a number read
-    // from the data, so both children of the pair measure the same ticks.
-    let warm = app
-        .world()
-        .get_resource::<BroodWatch>()
-        .map_or(WARM_FRAMES, |watch| 4 * watch.lifetime);
-    for _ in 0..warm {
-        app.update();
-    }
-    if let Some(failure) = &app.world().resource::<client::LabState>().battle_failure {
-        return Err(failure.clone().into());
-    }
-    if variant.presents()
-        && app
-            .world()
-            .resource::<client::RenderEntityMap>()
-            .is_empty()
-    {
-        return Err("the live synchroniser presented nothing after warm-up".into());
-    }
+    warm_up(&mut app, variant)?;
     let tick = |app: &App| {
         app.world()
             .resource::<BattleSession>()
@@ -1111,7 +1121,18 @@ fn run_child(variant: Variant) -> TestResult {
     let spawned_before = effects_spawned(&app);
     let crew_before = app.world().get_resource::<GasCrew>().copied();
     let brood_before = app.world().get_resource::<BroodWatch>().copied();
+    let pool_before = app.world().resource::<client::RenderEntityMap>().stats();
     measured_steady_frames(&mut app, frames);
+    if variant == Variant::BroodCycleLive {
+        // The warm-up reached the regime: no arrival of the window spawned a render entity.
+        let pool_after = app.world().resource::<client::RenderEntityMap>().stats();
+        if pool_after.spawned != pool_before.spawned {
+            return Err(format!(
+                "the render pool spawned in the window: {pool_before:?} then {pool_after:?}"
+            )
+            .into());
+        }
+    }
     if let Some(before) = brood_before {
         return check_brood_window(&app, frames, before, tick(&app) - ticked_from);
     }

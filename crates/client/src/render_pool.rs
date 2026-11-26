@@ -122,7 +122,9 @@ fn weapons_of(archetype: &UnitArchetype) -> Vec<&WeaponSpec> {
     let all_modes = archetype.modes.iter().chain(&archetype.capabilities.modes);
     let modes = all_modes.flat_map(|mode| {
         [
-            mode.ground_weapon_override.as_ref().and_then(Option::as_ref),
+            mode.ground_weapon_override
+                .as_ref()
+                .and_then(Option::as_ref),
             mode.air_weapon_override.as_ref().and_then(Option::as_ref),
         ]
     });
@@ -152,19 +154,19 @@ fn spawn_term(archetype: &UnitArchetype) -> u32 {
             let life = spawn.timed_life?;
             let lifetime = u32::from(life.ticks) + u32::from(life.random_extra_ticks);
             let per_strike = u32::from(spawn.per_strike);
-            Some(match magazine {
-                Some(magazine) => {
-                    let build = u32::from(magazine.build_ticks).max(1);
-                    let charges = u32::from(magazine.capacity) + lifetime.div_ceil(build);
-                    (true, per_strike.saturating_mul(charges))
-                }
-                None => {
+            Some(magazine.map_or_else(
+                || {
                     let period = u32::from(weapon.period_ticks).max(1);
                     let releases = lifetime / period + 1;
                     let strikes = per_strike.saturating_mul(u32::from(weapon.attacks_count));
                     (false, strikes.saturating_mul(releases))
-                }
-            })
+                },
+                |magazine| {
+                    let build = u32::from(magazine.build_ticks).max(1);
+                    let charges = u32::from(magazine.capacity) + lifetime.div_ceil(build);
+                    (true, per_strike.saturating_mul(charges))
+                },
+            ))
         })
         .fold(0, |total, (magazine, units)| {
             if magazine {
@@ -312,8 +314,16 @@ impl RenderEntityMap {
     #[doc(hidden)]
     pub fn retained_buffers(&self) -> impl Iterator<Item = (&'static str, usize, usize)> + '_ {
         [
-            ("render_pool.live", self.live.as_ptr().addr(), self.live.capacity()),
-            ("render_pool.parked", self.parked.as_ptr().addr(), self.parked.capacity()),
+            (
+                "render_pool.live",
+                self.live.as_ptr().addr(),
+                self.live.capacity(),
+            ),
+            (
+                "render_pool.parked",
+                self.parked.as_ptr().addr(),
+                self.parked.capacity(),
+            ),
             (
                 "render_pool.arrivals",
                 self.arrivals.as_ptr().addr(),
@@ -493,7 +503,11 @@ fn merge_sorted(live: &mut Vec<(EntityId, Entity)>, arrivals: &mut Vec<(EntityId
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::panic, reason = "a failed test is a panic")]
+#[allow(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "a failed test is a panic"
+)]
 mod tests {
     use super::*;
     use bevy::ecs::world::CommandQueue;
@@ -519,9 +533,15 @@ mod tests {
             for weapon in own.into_iter().flatten() {
                 weapon.impact_spawn = None;
             }
-            for mode in archetype.modes.iter_mut().chain(&mut archetype.capabilities.modes) {
+            for mode in archetype
+                .modes
+                .iter_mut()
+                .chain(&mut archetype.capabilities.modes)
+            {
                 let overrides = [
-                    mode.ground_weapon_override.as_mut().and_then(Option::as_mut),
+                    mode.ground_weapon_override
+                        .as_mut()
+                        .and_then(Option::as_mut),
                     mode.air_weapon_override.as_mut().and_then(Option::as_mut),
                 ];
                 for weapon in overrides.into_iter().flatten() {
@@ -652,7 +672,10 @@ mod tests {
             .map(|a| a.supply_cost.max(1))
             .min()
             .expect("something is trained");
-        assert_eq!(RenderPoolBound::for_session(&catalog, 2, 0).army, CAP / cheapest);
+        assert_eq!(
+            RenderPoolBound::for_session(&catalog, 2, 0).army,
+            CAP / cheapest
+        );
     }
 
     /// A mix of hosts within the cap keeps more transient units than the largest army of one
@@ -669,9 +692,13 @@ mod tests {
         small.capabilities.strike_magazine = None;
         small.capabilities.hangar = Some(HangarSpecFixture::one(hangar));
         small.supply_cost = 2;
-        for weapon in [small.weapon.as_mut(), small.ground_weapon.as_mut(), small.air_weapon.as_mut()]
-            .into_iter()
-            .flatten()
+        for weapon in [
+            small.weapon.as_mut(),
+            small.ground_weapon.as_mut(),
+            small.air_weapon.as_mut(),
+        ]
+        .into_iter()
+        .flatten()
         {
             weapon.impact_spawn = None;
         }
@@ -679,7 +706,7 @@ mod tests {
         let bound = RenderPoolBound::for_session(&catalog, 1, 0);
         // 33 carriers (198 supply) and one small host (2 supply): 33 × 8 + 1 = 265 transients.
         let mix = 33 * 8 + 1;
-        let single_type = ((CAP / 6) * 8).max((CAP / 2) * 1);
+        let single_type = ((CAP / 6) * 8).max(CAP / 2);
         assert!(mix > single_type, "the mix exceeds the single-type bound");
         assert_eq!(bound.transient, CAP * 8 / 6);
         assert!(bound.transient >= mix, "the derived bound covers the mix");
@@ -706,7 +733,10 @@ mod tests {
             host.capabilities.hangar.is_some() || host.capabilities.strike_magazine.is_some(),
             "the host has a hangar or a strike magazine"
         );
-        for hangar_host in catalog.archetypes().filter(|a| a.capabilities.hangar.is_some()) {
+        for hangar_host in catalog
+            .archetypes()
+            .filter(|a| a.capabilities.hangar.is_some())
+        {
             let members = u32::from(hangar_host.capabilities.hangar.expect("a hangar").max_count);
             assert!(bound.transient >= CAP * members / hangar_host.supply_cost.max(1));
         }
@@ -847,7 +877,7 @@ mod tests {
         let mut map = map_with(&mut world, 16, &[1, 2], &drawn);
         map.depart(&[record(2)], |_, _| false);
         assert_eq!(ids(&map), [2]);
-        assert!(map.parked().is_empty());
+        assert_eq!(map.parked().len(), 0);
     }
 
     #[test]
@@ -888,19 +918,18 @@ mod tests {
         let mut cursor = 0;
         let mut arrived = Vec::new();
         for record in &snapshot {
-            match map.find_from(&mut cursor, record.entity_id) {
-                Some(entity) => arrived.push((record.entity_id.0, entity, None)),
-                None => {
-                    let entity = map.take_parked().expect("a parked entity");
-                    map.arrive(record.entity_id, entity, Arrival::Reused);
-                    arrived.push((record.entity_id.0, entity, Some(Arrival::Reused)));
-                }
+            if let Some(entity) = map.find_from(&mut cursor, record.entity_id) {
+                arrived.push((record.entity_id.0, entity, None));
+            } else {
+                let entity = map.take_parked().expect("a parked entity");
+                map.arrive(record.entity_id, entity, Arrival::Reused);
+                arrived.push((record.entity_id.0, entity, Some(Arrival::Reused)));
             }
         }
         map.merge_arrivals();
         assert_eq!(ids(&map), [1, 3, 5, 6]);
         assert_eq!(map.stats().reused, 2);
-        assert!(map.parked().is_empty());
+        assert_eq!(map.parked().len(), 0);
         // The stack gives the last parked first.
         assert_eq!(map.get(EntityId(5)), Some(drawn[3]));
         assert_eq!(map.get(EntityId(6)), Some(drawn[1]));
@@ -912,7 +941,7 @@ mod tests {
         let (mut world, drawn) = entities(3);
         let mut map = map_with(&mut world, 16, &[1, 2, 3], &drawn);
         map.depart(&[], |_, _| true);
-        assert!(map.is_empty());
+        assert_eq!(map.len(), 0);
         assert_eq!(map.parked().len(), 3);
         assert_eq!(map.stats().parked_now, 3);
     }
@@ -922,11 +951,16 @@ mod tests {
         let (mut world, drawn) = entities(8);
         let mut map = map_with(&mut world, 8, &[1, 2, 3, 4], &drawn[..4]);
         let buffers: Vec<_> = map.retained_buffers().collect();
-        let mut next = 5;
         let mut spare = drawn[4..].to_vec();
-        for _ in 0..50 {
-            // The oldest leaves, a new one arrives with the largest id, and every few frames one
-            // arrives among the others (an out-of-order arrival).
+        for frame in 0..50_u32 {
+            // The oldest leaves and a new one arrives with the largest id, but every fifth frame
+            // it arrives below the largest (an out-of-order arrival, merged from the back). New
+            // ids are even, the out-of-order ones odd, so no id is ever reused.
+            let next = if frame % 5 == 4 {
+                2 * (5 + frame) - 3
+            } else {
+                2 * (5 + frame)
+            };
             let mut snapshot: Vec<u32> = ids(&map)[1..].to_vec();
             snapshot.push(next);
             snapshot.sort_unstable();
@@ -943,7 +977,7 @@ mod tests {
                 }
             }
             map.merge_arrivals();
-            next += 1;
+            assert!(ids(&map).is_sorted(), "frame {frame}: sorted");
         }
         assert_eq!(map.retained_buffers().collect::<Vec<_>>(), buffers);
         assert_eq!(map.len(), 4);
@@ -976,7 +1010,10 @@ mod tests {
         map.merge_arrivals();
         assert_eq!(map.stats().beyond_bound, 0);
         assert_eq!(map.stats().reused, 1);
-        assert!(map.take_parked().is_none(), "exhausted: the next arrival spawns");
+        assert!(
+            map.take_parked().is_none(),
+            "exhausted: the next arrival spawns"
+        );
     }
 
     #[test]
@@ -990,11 +1027,13 @@ mod tests {
         with_commands(&mut world, |commands| {
             map.follow(commands, Some(next), || bound_of(5));
         });
-        assert!(map.is_empty() && map.parked().is_empty());
+        assert_eq!((map.len(), map.parked().len()), (0, 0));
         assert_eq!(map.generation(), Some(next));
         assert_eq!(map.bound().map(|bound| bound.total()), Some(5));
         assert_eq!(map.stats(), RenderPoolStats::default());
-        assert!(drawn.iter().all(|entity| world.get_entity(*entity).is_err()));
+        assert!(drawn
+            .iter()
+            .all(|entity| world.get_entity(*entity).is_err()));
     }
 
     #[test]
@@ -1003,9 +1042,11 @@ mod tests {
         let mut map = map_with(&mut world, 8, &[1, 2, 3], &drawn);
         map.depart(&[record(1), record(2)], |_, _| true);
         with_commands(&mut world, |commands| map.retire_all(commands));
-        assert!(map.is_empty() && map.parked().is_empty());
+        assert_eq!((map.len(), map.parked().len()), (0, 0));
         assert_eq!((map.generation(), map.bound()), (None, None));
-        assert!(drawn.iter().all(|entity| world.get_entity(*entity).is_err()));
+        assert!(drawn
+            .iter()
+            .all(|entity| world.get_entity(*entity).is_err()));
     }
 
     #[test]
@@ -1015,7 +1056,7 @@ mod tests {
         map.depart(&[record(1)], |_, _| true);
         with_commands(&mut world, |commands| map.release_parked(commands));
         assert_eq!(ids(&map), [1]);
-        assert!(map.parked().is_empty());
+        assert_eq!(map.parked().len(), 0);
         assert!(world.get_entity(drawn[0]).is_ok());
         assert!(world.get_entity(drawn[1]).is_err());
     }

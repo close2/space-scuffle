@@ -801,6 +801,58 @@ fn playtest_units_appear_at_their_start_location_in_map_space() {
     );
 }
 
+/// Plan `2026-11-29-render-entity-pool` R-11: a playtest in which a unit died, so the render
+/// pool holds a parked bubble, leaves no live or parked bubble and an empty pool on exit.
+#[test]
+fn escape_after_a_death_retires_the_render_pool() {
+    let mut harness = EditorHarness::new();
+    harness.tap_key(KeyCode::F5);
+    harness.step(10);
+    let victim = {
+        let mut session = harness.app.world_mut().resource_mut::<BattleSession>();
+        let world = session.world_mut().expect("a playtest world");
+        let victim = world
+            .entities
+            .values()
+            .find(|unit| !unit.is_immobile)
+            .map(|unit| unit.id)
+            .expect("a mobile unit");
+        world.entities.get_mut(&victim).expect("the victim").hp = SimScalar::ZERO;
+        victim
+    };
+    for _ in 0..40 {
+        if !harness
+            .app
+            .world()
+            .resource::<client::RenderEntityMap>()
+            .parked()
+            .is_empty()
+        {
+            break;
+        }
+        harness.step(1);
+    }
+    let map = harness.app.world().resource::<client::RenderEntityMap>();
+    assert!(
+        map.get(victim).is_none() && !map.parked().is_empty(),
+        "a parked bubble"
+    );
+
+    harness.tap_key(KeyCode::Escape);
+    harness.step(2);
+    assert_eq!(harness.phase(), EditorPhase::Editing);
+    assert_eq!(harness.bubble_count(), 0, "no live bubble is left");
+    let parked = harness
+        .app
+        .world_mut()
+        .query_filtered::<Entity, With<client::ParkedBattleBubble>>()
+        .iter(harness.app.world())
+        .count();
+    assert_eq!(parked, 0, "no parked bubble is left");
+    let map = harness.app.world().resource::<client::RenderEntityMap>();
+    assert!(map.is_empty() && map.parked().is_empty() && map.bound().is_none());
+}
+
 #[test]
 fn escape_returns_to_editing_and_removes_every_battle_entity() {
     let mut harness = EditorHarness::new();

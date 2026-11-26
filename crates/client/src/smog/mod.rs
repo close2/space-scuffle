@@ -776,6 +776,9 @@ type SmogBubbleQuery<'w, 's> = Query<
         // An attack snapshot is an image, not a body: it pushes no smog (plan
         // `2026-11-24-attacker-snapshot` D-5).
         Without<crate::battle_hud::attack_snapshots::AttackSnapshotBubble>,
+        // A parked render entity draws no unit: it pushes no smog (plan
+        // `2026-11-29-render-entity-pool` §5).
+        Without<crate::render_pool::ParkedBattleBubble>,
     ),
 >;
 

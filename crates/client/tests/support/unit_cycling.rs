@@ -72,9 +72,34 @@ pub fn map_centre(world: &SimWorld) -> SimVec2 {
     )
 }
 
+/// Whether the cells round `at` (map units) are open, ground-pathable and free of structures,
+/// so a ground unit can stand where an air unit cycled.
+fn open_ground(world: &SimWorld, at: SimVec2) -> bool {
+    (-1..=1).all(|dx| {
+        (-1..=1).all(|dy| {
+            let probe = at + SimVec2::from_i32(dx, dy);
+            world
+                .map
+                .world_to_cell(probe)
+                .ok()
+                .and_then(|(x, y)| world.map.cell(x, y).ok())
+                .is_some_and(|cell| {
+                    cell.flags.contains(sim_map::CellFlags::GROUND_PATHABLE)
+                        && !cell.flags.intersects(
+                            sim_map::CellFlags::OCCUPIED_BY_STRUCTURE
+                                | sim_map::CellFlags::UNPASSABLE_CLIFF,
+                        )
+                })
+        })
+    })
+}
+
 /// Removes the weapons of `kind` in `world`'s catalog copy.
 fn disarm(world: &mut SimWorld, kind: UnitTypeId) {
-    let arch = world.catalog.get_mut(kind).expect("the kind is in the catalog");
+    let arch = world
+        .catalog
+        .get_mut(kind)
+        .expect("the kind is in the catalog");
     arch.weapon = None;
     arch.ground_weapon = None;
     arch.air_weapon = None;
@@ -158,12 +183,12 @@ impl AirCycle {
     /// odd ones) is spawned at its place on the same tick. Returns whether a cycle ran.
     pub fn advance(&mut self, world: &mut SimWorld, last_tick: &mut u32) -> bool {
         let tick = world.current_tick;
-        if tick == *last_tick || tick % AIR_CYCLE_TICKS != 0 {
+        if tick == *last_tick || !tick.is_multiple_of(AIR_CYCLE_TICKS) {
             return false;
         }
         *last_tick = tick;
         self.cycles += 1;
-        let kind = if self.cycles % 2 == 0 {
+        let kind = if self.cycles.is_multiple_of(2) {
             self.air
         } else {
             self.ground
@@ -179,7 +204,7 @@ impl AirCycle {
 }
 
 /// Stages R-2 on `world`: every mobile unit is killed and one unarmed air unit with media per
-/// player is spawned near the map's centre, three world units apart. `assets` is the shipped
+/// player is spawned beside that player's base, on the way to the map's centre. `assets` is the shipped
 /// asset root, read to find units with media.
 pub fn stage_air_cycle(world: &mut SimWorld, assets: &Path) -> AirCycle {
     let presentable = |slug: &str| {
@@ -206,14 +231,30 @@ pub fn stage_air_cycle(world: &mut SimWorld, assets: &Path) -> AirCycle {
     kill_mobile_units(world);
     disarm(world, air);
     disarm(world, ground);
+    // Each player's unit cycles beside its own base, away from the map's centre, where a map
+    // object (a watchtower) changes its tint as units of either side come and go.
     let centre = map_centre(world);
     let players = [PlayerId(0), PlayerId(1)];
     let units = players
         .iter()
-        .zip([-3, 3])
-        .map(|(&owner, dx)| {
-            let at = centre + SimVec2::from_i32(dx, 0);
-            let id = world.spawn_unit(air, owner, at).expect("open ground");
+        .map(|&owner| {
+            let base = world
+                .entities
+                .values()
+                .filter(|e| e.owner == owner && e.is_immobile)
+                .map(|e| (e.id, e.position))
+                .min_by_key(|(id, _)| *id)
+                .map(|(_, position)| position)
+                .expect("each player has a base");
+            let toward = (centre - base).normalize_or_zero();
+            let places: Vec<SimVec2> = (6..24)
+                .map(|step| base + toward * SimScalar::from_i32(step))
+                .filter(|at| open_ground(world, *at))
+                .collect();
+            let (id, at) = places
+                .into_iter()
+                .find_map(|at| world.spawn_unit(air, owner, at).ok().map(|id| (id, at)))
+                .expect("open ground between the base and the centre");
             (owner, id, at)
         })
         .collect();
