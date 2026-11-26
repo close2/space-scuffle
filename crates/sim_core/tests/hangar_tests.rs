@@ -628,8 +628,7 @@ fn shipped_fight(
     catalogs: sim_core::catalog::RuntimeCatalogs,
 ) -> Result<(SimWorld, EntityId, EntityId), Box<dyn Error>> {
     let map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0)))?;
-    let mut world =
-        SimWorld::with_catalogs(map.into(), 0x0B_A7, catalogs.units, catalogs.upgrades)?;
+    let mut world = SimWorld::with_catalogs(map, 0x0B_A7, catalogs.units, catalogs.upgrades)?;
     let (host, spec) = shipped_hangar(&world)?;
     let mut air: Vec<&UnitArchetype> = world
         .catalog
