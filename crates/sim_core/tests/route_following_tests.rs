@@ -863,8 +863,8 @@ fn a_fresh_route_passes_its_own_held_leg_test() -> TestResult {
         let (w, h) = (world.map.width(), world.map.height());
         let draw = |rng: &mut rand_chacha::ChaCha8Rng| {
             at(
-                rng.gen_range(1.0..f64::from(w) - 1.0),
-                rng.gen_range(1.0..f64::from(h) - 1.0),
+                rng.gen_range::<f64, _>(1.0..f64::from(w) - 1.0),
+                rng.gen_range::<f64, _>(1.0..f64::from(h) - 1.0),
             )
         };
         for case in 0..400_u32 {
