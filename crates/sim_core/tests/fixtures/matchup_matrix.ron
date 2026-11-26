@@ -1129,7 +1129,7 @@
     // different answer to Q0106 part 2 or part 4 re-opens this expectation.
     (
         name: "35_12_vikings_vs_6_colossi",
-        claim: "Vikings lose nothing; colossi that flee out of the vikings' sight survive, 1 to 3 on every measured run (5.0.14 TargetFilters Visible)",
+        claim: "Vikings lose nothing; colossi that flee out of the vikings' sight usually survive, though on a close run all six fall (5.0.14 TargetFilters Visible)",
         map_cells: 96,
         ticks: 900,
         blue: (
@@ -1158,7 +1158,8 @@
         // EffectData:1707-1712, UnitData:6901-6905, MoverData:531-567: 0.112 per tick for the first
         // 0.6875 of path, then accelerating 0.175616 to 1.568), 9 to 17 ticks instead of 1 to 7. On
         // the 20 matrix runs the vikings killed all six on 2 (the first seed of record, seed 4) and
-        // now on none: every run leaves 1 to 3 colossi, the expectation unchanged. Traced on the
+        // now on none: every one of those runs leaves 1 to 3 colossi, the expectation unchanged
+        // (held-out seeds 7001 to 7016 still kill all six on 2 of 16, other seeds than before). Traced on the
         // first seed of record: the first difference is tick 6, where the torpedoes the eight front
         // vikings released on tick 2 (the one unbounded band; the throw phase until the 7th step,
         // tick 8, then the acceleration) no longer strike colossi 13, 15 and 17; they strike them

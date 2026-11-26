@@ -107,3 +107,137 @@ bench-bin-wp0/`), one run under `perf stat -e instructions:u` (load average 21 t
 running): 64x64 0 units 3075 ticks/s, 100 units 802, 400 units 107; 128x128 400 units 177; 256x256 0 units 191;
 `showcase_canyon` 400 units 80; 67 casters 197; 12 hangar units 381. Every scenario is above 50 ticks/s. User-space
 instructions of the whole run: 297,769,229,666. WP6 compares the final tree against this binary, interleaved.
+
+## WP1: target-relative phase ends, latent (`ecdaaea9`)
+
+**Red first** (`~/scratch/missile-movers-b52/red/`): the WP1 tests on WP0's tree do not compile (`PhaseEnd` and
+`MissilePhase::ends` do not exist; `wp1-red-on-wp0.log`). Behaviourally, on a scratch copy of WP1's tree with each new
+rule switched off (a `Remaining` end never due, no release check, no D-4 end rule, unknown fields read, both variants
+encoded with tag 0; `neuter_wp1.py`): M-2, M-3, M-4 and M-7 fail in `missile_mover_tests.rs` and `missile_flight.rs`,
+M-5 in `validation.rs` (the end rules and the stale `ends_after`), M-6 in `checksum_state_tests.rs` and `encoding.rs`
+(`wp1-red-neutered{,-2,-3}.log`), while every weapon-delivery test (M-1) passes. On WP1's tree all pass.
+
+**Latent proof** (`proofcopy.sh wp1-latent ecdaaea9 unhash.py`): a `git archive` copy of WP1, every file touched, the
+schema set back to 57 with the new encoding of a phase end kept, built in a fresh target directory: both goldens and
+`DEFAULT_SANDBOX_CHECKSUM` reproduce `main`'s recorded values on native debug and release and `wasm32-wasip1` release
+and debug, 8 of 8. No golden world encodes a missile phase (WP0's probe), so the schema number is the only difference.
+Stop rule 1 holds. The schema then steps to 60 (provisional); WP1 to WP5 leave the goldens failing by design.
+
+**Worlds** against WP0's: every output file byte-identical (490 files, 0 differing): every matrix battle, battles 31
+and 33, the showcase, showcase effects and skirmish worlds.
+
+## WP2: the High Templar analogue (`51c47c2a`)
+
+**Red first** on WP1's tree (`red/wp2-red.log`): M-8 fails on the High Templar analogue (1.0, 5.0.14 1.05) and M-9 on
+its speed. M-8's table (`catalog_reference_values_tests.rs`) cites, for every shipped missile weapon without movers,
+the 5.0.14 mover its launch flies (`census/census_m8.txt`: `MissileDefault` and its children 1.05; Marauder 1.12;
+Hydralisk and Queen 2.24; Photon Cannon 1.008), the Brood Lord analogue's two rows `known_bug: "B-232"`, and the four
+rows of this plan's later packages `known_bug: "B-52"` until each lands. Green after the data.
+
+**Worlds** against WP1's: every output file byte-identical, outcomes included. The per-unit traces of the three
+probe-listed worlds (`scripts/trace.sh`, the 20 runs of each; `scripts/earlier.py`) give each first difference:
+
+| Battle | Runs differing | First difference | Class |
+|---|---:|---|---|
+| 13_storm_vs_held_lings | 20 of 20 | tick 18 on every run: the bolt released on tick 13 (edge 5.85) strikes a zergling one tick earlier (6 ticks, not 7), its life 15.276 → 11.276 instead of on tick 19; the worlds agree again from tick 19 | D |
+| 36a_storm_turns_marines | 8 of 20 | a red unit's life lower by the bolt's 4 one tick earlier, WP2's value at the tick equal to WP1's the next tick; equal again from the next tick | D |
+| 36b_marines_beat_zealots_without_storm | 15 of 20 | the same on 14 runs; on seed 2 the bolt (21 → 17) lands a tick before a second hit WP1 lands with it (21 → 9); equal again from the next tick | D |
+
+No outcome moved: the matrix summaries (end ticks, survivors, shots) are identical. Every other world is identical.
+
+## WP3: the Viking analogue (`87800150`, restatement `06a6585d`)
+
+**M-14 first** (green on WP2's tree): every analogue finder of `missile_mover_tests.rs` selects one archetype by a
+property unique to it, through `one_archetype`, which fails unless exactly one shipped archetype matches; the template
+finder `missile_archetype` takes a constant missile only. Red-proof (`red/m14-proof-{a,b}.log`): with the Viking
+analogue given an unbounded mover, the finders stay unique (green); given a bounded first band like the Phoenix's,
+`every_finder_matches_exactly_one_shipped_archetype` fails naming both. The finders of `weapon_catalog_rules_tests.rs`
+pick "any air unit" and "any ground unit without an air weapon" for tests that need any such unit; no mover data can
+change what they test, so they are left as they are.
+
+**Red first** on WP2's tree with M-14 (`red/wp3-red.log`): M-11's Viking row, M-12, M-15, M-16, M-17 and the finder
+test fail. With the data, both torpedoes of a volley land on §2.4's tick after their own release at every listed
+distance, with no boundary tick: edge 0.5, 2, 4, 6, 8, 9 → 9, 12, 14, 15, 16, 17 (stop rule 10 holds).
+
+**Worlds** against WP2's: only `matrix.csv` and `matrix.md` differ, in the three probe-listed battles; the showcase,
+showcase effects, skirmish, battles 31, 33 and every other matrix battle are identical.
+
+| Battle | Runs differing | Winner changes | Expectation changes | First difference (every run) | Class |
+|---|---:|---|---|---|---|
+| 12c_viking_vs_colossus | 20 of 20 | none | none | tick 6: the torpedo released on tick 2 struck the Colossus's shields after its old 5-tick flight; now on tick 16 | D |
+| 19_viking_vs_brood_lord | 20 of 20 | none | none | tick 5: the torpedo released on tick 2 struck the Brood Lord after 4 ticks; now later | D |
+| 35_12_vikings_vs_6_colossi | 20 of 20 | 2 (first seed of record, seed 4) | none | tick 6: the eight front vikings' torpedoes released on tick 2 no longer strike colossi 13, 15 and 17 | D |
+
+Mean end ticks: 12c 480 → 490, 19 300.6 → 310.6, 35 840 → 900 (all runs of 35 last the 900 ticks).
+
+**Battle 35, restated under charter §8** (on the frozen list; class D). WP2's 20 runs: 2 blue wins (all six colossi
+killed: the first seed of record on tick 267, seed 4 on tick 333) and 18 draws; WP3's: 20 draws, the first seed of
+record leaving 2 colossi and seed 4 one; the expectation (red 0 to 3) holds on every run. Traced on the first seed of
+record: on tick 2 eight vikings release, the single unbounded band (`VikingFighterMissile`), each torpedo in its throw
+phase at 0.112 per tick until its 7th step (tick 8) and then accelerating; in WP2 the constant 1.5 struck colossi 13, 15
+and 17 on tick 6 (their shields 100 → 86, 72, 86); in WP3 the same strikes land on tick 16. The probe on battle 35
+(`probe/probe35.sh`, WP2 against WP3): torpedoes lost on the last point when their colossus leaves the vikings' sight
+rise from 140 to 619 over the 20 runs, and on the first seed of record from 4 to 31, its kills from 6 to 4. Source:
+`liberty` MoverData:531–567 (S3). The claim and comment of battle 35 in `matchup_matrix.ron` carry the moved share and
+this trace. The claim itself still holds and is kept (held-out seeds still fell all six on some runs, WP6).
+
+## WP4: the Liberator and Banshee analogues (`53fb8665`, S-4 `4c94f740`)
+
+**Red first** on WP3's tree (`red/wp4-red.log`): their M-11 rows, M-12 cases and finders fail. With the data, every
+listed distance lands on §2.4's tick: Liberator edge 0.5, 1, 2, 3, 4, 5 → 3, 4, 7, 8, 9, 10; Banshee 0.5 to 6 → 3, 3,
+5, 6, 7, 8, 9. A strike is counted as a drop of life plus shields: the Banshee's ground victim template regenerates.
+
+S-4 (`combat_correctness_tests.rs`) picks the first shipped multi-strike missile `weapon`, the Banshee analogue's, and
+states that both missiles fly the same distance; its victim cannot hit back and walked off between the releases, and
+with the accelerating rockets the second landed a tick past one interval. The victim now holds, so its premise holds.
+
+**Worlds** against WP3's: every output file byte-identical, as WP0's probe predicted (no release of either weapon).
+
+## WP5: the Missile Turret analogue (`6524a75d`)
+
+**Red first** on WP4's tree (`red/wp5-red.log`): its M-11 row, M-12, M-13, M-15, M-17 and finder fail. With the data,
+every listed distance lands on §2.4's tick over the Turret's radius 1.125: edge 0.5 to 7 → 2, 3, 4, 5, 7, 8, 10, 12.
+M-13: at a target holding 6 away, and at one flying at the Turret from beyond its range (released inside 7), the
+missile is in its kill phase exactly on the ticks after whose step at most 4 is left, and the approaching target is
+struck earlier than a still target at its release distance. M-15 removes the copy's detection: the Turret analogue
+detects, as 5.0.14's does, so a cloaked target is otherwise not lost. M-17: a kill phase starting 1 from the target
+instead of 4 lengthens the flight at edge 6 in the same binary.
+
+**Worlds** against WP4's: every output file byte-identical, as predicted.
+
+## WP6: confirmation, re-record, records
+
+**Merge.** `main` had not moved from `4ff8402f` (checksum schema 57; Q0130 and Q0131 open, unrelated), so the final
+tree is the branch head; the Gated plan has not taken 58 or 59, and 60 stays provisional, the next free at merge.
+
+**Held-out seeds** (§7.3, `scripts/heldout.sh`, `main` `4ff8402f` against the final tree): matrix seeds 7001 to 7016,
+battles 31 and 33 on 7001 to 7064, the showcase and showcase effects on seeds 9 to 16, the skirmish on 9 to 12. Only
+`matrix.csv` and `matrix.md` differ, in 12c, 19 and 35 (Viking) and 36a (High Templar), each listed by WP0's probe for
+that weapon; battles 31 and 33, the showcase, showcase effects and skirmish worlds are identical. First differences
+(per-unit traces of the four battles on the 16 seeds): 12c, 19 and 35, every seed, the torpedo released on tick 2
+striking on tick 6 (or 5) on `main` and later on the final tree; 36a, 6 seeds, a bolt's 4 landing one tick earlier,
+the worlds equal again on the next tick. All class D. Outcomes: 12c and 19 unchanged; 36a unchanged (one run ends a
+tick earlier); 35 changes winner on 4 of 16 seeds in both directions (`main` kills all six on 7008 and 7012, the final
+tree on 7011 and 7014), a close battle restated in WP3, class D. No expectation changes. Stop rule 3 holds; nothing is
+restated or tuned from these seeds.
+
+**Throughput** (§5, `scripts/wp6-measure.sh`): WP0's binary and the final tree's, interleaved, two rounds each, under
+the gate lock (load average 6 to 18). Every scenario at 80 ticks per second or more in both (final: 64x64 0 units 3103
+and 3095, 100 units 810 and 796, 400 units 109 and 109; 128x128 180 and 178; 256x256 192 and 194; `showcase_canyon` 82
+and 82; 67 casters 201 and 201; 12 hangar units 392 and 391). User-space instructions of the whole run: WP0
+297,769,229,751 and 297,769,227,803; final 297,774,340,151 and 297,774,339,776, +0.0017 %. Stop rule 5 holds.
+
+**Goldens re-recorded** once on the final tree (`bca70ca5`), schema 57 -> 60: both goldens' checkpoint lists and
+`DEFAULT_SANDBOX_CHECKSUM` (`10_676_883_327_660_124_161` -> `14_163_679_094_600_060_237`). Proved on four builds, each
+a `git archive` copy with every file touched, in a fresh target directory, `wasmtime --dir=<copy>`: the recorded tree
+passes `golden_replay_tests` and `fixture_tests` on native debug and release and `wasm32-wasip1` release and debug, 8
+of 8 (`proof-final`); and its latent form (`unhash_final.py`: the schema back at 57 with `main`'s goldens and sandbox
+value) reproduces every checkpoint of `main` on the same four builds, 8 of 8 (`proof-final-latent`). No weapon of the
+plan fires in these worlds.
+
+**Client** (M-18): `effect_catalog_tests`, `sync_steady_state_tests` and `sync_allocation_count_tests` (valgrind) pass
+unchanged. `weapon_look_tests` W-20 assumed every mover weapon names an impact look; the Liberator analogue's look
+draws its landing with a splash (`flak_burst`), whose event the simulation publishes at the landing, so the test now
+requires a splash and no impact spawn for such a look (`test(client)` commit, no `client/src` change). The steady-state
+and allocation tests run no Viking volley: the default battle has no Viking analogue and the running children are
+defined as firing nothing, so a Viking volley would need a new staged window; not added (see the plan's As built).

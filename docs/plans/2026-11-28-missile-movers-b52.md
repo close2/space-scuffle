@@ -720,3 +720,51 @@ in §14, which charter §8 leaves to the agent.
   (`SC2_MISSILE_MOVERS`), `weapon_catalog_rules_tests.rs` (the delivery census), the five rows and their `effects`
   blocks, `effects.ron` (`rocket_trail`, `plasma_bolt`), `matchup_matrix.ron` (12c, 13, 19, 35, 36a, 36b),
   `throughput_scenarios.ron`, `structures.ron` (`trains_units`).
+
+---
+
+## As built
+
+Built on branch `missile-movers-b52-plan` from `4ff8402f` (`main` did not move during the work); evidence in
+[`docs/evidence/2026-11-28-missile-movers-b52.md`](../evidence/2026-11-28-missile-movers-b52.md).
+
+- **WP0** (`7ad7235a`): the census confirmed every source of §2.1 (stop rule 9 held); the probe and its control found
+  Viking releases in 12c, 19 and 35 only, High Templar releases in 13, 36a and 36b only, and no Liberator, Banshee or
+  Turret release in any measured world, golden or the sandbox (so WP4 did not split); the four-build baseline was 8 of
+  8; the close list frozen: 14, 26, 31, 33, 35, 38a, 38b. The Turret analogue's releases read its radius 1.125 (§2.4's
+  **verify**).
+- **WP1** (`ecdaaea9`, C7 allowance `37e8ec78`): `PhaseEnd::{Flown, Remaining}` as D-2 states, checked after each step
+  against the target's current aim point and once at the release; D-4's validation; `deny_unknown_fields` on the mover
+  defs; the encoding's variant tag; schema 60 (provisional). Latent proof 8 of 8; worlds byte-identical. M-6 is a
+  dedicated test (two projectiles differing only in the end's variant): the first, a mutation from `None`, did not
+  pin the tag, which the scratch red showed.
+- **WP2** (`51c47c2a`): the bolt at 1.05; M-8's table lists every shipped constant missile with its 5.0.14 mover and
+  carries `known_bug` B-232 (the Brood Lord analogue) and, until their packages, B-52. Worlds: 13, 36a and 36b differ
+  by a bolt landing a tick earlier (class D), no outcome moved.
+- **WP3** (`87800150`, restatement `06a6585d`, literal `9024af20`): M-14's finders exact (`one_archetype`), then the
+  Viking's movers. Flights 9, 12, 14, 15, 16, 17 ticks, §2.4 exactly. Worlds: 12c, 19, 35 (class D); 12c and 19 keep
+  their outcomes; **battle 35 restated under §8**: no matrix run kills all six colossi (2 of 20 before).
+- **WP4** (`53fb8665`, S-4 `4c94f740`, W-20 `16bc93e0`): the Liberator's and Banshee's movers, §2.4 exactly; worlds
+  identical. S-4's victim holds (both missiles fly the same distance, its own premise); W-20 accepts a look that draws
+  a mover weapon's landing with a splash (the Liberator analogue's).
+- **WP5** (`6524a75d`): the Turret's movers with `Remaining(4.0)`, §2.4 exactly; M-13 at a holding target and one
+  flying in from beyond range; worlds identical.
+- **WP6**: held-out seeds confirm (class D only, in probe-listed worlds; battle 35 flips both ways on 4 of 16); every
+  bench scenario at 80 ticks/s or more, instructions +0.0017 %; goldens and the sandbox re-recorded once at schema 60
+  (`bca70ca5`), proved 8 of 8 recorded and 8 of 8 latent; B-52 fixed.
+
+Deviations from the plan as written, each recorded:
+
+- **M-13's approaching target** starts beyond the Turret's range, already flying in: the Viking-analogue target
+  accelerates slowly, and ordered to approach only after the release it moved under half a unit, so the flight did not
+  shorten. Its comparison is with a still target at its measured release distance (the oracle over the shipped
+  phases), not §2.4's 12.
+- **M-15 for the Turret** removes its copy's detection: the Turret analogue detects (as 5.0.14's does), so a cloaked
+  target would not be undetected.
+- **M-14** narrows the finders of `missile_mover_tests.rs`; the two "any air unit" and "any ground unit" finders of
+  `weapon_catalog_rules_tests.rs` stay, since any such unit serves their tests and no mover data can change them.
+- **M-18**: the steady-state and allocation tests run unchanged and pass, but without a Viking-analogue volley: the
+  default battle has no Viking analogue and the running children fire nothing by design; a staged Viking window was not
+  added. Left for the orchestrator to decide.
+- Two older tests whose premise a moved flight broke were narrowed to their premise (S-4, W-20), with no change to
+  `client/src` or the simulation.
