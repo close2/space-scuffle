@@ -343,6 +343,30 @@ impl UnitArchetype {
             .find_map(|weapon| weapon.magazine_launch)
     }
 
+    /// The archetypes this unit brings into a battle by itself (plan `2026-11-28-broodlings`
+    /// D-12): its hangar's member and the units its weapons' missiles create, in that order,
+    /// each once. Empty for a unit that creates none. The client reads it to require their
+    /// media with the unit's own.
+    #[must_use]
+    pub fn created_units(&self) -> Vec<UnitTypeId> {
+        let mut created: Vec<UnitTypeId> = self
+            .capabilities
+            .hangar
+            .map(|hangar| hangar.member)
+            .into_iter()
+            .collect();
+        let spawns = [&self.weapon, &self.ground_weapon, &self.air_weapon]
+            .into_iter()
+            .flatten()
+            .filter_map(|weapon| weapon.impact_spawn.map(|spawn| spawn.unit));
+        for unit in spawns {
+            if !created.contains(&unit) {
+                created.push(unit);
+            }
+        }
+        created
+    }
+
     /// Whether this unit can raise `structure`. The one rule admission and the card share.
     #[must_use]
     pub fn can_raise(&self, structure: &Self) -> bool {
