@@ -43,6 +43,8 @@
 #[path = "support/terrain_mesh.rs"]
 mod terrain_mesh;
 
+use std::fmt::Write as _;
+
 use bevy::prelude::{Vec2, Vec3};
 use client::terrain::mesher::{
     cliff_level_height, dual_corner_levels, surface_class, SurfaceClass, ABYSS_WALL_BOTTOM_Y,
@@ -158,7 +160,10 @@ struct Violation {
     class: Class,
     /// Largest height above the surface, world units.
     height: f32,
-    /// Largest horizontal depth into the cell of a violating vertex, world units.
+    /// How far into the cell the violation reaches, world units: for a profile violation the
+    /// largest distance of a violating vertex from the cell's nearest edge, for a corner
+    /// violation from the nook's corner along its diagonal (a whole 45° nook reaches
+    /// `0.5 / sqrt(2) = 0.354`).
     depth: f32,
     triangle: [Vec3; 3],
 }
@@ -219,7 +224,7 @@ fn check_triangle(
         Surface::Ramp(profile, _) => Some(footprint_margins(profile.dir, tol.tau)),
         Surface::Flat(_) => None,
     };
-    let mut worst: Option<(f32, f32)> = None;
+    let mut worst: Option<(f32, f32, f32)> = None;
     let mut all_in_nook = true;
     for p in clip.points() {
         let (fx, fz) = (p.x - origin.x, p.z - origin.y);
@@ -234,30 +239,62 @@ fn check_triangle(
         if above <= allowance {
             continue;
         }
-        let depth = fx.min(1.0 - fx).min(fz).min(1.0 - fz);
-        let in_nook = nooks
+        let edge_depth = fx.min(1.0 - fx).min(fz).min(1.0 - fz);
+        let from_corner = nooks
             .iter()
-            .any(|c| (p.x - c.x).abs() + (p.z - c.y).abs() <= 0.5 + tol.tau);
-        all_in_nook &= in_nook;
-        let (h, d) = worst.unwrap_or((f32::NEG_INFINITY, 0.0));
-        worst = Some((h.max(above), d.max(depth)));
+            .map(|c| (p.x - c.x).abs() + (p.z - c.y).abs())
+            .fold(f32::INFINITY, f32::min);
+        all_in_nook &= from_corner <= 0.5 + tol.tau;
+        let nook_depth = from_corner * std::f32::consts::FRAC_1_SQRT_2;
+        let (h, d, n) = worst.unwrap_or((f32::NEG_INFINITY, 0.0, 0.0));
+        worst = Some((h.max(above), d.max(edge_depth), n.max(nook_depth)));
     }
-    worst.map(|(height, depth)| Violation {
-        cell,
-        class: if all_in_nook {
+    worst.map(|(height, edge_depth, nook_depth)| {
+        let class = if all_in_nook {
             Class::Corner
         } else {
             Class::Profile
-        },
-        height,
-        depth,
-        triangle: *t,
+        };
+        Violation {
+            cell,
+            class,
+            height,
+            depth: if class == Class::Corner {
+                nook_depth
+            } else {
+                edge_depth
+            },
+            triangle: *t,
+        }
     })
+}
+
+/// Environment variable naming a directory: when set, every map's violations are written there
+/// as `<map>.csv` (cell x, cell y, class, height, depth), for the review capture's heat map.
+const EXPORT_VAR: &str = "SPACE_SCUFFLE_CLIFF_VIOLATIONS_OUT";
+
+/// Writes `violations` of map `name` to [`EXPORT_VAR`]'s directory, when it is set.
+fn export(name: &str, violations: &[Violation]) {
+    let Some(directory) = std::env::var_os(EXPORT_VAR).map(std::path::PathBuf::from) else {
+        return;
+    };
+    let mut text = String::from("x,y,class,height,depth\n");
+    for v in violations {
+        writeln!(
+            text,
+            "{},{},{:?},{},{}",
+            v.cell.0, v.cell.1, v.class, v.height, v.depth
+        )
+        .expect("writing to a String cannot fail");
+    }
+    std::fs::create_dir_all(&directory).expect("the export directory is created");
+    std::fs::write(directory.join(format!("{name}.csv")), text).expect("the export is written");
 }
 
 /// Fails with a report of the violations `classes` select.
 fn assert_no_violations(name: &str, map: &GameMap, classes: &[Class]) {
     let (all, tol) = violations(map);
+    export(name, &all);
     let selected: Vec<&Violation> = all.iter().filter(|v| classes.contains(&v.class)).collect();
     if selected.is_empty() {
         println!(

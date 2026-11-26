@@ -4,7 +4,8 @@
 //!
 //! # Architectural Responsibilities
 //! - **Dual-Grid Marching Squares:** Evaluates cell centers as dual vertices and edge
-//!   midpoints as contour crossings, producing exact cell-aligned cliff lines with 45° cuts.
+//!   midpoints as contour crossings, producing exact cell-aligned cliff lines with 45° cuts at
+//!   convex corners and square, mitred corners at concave ones.
 //! - **Watertight Chunk Boundaries:** Boundary edges depend strictly on local cell corner
 //!   levels, guaranteeing bit-identical vertex positions and normals on shared chunk seams.
 //! - **Simulation Height Matching:** Ramp quads sample authoritative heights directly from
@@ -38,6 +39,12 @@
 //!   triangle rises above the cell's simulation surface, except a ramp's guard rail within
 //!   [`RAIL_WIDTH`] of its side edge and [`RAIL_HEIGHT`] above the surface. Rims and convex 45°
 //!   cuts remove solid below a plateau's floor and are allowed.
+//! - **Corners:** a concave corner of a plateau (a dual cell whose one corner is below a threshold
+//!   its two edge neighbours reach) runs its contour through the dual cell's centre, the cells'
+//!   shared corner, so the low cell keeps its whole quadrant; the centre's wall profile is mitred,
+//!   each row's offset applied along both edges' directions. Saddles resolve low-connected: two
+//!   convex cuts, each in its own high cell. Convex corners keep the 45° cut, which removes solid
+//!   from the high cell only (plan D-3, owner question Q0136, default (a)).
 //! - **Setback:** on an edge whose low corner is ground, every wall profile is moved
 //!   [`FOOT_WIDTH`] into the high cell and its toe is the edge midpoint itself, so the foot ends
 //!   on the edge and the jitter ([`WALL_JITTER_AMPLITUDE`] at most [`FOOT_WIDTH`]) stays behind
@@ -238,23 +245,19 @@ pub fn dual_corner_levels(map: &GameMap, di: u32, dj: u32) -> ([i32; 4], u8) {
 
 /// Marching level of the floor that the dual grid draws in corner `corner` (0..4, bottom-left,
 /// bottom-right, top-right, top-left) of dual cell `(di, dj)` next to the dual cell's centre:
-/// the median of the corner's level and the levels of its two edge-adjacent corners (rule R3).
+/// the corner's level, capped by the higher of its two edge-adjacent corners' levels (rule R3).
 ///
-/// Marching squares cut a corner's quadrant only when the corner is lone, unlike both
-/// edge-adjacent corners; the part of the quadrant at the dual cell's centre then belongs to
-/// the region of its neighbours. The median is the one level that covers both cases. The ramp
-/// pass compares a ramp cell's edges with this level, so the dual grid and the ramp pass agree
-/// on every height step by construction. Level -1 is the void.
+/// Marching squares cut a corner's quadrant only where the corner is a lone high corner, above
+/// both edge-adjacent corners; the part of the quadrant at the dual cell's centre then belongs
+/// to the region of the higher of them. A lone low corner keeps its whole quadrant (a concave
+/// corner's square nook), and so does a saddle's low corner. The ramp pass compares a ramp cell's
+/// edges with this level, so the dual grid and the ramp pass agree on every height step by
+/// construction. Level -1 is the void.
 #[must_use]
 pub fn dual_floor_level_beside(map: &GameMap, di: u32, dj: u32, corner: usize) -> i32 {
     let (levels, _) = dual_corner_levels(map, di, dj);
-    let mut three = [
-        levels[corner % 4],
-        levels[(corner + 1) % 4],
-        levels[(corner + 3) % 4],
-    ];
-    three.sort_unstable();
-    three[1]
+    let neighbours = levels[(corner + 1) % 4].max(levels[(corner + 3) % 4]);
+    levels[corner % 4].min(neighbours)
 }
 
 /// Cells `(x, y)` at the corners of dual cell `(di, dj)`, in corner order bottom-left,
@@ -345,6 +348,9 @@ pub enum DualVertexRef {
     Corner(DualCorner),
     /// Dual cell edge midpoint crossing (contour vertex; receives rim inset if rim present).
     Midpoint(EdgeMidpoint),
+    /// The dual cell's centre, the shared corner of its four cells: the inner vertex of a
+    /// concave corner's square nook (receives the mitred inset of the corner's wall).
+    Centre,
 }
 
 /// Directed contour wall segment between two edge midpoints on a dual cell.
@@ -354,237 +360,182 @@ pub struct ContourSegment {
     pub start: EdgeMidpoint,
     /// Ending edge midpoint crossing.
     pub end: EdgeMidpoint,
+    /// Whether the contour bends at the dual cell's centre: the two walls of a concave corner's
+    /// square nook, meeting at a mitred corner.
+    pub through_centre: bool,
 }
 
-/// Marching squares case definition containing convex region polygon vertices (CCW)
-/// and directed contour wall segments.
+/// Marching squares case definition: the region of the corners at or above the threshold and
+/// the region of the others, each as convex parts, and the directed contour wall segments.
 #[derive(Debug, Clone, Copy)]
 pub struct MarchingCase {
-    /// Vertices of the region polygon in CCW order seen from +Y.
-    pub region: &'static [DualVertexRef],
+    /// The high region (corners set in the case index) as polygons, vertices in CCW order seen
+    /// from +Y: convex, except a concave corner's L, which is star-shaped from its first vertex.
+    /// A saddle's high region is two parts.
+    pub regions: &'static [&'static [DualVertexRef]],
+    /// The low region (corners clear in the case index), as convex polygons, CCW seen from +Y.
+    /// It is the high region's complement: a lone low corner keeps its whole quadrant, and a
+    /// saddle's two low corners are joined.
+    pub low_regions: &'static [&'static [DualVertexRef]],
     /// Directed contour segments producing cliff wall quad strips.
     pub segments: &'static [ContourSegment],
 }
 
 // 16-entry lookup table for marching squares on cell centers with edge-midpoint crossings.
 // Corner bit flags: BL = 1, BR = 2, TR = 4, TL = 8.
-// Region polygons are strictly convex, oriented CCW seen from +Y.
-// Saddles 5 and 10 resolve high-connected (both high corners joined).
-const MARCHING_CASES: [MarchingCase; 16] = [
-    // Case 0: (0000) None high
-    MarchingCase {
-        region: &[],
-        segments: &[],
-    },
-    // Case 1: (0001) BL high
-    MarchingCase {
-        region: &[
-            DualVertexRef::Corner(DualCorner::BottomLeft),
-            DualVertexRef::Midpoint(EdgeMidpoint::Bottom),
-            DualVertexRef::Midpoint(EdgeMidpoint::Left),
-        ],
-        segments: &[ContourSegment {
-            start: EdgeMidpoint::Bottom,
-            end: EdgeMidpoint::Left,
-        }],
-    },
-    // Case 2: (0010) BR high
-    MarchingCase {
-        region: &[
-            DualVertexRef::Corner(DualCorner::BottomRight),
-            DualVertexRef::Midpoint(EdgeMidpoint::Right),
-            DualVertexRef::Midpoint(EdgeMidpoint::Bottom),
-        ],
-        segments: &[ContourSegment {
-            start: EdgeMidpoint::Right,
-            end: EdgeMidpoint::Bottom,
-        }],
-    },
-    // Case 3: (0011) BL and BR high (horizontal half quad)
-    MarchingCase {
-        region: &[
-            DualVertexRef::Corner(DualCorner::BottomLeft),
-            DualVertexRef::Corner(DualCorner::BottomRight),
-            DualVertexRef::Midpoint(EdgeMidpoint::Right),
-            DualVertexRef::Midpoint(EdgeMidpoint::Left),
-        ],
-        segments: &[ContourSegment {
-            start: EdgeMidpoint::Right,
-            end: EdgeMidpoint::Left,
-        }],
-    },
-    // Case 4: (0100) TR high
-    MarchingCase {
-        region: &[
-            DualVertexRef::Corner(DualCorner::TopRight),
-            DualVertexRef::Midpoint(EdgeMidpoint::Top),
-            DualVertexRef::Midpoint(EdgeMidpoint::Right),
-        ],
-        segments: &[ContourSegment {
-            start: EdgeMidpoint::Top,
-            end: EdgeMidpoint::Right,
-        }],
-    },
-    // Case 5: (0101) BL and TR high (Saddle, high-connected convex hexagon)
-    MarchingCase {
-        region: &[
-            DualVertexRef::Corner(DualCorner::BottomLeft),
-            DualVertexRef::Midpoint(EdgeMidpoint::Bottom),
-            DualVertexRef::Midpoint(EdgeMidpoint::Right),
-            DualVertexRef::Corner(DualCorner::TopRight),
-            DualVertexRef::Midpoint(EdgeMidpoint::Top),
-            DualVertexRef::Midpoint(EdgeMidpoint::Left),
-        ],
-        segments: &[
-            ContourSegment {
-                start: EdgeMidpoint::Bottom,
-                end: EdgeMidpoint::Right,
-            },
-            ContourSegment {
-                start: EdgeMidpoint::Top,
-                end: EdgeMidpoint::Left,
-            },
-        ],
-    },
-    // Case 6: (0110) BR and TR high (vertical half quad)
-    MarchingCase {
-        region: &[
-            DualVertexRef::Corner(DualCorner::BottomRight),
-            DualVertexRef::Corner(DualCorner::TopRight),
-            DualVertexRef::Midpoint(EdgeMidpoint::Top),
-            DualVertexRef::Midpoint(EdgeMidpoint::Bottom),
-        ],
-        segments: &[ContourSegment {
-            start: EdgeMidpoint::Top,
-            end: EdgeMidpoint::Bottom,
-        }],
-    },
-    // Case 7: (0111) BL, BR, TR high (convex pentagon)
-    MarchingCase {
-        region: &[
-            DualVertexRef::Corner(DualCorner::BottomLeft),
-            DualVertexRef::Corner(DualCorner::BottomRight),
-            DualVertexRef::Corner(DualCorner::TopRight),
-            DualVertexRef::Midpoint(EdgeMidpoint::Top),
-            DualVertexRef::Midpoint(EdgeMidpoint::Left),
-        ],
-        segments: &[ContourSegment {
-            start: EdgeMidpoint::Top,
-            end: EdgeMidpoint::Left,
-        }],
-    },
-    // Case 8: (1000) TL high
-    MarchingCase {
-        region: &[
-            DualVertexRef::Corner(DualCorner::TopLeft),
-            DualVertexRef::Midpoint(EdgeMidpoint::Left),
-            DualVertexRef::Midpoint(EdgeMidpoint::Top),
-        ],
-        segments: &[ContourSegment {
-            start: EdgeMidpoint::Left,
-            end: EdgeMidpoint::Top,
-        }],
-    },
-    // Case 9: (1001) BL and TL high (vertical half quad)
-    MarchingCase {
-        region: &[
-            DualVertexRef::Corner(DualCorner::BottomLeft),
-            DualVertexRef::Midpoint(EdgeMidpoint::Bottom),
-            DualVertexRef::Midpoint(EdgeMidpoint::Top),
-            DualVertexRef::Corner(DualCorner::TopLeft),
-        ],
-        segments: &[ContourSegment {
-            start: EdgeMidpoint::Bottom,
-            end: EdgeMidpoint::Top,
-        }],
-    },
-    // Case 10: (1010) BR and TL high (Saddle, high-connected convex hexagon)
-    MarchingCase {
-        region: &[
-            DualVertexRef::Corner(DualCorner::BottomRight),
-            DualVertexRef::Midpoint(EdgeMidpoint::Right),
-            DualVertexRef::Midpoint(EdgeMidpoint::Top),
-            DualVertexRef::Corner(DualCorner::TopLeft),
-            DualVertexRef::Midpoint(EdgeMidpoint::Left),
-            DualVertexRef::Midpoint(EdgeMidpoint::Bottom),
-        ],
-        segments: &[
-            ContourSegment {
-                start: EdgeMidpoint::Right,
-                end: EdgeMidpoint::Top,
-            },
-            ContourSegment {
-                start: EdgeMidpoint::Left,
-                end: EdgeMidpoint::Bottom,
-            },
-        ],
-    },
-    // Case 11: (1011) BL, BR, TL high (convex pentagon)
-    MarchingCase {
-        region: &[
-            DualVertexRef::Corner(DualCorner::BottomLeft),
-            DualVertexRef::Corner(DualCorner::BottomRight),
-            DualVertexRef::Midpoint(EdgeMidpoint::Right),
-            DualVertexRef::Midpoint(EdgeMidpoint::Top),
-            DualVertexRef::Corner(DualCorner::TopLeft),
-        ],
-        segments: &[ContourSegment {
-            start: EdgeMidpoint::Right,
-            end: EdgeMidpoint::Top,
-        }],
-    },
-    // Case 12: (1100) TR and TL high (horizontal half quad)
-    MarchingCase {
-        region: &[
-            DualVertexRef::Midpoint(EdgeMidpoint::Left),
-            DualVertexRef::Midpoint(EdgeMidpoint::Right),
-            DualVertexRef::Corner(DualCorner::TopRight),
-            DualVertexRef::Corner(DualCorner::TopLeft),
-        ],
-        segments: &[ContourSegment {
-            start: EdgeMidpoint::Left,
-            end: EdgeMidpoint::Right,
-        }],
-    },
-    // Case 13: (1101) BL, TR, TL high (convex pentagon)
-    MarchingCase {
-        region: &[
-            DualVertexRef::Corner(DualCorner::BottomLeft),
-            DualVertexRef::Midpoint(EdgeMidpoint::Bottom),
-            DualVertexRef::Midpoint(EdgeMidpoint::Right),
-            DualVertexRef::Corner(DualCorner::TopRight),
-            DualVertexRef::Corner(DualCorner::TopLeft),
-        ],
-        segments: &[ContourSegment {
-            start: EdgeMidpoint::Bottom,
-            end: EdgeMidpoint::Right,
-        }],
-    },
-    // Case 14: (1110) BR, TR, TL high (convex pentagon)
-    MarchingCase {
-        region: &[
-            DualVertexRef::Midpoint(EdgeMidpoint::Left),
-            DualVertexRef::Midpoint(EdgeMidpoint::Bottom),
-            DualVertexRef::Corner(DualCorner::BottomRight),
-            DualVertexRef::Corner(DualCorner::TopRight),
-            DualVertexRef::Corner(DualCorner::TopLeft),
-        ],
-        segments: &[ContourSegment {
-            start: EdgeMidpoint::Left,
-            end: EdgeMidpoint::Bottom,
-        }],
-    },
-    // Case 15: (1111) All high (full quad)
-    MarchingCase {
-        region: &[
-            DualVertexRef::Corner(DualCorner::BottomLeft),
-            DualVertexRef::Corner(DualCorner::BottomRight),
-            DualVertexRef::Corner(DualCorner::TopRight),
-            DualVertexRef::Corner(DualCorner::TopLeft),
-        ],
-        segments: &[],
-    },
-];
+// Region polygons are oriented CCW seen from +Y and convex, except a concave corner's L, which is
+// star-shaped from its first vertex. A lone high corner (1, 2, 4, 8) is cut at 45° through its two
+// edge midpoints: the cut removes solid from the high cell only. A lone low corner (7, 11, 13, 14)
+// keeps its whole quadrant: the contour bends at the centre, and the high region is the L of the
+// other three quadrants, listed from the corner diagonal to the nook, which sees the whole L (the
+// mitre moves the centre towards it), so the floor's triangle fan from that corner covers the L
+// with every vertex once and chunk seams meet vertex for vertex. Saddles 5 and 10 resolve low-connected: two
+// lone-high cuts, so the drawn plateaus meet only at the centre, as the simulation's cells do
+// (plan `2026-11-30-terrain-and-air-indicators` D-3).
+const MARCHING_CASES: [MarchingCase; 16] = {
+    use DualCorner::{BottomLeft as BL, BottomRight as BR, TopLeft as TL, TopRight as TR};
+    use DualVertexRef::{Centre as C, Corner, Midpoint};
+    use EdgeMidpoint::{Bottom, Left, Right, Top};
+    const B: DualVertexRef = Midpoint(Bottom);
+    const R: DualVertexRef = Midpoint(Right);
+    const T: DualVertexRef = Midpoint(Top);
+    const L: DualVertexRef = Midpoint(Left);
+    const CBL: DualVertexRef = Corner(BL);
+    const CBR: DualVertexRef = Corner(BR);
+    const CTR: DualVertexRef = Corner(TR);
+    const CTL: DualVertexRef = Corner(TL);
+    const fn seg(start: EdgeMidpoint, end: EdgeMidpoint) -> ContourSegment {
+        ContourSegment {
+            start,
+            end,
+            through_centre: false,
+        }
+    }
+    const fn nook(start: EdgeMidpoint, end: EdgeMidpoint) -> ContourSegment {
+        ContourSegment {
+            start,
+            end,
+            through_centre: true,
+        }
+    }
+    // Convex regions shared by several cases.
+    const QUAD: &[DualVertexRef] = &[CBL, CBR, CTR, CTL];
+    const CUT_BL: &[DualVertexRef] = &[CBL, B, L];
+    const CUT_BR: &[DualVertexRef] = &[CBR, R, B];
+    const CUT_TR: &[DualVertexRef] = &[CTR, T, R];
+    const CUT_TL: &[DualVertexRef] = &[CTL, L, T];
+    // The complement of a 45° cut: the other three corners and the cut line.
+    const NOT_BL: &[DualVertexRef] = &[L, B, CBR, CTR, CTL];
+    const NOT_BR: &[DualVertexRef] = &[CBL, B, R, CTR, CTL];
+    const NOT_TR: &[DualVertexRef] = &[CBL, CBR, R, T, CTL];
+    const NOT_TL: &[DualVertexRef] = &[CBL, CBR, CTR, T, L];
+    // Half quads.
+    const BOTTOM: &[DualVertexRef] = &[CBL, CBR, R, L];
+    const TOP: &[DualVertexRef] = &[L, R, CTR, CTL];
+    const LEFT: &[DualVertexRef] = &[CBL, B, T, CTL];
+    const RIGHT: &[DualVertexRef] = &[CBR, CTR, T, B];
+    // Joined saddle regions: the two corners named and the centre between them.
+    const JOIN_BR_TL: &[DualVertexRef] = &[CBR, R, T, CTL, L, B];
+    const JOIN_BL_TR: &[DualVertexRef] = &[CBL, B, R, CTR, T, L];
+    [
+        // Case 0: none high.
+        MarchingCase {
+            regions: &[],
+            low_regions: &[QUAD],
+            segments: &[],
+        },
+        // Case 1: BL high (convex corner).
+        MarchingCase {
+            regions: &[CUT_BL],
+            low_regions: &[NOT_BL],
+            segments: &[seg(Bottom, Left)],
+        },
+        // Case 2: BR high (convex corner).
+        MarchingCase {
+            regions: &[CUT_BR],
+            low_regions: &[NOT_BR],
+            segments: &[seg(Right, Bottom)],
+        },
+        // Case 3: BL and BR high (horizontal half quad).
+        MarchingCase {
+            regions: &[BOTTOM],
+            low_regions: &[TOP],
+            segments: &[seg(Right, Left)],
+        },
+        // Case 4: TR high (convex corner).
+        MarchingCase {
+            regions: &[CUT_TR],
+            low_regions: &[NOT_TR],
+            segments: &[seg(Top, Right)],
+        },
+        // Case 5: BL and TR high (saddle, low-connected: two convex corners).
+        MarchingCase {
+            regions: &[CUT_BL, CUT_TR],
+            low_regions: &[JOIN_BR_TL],
+            segments: &[seg(Bottom, Left), seg(Top, Right)],
+        },
+        // Case 6: BR and TR high (vertical half quad).
+        MarchingCase {
+            regions: &[RIGHT],
+            low_regions: &[LEFT],
+            segments: &[seg(Top, Bottom)],
+        },
+        // Case 7: BL, BR, TR high (concave corner, TL low).
+        MarchingCase {
+            regions: &[&[CBR, CTR, T, C, L, CBL]],
+            low_regions: &[&[CTL, L, C, T]],
+            segments: &[nook(Top, Left)],
+        },
+        // Case 8: TL high (convex corner).
+        MarchingCase {
+            regions: &[CUT_TL],
+            low_regions: &[NOT_TL],
+            segments: &[seg(Left, Top)],
+        },
+        // Case 9: BL and TL high (vertical half quad).
+        MarchingCase {
+            regions: &[LEFT],
+            low_regions: &[RIGHT],
+            segments: &[seg(Bottom, Top)],
+        },
+        // Case 10: BR and TL high (saddle, low-connected: two convex corners).
+        MarchingCase {
+            regions: &[CUT_BR, CUT_TL],
+            low_regions: &[JOIN_BL_TR],
+            segments: &[seg(Right, Bottom), seg(Left, Top)],
+        },
+        // Case 11: BL, BR, TL high (concave corner, TR low).
+        MarchingCase {
+            regions: &[&[CBL, CBR, R, C, T, CTL]],
+            low_regions: &[&[CTR, T, C, R]],
+            segments: &[nook(Right, Top)],
+        },
+        // Case 12: TR and TL high (horizontal half quad).
+        MarchingCase {
+            regions: &[TOP],
+            low_regions: &[BOTTOM],
+            segments: &[seg(Left, Right)],
+        },
+        // Case 13: BL, TR, TL high (concave corner, BR low).
+        MarchingCase {
+            regions: &[&[CTL, CBL, B, C, R, CTR]],
+            low_regions: &[&[CBR, R, C, B]],
+            segments: &[nook(Bottom, Right)],
+        },
+        // Case 14: BR, TR, TL high (concave corner, BL low).
+        MarchingCase {
+            regions: &[&[CTR, CTL, L, C, B, CBR]],
+            low_regions: &[&[CBL, B, C, L]],
+            segments: &[nook(Left, Bottom)],
+        },
+        // Case 15: all high (full quad).
+        MarchingCase {
+            regions: &[QUAD],
+            low_regions: &[],
+            segments: &[],
+        },
+    ]
+};
 
 /// Evaluates ambient occlusion at a floor or ramp vertex.
 #[must_use]
@@ -677,11 +628,6 @@ fn edge_setback(level_b: i32, suppressed: bool) -> f32 {
 /// Every row lies at `p + d·k` with `k <= 0`: the profile is set back by [`edge_setback`], at
 /// least the jitter's amplitude, and the foot's toe is `p` itself (invariant W1).
 #[must_use]
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_precision_loss,
-    reason = "map cell coordinates stay far below the range of f32 and i32"
-)]
 pub fn generate_wall_profile(
     p: Vec2,
     d: Vec2,
@@ -691,6 +637,52 @@ pub fn generate_wall_profile(
     tb: i32,
     suppressed: bool,
 ) -> Vec<WallProfileRow> {
+    wall_profile_rows(
+        ProfileFrame {
+            p,
+            offset: d,
+            facing: d,
+        },
+        level_a,
+        level_b,
+        ta,
+        tb,
+        suppressed,
+    )
+}
+
+/// Where a wall profile stands: its point on the contour, the direction its rows' signed offsets
+/// are taken along, and the horizontal unit vector its faces turn to, all in world XZ.
+#[derive(Debug, Clone, Copy)]
+struct ProfileFrame {
+    /// The contour point: an edge midpoint, or the centre of a mitred corner.
+    p: Vec2,
+    /// A row at signed offset `k` lies at `p + offset·k`: the edge's `d`, or for a mitred corner
+    /// the sum of its two edges' `d`, so the offset applies along both.
+    offset: Vec2,
+    /// Unit vector from the high side to the low side, for the rows' normals.
+    facing: Vec2,
+}
+
+/// The rows of [`generate_wall_profile`] in `frame`.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    reason = "map cell coordinates stay far below the range of f32 and i32"
+)]
+fn wall_profile_rows(
+    frame: ProfileFrame,
+    level_a: i32,
+    level_b: i32,
+    ta: i32,
+    tb: i32,
+    suppressed: bool,
+) -> Vec<WallProfileRow> {
+    let ProfileFrame {
+        p,
+        offset: d,
+        facing,
+    } = frame;
     let mut rows = Vec::with_capacity(16);
 
     let y_top = cliff_level_height(tb);
@@ -699,7 +691,7 @@ pub fn generate_wall_profile(
     let rim_present = level_a == tb && !suppressed;
     let foot_present = level_b == ta - 1 && ta > 0 && !suppressed;
 
-    let d3 = Vec3::new(d.x, 0.0, d.y);
+    let d3 = Vec3::new(facing.x, 0.0, facing.y);
 
     let norm_rim = (d3 * RIM_DROP + Vec3::Y * RIM_WIDTH).normalize();
     let norm_foot = (d3 * FOOT_RISE + Vec3::Y * FOOT_WIDTH).normalize();
@@ -1096,6 +1088,65 @@ impl DualCell {
         edge_setback(lb, suppressed) + rim
     }
 
+    /// The levels of a concave corner's mitred wall at threshold `tb`, whose two edges end at
+    /// midpoints `m1` and `m2` and share the lone low corner: the lower of the two high corners'
+    /// levels (so the corner has a rim when either edge has one), the low corner's level, and
+    /// whether either edge is a ramp's.
+    fn corner_levels(&self, m1: EdgeMidpoint, m2: EdgeMidpoint, tb: i32) -> (i32, i32, bool) {
+        let (la1, lb) = self.midpoint_levels(m1, tb);
+        let (la2, _) = self.midpoint_levels(m2, tb);
+        let suppressed = self.midpoint_suppressed(m1) || self.midpoint_suppressed(m2);
+        (la1.min(la2), lb, suppressed)
+    }
+
+    /// The direction a concave corner's mitre takes its offsets along, for walls ending at
+    /// midpoints `m1` and `m2` at threshold `tb`: the sum of both edges' `d`, which points into
+    /// the quadrant diagonal to the lone low corner. When that quadrant is a ramp's (the only
+    /// corner of such a dual cell that can be a ramp), the corner stands at the centre unmitred,
+    /// as rule R6's centre profile does, because the ramp's footprint is its own (R1).
+    fn mitre(&self, m1: EdgeMidpoint, m2: EdgeMidpoint, tb: i32) -> Vec2 {
+        if self.ramp_mask == 0 {
+            self.midpoint_d(m1, tb) + self.midpoint_d(m2, tb)
+        } else {
+            Vec2::ZERO
+        }
+    }
+
+    /// Where the high floor's corner vertex of a concave corner lies (plan D-3): the centre,
+    /// inset along the mitre by the corner wall's setback and rim, so the floor meets the
+    /// corner's rim top exactly.
+    fn mitred_centre(&self, m1: EdgeMidpoint, m2: EdgeMidpoint, tb: i32) -> Vec2 {
+        let (la, lb, suppressed) = self.corner_levels(m1, m2, tb);
+        let rim = if la == tb && !suppressed {
+            RIM_WIDTH
+        } else {
+            0.0
+        };
+        let inset = edge_setback(lb, suppressed) + rim;
+        self.centre - self.mitre(m1, m2, tb) * inset
+    }
+
+    /// The mitred wall profile at the centre of a concave corner whose walls end at midpoints
+    /// `m1` and `m2`, for the run `ta..=tb`: every row's offset applied along both edges' `d`
+    /// ([`Self::mitre`]), faces turned along their diagonal, jitter keyed by the centre, which no
+    /// other dual cell uses. Every row stays behind both edges and the toe is the centre itself
+    /// (W1).
+    fn mitred_corner_profile(
+        &self,
+        m1: EdgeMidpoint,
+        m2: EdgeMidpoint,
+        ta: i32,
+        tb: i32,
+    ) -> Vec<WallProfileRow> {
+        let (la, lb, suppressed) = self.corner_levels(m1, m2, tb);
+        let frame = ProfileFrame {
+            p: self.centre,
+            offset: self.mitre(m1, m2, tb),
+            facing: (self.midpoint_d(m1, tb) + self.midpoint_d(m2, tb)).normalize(),
+        };
+        wall_profile_rows(frame, la, lb, ta, tb, suppressed)
+    }
+
     /// The wall profile of a contour midpoint for the threshold run `ta..=tb`. A midpoint on a
     /// ramp edge has neither rim nor foot, and no jitter, so that the wall ends exactly on the
     /// ramp edge (rule R6).
@@ -1160,15 +1211,23 @@ fn emit_dual_cell(
             if curr_case != 0 && curr_case != 15 {
                 let mcase = &MARCHING_CASES[curr_case];
 
-                // Emit region polygon as floor at H(tb), contour vertices inset by the wall's
-                // setback and, where the rim is, the rim (W1).
-                let polygon = region_polygon(&cell, mcase.region, |vref| match vref {
-                    DualVertexRef::Corner(c) => cell.corner_coord(c),
-                    DualVertexRef::Midpoint(m) => {
-                        cell.midpoint_coord(m) - cell.midpoint_d(m, tb) * cell.floor_inset(m, tb)
-                    }
-                });
-                emit_dual_floor(map, &cell, &polygon, cliff_level_height(tb), scratch, stats);
+                // Emit the region's parts as floor at H(tb), contour vertices inset by the
+                // wall's setback and, where the rim is, the rim (W1); a concave corner's centre
+                // mitred along both its edges.
+                let nook = mcase.segments.iter().find(|seg| seg.through_centre);
+                for part in mcase.regions {
+                    let polygon = region_polygon(&cell, part, |vref| match vref {
+                        DualVertexRef::Corner(c) => cell.corner_coord(c),
+                        DualVertexRef::Midpoint(m) => {
+                            cell.midpoint_coord(m)
+                                - cell.midpoint_d(m, tb) * cell.floor_inset(m, tb)
+                        }
+                        DualVertexRef::Centre => nook.map_or(cell.centre, |seg| {
+                            cell.mitred_centre(seg.start, seg.end, tb)
+                        }),
+                    });
+                    emit_dual_floor(map, &cell, &polygon, cliff_level_height(tb), scratch, stats);
+                }
 
                 emit_cliff_walls(&cell, mcase.segments, ta, tb, scratch, stats);
             }
@@ -1180,22 +1239,17 @@ fn emit_dual_cell(
     // PERFORMANCE RATIONALE:
     // Why: Emitting a full floor quad at every level of a cliff cell would draw low ground hidden
     // under the higher plateau, overdraw that grows with the number of cliff cells on screen.
-    // What: A flat dual cell (hi == lo) emits its full quad; a cliff cell (hi > lo) emits only the
-    // low-region polygon (marching cases 1..14) for the threshold run, at H(lo).
+    // What: A flat dual cell (hi == lo) emits its full quad (case 0's low region); a cliff cell
+    // (hi > lo) emits only the low region of its first threshold's case, at H(lo).
     // Trade-off: A case lookup per cliff cell instead of one quad, in exchange for no hidden
     // fragments and watertight chunk boundaries.
     if lo >= 0 {
-        let low_case = if hi > lo {
-            (!cell.case_for_t(lo + 1)) & 0x0F
-        } else {
-            15
-        };
-
-        if low_case != 0 {
-            let region = MARCHING_CASES[low_case].region;
-            let polygon = region_polygon(&cell, region, |vref| match vref {
+        let case = if hi > lo { cell.case_for_t(lo + 1) } else { 0 };
+        for part in MARCHING_CASES[case].low_regions {
+            let polygon = region_polygon(&cell, part, |vref| match vref {
                 DualVertexRef::Corner(c) => cell.corner_coord(c),
                 DualVertexRef::Midpoint(m) => cell.midpoint_coord(m),
+                DualVertexRef::Centre => cell.centre,
             });
             emit_dual_floor(map, &cell, &polygon, cliff_level_height(lo), scratch, stats);
         }
@@ -1206,7 +1260,8 @@ fn emit_dual_cell(
 /// a ramp-aware cell adds the centre once, and each of at most two clipping half-planes adds one.
 const FLOOR_POLYGON_CAPACITY: usize = 12;
 
-/// A convex floor polygon in world XZ, counter-clockwise seen from +Y.
+/// A floor polygon in world XZ, counter-clockwise seen from +Y: convex, or star-shaped from its
+/// first vertex (a concave corner's L, see the marching table).
 // PERFORMANCE RATIONALE:
 // Why: Floors are built and clipped for every dual cell of every rebuilt chunk; a `Vec` per
 // polygon would allocate in the terrain rebuild path.
@@ -1384,9 +1439,10 @@ fn emit_dual_floor(
     }
 }
 
-/// Emits a convex, CCW (seen from +Y) floor polygon at altitude `floor_y` as an upward-facing
-/// triangle fan, with per-vertex ambient occlusion. Polygons with fewer than three vertices emit
-/// nothing, and fan triangles of (near) zero area, which clipping can leave, are skipped.
+/// Emits a CCW (seen from +Y) floor polygon, convex or star-shaped from its first vertex, at
+/// altitude `floor_y` as an upward-facing triangle fan from that vertex, with per-vertex ambient
+/// occlusion. Polygons with fewer than three vertices emit nothing, and fan triangles of (near)
+/// zero area, which clipping can leave, are skipped.
 #[expect(
     clippy::cast_possible_truncation,
     reason = "a chunk holds far fewer than u32::MAX vertices"
@@ -1428,7 +1484,8 @@ fn emit_floor_points(
 const MIN_FLOOR_TRIANGLE_DOUBLED_AREA: f32 = 1e-6;
 
 /// Emits the cliff walls of one threshold run `ta..=tb` of a dual cell: one quad strip per contour
-/// segment, from the wall profiles at the segment's two edge midpoints.
+/// segment, from the wall profiles at the segment's two edge midpoints; two strips meeting at the
+/// mitred centre profile for a concave corner's segment.
 ///
 /// In a dual cell with a ramp corner, a straight segment (through the centre) is split there:
 /// a half on a ramp edge is dropped, because the ramp cell owns that edge (rule R2), and the
@@ -1442,6 +1499,15 @@ fn emit_cliff_walls(
     stats: &mut MeshStats,
 ) {
     for &seg in segments {
+        if seg.through_centre {
+            // A concave corner: two walls meeting at the mitred centre (plan D-3).
+            let prof0 = cell.midpoint_profile(seg.start, ta, tb);
+            let corner = cell.mitred_corner_profile(seg.start, seg.end, ta, tb);
+            let prof1 = cell.midpoint_profile(seg.end, ta, tb);
+            emit_wall_strip(&prof0, &corner, scratch, stats);
+            emit_wall_strip(&corner, &prof1, scratch, stats);
+            continue;
+        }
         if cell.ramp_mask == 0 || !are_opposite(seg.start, seg.end) {
             let prof0 = cell.midpoint_profile(seg.start, ta, tb);
             let prof1 = cell.midpoint_profile(seg.end, ta, tb);
