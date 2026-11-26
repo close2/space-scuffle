@@ -672,9 +672,11 @@ fn surround_fill_time_starts_at_first_contact() -> TestResult {
     Ok(())
 }
 
-/// W0-T7: the lanes answer holds only when each gap passes at least a quarter of the group.
+/// W0-T7, as plan Amendment 2 corrects it: the lanes meter counts the walkers through each gap,
+/// and the answer does not judge the split (group routing, D-7, gives the group its leader's
+/// lane), so a group through one gap holds as one through both; the clump is still judged.
 #[test]
-fn lanes_answer_requires_both_gaps() -> TestResult {
+fn lanes_answer_reports_the_gaps_and_judges_the_clump() -> TestResult {
     let (scene, mut world, ids, mut meter) = known_scene(Family::Lanes, 6)?;
     let Some(KnownAnswer::Lanes { wall, gaps, .. }) = scene.known else {
         return Err("a lanes scene names its gaps".into());
@@ -699,15 +701,30 @@ fn lanes_answer_requires_both_gaps() -> TestResult {
     let row = meter.finish();
     let group = u32::try_from(walkers.len())?;
     assert_eq!(row.lanes, LaneUse([group, 0]), "{row:?}");
-    let verdict = judge(scene.known.ok_or("known")?, &ScenarioRow::default(), &row);
-    assert!(verdict.failed.contains(&"lanes"), "{verdict:?}");
-    // Half through each gap uses both.
-    let both = KnownRow {
-        lanes: LaneUse([group / 2, group - group / 2]),
-        ..row
+    let known = scene.known.ok_or("known")?;
+    let packed = KnownRow {
+        hull_ratio: 1.0,
+        ..row.clone()
     };
-    let verdict = judge(scene.known.ok_or("known")?, &ScenarioRow::default(), &both);
-    assert!(!verdict.failed.contains(&"lanes"), "{verdict:?}");
+    let one_gap = judge(known, &ScenarioRow::default(), &packed);
+    let both = judge(
+        known,
+        &ScenarioRow::default(),
+        &KnownRow {
+            lanes: LaneUse([group / 2, group - group / 2]),
+            ..packed.clone()
+        },
+    );
+    assert!(one_gap.holds && both.holds, "{one_gap:?} {both:?}");
+    let spread = judge(
+        known,
+        &ScenarioRow::default(),
+        &KnownRow {
+            hull_ratio: 2.5,
+            ..packed
+        },
+    );
+    assert_eq!(spread.failed, vec!["clump"], "{spread:?}");
     Ok(())
 }
 
@@ -836,5 +853,93 @@ fn the_permutation_mode_finds_nothing_at_offset_zero() -> TestResult {
     let text = sim_fixtures::harness::permutation_csv(&rows);
     assert!(text.starts_with(PermutationRow::HEADER), "{text}");
     assert_eq!(parse_csv(&text).len(), 2);
+    Ok(())
+}
+
+/// The crowd-cap selector of plan `2026-11-27-gated-movement` `WP0b` (arm R: `Solver` with
+/// C-3′'s cap at 151): it sets `contact.crowd_iterations` and no other rule, reaches the worlds
+/// the harness builds, and is refused, as the catalog refuses it, outside
+/// `iterations ..= 1000`.
+#[test]
+fn the_crowd_cap_selector_sets_the_cap_and_nothing_else() -> TestResult {
+    use sim_core::catalog::{ContactRules, MovementPipeline};
+    let shipped = RunOptions::default();
+    let r = RunOptions::with_pipeline(MovementPipeline::Solver)?.with_crowd_iterations(151)?;
+    assert_eq!(r.rules.contact().crowd_iterations, 151);
+    assert_eq!(
+        r.rules.contact(),
+        ContactRules {
+            crowd_iterations: 151,
+            pipeline: MovementPipeline::Solver,
+            ..shipped.rules.contact()
+        }
+    );
+    assert_eq!(r.order_rotation, shipped.order_rotation);
+    let scene = generate(Family::Gap, 1, false);
+    let (world, _) = build_world(&scene, &r)?;
+    assert_eq!(
+        world.catalog.movement_rules().contact().crowd_iterations,
+        151
+    );
+    let iterations = u16::from(shipped.rules.contact().iterations);
+    assert!(shipped.with_crowd_iterations(iterations - 1).is_err());
+    assert!(shipped.with_crowd_iterations(1001).is_err());
+    Ok(())
+}
+
+/// The shipped cap through the selector is the shipped rules exactly, so a run with it is
+/// byte-identical to a run without it; and the cap changes the solve where a crowd presses (the
+/// iteration histogram of a gap scene whose friends overlap beyond D-α's moving bound, seed 2,
+/// grows past `iterations`).
+#[test]
+fn the_shipped_crowd_cap_plays_identically_and_a_raised_cap_extends_the_solve() -> TestResult {
+    let shipped = RunOptions::default();
+    let same = shipped.with_crowd_iterations(shipped.rules.contact().crowd_iterations)?;
+    assert_eq!(same, shipped);
+    let plain = run_range(Family::Gap, (2, 1), false, 1, &shipped)?;
+    assert_eq!(run_range(Family::Gap, (2, 1), false, 1, &same)?, plain);
+    let raised = run_range(
+        Family::Gap,
+        (2, 1),
+        false,
+        1,
+        &shipped.with_crowd_iterations(151)?,
+    )?;
+    let longest = |text: &str| -> usize {
+        parse_csv(text)
+            .iter()
+            .filter_map(|row| row.get("iteration_ticks"))
+            .map(|cell| cell.split('/').count())
+            .max()
+            .unwrap_or(0)
+    };
+    let cap = usize::from(shipped.rules.contact().iterations);
+    assert!(longest(&plain) <= cap + 1, "shipped: {plain}");
+    assert!(longest(&raised) > cap + 1, "raised: {raised}");
+    Ok(())
+}
+
+/// `--crowd-iterations` parses into the play command and is refused when it is not a number.
+#[test]
+fn the_command_line_takes_a_crowd_cap() -> TestResult {
+    use sim_fixtures::harness::cli::{parse, Command};
+    let args = |text: &str| text.split(' ').map(str::to_owned).collect::<Vec<_>>();
+    match parse(&args(
+        "--family arc --from 3 --count 2 --pipeline solver --crowd-iterations 151 --out a.csv",
+    ))? {
+        Command::Play {
+            crowd_iterations,
+            range,
+            ..
+        } => assert_eq!((crowd_iterations, range), (Some(151), (3, 2))),
+        Command::Aggregate(_) => return Err("a play command".into()),
+    }
+    match parse(&args("--family arc --out a.csv"))? {
+        Command::Play {
+            crowd_iterations, ..
+        } => assert_eq!(crowd_iterations, None),
+        Command::Aggregate(_) => return Err("a play command".into()),
+    }
+    assert!(parse(&args("--family arc --crowd-iterations many --out a.csv")).is_err());
     Ok(())
 }

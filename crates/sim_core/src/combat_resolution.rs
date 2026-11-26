@@ -63,15 +63,16 @@ use crate::catalog::UnitCatalog;
 use crate::catalog::{SplashSpec, UnitArchetype, WeaponSpec};
 use crate::combat::{
     charge_random_delay, fires_without_attack_order, mitigate_weapon_strike, raw_strike_damage,
-    shares_combat_plane, splash_raw_damage, step_entity_weapon_tracking, within_band, Mandate,
-    TrackingAim, WeaponTarget,
+    shares_combat_plane, splash_raw_damage, step_resolved_weapon, within_band, Mandate,
+    ResolvedWeapon, TrackingAim, WeaponTarget,
 };
 use crate::entity::{
     ActiveProjectile, Entity, PendingLine, PendingLineView, PendingStrikes, WeaponPhase,
 };
 use crate::weapon_timing::{resolve_attack_period, AttackRate, SimulationDiagnostic};
 use crate::world::presentation::{
-    mode_index, weapon_source, AttackSnapshotRecord, PresentationWorkspace, SnapshotPose,
+    mode_index, weapon_source, weapon_source_with_mode, AttackSnapshotRecord,
+    PresentationWorkspace, SnapshotPose,
 };
 use crate::world::SimWorld;
 use missile_flight::{FlightProfile, MoverTick};
@@ -260,39 +261,6 @@ impl CombatWorkspace {
             .binary_search_by_key(&id, |entry| entry.0)
             .ok()
             .map(|index| self.snapshots[index].1)
-    }
-}
-
-/// A weapon as it acts this tick: its catalog (or siege) spec with the range and the attack
-/// period that upgrades and attack-rate buffs resolve to.
-///
-/// Produced only by [`SimWorld::resolved_weapon`], which both the combat phase and the render
-/// snapshot call, so the cycle combat runs and the cycle the snapshot publishes cannot differ.
-// PERFORMANCE RATIONALE:
-// Why: The render snapshot reads the period of every swinging entity each tick, and a cloned
-// `WeaponSpec` allocates (its `name` is a `String`).
-// What: Borrow the spec and carry the two resolved values beside it; only combat, which hands
-// an owned spec to the state machine and to a prepared shot, clones it (`to_spec`), as before.
-// Trade-off: Two fields that shadow the spec's own, read through this type rather than the spec.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct ResolvedWeapon<'a> {
-    /// The authored weapon: siege override, ground, generic or air spec.
-    pub(crate) spec: &'a WeaponSpec,
-    /// Maximum range after the owner's range upgrades, in world units.
-    pub(crate) max_range: SimScalar,
-    /// Attack period after cooldown upgrades and attack-rate buffs, in ticks; at least 1.
-    pub(crate) period_ticks: u16,
-}
-
-impl ResolvedWeapon<'_> {
-    /// The spec with the resolved range and period written in, as the weapon state machine and
-    /// a prepared shot take it.
-    pub(crate) fn to_spec(self) -> WeaponSpec {
-        WeaponSpec {
-            max_range: self.max_range,
-            period_ticks: self.period_ticks,
-            ..self.spec.clone()
-        }
     }
 }
 
@@ -712,17 +680,17 @@ impl SimWorld {
             let target_mover =
                 target_snapshot.map_or_else(|| Self::idle_weapon_plane(entity, arch), |t| t.mover);
 
-            let Some((weapon, source)) = Self::resolved_weapon(
+            // A mode weapon lives in the entity the step mutates, so a unit in such a mode steps
+            // a copy of it; every other weapon is borrowed from the catalog.
+            let mode_weapon = entity.active_siege_weapon().cloned();
+            let Some(weapon) = Self::resolve_weapon(
                 &self.player_upgrades,
                 entity,
                 arch,
+                mode_weapon.as_ref(),
                 target_mover,
                 attack_mult,
-            )
-            .map(|resolved| {
-                let source = weapon_source(arch, entity, resolved.spec);
-                (resolved.to_spec(), source)
-            }) else {
+            ) else {
                 // A target that vanished mid-swing may leave no weapon to resolve here.
                 if matches!(entity.weapon_phase, WeaponPhase::Windup { .. }) {
                     entity.weapon_phase = WeaponPhase::Ready;
@@ -730,6 +698,7 @@ impl SimWorld {
                 continue;
             };
 
+            let source = weapon_source_with_mode(arch, entity, mode_weapon.as_ref(), weapon.spec);
             let target_info = target_opt_id.and_then(|id| {
                 let snapshot = target_snapshot?;
                 Self::swing_target_live(&context, entity, snapshot).then_some(WeaponTarget {
@@ -746,10 +715,10 @@ impl SimWorld {
                 arch,
                 self.tracked_targets.get(*id),
             );
-            if step_entity_weapon_tracking(entity, &weapon, target_info, mandate, tracking) {
-                charge_random_delay(entity, &weapon, rng);
+            if step_resolved_weapon(entity, weapon, target_info, mandate, tracking) {
+                charge_random_delay(entity, weapon.spec, rng);
                 if let Some(target) = target_info {
-                    let strikes = Self::begin_strikes(entity, &weapon, target.id, target_mover);
+                    let strikes = Self::begin_strikes(entity, weapon.spec, target.id, target_mover);
                     // A strike magazine's release carries one armed charge per strike (plan
                     // `2026-11-28-broodlings` D-3); the swing started only with one armed.
                     let strikes = entity
@@ -760,7 +729,7 @@ impl SimWorld {
                         combat.shots.push(PreparedShot {
                             attacker: *id,
                             target: target.id,
-                            weapon,
+                            weapon: weapon.to_spec(),
                             source_slug: arch.slug.clone(),
                             origin: entity.position,
                             owner: entity.owner,
@@ -973,46 +942,45 @@ impl SimWorld {
         let Some(arch) = context.catalog.get(entity.unit_type_id).ok() else {
             return;
         };
-        let Some((weapon, source)) =
-            Self::resolved_weapon(context.upgrades, entity, arch, pending.plane, attack_rate).map(
-                |resolved| {
-                    let source = weapon_source(arch, entity, resolved.spec);
-                    (resolved.to_spec(), source)
-                },
-            )
+        let Some(weapon) =
+            Self::resolved_weapon(context.upgrades, entity, arch, pending.plane, attack_rate)
         else {
             return;
         };
-        let strikes = if weapon.strike_interval_ticks == 0 {
-            pending.remaining
-        } else {
-            1
-        };
-        let remaining = pending.remaining.saturating_sub(strikes);
-        if remaining > 0 && weapon.strike_interval_ticks > 0 {
-            entity.pending_strikes = Some(PendingStrikes {
-                remaining,
-                ticks_until_next: weapon.strike_interval_ticks,
-                ..pending
-            });
-        }
-        let Some(target) = combat.snapshot(pending.target_id) else {
-            return;
-        };
-        let in_reach = weapon
-            .followup_max_distance
-            .is_none_or(|limit| entity.position.distance(target.position) <= limit);
-        if target.mover == pending.plane && in_reach && context.is_available(entity.owner, target) {
-            combat.shots.push(PreparedShot {
+        let interval = weapon.spec.strike_interval_ticks;
+        let strikes = if interval == 0 { pending.remaining } else { 1 };
+        // The strike lands only on a target still there, on the plane, in reach and available.
+        // The owned weapon, which borrows the entity for a mode weapon, is built (only for a
+        // landing strike) before the entity's pending strikes change.
+        let shot = combat.snapshot(pending.target_id).and_then(|target| {
+            let in_reach = weapon
+                .spec
+                .followup_max_distance
+                .is_none_or(|limit| entity.position.distance(target.position) <= limit);
+            (target.mover == pending.plane
+                && in_reach
+                && context.is_available(entity.owner, target))
+            .then(|| PreparedShot {
                 attacker: id,
                 target: pending.target_id,
-                weapon,
+                weapon: weapon.to_spec(),
                 source_slug: arch.slug.clone(),
                 origin: entity.position,
                 owner: entity.owner,
                 strikes,
-                source,
+                source: weapon_source(arch, entity, weapon.spec),
+            })
+        });
+        let remaining = pending.remaining.saturating_sub(strikes);
+        if remaining > 0 && interval > 0 {
+            entity.pending_strikes = Some(PendingStrikes {
+                remaining,
+                ticks_until_next: interval,
+                ..pending
             });
+        }
+        if let Some(shot) = shot {
+            combat.shots.push(shot);
         }
     }
 
@@ -1049,7 +1017,28 @@ impl SimWorld {
         target_mover: MoverType,
         attack_rate: AttackRate,
     ) -> Option<ResolvedWeapon<'a>> {
-        let spec = arch.weapon_against(target_mover, entity.active_siege_weapon())?;
+        Self::resolve_weapon(
+            upgrades,
+            entity,
+            arch,
+            entity.active_siege_weapon(),
+            target_mover,
+            attack_rate,
+        )
+    }
+
+    /// [`Self::resolved_weapon`] with `entity`'s mode weapon given apart (`mode_weapon`, its
+    /// [`Entity::active_siege_weapon`] or a copy of it), so the result borrows `arch` and the
+    /// mode weapon but not `entity`, which the weapon step then mutates.
+    fn resolve_weapon<'a>(
+        upgrades: &PerPlayer<PlayerUpgradeState>,
+        entity: &Entity,
+        arch: &'a UnitArchetype,
+        mode_weapon: Option<&'a WeaponSpec>,
+        target_mover: MoverType,
+        attack_rate: AttackRate,
+    ) -> Option<ResolvedWeapon<'a>> {
+        let spec = arch.weapon_against(target_mover, mode_weapon)?;
         // Statuses change the range after upgrades (plan `2026-11-10-spellcaster-mechanics`
         // §6.4); neutral modifiers leave it as it is.
         let max_range = entity.status_modifiers().weapon_range(

@@ -47,6 +47,53 @@ use sim_types::{
 // What: Pure fixed-point scalar math with no heap allocations or intermediate buffers.
 // Trade-off: Exact branch structure mimics SC2 engine execution precisely.
 
+/// A weapon as it acts this tick: its catalog (or siege) spec with the range and the attack
+/// period that upgrades and attack-rate buffs resolve to.
+///
+/// The combat phase and the render snapshot obtain it from `SimWorld::resolved_weapon`, so the
+/// cycle combat runs and the cycle the snapshot publishes cannot differ; the weapon state
+/// machine steps it as it is. Authored facts are read through [`Self::spec`]; the two resolved
+/// values only through this type, never through the spec's own fields of the same names.
+// PERFORMANCE RATIONALE:
+// Why: Combat steps every armed entity's weapon each tick; an owned spec with the resolved values
+// written in copied the whole `WeaponSpec` and allocated its `name` per entity per tick, so any
+// new field cost about 2 % of the throughput bench's instructions, whatever it did.
+// What: Borrow the spec and carry the two resolved values beside it in a `Copy` view the state
+// machine takes by value; `to_spec` builds an owned spec only for a discharged shot.
+// Trade-off: Two fields shadow the spec's own: authored facts are read through `spec`, the range
+// and period through the view, a split reviewers must keep.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ResolvedWeapon<'a> {
+    /// The authored weapon: siege override, ground, generic or air spec.
+    pub(crate) spec: &'a WeaponSpec,
+    /// Maximum range after the owner's range upgrades and statuses, in world units.
+    pub(crate) max_range: SimScalar,
+    /// Attack period after cooldown upgrades and attack-rate buffs, in ticks; at least 1.
+    pub(crate) period_ticks: u16,
+}
+
+impl<'a> ResolvedWeapon<'a> {
+    /// `spec` acting with its authored range and period, as a caller that resolves nothing
+    /// steps it ([`step_entity_weapon`]).
+    pub(crate) const fn authored(spec: &'a WeaponSpec) -> Self {
+        Self {
+            spec,
+            max_range: spec.max_range,
+            period_ticks: spec.period_ticks,
+        }
+    }
+
+    /// The spec with the resolved range and period written in, for a discharged shot, which
+    /// outlives the borrow of the spec.
+    pub(crate) fn to_spec(self) -> WeaponSpec {
+        WeaponSpec {
+            max_range: self.max_range,
+            period_ticks: self.period_ticks,
+            ..self.spec.clone()
+        }
+    }
+}
+
 /// The result of an applied weapon hit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DamageResolution {
@@ -616,13 +663,13 @@ pub(crate) fn weapon_aim(entity: &Entity, weapon: &WeaponSpec) -> SimAngle {
 /// Whether `distance` lies in the engagement band, with `slop` extra reach at the far end.
 fn in_engagement_band(
     distance: SimScalar,
-    weapon: &WeaponSpec,
+    weapon: ResolvedWeapon<'_>,
     combined_radius: SimScalar,
     slop: SimScalar,
 ) -> bool {
     within_band(
         distance,
-        weapon.min_range,
+        weapon.spec.min_range,
         weapon.max_range + slop,
         combined_radius,
     )
@@ -653,7 +700,7 @@ pub(crate) fn within_band(
 /// the cooldown is charged with `period − damage point`, so that the cycle from the start of
 /// the swing to the start of the next one is `period_ticks`, and the phase becomes `Backswing`
 /// (or `Cooldown` for a weapon without one).
-fn release_swing(entity: &mut Entity, weapon: &WeaponSpec, target: WeaponTarget) -> bool {
+fn release_swing(entity: &mut Entity, weapon: ResolvedWeapon<'_>, target: WeaponTarget) -> bool {
     let distance = entity.position.distance(target.position);
     if !in_engagement_band(distance, weapon, target.combined_radius, RELEASE_RANGE_SLOP) {
         entity.weapon_phase = WeaponPhase::Ready;
@@ -661,11 +708,11 @@ fn release_swing(entity: &mut Entity, weapon: &WeaponSpec, target: WeaponTarget)
     }
     entity.weapon_cooldown_remaining = weapon
         .period_ticks
-        .saturating_sub(weapon.damage_point_ticks);
-    entity.weapon_phase = if weapon.backswing_ticks > 0 {
+        .saturating_sub(weapon.spec.damage_point_ticks);
+    entity.weapon_phase = if weapon.spec.backswing_ticks > 0 {
         WeaponPhase::Backswing {
             target_id: target.id,
-            remaining_ticks: weapon.backswing_ticks,
+            remaining_ticks: weapon.spec.backswing_ticks,
         }
     } else {
         WeaponPhase::Cooldown
@@ -713,16 +760,16 @@ pub fn charge_random_delay(entity: &mut Entity, weapon: &WeaponSpec, rng: &mut i
 /// `2026-11-04-combat-sc2-alignment` D-3, Q0036). Any other swing winds up for
 /// `damage_point_ticks` ticks and releases in [`step_windup`]. Either way the release falls
 /// `damage_point_ticks` after the start, which is what keeps the cycle at `period_ticks`.
-fn start_swing(entity: &mut Entity, weapon: &WeaponSpec, target: WeaponTarget) -> bool {
+fn start_swing(entity: &mut Entity, weapon: ResolvedWeapon<'_>, target: WeaponTarget) -> bool {
     entity.engaged_target = Some(target.id);
     // An attack dash ends when the weapon starts to fire (B-43).
     entity.end_attack_dash();
-    if weapon.damage_point_ticks == 0 {
+    if weapon.spec.damage_point_ticks == 0 {
         return release_swing(entity, weapon, target);
     }
     entity.weapon_phase = WeaponPhase::Windup {
         target_id: target.id,
-        remaining_ticks: weapon.damage_point_ticks,
+        remaining_ticks: weapon.spec.damage_point_ticks,
     };
     false
 }
@@ -750,7 +797,7 @@ fn swing_arc(entity: &Entity, weapon: &WeaponSpec, target: WeaponTarget) -> SimA
 /// into its arc instead.
 fn step_ready_weapon(
     entity: &mut Entity,
-    weapon: &WeaponSpec,
+    weapon: ResolvedWeapon<'_>,
     target: WeaponTarget,
     mandate: Mandate,
 ) -> bool {
@@ -760,24 +807,29 @@ fn step_ready_weapon(
     }
     let delta = target.position - entity.position;
     let target_angle = SimAngle::atan2(delta.y, delta.x);
-    let aim = weapon_aim(entity, weapon);
+    let aim = weapon_aim(entity, weapon.spec);
     if entity.engaged_target == Some(target.id)
-        && !is_within_firing_arc(aim, entity.position, target.position, weapon.firing_arc)
+        && !is_within_firing_arc(
+            aim,
+            entity.position,
+            target.position,
+            weapon.spec.firing_arc,
+        )
     {
         entity.engaged_target = None;
     }
-    let arc = swing_arc(entity, weapon, target);
+    let arc = swing_arc(entity, weapon.spec, target);
     if is_within_firing_arc(aim, entity.position, target.position, arc) {
         // An unrestricted arc removes the aiming gate, not the aiming: the turret
         // or hull keeps slewing, so a firing weapon never stays pointed away.
-        if arc >= SimAngle::DEG_180 && mandate.may_slew(weapon) {
-            slew_towards(entity, weapon, target_angle);
+        if arc >= SimAngle::DEG_180 && mandate.may_slew(weapon.spec) {
+            slew_towards(entity, weapon.spec, target_angle);
         }
         // CRITICAL COOLDOWN GUARD:
         // An entity may align with a target while its weapon is on cooldown,
         // but MUST NOT start a swing until cooldown has fully elapsed!
         may_start_swing(entity) && start_swing(entity, weapon, target)
-    } else if !mandate.may_slew(weapon) {
+    } else if !mandate.may_slew(weapon.spec) {
         false
     } else {
         entity.weapon_phase = WeaponPhase::RotatingToTarget {
@@ -799,13 +851,13 @@ fn step_ready_weapon(
 /// discharges in this call (a swing with damage point 0, [`start_swing`]).
 fn slew_and_try_swing(
     entity: &mut Entity,
-    weapon: &WeaponSpec,
+    weapon: ResolvedWeapon<'_>,
     target: WeaponTarget,
     target_angle: SimAngle,
 ) -> bool {
-    slew_towards(entity, weapon, target_angle);
-    let aim = weapon_aim(entity, weapon);
-    let arc = swing_arc(entity, weapon, target);
+    slew_towards(entity, weapon.spec, target_angle);
+    let aim = weapon_aim(entity, weapon.spec);
+    let arc = swing_arc(entity, weapon.spec, target);
     if is_within_firing_arc(aim, entity.position, target.position, arc) {
         if may_start_swing(entity) {
             return start_swing(entity, weapon, target);
@@ -829,11 +881,11 @@ fn may_start_swing(entity: &Entity) -> bool {
 /// stops rotating and steps as a ready weapon.
 fn step_rotating_weapon(
     entity: &mut Entity,
-    weapon: &WeaponSpec,
+    weapon: ResolvedWeapon<'_>,
     target: WeaponTarget,
     mandate: Mandate,
 ) -> bool {
-    if !mandate.may_slew(weapon) {
+    if !mandate.may_slew(weapon.spec) {
         entity.weapon_phase = WeaponPhase::Ready;
         return step_ready_weapon(entity, weapon, target, mandate);
     }
@@ -857,7 +909,7 @@ fn step_rotating_weapon(
 /// from outside still releases on its next step.
 fn step_windup(
     entity: &mut Entity,
-    weapon: &WeaponSpec,
+    weapon: ResolvedWeapon<'_>,
     target_opt: Option<WeaponTarget>,
     bound: EntityId,
     remaining_ticks: u16,
@@ -868,9 +920,9 @@ fn step_windup(
     };
     // A locked turret holds while its weapon fires (plan `2026-11-24-fire-rules` D-2, B-179):
     // the release checks the band, not the arc, so the lock changes no damage.
-    if weapon.has_turret && !weapon.locks_turret_while_firing {
+    if weapon.spec.has_turret && !weapon.spec.locks_turret_while_firing {
         let delta = target.position - entity.position;
-        slew_towards(entity, weapon, SimAngle::atan2(delta.y, delta.x));
+        slew_towards(entity, weapon.spec, SimAngle::atan2(delta.y, delta.x));
     }
 
     let remaining_ticks = remaining_ticks.saturating_sub(1);
@@ -914,9 +966,31 @@ pub fn step_entity_weapon(
 /// its turret holds it for tracking too through its wind-up and backswing. Tracking changes no
 /// phase, cooldown, engagement or swing, and draws nothing. Returns what [`step_entity_weapon`]
 /// returns.
+///
+/// `weapon` acts with its authored range and period; the combat phase, which resolves them for
+/// upgrades and buffs, steps the weapon through [`step_resolved_weapon`].
 pub fn step_entity_weapon_tracking(
     entity: &mut Entity,
     weapon: &WeaponSpec,
+    target_opt: Option<WeaponTarget>,
+    mandate: Mandate,
+    tracking: Option<TrackingAim>,
+) -> bool {
+    step_resolved_weapon(
+        entity,
+        ResolvedWeapon::authored(weapon),
+        target_opt,
+        mandate,
+        tracking,
+    )
+}
+
+/// [`step_entity_weapon_tracking`] for a weapon whose range and period are resolved for its
+/// owner's upgrades and its attack-rate buffs ([`ResolvedWeapon`]): the combat phase's step,
+/// which borrows the authored spec instead of building an owned one.
+pub(crate) fn step_resolved_weapon(
+    entity: &mut Entity,
+    weapon: ResolvedWeapon<'_>,
     target_opt: Option<WeaponTarget>,
     mandate: Mandate,
     tracking: Option<TrackingAim>,
@@ -931,7 +1005,7 @@ pub fn step_entity_weapon_tracking(
     if entity.engaged_target.is_some() && entity.engaged_target != target_opt.map(|t| t.id) {
         entity.engaged_target = None;
     }
-    let locked = weapon.locks_turret_while_firing
+    let locked = weapon.spec.locks_turret_while_firing
         && matches!(
             entity.weapon_phase,
             WeaponPhase::Windup { .. } | WeaponPhase::Backswing { .. }
@@ -940,7 +1014,7 @@ pub fn step_entity_weapon_tracking(
     if target_opt.is_none() {
         match tracking {
             Some(aim) => track_turret(entity, aim),
-            None => idle_turret(entity, weapon),
+            None => idle_turret(entity, weapon.spec),
         }
     }
     // Decrement weapon cooldown if running
@@ -974,7 +1048,7 @@ pub fn step_entity_weapon_tracking(
 /// dispatch of [`step_entity_weapon`]. Returns true when a shot discharges this tick.
 fn step_weapon_phase(
     entity: &mut Entity,
-    weapon: &WeaponSpec,
+    weapon: ResolvedWeapon<'_>,
     target_opt: Option<WeaponTarget>,
     mandate: Mandate,
 ) -> bool {
@@ -1006,7 +1080,7 @@ fn step_weapon_phase(
             mandate,
         ),
         WeaponPhase::Cooldown => {
-            face_target_between_shots(entity, weapon, target_opt, mandate);
+            face_target_between_shots(entity, weapon.spec, target_opt, mandate);
             false
         }
     }
@@ -1061,7 +1135,7 @@ fn face_target_between_shots(
 /// facing between shots.
 fn step_backswing(
     entity: &mut Entity,
-    weapon: &WeaponSpec,
+    weapon: ResolvedWeapon<'_>,
     target_opt: Option<WeaponTarget>,
     bound: EntityId,
     remaining_ticks: u16,
@@ -1079,8 +1153,8 @@ fn step_backswing(
     }
     // Nothing started, so the ready step turned nothing: the mount faces its target as between
     // any two shots, unless its weapon locks its turret until the follow-through ends (D-2).
-    if !(weapon.has_turret && weapon.locks_turret_while_firing) {
-        face_target_between_shots(entity, weapon, target_opt, mandate);
+    if !(weapon.spec.has_turret && weapon.spec.locks_turret_while_firing) {
+        face_target_between_shots(entity, weapon.spec, target_opt, mandate);
     }
     entity.weapon_phase = match (remaining_ticks, entity.weapon_cooldown_remaining) {
         (0, 0) => WeaponPhase::Ready,

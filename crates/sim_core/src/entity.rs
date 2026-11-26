@@ -708,7 +708,13 @@ pub struct Entity {
     /// Active ability / siege mode state.
     pub is_sieged: bool,
     /// Active siege mode weapon configuration.
-    pub siege_weapon: Option<WeaponSpec>,
+    // PERFORMANCE RATIONALE:
+    // Why: An inline spec made `Entity`'s size follow `WeaponSpec`'s; a 24-byte weapon field moved
+    // the code LLVM emits for the `BTreeMap<EntityId, Entity>` lookup in target acquisition by
+    // 2.19 % of the throughput bench's instructions (perf record, `scan_candidates`).
+    // What: Box the spec, so `Entity`'s size and layout no longer depend on the weapon's.
+    // Trade-off: One allocation when a unit enters a mode, and one indirection on reading it.
+    pub siege_weapon: Option<Box<WeaponSpec>>,
     /// Active generalized stance / mode identifier (e.g. "`siege_mode`", "burrowed").
     pub active_mode: Option<String>,
     /// Remaining ticks of channeled casting / transformation.
@@ -1501,7 +1507,7 @@ impl Entity {
                     self.is_immobile = spec.is_immobile;
                     self.unpushable = spec.unpushable;
                     self.is_cloaked = spec.is_cloaked;
-                    self.siege_weapon = spec.ground_weapon_override.clone().flatten();
+                    self.siege_weapon = spec.ground_weapon_override.clone().flatten().map(Box::new);
                     self.is_sieged = self.siege_weapon.is_some();
                 }
             }
@@ -1513,7 +1519,7 @@ impl Entity {
                     self.is_sieged = true;
                     self.is_immobile = true;
                     self.unpushable = true;
-                    self.siege_weapon = Some(WeaponSpec::clone(sieged_weapon));
+                    self.siege_weapon = Some(Box::new(WeaponSpec::clone(sieged_weapon)));
                 }
             }
             _ => {}
@@ -1676,7 +1682,7 @@ impl Entity {
     #[inline]
     pub fn active_siege_weapon(&self) -> Option<&WeaponSpec> {
         self.is_sieged
-            .then_some(self.siege_weapon.as_ref())
+            .then_some(self.siege_weapon.as_deref())
             .flatten()
     }
 
