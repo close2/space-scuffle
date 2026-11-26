@@ -19,10 +19,10 @@ use sim_core::{SimWorld, SimulationDiagnostic, WeaponPhase};
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
     AttackOrigin, AttackVisibility, AttributeFlags, CombatEventVisual, EntityId, ImpactSpawn,
-    MissileValidation, MoverType, PlayerId, ProjectileTargetLossBehavior, RenderSnapshot,
-    ShapeKind, SimAngle, SimScalar, SimVec2, SpawnOrder, SplashCliff, SplashImpact, SplashShape,
-    SplashSpec, SplashZone, StrikeMagazineSpec, Tick, TickBundle, TimedLifeSpec, UnitOrder,
-    UnitTypeId, WeaponSpec, WeaponVisualKind,
+    MissileValidation, MoverType, PlayerCommand, PlayerId, ProjectileTargetLossBehavior,
+    RenderSnapshot, ShapeKind, SimAngle, SimScalar, SimVec2, SpawnOrder, SplashCliff, SplashImpact,
+    SplashShape, SplashSpec, SplashZone, StrikeMagazineSpec, Tick, TickBundle, TimedLifeSpec,
+    UnitOrder, UnitTypeId, WeaponSpec, WeaponVisualKind,
 };
 
 type TestResult = Result<(), Box<dyn Error>>;
@@ -854,9 +854,9 @@ fn shipped_nest(seed: u64) -> Result<Nest, Box<dyn Error>> {
 /// B-12 (WP3): the shipped Brood Lord analogue's magazine is 5.0.14's `BroodLordHangar` (S3:
 /// `CountStart 2`, `Ammo1 Time 2.5` = 45 ticks; S4: `QueueSize 2`, one at a time; S6:
 /// `BroodlingAttackDelay 0.5` = 9 ticks; S20: two at most), and the shipped unit reproduces B-1
-/// to B-3: two strikes on its first release, then one at R + 57, R + 102, … over 20 strikes (each
-/// at most 3 ticks late, by the weapon's random delay), no swing while nothing is armed, and two
-/// again after an idle spell.
+/// to B-3: two strikes on its first release, one on R + 57, then one per rebuild (45 ticks, or the
+/// period with the weapon's random delay when that is longer), no swing while nothing is armed,
+/// and two again after an idle spell.
 #[test]
 fn b12_the_shipped_brood_lord_throws_its_escorts_on_the_plan_ticks() -> TestResult {
     let mut nest = shipped_nest(0xB12)?;
@@ -889,20 +889,21 @@ fn b12_the_shipped_brood_lord_throws_its_escorts_on_the_plan_ticks() -> TestResu
     let plan = schedule(first.tick, 20);
     assert_eq!(releases.len(), plan.len(), "20 strikes: {releases:?}");
     // The shipped weapon draws its random delay (-1.1161 to 2.2321 ticks, B-3) into the cooldown
-    // of each release, so a swing may wait for its cooldown past the tick its escort arms; the
-    // magazine still paces the releases, so the lag never accumulates.
-    for (got, want) in releases.iter().zip(&plan) {
-        assert_eq!(got.strikes, want.strikes, "{got:?} against {want:?}");
-        assert!(
-            (want.tick..=want.tick + 3).contains(&got.tick),
-            "{got:?} within the random delay of {want:?}"
-        );
-    }
+    // of each release, so a swing may wait for its cooldown past the tick its escort arms: after
+    // the first two releases, which the magazine alone places, each follows the last by the
+    // escort's 45 ticks or the period with its delay, 43 to 48 ticks.
     assert_eq!(
         &releases[..2],
         &plan[..2],
-        "the first two releases are the magazine's alone"
+        "the magazine's first two releases"
     );
+    for pair in releases[1..].windows(2) {
+        assert_eq!(pair[1].strikes, 1, "one escort per rebuild: {pair:?}");
+        assert!(
+            (43..=48).contains(&(pair[1].tick - pair[0].tick)),
+            "one escort per rebuild or per delayed period: {pair:?}"
+        );
+    }
     // B-3: an idle spell refills both escorts.
     nest.world
         .entities
@@ -922,5 +923,125 @@ fn b12_the_shipped_brood_lord_throws_its_escorts_on_the_plan_ticks() -> TestResu
         .is_cloaked = false;
     nest.attack(lord, target)?;
     assert_eq!(nest.until_release(lord, 60)?.strikes, 2, "refilled");
+    Ok(())
+}
+
+impl Nest {
+    /// Steps with `commands`, as [`Self::step`].
+    fn step_with(&mut self, commands: Vec<PlayerCommand>) -> RenderSnapshot {
+        self.tick += 1;
+        let mut out = RenderSnapshot::default();
+        self.world.step_into(
+            &TickBundle {
+                tick: Tick(self.tick),
+                commands,
+                state_checksum: None,
+            },
+            &mut out,
+        );
+        out
+    }
+}
+
+/// B-13 (WP4): the shipped Brood Lord analogue's escorts land as the shipped spawned archetype,
+/// one per strike, with 89 + 0..=5 ticks of life and the attack order; the created unit fights,
+/// its owner selects and commands it (a `PlayerCommand` move is admitted), and an enemy's
+/// automatic targeting attacks it.
+#[test]
+fn b13_the_shipped_escorts_land_as_broodlings_that_fight_and_obey() -> TestResult {
+    let mut nest = shipped_nest(0xB13)?;
+    assert_ne!(
+        nest.mite, nest.dummy,
+        "premise: a spawned archetype is shipped"
+    );
+    let (lord, target) = nest.engaged(at(20, 32), at(25, 32))?;
+    let first = nest.until_release(lord, 60)?;
+    assert_eq!(first.strikes, 2);
+    nest.until_landed(lord, 40)?;
+    let mites = nest.mites();
+    assert_eq!(mites.len(), 2, "one per escort");
+    for id in &mites {
+        let mite = &nest.world.entities[id];
+        let life = mite.timed_life().ok_or("a clock")?;
+        assert!((89..=94).contains(&life), "89 + 0..=5: {life}");
+        assert_eq!(
+            mite.order_queue.front(),
+            Some(&UnitOrder::AttackTarget {
+                target,
+                origin: AttackOrigin::Explicit
+            })
+        );
+    }
+    let arch = nest.world.catalog.get(nest.mite)?;
+    assert!(arch.selectable && arch.order_targetable, "an ordinary unit");
+    // Without the lord, the target's life falls by the Broodlings' claws alone.
+    nest.world.entities.get_mut(&lord).ok_or("lord")?.hp = SimScalar::ZERO;
+    nest.step();
+    let before = nest.world.entities[&target].hp;
+    for _ in 0..30 {
+        nest.step();
+    }
+    assert!(
+        nest.world.entities[&target].hp < before,
+        "the Broodlings fight"
+    );
+    // Their owner commands one.
+    let mover = mites[0];
+    let destination = at(10, 10);
+    nest.step_with(vec![PlayerCommand {
+        player_id: ME,
+        entities: vec![mover],
+        order: UnitOrder::Move {
+            target: destination,
+        },
+        queue: false,
+    }]);
+    assert_eq!(
+        nest.world.entities[&mover].order_queue.front(),
+        Some(&UnitOrder::Move {
+            target: destination
+        }),
+        "the owner's move is admitted"
+    );
+    // An armed enemy acquires one by itself.
+    let [_, _, armed] = pick(&nest.world)?;
+    let hunter = nest.world.spawn_unit(armed, FOE, at(27, 32))?;
+    let mut acquired = false;
+    for _ in 0..20 {
+        nest.step();
+        acquired |= nest
+            .world
+            .entities
+            .get(&hunter)
+            .is_some_and(|h| h.current_target.is_some_and(|t| mites.contains(&t)));
+    }
+    assert!(
+        acquired,
+        "an enemy's automatic targeting takes the Broodling"
+    );
+    Ok(())
+}
+
+/// B-15 (WP4): spawns capture no supply; the supply ledger validates on every tick of a
+/// 600-tick Brood Lord fight and the owner's supply never moves.
+#[test]
+fn b15_spawns_capture_no_supply() -> TestResult {
+    let mut nest = shipped_nest(0xB15)?;
+    let (lord, _) = nest.engaged(at(20, 32), at(25, 32))?;
+    let slot = ME.slot().ok_or("a player")?;
+    let used = nest.world.player_resources[slot].supply_used;
+    let mut created = std::collections::BTreeSet::new();
+    for _ in 0..600 {
+        nest.step();
+        nest.world.validate_supply_ledger()?;
+        assert_eq!(nest.world.player_resources[slot].supply_used, used);
+        created.extend(nest.mites());
+    }
+    assert!(nest.world.entities.contains_key(&lord));
+    assert!(
+        created.len() >= 10,
+        "Broodlings came and went: {}",
+        created.len()
+    );
     Ok(())
 }

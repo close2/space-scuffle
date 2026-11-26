@@ -4475,3 +4475,113 @@ fn an_edited_remaining_end_changes_the_turret_flight_without_recompiling() -> Te
     );
     Ok(())
 }
+
+/// What one Brood Lord volley does under a catalog: the units its first missile creates, their
+/// least and greatest clocks, and the ticks from the first release to the second.
+fn brood_volley(
+    catalogs: RuntimeCatalogs,
+) -> Result<(usize, u16, u16, u32), Box<dyn std::error::Error>> {
+    let mut world = SimWorld::with_catalogs(
+        GameMap::new(48, 48, MapCell::default_ground(CliffLevel(0)))?,
+        5,
+        catalogs.units,
+        catalogs.upgrades,
+    )?;
+    let lord = world
+        .catalog
+        .archetypes()
+        .find(|a| a.capabilities.strike_magazine.is_some())
+        .ok_or("a unit with a strike magazine")?;
+    let (lord_type, spawned) = (
+        lord.unit_type_id,
+        lord.ground_weapon
+            .as_ref()
+            .and_then(|w| w.impact_spawn)
+            .ok_or("an impact spawn")?
+            .unit,
+    );
+    let mut ground: Vec<_> = world
+        .catalog
+        .archetypes()
+        .filter(|a| a.mover_type == sim_types::MoverType::Ground && a.max_speed > SimScalar::ZERO)
+        .filter(|a| a.unit_type_id != spawned && a.weapon.is_some())
+        .map(|a| a.unit_type_id)
+        .collect();
+    ground.sort();
+    let dummy = ground[0];
+    let arch = world.catalog.get_mut(dummy)?;
+    arch.weapon = None;
+    arch.ground_weapon = None;
+    arch.air_weapon = None;
+    arch.max_hp = SimScalar::from_i32(100_000);
+    let lord = world.spawn_unit(lord_type, PlayerId(0), SimVec2::from_i32(20, 24))?;
+    let target = world.spawn_unit(dummy, PlayerId(1), SimVec2::from_i32(25, 24))?;
+    world
+        .entities
+        .get_mut(&lord)
+        .ok_or("lord")?
+        .issue_order(sim_types::UnitOrder::attack(target), false)?;
+    let mut releases = Vec::new();
+    let mut seen = None;
+    let mut first_spawn = Vec::new();
+    for tick in 1..=200 {
+        world.step(&sim_types::TickBundle {
+            tick: sim_types::Tick(tick),
+            commands: Vec::new(),
+            state_checksum: None,
+        });
+        for projectile in world
+            .projectiles
+            .iter()
+            .filter(|p| p.attacker_id == Some(lord))
+        {
+            if seen.is_none_or(|s| projectile.id > s) {
+                seen = Some(projectile.id);
+                releases.push(world.current_tick);
+            }
+        }
+        if first_spawn.is_empty() {
+            first_spawn = world
+                .entities
+                .values()
+                .filter(|e| e.unit_type_id == spawned)
+                .filter_map(sim_core::Entity::timed_life)
+                .collect();
+        }
+    }
+    let low = first_spawn.iter().copied().min().ok_or("units created")?;
+    let high = first_spawn.iter().copied().max().ok_or("units created")?;
+    Ok((first_spawn.len(), low, high, releases[1] - releases[0]))
+}
+
+/// B-14 (plan `2026-11-28-broodlings` §6.2): in a catalog directory copy, a spawn count of 2, a
+/// timed life of 50 and a magazine build of 30 ticks change the units created, their clocks and
+/// the second release in the same binary.
+#[test]
+fn an_edited_spawn_clock_and_magazine_change_the_volley() -> TestResult {
+    let bundle = Bundle::new("broodlings")?;
+    let (count, low, high, gap) = brood_volley(bundle.load()?)?;
+    assert_eq!(count, 2, "one per escort");
+    assert!(89 <= low && high <= 94, "89 + 0..=5: {low}..{high}");
+    assert!((57..=60).contains(&gap), "the first rebuild: {gap}");
+    let path = bundle.directory.join(FILES[0]);
+    let text = std::fs::read_to_string(&path)?;
+    let edited = text
+        .replace("per_strike: 1,", "per_strike: 2,")
+        .replace(
+            "timed_life: Some((ticks: 89,",
+            "timed_life: Some((ticks: 50,",
+        )
+        .replace(
+            "build_ticks: 45, arming_ticks: 9",
+            "build_ticks: 30, arming_ticks: 9",
+        );
+    assert_ne!(edited, text, "premise: the shipped rows carry the fields");
+    std::fs::write(&path, edited)?;
+    let (count, low, high, gap) = brood_volley(bundle.load()?)?;
+    assert_eq!(count, 4, "two per escort");
+    assert!(50 <= low && high <= 55, "50 + 0..=5: {low}..{high}");
+    assert!((42..=45).contains(&gap), "a 30-tick rebuild: {gap}");
+    bundle.finish()?;
+    Ok(())
+}
