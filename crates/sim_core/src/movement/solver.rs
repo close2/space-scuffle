@@ -862,11 +862,13 @@ impl ContactSolver {
     /// the tick, which no application before the last knows. An attacking unit the solve moved
     /// ([`Self::walks`]: off its committed position) that ends out of its band round its target's
     /// final position, though at its committed position it would be in it, steps back toward its
-    /// committed position by the least part of the way that puts it in the band
-    /// ([`restore_scale`]). The steps pass E-2's bound like any other ([`Self::bound_enemy_steps`],
+    /// committed position by the least part of the way that puts it well inside the band
+    /// ([`restore_step`]). The steps pass E-2's bound like any other ([`Self::bound_enemy_steps`],
     /// after making sure the list covers them) and a terrain step that refuses a slide turning
-    /// one back into an enemy ([`closes_too_far`]); a unit E-2 or terrain leaves short of the band
-    /// stays out of it. A solve in which every attacking unit ends in its band does nothing here.
+    /// one back into an enemy ([`closes_too_far`]). E-2 may take the part of a step that closes
+    /// on another enemy, so a unit still out of its band steps again, for up to
+    /// [`RESTORE_ROUNDS`] rounds; one E-2 or terrain leaves short of the band stays out of it. A
+    /// solve in which every attacking unit ends in its band does nothing here.
     fn restore_bands(
         &mut self,
         (map_size, settings, done): ((u32, u32), SolverSettings, &mut SolveReport),
@@ -876,6 +878,25 @@ impl ContactSolver {
         ),
         report: &mut impl FnMut(MovementInvariant),
     ) {
+        for _ in 0..RESTORE_ROUNDS {
+            let context = (map_size, settings, &mut *done);
+            if !self.restore_round(context, (&mut *connected, &mut *terrain), report) {
+                break;
+            }
+        }
+    }
+
+    /// One round of [`Self::restore_bands`]: plans, bounds and takes the step back of every
+    /// attacking unit still out of its band. Returns whether any unit had one.
+    fn restore_round(
+        &mut self,
+        (map_size, settings, done): ((u32, u32), SolverSettings, &mut SolveReport),
+        (connected, terrain): (
+            &mut impl FnMut(&SolverBody, &SolverBody) -> bool,
+            &mut impl FnMut(&SolverBody, SimVec2) -> Result<Option<SimVec2>, MovementMathError>,
+        ),
+        report: &mut impl FnMut(MovementInvariant),
+    ) -> bool {
         self.planned.clear();
         self.limits.clear();
         let mut longest = 0_i128;
@@ -898,7 +919,7 @@ impl ContactSolver {
             self.planned.push(step);
         }
         if longest == 0 {
-            return;
+            return false;
         }
         if self.reach_is_short(longest) {
             let extra = SimScalar::from_raw(i64::try_from(2 * longest).unwrap_or(i64::MAX));
@@ -932,6 +953,7 @@ impl ContactSolver {
                 }),
             }
         }
+        true
     }
 
     /// Clears `Gated`'s per-solve buffers: no body is held by terrain, nothing pushed yet.
@@ -1789,7 +1811,9 @@ fn in_band(position: SimVec2, centre: SimVec2, ring: Ring) -> bool {
 
 /// The step of [`ContactSolver::restore_bands`]: from `position`, out of `ring`'s band round
 /// `centre`, the least part, to within 2⁻¹⁶, of the way back to `committed`, which is in it, that
-/// ends in the band ([`in_band`], applied to the scaled step exactly as it will be taken).
+/// ends in the band narrowed halfway toward `committed`'s distance from `centre` ([`in_band`],
+/// applied to the scaled step exactly as it will be taken): the margin leaves room for E-2 to
+/// take a part of the step that closes on another enemy without leaving the unit out again.
 ///
 /// # Errors
 /// An unrepresentable step or end.
@@ -1800,6 +1824,18 @@ fn restore_step(
     ring: Ring,
 ) -> Result<SimVec2, MovementMathError> {
     let way = checked_vec_sub(committed, position)?;
+    let held =
+        super::checked_distance(committed, centre).ok_or(MovementMathError::Unrepresentable)?;
+    let halfway = |edge: SimScalar| SimScalar::from_raw(edge.raw() / 2 + held.raw() / 2);
+    let ring = Ring {
+        min: if ring.min > SimScalar::ZERO {
+            halfway(ring.min).max(ring.min)
+        } else {
+            SimScalar::ZERO
+        },
+        max: halfway(ring.max).min(ring.max),
+        ..ring
+    };
     let scaled =
         |scale: SimScalar| SimVec2::new(way.x.saturating_mul(scale), way.y.saturating_mul(scale));
     // `high` ends in the band (the whole way does) and `low` does not; halve the interval.
@@ -1815,6 +1851,9 @@ fn restore_step(
     }
     Ok(scaled(SimScalar::from_raw(high)))
 }
+
+/// The most rounds of [`ContactSolver::restore_bands`] in one solve.
+const RESTORE_ROUNDS: usize = 4;
 
 /// Bisection steps of [`band_scale`] and [`restore_step`]: the scale each returns is within
 /// 2⁻¹⁶ of the bound it seeks.
@@ -4329,12 +4368,102 @@ mod tests {
         Ok(())
     }
 
+    /// Runs [`ContactSolver::restore_bands`] alone over `bodies`, each committed where it
+    /// started and attacking with `rings`, on `world`'s terrain; returns the solver.
+    fn restore_on(
+        world: &mut crate::SimWorld,
+        bodies: &[SolverBody],
+        rings: &[Option<Ring>],
+    ) -> (ContactSolver, Vec<MovementInvariant>) {
+        let mut solver = ContactSolver::default();
+        solver.bodies.extend_from_slice(bodies);
+        solver.walks.extend(bodies.iter().map(|b| Walk {
+            committed: b.start,
+            from: b.start,
+        }));
+        solver.rings.extend_from_slice(rings);
+        solver.start_gated();
+        let mut errors = Vec::new();
+        let map = &world.map;
+        let size = (map.width(), map.height());
+        let pathfinder = &mut world.pathfinder;
+        let mut done = SolveReport::default();
+        let mut connected = |a: &SolverBody, b: &SolverBody| bodies_touch(map, a, b);
+        let mut terrain = |body: &SolverBody, to| {
+            terrain_step(
+                map,
+                pathfinder,
+                body.policy,
+                (body.start, body.position),
+                to,
+            )
+        };
+        let reach = (size, GATED, Reach::CONTACT);
+        solver.build_pairs::<true>(reach, &mut connected, &mut |e| errors.push(e));
+        solver.restore_bands(
+            (size, GATED, &mut done),
+            (&mut connected, &mut terrain),
+            &mut |e| errors.push(e),
+        );
+        (solver, errors)
+    }
+
     /// A3b-T6 (Amendment 3b (ii) at the end of the solve, [`ContactSolver::restore_bands`]): an
     /// attacking unit the solve left out of its band round where its target ends, though its
-    /// committed position is in it, steps back toward that position just into the band; one in
-    /// its band, or one whose committed position is out of it too, is left alone.
+    /// committed position is in it, steps back toward that position into the band narrowed
+    /// halfway toward the committed distance; one in its band, or one whose committed position is
+    /// out of it too, is left alone.
     #[test]
     fn an_attacker_left_out_of_its_band_steps_back_into_it_under_gated(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut world = flat_world(None)?;
+        let standing = ContactParty {
+            idle: true,
+            ..party(1)
+        };
+        let attacking = ContactParty {
+            engaged: true,
+            ..party(0)
+        };
+        let ring = Some(Ring {
+            target: 0,
+            min: ZERO,
+            max: SimScalar::from_num(1.5),
+        });
+        let target = at(20.0, 20.0);
+        // Committed at 1.4 west of the target; the solve left the first at 1.6 (out), the second
+        // at 1.45 (in); the third was committed at 1.7, out already, and stands at 1.8.
+        let cases = [
+            (at(18.6, 20.0), at(18.4, 20.0), true),
+            (at(18.6, 20.0), at(18.55, 20.0), false),
+            (at(18.3, 20.0), at(18.2, 20.0), false),
+        ];
+        for (committed, left, moves) in cases {
+            let bodies = [
+                solver_body(1, standing, 0.5, target, target),
+                solver_body(2, attacking, 0.5, committed, left),
+            ];
+            let (solver, errors) = restore_on(&mut world, &bodies, &[None, ring]);
+            assert_eq!(errors, []);
+            let end = solver.bodies[1].position;
+            if moves {
+                // Into the band narrowed to 1.45, no farther back than needed.
+                assert!(end.x > SimScalar::from_num(18.549), "{end:?}");
+                assert!(end.x < SimScalar::from_num(18.551), "{end:?}");
+            } else {
+                assert_eq!(end, left);
+            }
+        }
+        Ok(())
+    }
+
+    /// A3b-T7 (Amendment 3b, (i) before (ii) at the end of the solve): the way back of an
+    /// attacking unit left out of its band closes on another enemy it touches, whose allowance is
+    /// none; E-2 takes that part of each step, and the unit steps again along what is left until
+    /// it is in its band, never closing on the other enemy. Red with one round aimed at the band's
+    /// edge (`enemy-press`'s clash of `razor_mantis`, seed 2, tick 196, 7·10⁻⁵ out).
+    #[test]
+    fn an_attacker_steps_back_into_its_band_round_an_enemy_it_touches_under_gated(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut world = flat_world(None)?;
         let standing = ContactParty {
@@ -4350,61 +4479,23 @@ mod tests {
             min: ZERO,
             max: SimScalar::from_num(1.5),
         };
-        let target = at(20.0, 20.0);
-        // Committed at 1.4 west of the target; the solve left the first at 1.6 (out), the second
-        // at 1.45 (in); the third was committed at 1.7, out already, and stands at 1.8.
-        let cases = [
-            (at(18.6, 20.0), at(18.4, 20.0), true),
-            (at(18.6, 20.0), at(18.55, 20.0), false),
-            (at(18.3, 20.0), at(18.2, 20.0), false),
+        let (target, left) = (at(20.0, 20.0), at(18.4, 20.0));
+        let other = at(18.4 + 0.36, 20.0 + 0.48);
+        let bodies = [
+            solver_body(1, standing, 0.5, target, target),
+            solver_body(2, attacking, 0.3, at(18.6, 20.1), left),
+            solver_body(3, standing, 0.3, other, other),
         ];
-        for (committed, left, moves) in cases {
-            let mut solver = ContactSolver::default();
-            solver.bodies.extend([
-                solver_body(1, standing, 0.5, target, target),
-                solver_body(2, attacking, 0.5, committed, left),
-            ]);
-            solver.walks.extend(solver.bodies.iter().map(|b| Walk {
-                committed: b.start,
-                from: b.start,
-            }));
-            solver.rings.extend([None, Some(ring)]);
-            solver.start_gated();
-            let mut errors = Vec::new();
-            let map = &world.map;
-            let size = (map.width(), map.height());
-            let pathfinder = &mut world.pathfinder;
-            let mut done = SolveReport::default();
-            solver.build_pairs::<true>(
-                (size, GATED, Reach::CONTACT),
-                &mut |a, b| bodies_touch(map, a, b),
-                &mut |e| errors.push(e),
-            );
-            solver.restore_bands(
-                (size, GATED, &mut done),
-                (&mut |a, b| bodies_touch(map, a, b), &mut |body, to| {
-                    terrain_step(
-                        map,
-                        pathfinder,
-                        body.policy,
-                        (body.start, body.position),
-                        to,
-                    )
-                }),
-                &mut |e| errors.push(e),
-            );
-            assert_eq!(errors, []);
-            let end = solver.bodies[1].position;
-            if moves {
-                assert!(in_band(end, target, ring), "{end:?}");
-                assert!(
-                    end.x < SimScalar::from_num(18.501) && end.x > left.x,
-                    "{end:?}"
-                );
-            } else {
-                assert_eq!(end, left);
-            }
-        }
+        let (solver, errors) = restore_on(&mut world, &bodies, &[None, Some(ring), None]);
+        assert_eq!(errors, []);
+        let end = solver.bodies[1].position;
+        assert!(in_band(end, target, ring), "{end:?}");
+        let gap = super::super::checked_distance(end, other).ok_or("the gap")?;
+        assert!(
+            gap >= SimScalar::from_num(0.6) - SimScalar::from_raw(64),
+            "{gap:?}"
+        );
+        assert_eq!(solver.bodies[2].position, other);
         Ok(())
     }
 }
