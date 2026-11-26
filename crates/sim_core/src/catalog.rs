@@ -344,9 +344,10 @@ impl UnitArchetype {
     }
 
     /// The archetypes this unit brings into a battle by itself (plan `2026-11-28-broodlings`
-    /// D-12): its hangar's member and the units its weapons' missiles create, in that order,
-    /// each once. Empty for a unit that creates none. The client reads it to require their
-    /// media with the unit's own.
+    /// D-12): its hangar's member, the units its weapons' missiles create and the units it leaves
+    /// when it dies (plan `2026-12-01-death-spawns-and-hangar-commands` D-8), in that order, each
+    /// once. Empty for a unit that creates none. The client reads it to require their media with
+    /// the unit's own.
     #[must_use]
     pub fn created_units(&self) -> Vec<UnitTypeId> {
         let mut created: Vec<UnitTypeId> = self
@@ -358,7 +359,8 @@ impl UnitArchetype {
         let spawns = [&self.weapon, &self.ground_weapon, &self.air_weapon]
             .into_iter()
             .flatten()
-            .filter_map(|weapon| weapon.impact_spawn.map(|spawn| spawn.unit));
+            .filter_map(|weapon| weapon.impact_spawn.map(|spawn| spawn.unit))
+            .chain(self.capabilities.death_spawn.map(|spawn| spawn.unit));
         for unit in spawns {
             if !created.contains(&unit) {
                 created.push(unit);
@@ -3211,5 +3213,32 @@ mod tests {
             },
         };
         assert_eq!(dome.drawn_radius(), SimScalar::HALF);
+    }
+
+    /// Plan `2026-12-01-death-spawns-and-hangar-commands` D-8: a unit's created units list its
+    /// hangar member, its impact spawns and its death spawn, in that order, each once.
+    #[test]
+    fn created_units_list_the_death_spawn_after_the_others_each_once() {
+        let catalogs = crate::test_support::shipped_catalogs();
+        let mut host = catalogs
+            .units
+            .archetypes()
+            .find(|a| a.capabilities.strike_magazine.is_some())
+            .expect("the shipped unit with a strike magazine")
+            .clone();
+        let before = host.created_units();
+        assert_eq!(before.len(), 1, "premise: one impact-spawned unit");
+        let death = |unit| DeathSpawnSpec {
+            unit,
+            count: 1,
+            delay_ticks: 1,
+            search_range: SimScalar::ZERO,
+            timed_life: None,
+            disabled_while_constructing: false,
+        };
+        host.capabilities.death_spawn = Some(death(before[0]));
+        assert_eq!(host.created_units(), before, "the same unit once");
+        host.capabilities.death_spawn = Some(death(UnitTypeId(999)));
+        assert_eq!(host.created_units(), [before[0], UnitTypeId(999)]);
     }
 }
