@@ -522,8 +522,13 @@
 // movers fires; the Mothership Carrier does not appear). (56 is provisional, the next free at
 // merge: 54 and 55 are reserved for the Gated movement plan.) Proved on native debug and release
 // and wasm32-wasip1 release and debug, each in a fresh target directory.
+// Re-recorded for plan 2026-11-28-carrier-interceptors (checksum schema 56 -> 57): each entity
+// encodes its hangar and hangar link, each weapon its magazine launch; with those left out at
+// schema 56 every checkpoint reproduced. Behaviour: none in these worlds (no hangar unit
+// appears). Proved on native debug and release and wasm32-wasip1 release and debug, each in a
+// fresh target directory.
 (
-    checksum_schema: 56,
+    checksum_schema: 57,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -549,25 +554,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x76eb40e0d776f396,
-        0xa323dde0c67b6480,
-        0x58957e2e73d10a2a,
-        0x4a79caab1917b23b,
-        0x6a87e2d66c5a6fd9,
-        0x69ce52fc2ad86f07,
-        0x745293dd72e1c49f,
-        0x892d9cb62578a977,
-        0x8879af8459c88851,
-        0xceffbc1a3342e5f1,
-        0x30afd3650d3c79a3,
-        0x689877c01ae5987e,
-        0x00e02acbf4f28572,
-        0x22879909d925e3df,
-        0x9daac36da978c2c2,
-        0x21465c2e3bf0f463,
-        0xed0646fbb31bb2b0,
-        0x81bb291e5457265a,
-        0x718e0945c1bf1d60,
-        0xcdac3723741de74f,
+        0xaa67008cc990ec26,
+        0x7bb9573465d8d4b5,
+        0x9478c27ec8e4ace1,
+        0xfbbfd09fc35abb59,
+        0x08ed3b0e914a5373,
+        0xd28c01178dc6828d,
+        0xa2222d23946ff384,
+        0x4d1d80a9f6472c8e,
+        0x7b0414d601b75710,
+        0x755f67f3bd6dba5b,
+        0xe182402691b60e6b,
+        0x0a4954b4a5312505,
+        0x6c14f56bcfac2d40,
+        0x80db1a282d2d0b87,
+        0xef002bde3ab1b6a1,
+        0xaeb14fa892b430ce,
+        0x85473294a6a3dd32,
+        0x203836adb28258f4,
+        0x831fc463b06f4ed7,
+        0x5cfb41f0406ace9e,
     ],
 )
