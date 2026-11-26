@@ -1322,3 +1322,38 @@ plan's `WP0b` rule provides for, and before any `Gated` code exists. No constant
 part was removed, not re-tuned. **Only the verdict columns of the `lanes` rows change** (`answer`, `hard`,
 `answer_failed`); every world, every metered column and every other family's CSV is unchanged (the lanes worlds of the
 first and corrected runs are compared column by column in the evidence, §2).
+
+## Amendment 3 (orchestrator, 2026-11-29): WP1's single amendment, after the H-1/H-2 stop
+
+WP1 stopped under §6.6 rule 2 (evidence §9.3): H-1 and H-2 fail under `Gated`, and C-2 fails on flat64 (Solver +0.78 %).
+The traces (evidence §9.5) give four causes. This amendment is WP1's one allowed amendment; after it, a further failure
+of any hard check stops the package for the owner.
+
+1. **"Attacking" is read from the tick-start snapshot (conformance, not a new rule).** The plan defines an attacking
+   body (C′-1, I′-1) as one whose current target is in its weapon band in the tick-start snapshot. The implementation
+   used `SimWorld::engaged`, which judges the band at committed positions, so an attacker whose target stepped out
+   during the tick was pushed by a moving friend (the cause B-225 suspected). Under `Gated` the solver's
+   "never moved by others" set is computed from the snapshot band, once per tick, before any body moves; `Solver` keeps
+   `engaged` unchanged (H-6).
+2. **Two attacking friends do not push each other.** The kept C′ row "attacking ↔ attacking: ½ / ½" contradicts the
+   owner's rule (Q0118: attacking units are not pushable). Under `Gated` a friend pair of two attacking or holding
+   bodies takes no correction; their overlap is left to intent (WP2 gates steps into bodies that will not give way)
+   and is reported in the friend-overlap columns, not hidden.
+3. **E-2's pair list covers every enemy pair that can close within the tick.** Enemy pairs beyond the list's reach
+   `r_a + r_b + 1/4` could be pressed together by their own friends in the summed passes, which have no rebuild after
+   them (seed 606, ticks 665–667: 19.6 %). Under `Gated` the enemy-only list is built with the reach
+   `r_a + r_b + |committed step_a| + |committed step_b| + max per-body friend correction bound` (or, equivalently, the
+   enemy pass is re-listed after the summed passes); the implementer picks the cheaper of the two with a proof that no
+   enemy pair can be missed, and a test reproducing seed 606.
+4. **H-2's meter is repaired (stated as made after the figures).** H-2 is "enemies never push each other": an enemy
+   displaced by **its own** friends (a fleeing unarmed enemy pushing its idle friends, which C-2 allows) is not an
+   H-2 event. The meter counts displacement of a body only where the contributing pair is an enemy pair. The original
+   count stays a reported column. This repair is recorded here because it was decided after reading WP1's figures.
+5. **C-2: `Solver` costs what the base costs.** The `Gated`-only fields (`committed`, `walk_from`, `gap_shares`,
+   `held_by_terrain`) must not widen the structs the `Solver` path copies: keep them in `Gated`-only side storage or in
+   types selected by the existing `const G: bool`, so the `Solver` instantiation's layout equals the base's. Acceptance:
+   Solver and Legacy instructions within noise of main `00330fcc` on every scenario, attributed with `perf record`.
+
+Acceptance is otherwise unchanged: H-1..H-7 under `Gated` (H-1 and H-2 now must be 0 except H-1's first-contact
+exclusion, which WP1 builds now as Amendment 1 deferred it), H-6 identity, C-2, friend overlap reported. Battle
+outcomes under `Gated` are not judged at WP1.
