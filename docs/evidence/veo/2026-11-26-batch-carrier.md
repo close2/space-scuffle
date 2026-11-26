@@ -1,16 +1,16 @@
-# Veo: the carrier batch, the Carrier and its interceptor (2026-11-26), stopped for the owner
+# Veo: the carrier batch, the Carrier and its interceptor (2026-11-26), stopped for the owner, then continued
 
 Evidence for WP5 of plan [`2026-11-28-carrier-interceptors`](../../plans/2026-11-28-carrier-interceptors.md) (D-11),
 run on 2026-11-26 (UTC) from branch `carrier-interceptors-plan` (WP4 `43b0529e`), with the method of batches 1 to
 [6](2026-11-09-batch-6.md): authored texts on the batch-5 aircraft pattern, the seed clip, then the pin, then the
 pinned states, and the D-7 review.
 
-**Result: the batch stopped at the seed Idles, and no clip is accepted.** Four seeds of each identity, eight
+**First result: the batch stopped at the seed Idles, and no clip was accepted** (the continuation, below, installs six clips). Four seeds of each identity, eight
 generations, all drew diagonal light shafts across the backdrop, which breaks the owner's backdrop rule (no radiating
 stripes, rays or spotlight beams; `sky_bastion`'s seed `a25e084f` was rejected for the same thing in batch 5). Two
 rewordings did not remove them. The batch stopped under the plan's stop rule 8 and charter §1.2: the tool fell below
 the required quality, and the question went to the owner as
-[Q0131](../../questions/open/0131-carrier-media-light-shafts.md). Nothing was installed, baked or added to
+[Q0131](../../questions/closed/0131-carrier-media-light-shafts.md). Nothing was installed, baked or added to
 `assets/media/required_set.ron`. `mothership_carrier` and `saucer_interceptor` stay without media, so the client keeps
 the Carrier locked (`CardLock::NoMedia`; H-16: a hangar unit is presentable only with its member's media). That is
 truthful: no stand-in was made.
@@ -76,3 +76,70 @@ the negative prompt (which already names light rays, god rays, rays of light and
 
 Q0131 sets out the choices. The texts and overrides of this batch stay, so a continuation starts from them; 17
 generations and $6.80 of the batch's cap remain.
+
+## Continuation under the owner's answer to Q0131 (2026-11-26)
+
+The owner answered [Q0131](../../questions/closed/0131-carrier-media-light-shafts.md): option (a) with a hard cap of
+4 more seeds per identity, then option (b), the best available seed; faint light shafts are accepted as a temporary
+exception, and a polish pass will redo the videos. Run from branch `carrier-media` (cut from `main` `0f0608cd`).
+
+**Per-identity negative terms.** `media_style.ron`'s `actions.negative_overrides` (added by the broodlings package)
+gives both identities "light shafts, tractor beam, beam of light from above, volumetric light, haze, light streaks".
+Seeds 5 and 6 kept the texts; for seeds 7 and 8 the two Idle texts in `units.ron` were reworded on the Brood Lord
+analogue's pattern ("held still, seen from above at a three-quarter angle looking down on its top … plain dark
+backdrop, lit softly from the front"; no "floating" or "high above"), and the golden list of unit prompts changes in
+exactly those two lines. Every wording passed `validate-prompts` before the run that used it.
+
+**Preflight.** `veo-preflight`: Vertex AI Express, HTTP 404, "Model visible: no", as every day since 2026-11-04
+(Q0042). `generate-veo --dry-run` read **$123.25 spent of $230.00** before the first run.
+
+**Spending.** Five runs of the release binary, `--credentials-dir <main checkout>`; logs
+`~/scratch/carrier-media/veo-logs/r0{5..9}-*.log`; run ids `20261126T103259Z-1532138` (2 Idles, seed 5),
+`20261126T103422Z-1540341` (2, seed 6), `20261126T103601Z-1549844` (2, seed 7), `20261126T103729Z-1566151` (the
+interceptor's Idle, seed 8), `20261126T103836Z-1593945` (6 pinned clips, seed 9). **13 generations, $5.20; the batch:
+21 generations, $8.40 of its $10.00 cap (4 generations left unused); the ledger: $128.45 of $230.00.** Every result
+came back inline, 4 s, 1280 × 720, 96 frames; no filtered result, quota refusal or failure; no key-like string in the
+logs or the new ledger lines.
+
+| Identity | State | Operation | Clip SHA-256 | Seed | Start | Loop-check | Verdict |
+|---|---|---|---|---|---|---|---|
+| `saucer_interceptor` | Idle A5 | `d249c10a` | `bdeed039` | 5 | text + identity terms | repaired PASS | rejected: diagonal light shafts at the upper right |
+| | Idle A6 | `b97dddcd` | `0988152c` | 6 | as A5 | worst 0.892 < 0.904 | rejected: light shafts; propeller-like parts on its dome |
+| | Idle A7 | `195c6479` | `6b0fd0c7` | 7 | reworded text | worst 0.867 < 0.870 | rejected: light shafts; rotors on its top |
+| | Idle A8 | `cbe197b6` | `34aaf27b` | 8 | as A7 | worst 0.877 < 0.885 | rejected: light shafts; quadcopter-like rotors; the last seed |
+| | (pin) | `3ddf92e4` | `53ac1c38` | 2 | first batch's A2 | | the best available seed (faint shafts, the view right): **pin** frame 0, SHA-256 `b303d4b9…` |
+| | Idle | `b9cb72f1` | `eca736b1` | 9 | pin, both ends | repaired wrap 0.999, worst 0.912 < 0.934 FAIL; fidelity 0.995 | **accepted (exception)**: still; the rim lights blink; faint shafts at the upper right |
+| | Walk | `323525cb` | `d181fb8d` | 9 | pin, both ends | raw worst 0.875 < 0.882, growth +2.43 % FAIL; repaired without scale lock wrap 0.969 | **accepted (exception)**: amber light trails stream to the upper left, appearing after the first frame and gone by the last; faint shafts |
+| | Attack | `7f78344e` | `1fe46c47` | 9 | pin, both ends | one-shot | **accepted**: two amber beams fire toward the lower right, then it hovers in the pose |
+| `mothership_carrier` | Idle A5 | `901d34c9` | `80d6a68c` | 5 | text + identity terms | repair refused (1.25 %) | rejected: faint shafts at the top; seen nearly level |
+| | Idle A6 | `ebc5154c` | `437cf00b` | 6 | as A5 | repair refused (2.75 %) | rejected: turns in place, seen nearly level (backdrop nearly plain) |
+| | Idle A7 | `4b5d07ee` | `046d1853` | 7 | reworded text | repair refused (+7.7 % push-in) | rejected as a clip, taken as the **pin** (frame 0, SHA-256 `106e64bb…`): **no light shafts**, seen from above at 3/4; a soft dark shadow to the lower left |
+| | Idle | `727f5501` | `17ca3ffc` | 9 | pin, both ends | repaired wrap 0.999, worst 0.976 PASS; fidelity 0.994 | **accepted**: still; the bays dim and glow once |
+| | Walk | `36b3207c` | `3ed57646` | 9 | pin, both ends | repaired wrap 0.999, worst 0.958 PASS | **accepted**: vapour trails stream to the upper left, appearing after the first frame and gone by the last |
+| | Attack | `25a9e6ce` | `ee5b3f63` | 9 | pin, both ends | one-shot | **accepted**: the front bays flash and a stream of small golden drones flies out to the lower right, then it hovers in the pose |
+
+Sheets: the rejected seeds as `<slug>_idle_<operation>{,_framed,_loopcheck_repaired,_loopcheck_seam}.png`, the
+accepted clips as `<slug>_<state>{,_framed,_repaired,_seam}.png`, under [`review/`](review/). The full reason of every
+rejection is in its `rejected_in_review` ledger line.
+
+**Flaws accepted as the temporary exception (Q0131), each recorded:** no interceptor seed was free of light shafts,
+so its pin and all three of its clips show faint diagonal shafts at the upper right of the backdrop. Its Idle's worst
+loop step is 0.022 under the threshold (the rim lights blink), and its Walk's light trails appear after the pinned
+first frame and vanish before the pinned last one, so the loop shows them for most of its length and not at the seam
+(an uneven zoom of +2.43 %: `media_style.ron`'s loops give it no scale lock and a cross-fade of 2, so the bake's seam
+repair is not refused). The Carrier's Walk has the same trail timing but passes the loop criterion. The Carrier's pin
+and clips show a soft dark shadow falling to the lower left on a slightly graded backdrop, with no light shafts. Both
+Attacks are clean.
+
+**Installed and baked through the pipeline.** `install-clip` for the six clips; `bake-unit-videos` for both identities
+(letterboxed, feather 30 ‰; logs `~/scratch/carrier-media/veo-logs/bake-*.log`); the pins committed as
+`assets/ai_keyframes/{mothership_carrier,saucer_interceptor}_idle.png`; both added to `assets/media/required_set.ron`
+as `Expansion`; `crates/client/tests/data/flipbook_coverage.ron` lists both atlases. `audit-media --strict`: **34 of 34
+verified**, both identities `Verified [Expansion]`. The client unlocks the Carrier (H-16: a hangar unit is presentable
+only with its member's media). H-20, the client's steady state with interceptors cycling, is not written here: it
+waits for the render-entity pool (B-237), as the Broodlings' B-19 does.
+
+**Tests.** `cargo test -p asset_baker` (including `bake_integrity_tests`, `prompt_tests`, `media_tests`), `sim_core`'s
+`golden_replay_tests` (goldens and worlds untouched: no simulation change), and the client's `runtime_media_tests`,
+`runtime_assets_tests`, `battle_flipbook_tests`, `round2_visual_tests` and `smog_golden_tests` (on the physical GPU)
+pass; log `~/scratch/carrier-media/veo-logs/media-tests.log`.

@@ -992,7 +992,7 @@ of the final tree), checksum schema 57. Measurements in
 | WP2 | `268a437e` | Hangar mechanism, latent, schema 57 (H-2 to H-11); worlds byte-identical; latent proof 8/8 |
 | WP3 | `9b40d6ab`, `e56831c1` | The Carrier's launch weapon and hangar, `saucer_interceptor` (id 47) (H-12 to H-15); worlds byte-identical; four player-command rule tests and W-15 adapted (evidence, WP3) |
 | WP4 | `43b0529e` | H-16 to H-19; the held-beam bound counts members through their hangar; **H-20 not done** (needs the Carrier's media) |
-| WP5 | `9bb48924` | **Stopped** (stop rule 8): 8 seeds, $3.20, all with light shafts in the backdrop; [Q0131](../questions/open/0131-carrier-media-light-shafts.md); no media installed, the Carrier stays locked (`NoMedia`) |
+| WP5 | `9bb48924`; continuation on `carrier-media` | First **stopped** (stop rule 8): 8 seeds, $3.20, all with light shafts in the backdrop; [Q0131](../questions/closed/0131-carrier-media-light-shafts.md). Continued under the owner's answer (identity negative terms, at most 4 more seeds, then the best): 13 more generations, $5.20 (batch $8.40 of $10); six clips installed and baked, flaws accepted until the polish pass; H-21 met, the Carrier unlocked |
 | WP6 | `0fcce364`, `201411e3`, this commit | `hangar` throughput scenario; goldens and sandbox re-recorded at schema 57, proved 8/8, and latent 8/8 on the final tree against `main`'s values; final worlds byte-identical to WP3's (and so WP0's); held-out seeds byte-identical to `main`'s; records |
 
 **Deviations decided while building (each recorded here, none moves a measured world):**
@@ -1030,9 +1030,9 @@ of the final tree), checksum schema 57. Measurements in
 15. B-8's row no longer exists in `DESIGN.md`, so the note on the Interceptor's priority (20 in the data, not 19) is
     recorded here instead.
 
-**Not done:** WP5's media (Q0131, blocking for the media only) and so H-20 (steady state and valgrind with Carriers
-cycling) and H-21. When the media lands, H-20 is run then, and `mothership_carrier` and `saucer_interceptor` join
-`required_set.ron`.
+**Not done:** H-20 (steady state and valgrind with Carriers cycling). The media landed in the WP5 continuation
+(Q0131 closed; both identities in `required_set.ron`, H-21 met), but a battle with members cycling allocates render
+entities in the client (B-237), so H-20 waits for the render-entity pool package, which writes it.
 
 **Owner questions.** Q0129 is closed on `main` with its resolution. Q0130 is open; its default (a), interceptors hover,
-is what is built (B-229). Q0131 is new and open.
+is what is built (B-229). Q0131 is closed (answered (a) with a cap, then (b); the WP5 continuation).
