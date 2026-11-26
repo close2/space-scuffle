@@ -132,7 +132,25 @@
         // shown by light and vapour trails (a saucer has no exhaust), and an Attack that fires
         // or launches forward and returns to the hover pose. The interceptor's beams and the
         // Carrier's drones leave toward the lower right, the way both face.
+        // spore_matriarch, brood_mite (broodlings batch, 2026-11-26; plan 2026-11-28-broodlings
+        // WP6, D-12): the Brood Lord analogue and the Broodling it throws, the second and third
+        // Sylvan Swarm creatures with generated media. The Brood Lord analogue is described as a
+        // creature, not an aircraft (the Carrier's saucers drew light shafts, Q0131), with no sky,
+        // cloud, "high above", "hovering" or lit-from-above wording: a still pose with its wings
+        // spread, a glide in place with rippling wings, and an Attack that flings two larvae
+        // toward the lower right. The Broodling follows the scorpion's pattern: a still crouch,
+        // a scuttle on a treadmill, and a stab that settles back to the Idle pose.
         overrides: {
+            "spore_matriarch": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the beast keeps the same size and place in frame. It holds still, wings spread: it never turns, tilts or bobs; only its amber spore pods pulse softly. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the beast glides forward in place, as if held in a wind tunnel, keeping the same size, place and three-quarter facing in frame: its broad wings ripple in slow even waves from the first frame to the last. The plain dark backdrop stays unchanged. Seamless loop: the last frame matches the first.",
+                Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the beast keeps its place in frame. It flings two small wriggling pale larvae from under its belly straight toward the lower right and out of the frame, then holds still in its starting pose. The plain dark backdrop stays unchanged throughout.",
+            },
+            "brood_mite": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the larva keeps the same size, pose and place in frame. It crouches as still as a statue: its body, head, legs and claws never move, turn or nod; its colours and light never change. The plain dark backdrop stays unchanged. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans. The larva scuttles on a treadmill that holds it in place: its short hooked legs clearly lift and step in quick turns at an even pace from the first frame to the last, while its body and claws stay at exactly the same place, size and three-quarter facing in frame; it never moves forward, back or toward the camera. The plain dark backdrop stays unchanged. Seamless loop: the last frame matches the first.",
+                Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the larva keeps its place in frame. It rears and stabs forward twice with its two curved needle claws toward the lower right, then settles smoothly back to its starting pose. The plain dark backdrop stays unchanged throughout.",
+            },
             "mothership_carrier": {
                 Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the carrier keeps the same size and place in frame. The carrier hangs still in the air: it never turns, tilts or bobs, and only its rim bays and central core glow and blink softly. Seamless loop: the last frame matches the first.",
                 Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the carrier flies forward in place, as if held in a wind tunnel, keeping the same size, pose and place in frame. From the first frame to the last its rim bays glow bright and long thin vapour trails stream back from its rim toward the upper left, flickering at an even pace; no ground contact. Seamless loop: the last frame matches the first.",
@@ -208,6 +226,16 @@
                 Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the aircraft flies in place, keeping the same size, pose and place in frame. Thrusters flare in steady bursts, exhaust streams backward, a slight rhythmic bob, no ground contact. Seamless loop: the last frame matches the first.",
             },
         },
+        // Exact catalog slug -> plain nouns appended after its kind's negative terms, for one
+        // identity whose clips keep drawing something its kind's clips need not avoid (owner
+        // answers Q0131 (a), Q0133; plan 2026-11-28-broodlings WP6). A slug that is not in the
+        // catalog, or blank terms, is refused.
+        // spore_matriarch: its first four seeds drew light shafts from above and flapped their
+        // wings; brood_mite: its pinned Idles nodded their heads and flushed in colour.
+        negative_overrides: {
+            "spore_matriarch": "light shafts, tractor beam, beam of light from above, volumetric light, haze, flapping wings",
+            "brood_mite": "head turning, nodding, twitching, colour change",
+        },
     ),
 
     // Longest composed prompt accepted, in characters. The model's own limit is not published
@@ -280,7 +308,12 @@
         // mothership_carrier, saucer_interceptor (carrier batch, 2026-11-26): two wide flat
         // saucers seen at 3/4, the aircraft shape batch 5 letterboxed; letterboxed from the first
         // clip.
+        //
+        // spore_matriarch, brood_mite (broodlings batch, 2026-11-26): a wide winged beast and a
+        // small creature with its claws spread, seen at 3/4; letterboxed from the first clip.
         overrides: {
+            "spore_matriarch": Letterbox(feather_permille: 30),
+            "brood_mite": Letterbox(feather_permille: 30),
             "mothership_carrier": Letterbox(feather_permille: 30),
             "saucer_interceptor": Letterbox(feather_permille: 30),
             "burrow_scorpion": Letterbox(feather_permille: 30),
@@ -384,7 +417,22 @@
         // sampling only, as the crawler's Idle.
         // mothership_carrier, saucer_interceptor Attack (carrier batch, 2026-11-26): pinned at its
         // end to the Idle picture, as batch 5's aircraft.
+        // spore_matriarch, brood_mite (broodlings batch, 2026-11-26): Attack pinned at its end to
+        // the Idle picture; the Broodling's Walk keeps no scale lock and no cross-fade from the
+        // first attempt, as the scorpion's (a stride reads as an uneven zoom). The Brood Lord
+        // analogue's Idle and Walk keep no scale lock either: every clip of it beats its wings,
+        // which reads as an uneven zoom; its accepted loops are a temporary exception under the
+        // owner's answer to Q0133 (a polish pass redoes them).
         overrides: {
+            "spore_matriarch": {
+                Attack: (pin_end: true, seam: None),
+                Idle: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 2))),
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 2))),
+            },
+            "brood_mite": {
+                Attack: (pin_end: true, seam: None),
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 0))),
+            },
             "mothership_carrier": {
                 Attack: (pin_end: true, seam: None),
             },

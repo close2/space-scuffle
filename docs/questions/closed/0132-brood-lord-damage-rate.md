@@ -23,3 +23,11 @@ data supports the second (`BroodLordHangar`: 2 at the start, one built per 2.5 g
 ## Answer
 
 - **Option (a): Follow StarCraft II 5.0.14 data.** Launch both stored escort Broodlings on the opening attack, then one per 45-tick rebuild period during continuous fire, with each hit spawning a Broodling.
+
+## Resolution
+
+Built as (a) by plan [`2026-11-28-broodlings`](../../plans/2026-11-28-broodlings.md): WP1 (`2aa72f59`) added the
+generic strike magazine, impact spawn and timed life; WP3 (`7b815da4`) gave the Brood Lord analogue the 5.0.14
+magazine (two escorts at the start, one rebuilt per 45 ticks, armed 9 ticks later), so it throws two on its first
+release and then one per rebuild; WP4 (`3f51a790`) lands each escort as a Broodling (`brood_mite`) with 89 + 0 to 5
+ticks of life. Battle 20 keeps its outcome (evidence `docs/evidence/2026-11-28-broodlings.md`). B-233 fixed.

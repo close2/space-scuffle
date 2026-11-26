@@ -153,7 +153,13 @@ use std::collections::BTreeMap;
 /// variant tag (`Flown` 0, `Remaining` 1) and its value, in place of `ends_after` (plan
 /// `2026-11-28-missile-movers-b52` D-2, D-5). The number is the next free at merge: 58 and 59
 /// are reserved for the Gated movement plan.
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 60;
+/// Schema 61 adds each entity's strike magazine, `Entity::strike_magazine` (an option tag, then
+/// its armed count, arming and build countdowns), and timed life, `Entity::timed_life` (an option
+/// tag, then its ticks), after `hangar_link`; and each weapon's impact spawn,
+/// `WeaponSpec::impact_spawn` (an option tag, then its unit, count per strike, search range,
+/// timed life and order), after `magazine_launch` (plan `2026-11-28-broodlings` D-3 to D-5). The
+/// number is the next free at merge.
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 61;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.

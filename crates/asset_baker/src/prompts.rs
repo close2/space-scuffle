@@ -294,7 +294,8 @@ impl fmt::Display for ActionSource {
     }
 }
 
-/// The action text of one identity's state, with its source and its kind's negative terms.
+/// The action text of one identity's state, with its source, its kind's negative terms and
+/// the identity's own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActionText<'a> {
     /// The text placed between the identity's prompt and the style.
@@ -303,6 +304,19 @@ pub struct ActionText<'a> {
     pub source: ActionSource,
     /// The negative terms of the identity's drawing kind; an override does not change them.
     pub negative_terms: Option<&'a str>,
+    /// The identity's own negative terms ([`ActionPolicy::negative_overrides`]), appended after
+    /// its kind's; `None` for an identity without any.
+    pub identity_negative_terms: Option<&'a str>,
+}
+
+impl ActionText<'_> {
+    /// Every negative term of this clip beyond the global negative prompt: the kind's, then
+    /// `", "`, then the identity's (plan `2026-11-28-broodlings` WP6, owner answers Q0131 (a)
+    /// and Q0133); either alone as it is; `None` with neither.
+    #[must_use]
+    pub fn clip_negative_terms(&self) -> Option<String> {
+        compose_negative_prompt(self.negative_terms, self.identity_negative_terms)
+    }
 }
 
 /// The `actions` section of `media_style.ron`: action text per drawing kind, and per-identity
@@ -319,6 +333,12 @@ pub struct ActionPolicy {
     /// A state the override does not name keeps its kind's text.
     #[serde(default)]
     pub overrides: BTreeMap<String, BTreeMap<AnimState, String>>,
+    /// Exact catalog slug to plain nouns appended after its kind's negative terms, for one
+    /// identity whose clips draw something every clip of its kind need not avoid (plan
+    /// `2026-11-28-broodlings` WP6; owner answers Q0131 (a), Q0133). Every state of the
+    /// identity takes them.
+    #[serde(default)]
+    pub negative_overrides: BTreeMap<String, String>,
 }
 
 impl ActionPolicy {
@@ -343,6 +363,7 @@ impl ActionPolicy {
         let kind = DrawingKind::of(shape);
         let actions = self.kind(kind);
         let negative_terms = actions.negative_terms.as_deref();
+        let identity_negative_terms = self.negative_overrides.get(slug).map(String::as_str);
         if let Some(text) = self
             .overrides
             .get(slug)
@@ -352,12 +373,14 @@ impl ActionPolicy {
                 text,
                 source: ActionSource::Override,
                 negative_terms,
+                identity_negative_terms,
             });
         }
         actions.texts.get(&state).map(|text| ActionText {
             text,
             source: ActionSource::Kind(kind),
             negative_terms,
+            identity_negative_terms,
         })
     }
 
@@ -404,8 +427,8 @@ impl ActionPolicy {
     /// Checks the policy loaded from `path` against `catalog`.
     ///
     /// # Errors
-    /// [`BakerError::UnknownActionOverride`] for an override whose slug the catalog does not
-    /// hold exactly; [`BakerError::DataFile`] for an override of a state its identity does not
+    /// [`BakerError::UnknownActionOverride`] for an override or a negative override whose slug
+    /// the catalog does not hold exactly; [`BakerError::DataFile`] for an override of a state its identity does not
     /// publish, or for a blank text or blank negative terms; and
     /// [`BakerError::MissingActionText`] for the first identity, in catalog order, that
     /// publishes a state for which neither its kind nor an override has a text.
@@ -425,6 +448,19 @@ impl ActionPolicy {
             if let Some(state) = states.keys().find(|state| !published.contains(**state)) {
                 return Err(invalid(format!(
                     "actions.overrides {slug} {state:?}: '{slug}' does not publish {state:?}"
+                )));
+            }
+        }
+        for (slug, terms) in &self.negative_overrides {
+            if catalog.get_by_slug(slug).is_none_or(|a| a.slug != *slug) {
+                return Err(BakerError::UnknownActionOverride {
+                    path: path.to_path_buf(),
+                    slug: slug.clone(),
+                });
+            }
+            if terms.trim().is_empty() {
+                return Err(invalid(format!(
+                    "actions.negative_overrides {slug} is blank"
                 )));
             }
         }

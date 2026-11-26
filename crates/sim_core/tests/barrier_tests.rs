@@ -77,6 +77,7 @@ fn weapon(damage: i32, period: u16) -> WeaponSpec {
         launch_visibility: sim_types::AttackVisibility::Snapshot,
         missile_movers: Vec::new(),
         magazine_launch: None,
+        impact_spawn: None,
     }
 }
 

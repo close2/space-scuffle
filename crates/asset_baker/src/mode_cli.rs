@@ -402,13 +402,19 @@ fn prepare_clip(
         .get_by_slug(id.slug)
         .ok_or_else(|| format!("'{}' is not a catalog identity", id.slug))?;
     let mut parameters = VeoRequestSettings::load(&root.join(VEO_REQUEST_FILE))?.parameters();
+    let kind_terms = style
+        .actions
+        .kind(DrawingKind::of(&archetype.shape))
+        .negative_terms
+        .as_deref();
+    let identity_terms = style
+        .actions
+        .negative_overrides
+        .get(id.slug)
+        .map(String::as_str);
     parameters.negative_prompt = compose_negative_prompt(
         parameters.negative_prompt.as_deref(),
-        style
-            .actions
-            .kind(DrawingKind::of(&archetype.shape))
-            .negative_terms
-            .as_deref(),
+        compose_negative_prompt(kind_terms, identity_terms).as_deref(),
     );
     parameters.seed = run.seed;
     let mut issues = check_mode_clip(style, &prompt, &pictures);

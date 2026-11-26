@@ -117,6 +117,17 @@ pub enum SimulationDiagnostic {
         /// The effect key the spell catalog lacks.
         effect: String,
     },
+    /// A finishing missile's spawn found no place valid for the created unit within its search
+    /// range (plan `2026-11-28-broodlings` D-4); that unit was not created.
+    #[error("simulation tick {tick:?}: no place for impact spawn {unit:?} near {point:?}")]
+    ImpactSpawnBlocked {
+        /// Tick of the finish.
+        tick: Tick,
+        /// The archetype that was not created.
+        unit: sim_types::UnitTypeId,
+        /// The finish point the search started from, world units.
+        point: sim_types::SimVec2,
+    },
     /// An invalid buff prevented this entity's weapon update during the tick.
     #[error("simulation tick {tick:?}, entity {entity:?}: {source}")]
     InvalidBuffAttackRate {

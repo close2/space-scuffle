@@ -1,0 +1,72 @@
+(
+    format_version: 1,
+    name: "brood_mite",
+    atlas_sha256: "b579fe9d8eebb6330b80ea5cbd651b9b8c6690efa9258f182f25241c4b3bf473",
+    manifest_sha256: "e8ff231ad196777001e098ad1413497bc6a280e8a3278adf836a33d0faeab56a",
+    bake: (
+        frame_size: 512,
+        fps: 15,
+        max_frames_per_state: 10,
+        ffmpeg_version: "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+        framing: Letterbox(
+            feather_permille: 30,
+        ),
+    ),
+    states: {
+        Idle: (
+            clip: "brood_mite_idle.mp4",
+            clip_sha256: "2abf143e439b8e3afe5727da8a6fd6612c61eb0d6e173ffda187c3bf5ce0cc60",
+            start_frame: 0,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/a05e5b81-c049-4418-a777-08fe84cebb44",
+                prompt_sha256: "4406264c04b9f4035b302fc3a5b27903f35470ca2204a96076222e7e25e7c06c",
+                keyframe_sha256: Some("46ce66af5f73a4f3c915fd34dedb3af69f5b1e98856ba365b1891db2b0539c8b"),
+                last_frame_sha256: Some("46ce66af5f73a4f3c915fd34dedb3af69f5b1e98856ba365b1891db2b0539c8b"),
+                ledger_line: 1532,
+            ),
+            bar_rgb: Some((40, 42, 61)),
+            seam: Some((
+                sampling: Loop,
+                scale_permille: 0,
+                crossfade_frames: 2,
+            )),
+        ),
+        Walk: (
+            clip: "brood_mite_walk.mp4",
+            clip_sha256: "a8f21daa9847552e1543c0198d01b897fc42dfd0eab7f76a5c21fbc404229df3",
+            start_frame: 10,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/5f036fff-8f48-429d-a42f-5f402b3b678c",
+                prompt_sha256: "182ca4003ec8a5d7dc906a3a9ebcd41484029d20b20c3e5d4ec4df0f1f3846fa",
+                keyframe_sha256: Some("46ce66af5f73a4f3c915fd34dedb3af69f5b1e98856ba365b1891db2b0539c8b"),
+                last_frame_sha256: Some("46ce66af5f73a4f3c915fd34dedb3af69f5b1e98856ba365b1891db2b0539c8b"),
+                ledger_line: 1536,
+            ),
+            bar_rgb: Some((40, 42, 61)),
+            seam: Some((
+                sampling: Loop,
+                scale_permille: 0,
+                crossfade_frames: 0,
+            )),
+        ),
+        Attack: (
+            clip: "brood_mite_attack.mp4",
+            clip_sha256: "95a47aab545c78db87bbabd55cf0936c3f3d886bb96b82ac72fb0bfce1a4e3c7",
+            start_frame: 20,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/d57c22e3-7c57-489b-b415-7ef07953fc13",
+                prompt_sha256: "deb0e66e0e635abd7e471b3f308716da8b864c78edc7ddaf56efeefc141bee87",
+                keyframe_sha256: Some("46ce66af5f73a4f3c915fd34dedb3af69f5b1e98856ba365b1891db2b0539c8b"),
+                last_frame_sha256: Some("46ce66af5f73a4f3c915fd34dedb3af69f5b1e98856ba365b1891db2b0539c8b"),
+                ledger_line: 1540,
+            ),
+            bar_rgb: Some((40, 42, 61)),
+        ),
+    },
+)

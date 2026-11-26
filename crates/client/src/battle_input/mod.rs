@@ -872,4 +872,41 @@ mod hangar_pick_tests {
             assert!(!BattleView::can_pick(&world, foe, unit, me));
         }
     }
+
+    /// B-18 (plan `2026-11-28-broodlings` D-12 item 2): the unit a shipped missile creates is an
+    /// ordinary unit, picked by its owner and, seen, by an enemy.
+    #[test]
+    fn a_spawned_unit_is_picked_as_any_unit() {
+        let map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))
+            .expect("invariant: a flat map");
+        let mut world = sim_fixtures::world(map, 7);
+        let spawned = world
+            .catalog
+            .archetypes()
+            .find_map(|arch| arch.ground_weapon.as_ref().and_then(|w| w.impact_spawn))
+            .map(|spawn| spawn.unit)
+            .expect("a shipped impact spawn");
+        let (me, foe) = (PlayerId(0), PlayerId(1));
+        let unit = world
+            .spawn_unit(spawned, me, SimVec2::from_i32(10, 10))
+            .expect("open ground");
+        let watcher_kind = world
+            .catalog
+            .archetypes()
+            .find(|arch| arch.mover_type == MoverType::Ground && arch.max_speed > SimScalar::ZERO)
+            .map(|arch| arch.unit_type_id)
+            .expect("a shipped ground unit");
+        world
+            .spawn_unit(watcher_kind, foe, SimVec2::from_i32(12, 10))
+            .expect("open ground");
+        world.update_vision();
+        assert!(
+            BattleView::can_pick(&world, me, unit, me),
+            "its owner picks it"
+        );
+        assert!(
+            BattleView::can_pick(&world, foe, unit, me),
+            "a seeing enemy targets it"
+        );
+    }
 }

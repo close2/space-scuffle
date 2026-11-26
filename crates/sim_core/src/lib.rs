@@ -51,7 +51,8 @@ pub use combat::{
 };
 pub use entity::{
     ActiveBuff, ActiveProjectile, BarrierState, Cargo, Entity, LastSeen, MovementMemory,
-    PendingLine, PendingLineView, PendingStrikes, SlotClaim, UnitTask, WeaponPhase,
+    PendingLine, PendingLineView, PendingStrikes, SlotClaim, StrikeMagazineState, UnitTask,
+    WeaponPhase,
 };
 pub use error::{CollisionClassLayersFault, CollisionClassNameFault, SimCoreError, SimResult};
 pub use published_actions::ActionSet;

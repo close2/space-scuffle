@@ -321,6 +321,7 @@ fn test_siege_mode_toggle_immobility_and_long_range_splash() {
         launch_visibility: sim_types::AttackVisibility::Snapshot,
         missile_movers: Vec::new(),
         magazine_launch: None,
+        impact_spawn: None,
     };
 
     let ability = AbilitySpec {
