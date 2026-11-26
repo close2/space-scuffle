@@ -32,6 +32,23 @@
 // `Remaining(x)` once at most x is left to the impact (a negative `Outro`, its magnitude; plan
 // 2026-11-28-missile-movers-b52 D-2). With movers, `projectile_speed` is the missile's top speed.
 // Omitted: a constant `projectile_speed`.
+//
+// `capabilities.strike_magazine` (plan 2026-11-28-broodlings D-3): StarCraft II's CAbilArmMagazine
+// whose members are never units of their own (the Brood Lord's escorts), `(capacity, start,
+// build_ticks, arming_ticks)`: at most `capacity` charges armed, arming and building together,
+// `start` armed when the unit is created, one built at a time in `build_ticks` and armed
+// `arming_ticks` after its build. A release of the unit's weapon carries one armed charge per
+// strike, up to `attacks_count`; with none armed the weapon starts no swing. Omitted: none.
+//
+// `impact_spawn` (a missile weapon's field; plan 2026-11-28-broodlings D-4, D-5): StarCraft II's
+// `FinishEffect` CEffectCreateUnit, `(unit, per_strike, search_range, timed_life, order)`: where
+// the missile's flight finishes, hit or miss (at the target, or the last point if it was lost; a
+// missile that fizzles creates nothing), `per_strike` units of the slug `unit` per strike it
+// carried, placed within `search_range` world units, each with `timed_life: Some((ticks,
+// random_extra_ticks))` (dies after `ticks` plus 0 to `random_extra_ticks` at random, with no
+// damage source) or `None`, and the first order `AttackTargetOrPoint` (attack the target if it
+// can, else attack-move to the finish). The unit exists only by spawning: no structure trains
+// it, it costs no supply and spawns nothing in turn. Omitted: none.
 (
     attack_snapshot_cap_ticks: Some(25),
     units: [
@@ -3851,7 +3868,25 @@
                 backswing_ticks: 9,
                 random_delay_ticks: (-1.1161, 2.2321),
                 splash: None,
-                projectile_speed: Some(0.9),
+                // 5.0.14 BroodlingEscortLaunchA Movers BroodLordWeaponRight/Left, IfRangeLTE 500 (liberty
+                // EffectData:2664-2672), mirror images (MoverData:44-69, :620-644): Throw from Speed 5
+                // accelerating 3 to MaxSpeed 8 until Outro 1.5,4.5 (midpoint 3), then Guidance
+                // accelerating 20 to MaxSpeed 40, carrying the speed in; the top speed is 40 x 0.056.
+                // The throw's direction, gravity and wave are not modelled (B-231). Plan
+                // 2026-11-28-broodlings D-2 (B-232).
+                projectile_speed: Some(2.24),
+                missile_movers: [(up_to_range: None, phases: [
+                    (speed: Some(0.28), acceleration: 0.009408, max_speed: 0.448, ends: Some(Flown(3.0))),
+                    (speed: None, acceleration: 0.06272, max_speed: 2.24, ends: None),
+                ])],
+                // 5.0.14 BroodlingEscortImpactA (liberty EffectData:2684-2692): one Broodling per escort at
+                // TargetUnitOrPoint, SpawnRange 5; BroodlingTimedLifeBroodLord Duration 5 = 89 ticks
+                // (voidmulti EffectData:2289-2294) plus TimedLife DurationRandomMax 0.3 = 5 ticks (core
+                // BehaviorData:105-117); BroodlingAttack (liberty EffectData:2769-2773); plan
+                // 2026-11-28-broodlings D-4, D-5 (B-21).
+                impact_spawn: Some((unit: "brood_mite", per_strike: 1, search_range: 5.0,
+                    timed_life: Some((ticks: 89, random_extra_ticks: 5)),
+                    order: AttackTargetOrPoint)),
                 weapon_class: Some("swarm_flyer_attacks"),
                 upgrade_bonus_per_level: 2.0,
                 bonus_upgrade_per_level: 0.0,
@@ -3888,7 +3923,25 @@
                 backswing_ticks: 9,
                 random_delay_ticks: (-1.1161, 2.2321),
                 splash: None,
-                projectile_speed: Some(0.9),
+                // 5.0.14 BroodlingEscortLaunchA Movers BroodLordWeaponRight/Left, IfRangeLTE 500 (liberty
+                // EffectData:2664-2672), mirror images (MoverData:44-69, :620-644): Throw from Speed 5
+                // accelerating 3 to MaxSpeed 8 until Outro 1.5,4.5 (midpoint 3), then Guidance
+                // accelerating 20 to MaxSpeed 40, carrying the speed in; the top speed is 40 x 0.056.
+                // The throw's direction, gravity and wave are not modelled (B-231). Plan
+                // 2026-11-28-broodlings D-2 (B-232).
+                projectile_speed: Some(2.24),
+                missile_movers: [(up_to_range: None, phases: [
+                    (speed: Some(0.28), acceleration: 0.009408, max_speed: 0.448, ends: Some(Flown(3.0))),
+                    (speed: None, acceleration: 0.06272, max_speed: 2.24, ends: None),
+                ])],
+                // 5.0.14 BroodlingEscortImpactA (liberty EffectData:2684-2692): one Broodling per escort at
+                // TargetUnitOrPoint, SpawnRange 5; BroodlingTimedLifeBroodLord Duration 5 = 89 ticks
+                // (voidmulti EffectData:2289-2294) plus TimedLife DurationRandomMax 0.3 = 5 ticks (core
+                // BehaviorData:105-117); BroodlingAttack (liberty EffectData:2769-2773); plan
+                // 2026-11-28-broodlings D-4, D-5 (B-21).
+                impact_spawn: Some((unit: "brood_mite", per_strike: 1, search_range: 5.0,
+                    timed_life: Some((ticks: 89, random_extra_ticks: 5)),
+                    order: AttackTargetOrPoint)),
                 weapon_class: Some("swarm_flyer_attacks"),
                 upgrade_bonus_per_level: 2.0,
                 bonus_upgrade_per_level: 0.0,
@@ -3897,15 +3950,21 @@
                 overclock: None,
                 harvester: None,
                 is_resource_dropoff: false,
+                // 5.0.14 BroodLordHangar (CAbilArmMagazine, External): liberty AbilData:3808-3824
+                // (CountStart 2, Ammo1 Time 2.5 = 45 ticks, AutoBuild), BroodLordQueue2 QueueSize 2
+                // (:2077-2082), BroodlingAttackDelay 0.5 = 9 ticks (liberty BehaviorData:1361-1368);
+                // two at most (Liquipedia, Brood Lord); attacks_count 2 is "up to two escorts, 20
+                // each"; plan 2026-11-28-broodlings D-3 (B-233; Q0132 default (a)).
+                strike_magazine: Some((capacity: 2, start: 2, build_ticks: 45, arming_ticks: 9)),
             ),
             // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
             effects: (
                 weapons: [(weapon: Primary, travel: Some("acid_spit"), impact: Some("acid_hit"))],
             ),
             veo_prompts: {
-                Idle: "Spore Matriarch: Massive manta-ray bio-beast drifting slowly high above ground with pulsating spore pods.",
-                Walk: "Spore Matriarch: Majestic undulating wing sweeps slowly displacing air.",
-                Attack: "Spore Matriarch: Launching clusters of writhing bio-symbionts plunging toward ground targets.",
+                Idle: "Spore Matriarch: a single manta-ray-shaped swarm beast, broad dark green chitin wings edged with glowing amber spore pods, a thin tail, two pale larvae on its belly, seen from above at a three-quarter angle, head toward the lower right, wings spread wide and motionless, the whole beast in the middle of the frame with wide margins, plain dark backdrop, lit softly from the front.",
+                Walk: "Spore Matriarch: the same huge winged beast gliding forward in place, its broad wings rippling in slow even waves, fully visible in the middle of the frame, no other creatures.",
+                Attack: "Spore Matriarch: the same huge winged beast flings two small pale parasite larvae from under its belly toward the lower right.",
             },
         ),
         (
@@ -4373,6 +4432,106 @@
                 Idle: "Amber Spore Balloon: Huge buoyant jellyfish-like biological gas sac drifting lazily with trailing tentacles.",
                 Walk: "Amber Spore Balloon: Slow rhythmic gaseous pulsation gently wafting forward.",
                 Attack: "Amber Spore Balloon: Venting harmless glowing spores into the surrounding breeze.",
+            },
+        ),
+        // The Brood Lord's Broodling (plan 2026-11-28-broodlings D-6, B-21): 5.0.14 Broodling, liberty
+        // UnitData:11166-11193, parent BroodlingDefault (:79-109), voidmulti UnitData:150-156. It exists
+        // only by spawning: the Spore Matriarch's escorts land as one each (impact_spawn), with a 5
+        // Normal s timed life; no structure trains it, no supply, no cost (NoScore).
+        (
+            slug: "brood_mite",
+            unit_type_id: 48,
+            faction: "sylvan_swarm",
+            display_name: "Brood Mite",
+            lore: "Short-lived parasite larva flung down by a Spore Matriarch, biting whatever it lands on.",
+            sc2_analogue: "Broodling (Brood Lord spawn)",
+            showcase_hero: false,
+            showcase_order: None,
+            shape: UnitSphere,
+            silhouette: MeleeSpikes,
+            mover_type: Ground,
+            // Light, Biological (BroodlingDefault, liberty UnitData:79-109).
+            attributes: (bits: 5),
+            // LifeMax 20 (voidmulti UnitData:150-156); no LifeArmor.
+            max_hp: 20.0,
+            max_shields: 0.0,
+            max_energy: 0.0,
+            start_energy: 0.0,
+            life_armor: 0.0,
+            shield_armor: 0.0,
+            // LifeRegenRate 0.2734 (BroodlingDefault) x 0.056.
+            hp_regen_per_tick: 0.01531,
+            shield_regen_per_tick: 0.00,
+            energy_regen_per_tick: 0.000,
+            // Speed 2.9531 (voidmulti UnitData:150-156) x 0.056.
+            max_speed: 0.1654,
+            // Acceleration 1000 and TurningRate 999.8437 (liberty UnitData:11166-11193): instant.
+            acceleration: 3.136,
+            deceleration: 3.136,
+            turn_rate_deg_per_tick: 55.99,
+            // Radius and SeparationRadius 0.375 (BroodlingDefault).
+            collision_radius: 0.375,
+            separation_radius: 0.375,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
+            // Sight 7 (BroodlingDefault).
+            sight_radius: 7.0,
+            // NeedleClaws MinScanRange 15 against Range 0.1 (liberty WeaponData:109-117): the greater.
+            scan_range: 15.0,
+            attack_target_priority: 20,
+            primary_weapon: Either,
+            acquire_tie_break: Closest,
+            mineral_cost: 0,
+            gas_cost: 0,
+            supply_cost: 0,
+            supply_provided: 0,
+            // Never built: it exists only by its spawn (D-6).
+            build_time_ticks: 0,
+            armor_class: Some("swarm_ground_carapace"),
+            weapon: Some((
+                name: "Needle Claws",
+                visual_kind: MeleeSlash,
+                target_flags: (bits: 255),
+                min_range: 0.0,
+                // NeedleClaws Range 0.1 (liberty WeaponData:109-117).
+                max_range: 0.1,
+                firing_arc_deg: 11.25,
+                acquire_arc_deg: 0.0,
+                has_turret: false,
+                turret_turn_rate_deg_per_tick: 0.0,
+                turret_idle: Hold,
+                // NeedleClaws Amount 4 (liberty EffectData:1413-1416); +1 per Swarm melee level
+                // (liberty UpgradeData:502-503).
+                base_damage: 4.0,
+                attribute_bonuses: [],
+                attacks_count: 1,
+                strike_interval_ticks: 0,
+                // Period 0.8 (voidmulti WeaponData:402-404) = 14.29, rounded half up to 14 ticks.
+                period_ticks: 14,
+                damage_point_ticks: 3,
+                backswing_ticks: 9,
+                random_delay_ticks: (-1.1161, 2.2321),
+                splash: None,
+                projectile_speed: None,
+                weapon_class: Some("swarm_melee_attacks"),
+                upgrade_bonus_per_level: 1.0,
+                bonus_upgrade_per_level: 0.0,
+                // Options Melee: NeedleClaws, liberty WeaponData:109-117.
+                melee: true,
+            )),
+            capabilities: (
+                overclock: None,
+                harvester: None,
+                is_resource_dropoff: false,
+            ),
+            // Presentation (plan 2026-11-09-effect-visualization §5.3): the Swarm's melee look.
+            effects: (
+                weapons: [(weapon: Primary, impact: Some("claw_rake"))],
+            ),
+            veo_prompts: {
+                Idle: "Brood Mite: a single small parasitic larva creature, a pale segmented grub-like body with dark chitin plates, short hooked legs and two curved needle claws at its front, crouched still and twitching, seen from above at a three-quarter angle, its front toward the lower right, whole in the middle of the frame, on a plain dark backdrop, lit softly from the front, no other creatures.",
+                Walk: "Brood Mite: the same small parasitic larva scuttling quickly forward on its hooked legs, staying in place in the middle of the frame and fully visible, no other creatures.",
+                Attack: "Brood Mite: the same small parasitic larva lunges and stabs forward with its two curved needle claws toward the lower right.",
             },
         ),
     ]

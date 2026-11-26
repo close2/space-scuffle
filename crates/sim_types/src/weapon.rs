@@ -596,6 +596,51 @@ pub struct WeaponSpec {
     /// its release spends its unit's hangar, one docked member per try.
     #[serde(default)]
     pub magazine_launch: Option<MagazineLaunch>,
+    /// Units this weapon's missile creates where its flight finishes, whether or not its strike
+    /// landed (`StarCraft` II's `FinishEffect` of a `CEffectCreateUnit`; plan
+    /// `2026-11-28-broodlings` D-4). `None`, the default, for every weapon that creates nothing.
+    /// Read only for a weapon with a `projectile_speed`; catalog validation refuses it on an
+    /// instant weapon.
+    #[serde(default)]
+    pub impact_spawn: Option<ImpactSpawn>,
+}
+
+/// What a weapon's finishing missile creates (plan `2026-11-28-broodlings` D-4): `StarCraft` II's
+/// `CEffectCreateUnit` (`SpawnUnit`, `SpawnCount`, `SpawnRange`), the timed life its spawn effect
+/// applies and the order its `CEffectIssueOrder` gives. The catalog resolves the authored unit
+/// slug to its id once at load.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImpactSpawn {
+    /// The archetype created.
+    pub unit: crate::ids::UnitTypeId,
+    /// Units created per strike the missile carries, at least 1 (`SpawnCount`).
+    pub per_strike: u8,
+    /// World units around the finish point searched for a place valid for the created unit's
+    /// movement layer (`SpawnRange`); 0 searches the finish point alone.
+    pub search_range: SimScalar,
+    /// The timed life each created unit gets; `None` for a unit that lives until killed.
+    pub timed_life: Option<TimedLifeSpec>,
+    /// The first order each created unit gets.
+    pub order: SpawnOrder,
+}
+
+/// The first order of a unit a finishing missile creates (plan `2026-11-28-broodlings` D-4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SpawnOrder {
+    /// Attack the missile's target if it still lives and the created unit may attack it, else
+    /// attack-move to the finish point (`StarCraft` II's `attack` on `TargetUnitOrPoint`).
+    AttackTargetOrPoint,
+}
+
+/// How a created unit's clock is set (plan `2026-11-28-broodlings` D-5): `StarCraft` II's
+/// `TimedLife` behaviours, whose expiry kills with no damage source and no kill credit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TimedLifeSpec {
+    /// Ticks of life (`Duration`).
+    pub ticks: u16,
+    /// Up to this many ticks added, drawn uniformly from 0 to it inclusive from the world's
+    /// seeded generator (`DurationRandomMax`); 0 draws nothing.
+    pub random_extra_ticks: u16,
 }
 
 /// How a launch weapon's release spends its unit's hangar (plan `2026-11-28-carrier-interceptors`
@@ -993,6 +1038,7 @@ mod tests {
             launch_visibility: AttackVisibility::Snapshot,
             missile_movers: Vec::new(),
             magazine_launch: None,
+            impact_spawn: None,
         }
     }
 
@@ -1017,6 +1063,35 @@ mod tests {
                 interval_ticks: 7
             })
         );
+        Ok(())
+    }
+
+    /// Plan `2026-11-28-broodlings` D-4, D-5: a weapon that leaves its impact spawn out creates
+    /// nothing (`None`); an authored spawn reads its unit, count, search range, timed life and
+    /// order.
+    #[test]
+    fn impact_spawn_defaults_to_none_and_reads_its_fields() -> Result<(), Box<dyn std::error::Error>>
+    {
+        use super::{ImpactSpawn, SpawnOrder, TimedLifeSpec, WeaponSpec};
+        use crate::ids::UnitTypeId;
+        let text = ron::to_string(&missile_weapon())?;
+        let field = "impact_spawn:None";
+        assert!(text.contains(field), "premise: the field is written");
+        let omitted: WeaponSpec = ron::from_str(&text.replace(&format!(",{field}"), ""))?;
+        assert_eq!(omitted.impact_spawn, None);
+        let spawn = ImpactSpawn {
+            unit: UnitTypeId(48),
+            per_strike: 1,
+            search_range: SimScalar::from_i32(5),
+            timed_life: Some(TimedLifeSpec {
+                ticks: 89,
+                random_extra_ticks: 5,
+            }),
+            order: SpawnOrder::AttackTargetOrPoint,
+        };
+        let authored = format!("impact_spawn:Some({})", ron::to_string(&spawn)?);
+        let read: WeaponSpec = ron::from_str(&text.replace(field, &authored))?;
+        assert_eq!(read.impact_spawn, Some(spawn));
         Ok(())
     }
 

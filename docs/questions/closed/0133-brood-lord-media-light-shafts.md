@@ -32,3 +32,15 @@ Recommended: (c) now, then (a) together with the Carrier once Q0131 is answered 
 ## Answer
 
 - **Try up to 4 more seeds (using per-identity negative terms as in Q0131 (a), or a clean start still if needed for framing), then take the best available seed** within the remaining batch budget. Accept faint light shafts / minor staging imperfections as a temporary exception so `spore_matriarch` and `brood_mite` unlock in the client now; unsatisfactory videos across the roster will be redone in a polish pass once the game is finished.
+
+## Resolution
+
+Done on branch `broodlings-plan` (plan `2026-11-28-broodlings` WP6 continuation): `asset_baker` gained per-identity
+negative terms (`actions.negative_overrides` in `media_style.ron`, tested), used for both identities. 8 more
+generations ($3.20; the batch 16, $6.40 of $10; the ledger $123.25 of $230). Accepted as the temporary exception:
+`spore_matriarch`'s Idle and Walk beat their wings (an uneven zoom no seam repair locks) with faint light shafts at the
+top of the backdrop, and its pin's left wing tip touches the frame edge; `brood_mite`'s Idle nods its head slightly
+and its Walk's worst loop step is just under the threshold. Both Attacks are clean. Installed, baked, strict audit 32
+of 32; both identities in `required_set.ron`; the client unlocks the Brood Lord analogue. Evidence:
+[`docs/evidence/veo/2026-11-28-batch-broodlings.md`](../../evidence/veo/2026-11-28-batch-broodlings.md). For the polish
+pass.

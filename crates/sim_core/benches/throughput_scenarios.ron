@@ -44,5 +44,10 @@
         // first army, about 100 launched members at full magazines; 250 warm ticks bring the
         // armies together, and the measured ticks include launches, fights, docks and rebuilds.
         (map_cells: 64, units: 200, warm_ticks: 250, hangar_units: 12),
+        // Brood (plan 2026-11-28-broodlings §5): the 64x64 battle of 200 units with 12 of the
+        // first unit of the catalog with a strike magazine and an impact spawn (found by
+        // property) attack-moving with the first army; 250 warm ticks bring the armies together,
+        // and the measured ticks include releases, spawns, clocks and expiries.
+        (map_cells: 64, units: 200, warm_ticks: 250, spawner_units: 12),
     ],
 )

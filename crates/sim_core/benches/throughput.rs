@@ -94,6 +94,13 @@ struct Scenario {
     /// members fighting, docking and rebuilding.
     #[serde(default)]
     hangar_units: u32,
+    /// Spawning units added to the first army on a flat map, attack-moving with it (plan
+    /// `2026-11-28-broodlings` §5, the `brood` row): the first archetype of the catalog, by id,
+    /// with a strike magazine and a weapon whose missile creates units, found by property. The
+    /// measured ticks include their magazines, the created units' spawns, fights, clocks and
+    /// expiries.
+    #[serde(default)]
+    spawner_units: u32,
 }
 
 /// One kind of spellcaster in a spell scenario: `casters` units of `caster_slug` for the
@@ -128,6 +135,8 @@ impl Scenario {
             .unwrap_or_else(|| format!("{0}x{0}", self.map_cells));
         if self.hangar_units > 0 {
             format!("{map}, {} hangar units", self.hangar_units)
+        } else if self.spawner_units > 0 {
+            format!("{map}, {} spawner units", self.spawner_units)
         } else if self.spells.is_empty() {
             map
         } else {
@@ -211,6 +220,7 @@ fn build_world(
         }
     }
     blue.extend(spawn_hangar_units(&mut world, scenario.hangar_units)?);
+    blue.extend(spawn_spawner_units(&mut world, scenario.spawner_units)?);
     let far_target = scenario.map_cells - ORDER_MARGIN;
     let mut tick = 0;
     step_with(
@@ -261,6 +271,42 @@ fn spawn_hangar_units(world: &mut SimWorld, count: u32) -> Result<Vec<EntityId>,
             Ok(world.spawn_unit(kind, PlayerId(0), spawn)?)
         })
         .collect()
+}
+
+/// Spawns `count` spawning units (a strike magazine and an impact spawn) for the first player
+/// in the hangar units' row; none when `count` is 0.
+fn spawn_spawner_units(world: &mut SimWorld, count: u32) -> Result<Vec<EntityId>, Box<dyn Error>> {
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+    let kind = world
+        .catalog
+        .archetypes()
+        .filter(|arch| arch.capabilities.strike_magazine.is_some())
+        .filter(|arch| {
+            [&arch.weapon, &arch.ground_weapon, &arch.air_weapon]
+                .into_iter()
+                .flatten()
+                .any(|weapon| weapon.impact_spawn.is_some())
+        })
+        .map(|arch| arch.unit_type_id)
+        .min()
+        .ok_or("a spawner scenario needs a catalog with a spawning unit")?;
+    (0..count)
+        .map(|index| {
+            let spawn = position(FORMATION_MARGIN + index * HANGAR_SPACING, HANGAR_ROW)?;
+            Ok(world.spawn_unit(kind, PlayerId(0), spawn)?)
+        })
+        .collect()
+}
+
+/// The units alive in `world` that a clock will kill (spawned units with a timed life).
+fn timed_units(world: &SimWorld) -> usize {
+    world
+        .entities
+        .values()
+        .filter(|entity| entity.timed_life().is_some())
+        .count()
 }
 
 /// The launched hangar members alive in `world`.
@@ -540,12 +586,13 @@ fn measure(
             if scenario.hangar_units > 0 {
                 members += launched_members(&world);
             }
+            if scenario.spawner_units > 0 {
+                members += timed_units(&world);
+            }
         }
         let rate = f64::from(config.ticks) / started.elapsed().as_secs_f64();
-        return Ok((
-            rate,
-            (scenario.hangar_units > 0).then(|| (mean(members, config.ticks), 0.0)),
-        ));
+        let counted = scenario.hangar_units > 0 || scenario.spawner_units > 0;
+        return Ok((rate, counted.then(|| (mean(members, config.ticks), 0.0))));
     }
     if scenario.map_file.is_some() {
         return Err("a spell scenario needs a flat map".into());
@@ -604,7 +651,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             let (rate, load) = measure(&config, &catalogs, scenario)?;
             samples.push(rate);
             if let Some((first, second)) = load {
-                loads.push(if scenario.hangar_units > 0 {
+                loads.push(if scenario.spawner_units > 0 {
+                    format!(
+                        "{}: {first:.1} spawned units alive per measured tick (the clock includes counting them)",
+                        scenario.label()
+                    )
+                } else if scenario.hangar_units > 0 {
                     format!(
                         "{}: {first:.1} launched members per measured tick (the clock includes counting them)",
                         scenario.label()

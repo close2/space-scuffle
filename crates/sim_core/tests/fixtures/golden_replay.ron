@@ -533,8 +533,11 @@
 // plan fires). (60 is provisional, the next free at merge: 58 and 59 are reserved for the Gated
 // movement plan.) Proved on native debug and release and wasm32-wasip1 release and debug, each
 // in a fresh target directory.
+// Re-recorded for plan 2026-11-28-broodlings (checksum schema 60 -> 61): entity strike magazine
+// and timed life, weapon impact spawn encoded; with the schema at 60 and the fields unhashed every
+// checkpoint reproduced. Behaviour: none in these worlds (no Brood Lord analogue).
 (
-    checksum_schema: 60,
+    checksum_schema: 61,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -560,25 +563,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x5dbf62d8ef73c9e2,
-        0x2b3d10d447627d6f,
-        0xd66f3c3d5f8c569d,
-        0x1952769cc9b95358,
-        0x0f870abadef42603,
-        0xa285bbab3601f1de,
-        0x8d44179ac1190bdc,
-        0xa4a9a49110080361,
-        0x50df211f2fad616c,
-        0x2d607ef2b69314e4,
-        0xe85ad5273e9f717b,
-        0x3a37e911a90adf6e,
-        0x37b8dce582446b3b,
-        0xd1da4203944413d4,
-        0xbd9096a2967a6bad,
-        0xbf486830f4cc15a6,
-        0xbe56a745485bce11,
-        0x1f87d45705b4a704,
-        0xaa5c847f006e8dfe,
-        0xbcec92e5d5f6cc28,
+        0x4e5050bbad56f6b0,
+        0x3f54ea013d3cbe90,
+        0x09bc16ab321759da,
+        0x61d30f57616d70c4,
+        0xf847c268b5128598,
+        0xdd3b5076d5f90735,
+        0x900ee1252b1c1675,
+        0x6db04eaf77ed2c54,
+        0x74aca82129279349,
+        0xebfd04212ed1a260,
+        0x2ce0fe03d75554d9,
+        0xb9c4540e772f3e7e,
+        0x91918330585a74bd,
+        0x5a2541be9d742e53,
+        0x6a7f28373ecb8418,
+        0x7cdb41eca4a6bf7a,
+        0x695caee4571a8aba,
+        0x0b26d05a600ca100,
+        0x114553610cafd6d9,
+        0xffe51e665ac652ba,
     ],
 )

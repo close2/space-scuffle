@@ -2,7 +2,8 @@
 //!
 //! # Responsibility
 //! Advances production, then each living entity's channel, cooldown, buff, damage-delay,
-//! regeneration, mode-drain and hit-flash timers, then the effect engine's missiles, persistents, statuses
+//! regeneration, mode-drain, strike-magazine, hit-flash and timed-life timers, then the effect
+//! engine's missiles, persistents, statuses
 //! and displacements (stepped by `crate::effects`, which owns them), then completes
 //! production.
 //!
@@ -33,6 +34,12 @@
 //!   `shield_regen_delay_ticks` and the entity is completed.
 //! - Regeneration never exceeds `max_hp` or `max_shields`.
 //! - A new entity's counter is `u16::MAX`, which satisfies every delay.
+//! - A strike magazine (plan `2026-11-28-broodlings` D-3) steps once per tick, before the weapon
+//!   phase reads it ([`crate::entity::StrikeMagazineState::tick`]).
+//! - A timed life (D-5) falls by one per tick and is counted last: on the tick it reaches 0 the
+//!   unit's life and shields are set to 0 with no damage source, after regeneration, so the reap
+//!   of the same tick removes it with its ordinary death. A unit created on tick T with `n` ticks
+//!   dies on tick T + n.
 
 use crate::catalog::{UnitArchetype, UnitCatalog};
 use crate::entity::Entity;
@@ -88,8 +95,9 @@ fn shields_regenerate(arch: &UnitArchetype, ticks_since_last_damage: u16) -> boo
 }
 
 /// Advances one living entity's channel, cooldown, buff, damage-delay, life and energy
-/// regeneration (completed entities only), mode-drain, shield regeneration and hit-flash timers
-/// by one tick, in that order. Dead entities are left untouched until reap.
+/// regeneration (completed entities only), mode-drain, shield regeneration, strike-magazine,
+/// hit-flash and timed-life timers by one tick, in that order. Dead entities are left untouched
+/// until reap.
 fn upkeep_entity(entity: &mut Entity, catalog: &UnitCatalog) {
     // Dead entities retain their ledger until reap; passive regeneration
     // must never resurrect them or resume their production.
@@ -163,9 +171,26 @@ fn upkeep_entity(entity: &mut Entity, catalog: &UnitCatalog) {
         if regenerates && entity.is_completed {
             entity.shields = (entity.shields + arch.shield_regen_per_tick).min(arch.max_shields);
         }
+
+        // The strike magazine's arming and build (plan `2026-11-28-broodlings` D-3).
+        if let (Some(spec), Some(magazine)) = (
+            arch.capabilities.strike_magazine,
+            entity.strike_magazine.as_mut(),
+        ) {
+            magazine.tick(spec);
+        }
     }
 
     // Hit flash timers
     entity.shield_hit_flash_ticks = entity.shield_hit_flash_ticks.saturating_sub(1);
     entity.hull_hit_flash_ticks = entity.hull_hit_flash_ticks.saturating_sub(1);
+
+    // The clock runs out last, after regeneration (plan `2026-11-28-broodlings` D-5).
+    if let Some(left) = entity.timed_life.as_mut() {
+        *left = left.saturating_sub(1);
+        if *left == 0 {
+            entity.hp = SimScalar::ZERO;
+            entity.shields = SimScalar::ZERO;
+        }
+    }
 }
