@@ -27,3 +27,6 @@ Recommendation: (a) first, then decide (b) on the measured result.
 
 ## Answer
 
+- **Option (a) now:** Fix the three defects only (`B-240` rounding-wedge corner cutting, `B-241` re-checking the current leg after a push, and `B-242` following the route line back to the `0.05` margin).
+
+**Testing & follow-up guidance:** Do **not** use the showcase alone as the deciding factor for whether wider wall clearance (`(b)`) or active wall avoidance (`(c)`) is needed later — the showcase is only one example. Add dedicated tests where **large groups of units travel through narrow sections/chokepoints and around corners**, and judge wall grazing, corner bumping, and any follow-up clearance change against those broader crowd tests.
