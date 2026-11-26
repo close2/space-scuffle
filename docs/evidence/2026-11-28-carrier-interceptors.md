@@ -128,3 +128,105 @@ catalog has no hangar yet, so the hangar phase is skipped.
 `DEFAULT_SANDBOX_CHECKSUM` reproduce on native debug and release and `wasm32-wasip1` release and debug
 (`~/scratch/carrier/proof-wp2-latent/status`). The goldens of the tree itself fail by the schema alone (57) until
 WP6's re-record.
+
+## WP3: the data
+
+Red first (`~/scratch/carrier/red/wp3-red.log`): on WP2's tree with WP3's test edits, `catalog_reference_values_tests`,
+`hangar_tests` and `weapon_catalog_rules_tests` fail (no shipped hangar, no member row, the census still lists the
+salvo with `known_bug: "B-22"`). Green after D-13 (`9b40d6ab`).
+
+**Worlds.** WP3's worlds against WP2's: 490 files, none differing (`~/scratch/carrier/compare-wp3.txt`). No measured
+world carries the Carrier (census), so no class H difference arises; stop rules 2 and 4 hold.
+
+**Fallout found later.** The full simulation run of WP3 (`~/scratch/carrier/logs/wp3-simcore-all.log`) used a build
+from before the commit's last edits; a run on `43b0529e` (`~/scratch/carrier/logs/sim-all-wp4.log`) confirmed that
+`effect_snapshot_tests` passes (14 of 14) and found four tests the new member or the removed salvo broke:
+`stance_orders_tests`' P-1 and P-2 and `player_view_tests`' `can_raise` check iterate every shipped archetype
+through a player command, which admission now refuses for the member whatever the rule under test (D-8), so they
+leave out archetypes that are not `selectable` (H-9 pins the refusal); `missile_mover_tests`' W-15 found its subject
+as the shipped missile weapon with a `Hidden` launch, the salvo WP3 replaced, and now makes the shipped ground missile
+weapon's launch `Hidden` on a copy (`e56831c1`). The asset baker's golden list of unit prompts lacked the member's
+three lines; WP5 adds them.
+
+## WP4: client
+
+`43b0529e`. H-16 (`runtime_media_tests`) and H-17 (`battle_input`'s `hangar_pick_tests`) as left by the previous
+agent, both red on WP3's tree (no `member` in the media entry; `can_pick` read no flag). The two client failures after
+WP3 (`~/scratch/carrier/logs/wp4-tests.log`) and their causes:
+
+- `effect_catalog_tests::every_shipped_weapon_names_the_looks_of_the_event_it_publishes`: the Carrier's two launch
+  weapons (the same weapon authored for both planes) were counted as silent weapons by B-123's check. A launch weapon
+  is now its own delivery kind in the test's helper (D-11 item 4): it publishes no event and names no look, and the
+  launch weapons are exactly the hangar units' weapons (H-18).
+- `weapon_look_tests::the_table_is_sized_from_the_catalog_and_the_budget`: `HeldBeams::capacity_for` bounded the
+  supply-free member as a unit costing 1 supply (200 per player), which is neither the member's bound nor the shipped
+  figure the test pins. A member is fielded only through its hangar units, so its bound is the cap over the hangar
+  unit's supply times `max_count` (`units_per_player`, `effects/beams.rs`): 33 × 8 = 264 per player, 8 × 264 × 2
+  beam weapons = 4,224, above the cheapest supply-bounded beam units' 800. The table takes the smaller of that and the
+  pool share, 1,536 (was 800). A unit test (`bound_tests`) checks both bounds and that a bigger magazine raises the
+  member's in the same binary.
+
+H-19 (`battle_presentation_tests::a_docking_member_draws_no_death_and_a_killed_one_does`): the shipped Carrier,
+found by property, launches its four start members at a passive air enemy; the enemy dies (its own death is of another
+kind), the members fly home and dock: no `BubbleShatter` of the member's kind for the whole return, no death spawn
+asked of the effect system (`spawn_request` with the shipped tables) and no legacy shatter, and the docked members
+leave the snapshot; a relaunched member killed draws exactly one death. It pins behaviour WP2 built (the simulation's
+`members_return_and_dock_when_the_target_is_gone` already counts no shatter at a dock), so it passed on its first run
+rather than red. Logs `~/scratch/carrier/logs/wp4b-tests.log`, `wp4c-tests.log`.
+
+**H-20 is not done:** it needs a Carrier on the field in the client, and the client refuses an identity without media
+(H-16); WP5 produced none (below). It waits for the Carrier's media.
+
+## WP5: media, stopped
+
+[`docs/evidence/veo/2026-11-26-batch-carrier.md`](veo/2026-11-26-batch-carrier.md): the preflight gave its usual
+Express-mode 404 (Q0042); four seeds of each identity, 8 generations, $3.20 at list price ($116.85 of $230.00 spent),
+all drew diagonal light shafts across the backdrop (the owner's no-rays rule) and were rejected; stop rule 8, and the
+owner is asked ([Q0131](../questions/open/0131-carrier-media-light-shafts.md), default: no more spend, the Carrier
+stays locked by `NoMedia`). H-21 is not met; nothing was installed, baked or added to the required set.
+
+## WP6: confirmation, re-record, throughput
+
+**Merge.** `main` `b1dbb43f` (Q0129 closed, Q0130 filed) was already an ancestor of the branch; `main` had not moved, so
+no merge commit was needed. Schema 57 is free (`main` is at 56).
+
+**Final worlds.** Trace binaries and assets of `0fcce364` (the final simulation code; the later commits change
+fixtures and records only) against WP3's: `compare.sh` finds 490 files, none differing
+(`~/scratch/carrier/compare-final.txt`). With WP1 to WP3 each byte-identical to its predecessor, the final worlds are
+WP0's: no class S, V, H or P difference outside the goldens, no outcome moved, the close list is untouched.
+
+**Held-out seeds (§7.3, confirmation only).** `heldout.sh` (matrix seeds 7001 to 7016, battles 31 and 33 on 7001 to
+7064, the showcase and showcase effects on seeds 9 to 16, the skirmish scenario on seeds 9 to 12) on `main` `b1dbb43f`
+and on `0fcce364`: 409 files, none differing (`~/scratch/carrier/compare-heldout.txt`). Stop rule 3 holds.
+
+**Re-record and proof (§5).** `golden_replay.ron`, `golden_replay_orders.ron` and `DEFAULT_SANDBOX_CHECKSUM`
+(`10_676_883_327_660_124_161`) re-recorded at schema 57 in `201411e3`, with the plan's header. `proofcopy.sh final
+201411e3`: a `git archive` copy, every file touched, a fresh target directory, `wasmtime --dir=<real path>`: both goldens
+and the sandbox pass on native debug and release and `wasm32-wasip1` release and debug, 8 of 8
+(`~/scratch/carrier/proof-final/status`). Latent proof of the final tree: `proofcopy.sh final-latent 201411e3
+unhash_final.py` leaves `hangar`, `hangar_link` and `magazine_launch` unhashed at schema 56 and restores `main`'s
+fixtures and sandbox value (`6_457_533_297_407_649_319`): 8 of 8 (`~/scratch/carrier/proof-final-latent/status`).
+So the goldens moved by the encoding alone (class S).
+
+**Throughput (§5, stop rule 5).** `wp6-bench.sh`: the benchmark of WP0 (`a9c0a248`), of the final tree without the new
+row (`final-x`, built from a copy of `201411e3` with the `hangar` row removed, so the runs are like for like) and of the
+final tree, interleaved, two rounds, each run under the gate lock and `perf stat -e instructions:u`. The server was
+heavily loaded by other agents (load average 21 to 183), so the ticks per second are noisy; instructions are not:
+
+| Binary | Round 1 instructions | Round 2 instructions |
+|---|---:|---:|
+| WP0 | 270,018,508,127 | 270,018,529,959 |
+| final without the `hangar` row | 270,141,721,337 | 270,141,739,692 |
+| final | 297,769,687,286 | 297,769,685,994 |
+
+The seven existing rows take **+0.046 %** instructions (limit +0.5 %): one members pass per tick over entities with
+no link. Ticks per second of the final binary, rounds 1 and 2: 64x64 0 units 2853, 3022; 100 units 760, 786; 400
+units 88, 77; 128x128 400 units 156, 171; 256x256 0 units 117, 189; `showcase_canyon` 55, 77; 67 casters 194, 179;
+**`hangar` (64x64, 200 units, 12 hangar units) 348, 373**. Every scenario is at 50 ticks/s or more. (WP0's own binary
+fell to 44 on the canyon in round 2 at load average 183, so the floor is a property of the load, not of the change.)
+
+The `hangar` row launches 6.6 members per measured tick on average. A 900-tick trace of the row
+(`~/scratch/carrier/src-hdebug`, scratch only) shows why it is not about 100: the enemy `pulse_bot` army shoots the
+engaged Carriers' members down, a rebuild takes 214 ticks, and the Carriers out of reach keep theirs docked (at most
+18 in flight, 37 to 60 docked). The engaged Carriers relaunch every rebuilt member at once, and their channels restart
+on each new target, as D-4 and D-5 say. Recorded in the plan's As built, deviation 14.

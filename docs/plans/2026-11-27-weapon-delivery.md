@@ -815,3 +815,12 @@ the measured worlds as §7.1's "skirmish stage".
 missile with a `Hidden` launch); the Carrier's vitals (300/150) and the interceptor hangar are B-22's own package, and
 the B-22 and B-228 rows say so. Q0129 is closed by the orchestrator.
 
+
+## Amendment 1 (plan `2026-11-28-carrier-interceptors` WP6, 2026-11-26): the Carrier clause of D-7 is done
+
+The salvo's interim `launch_visibility: Hidden` (D-7) is gone: plan
+[`2026-11-28-carrier-interceptors`](2026-11-28-carrier-interceptors.md) WP3 replaced the Carrier analogue's missile
+salvo with a launch weapon (`magazine_launch`, `Hidden` on both counts, no damage), and the W-10 delivery census lists
+it as a launch weapon citing `InterceptorLaunch`, `InterceptorLaunchPersistent` and `CarrierInterceptor`, with no
+`known_bug`. W-15 (a hidden launch shows nothing) now checks the rule on a copy of a shipped missile weapon. B-22 is
+fixed.

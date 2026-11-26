@@ -976,3 +976,63 @@ damage per second; it is easier to hit with splash and short-range weapons while
   identity), the weapon-delivery plan and evidence (probe, close list, throughput), the Gated plan §7 and §14, the
   collision-classes plan §2.
 - No prototype: the mechanism is bookkeeping over existing orders and spawns, pinned by H-2 to H-11.
+
+---
+
+## As built
+
+Built on branch `carrier-interceptors-plan` from `a9c0a248` (`main` `2afbad04` merged; `main` `b1dbb43f` is an ancestor
+of the final tree), checksum schema 57. Measurements in
+[`docs/evidence/2026-11-28-carrier-interceptors.md`](../evidence/2026-11-28-carrier-interceptors.md).
+
+| WP | Commit | Result |
+|---|---|---|
+| WP0 | `bc652fa5` | B-22 and B-228 restated, B-229 and B-230 registered; census: no measured world carries the Carrier; close list 14, 26, 31, 33, 35, 38a, 38b; baseline 8/8 at schema 56 |
+| WP1 | `b04f4247` | Carrier 300/150, radius and separation 1.25 (H-1); worlds byte-identical to WP0's |
+| WP2 | `268a437e` | Hangar mechanism, latent, schema 57 (H-2 to H-11); worlds byte-identical; latent proof 8/8 |
+| WP3 | `9b40d6ab`, `e56831c1` | The Carrier's launch weapon and hangar, `saucer_interceptor` (id 47) (H-12 to H-15); worlds byte-identical; four player-command rule tests and W-15 adapted (evidence, WP3) |
+| WP4 | `43b0529e` | H-16 to H-19; the held-beam bound counts members through their hangar; **H-20 not done** (needs the Carrier's media) |
+| WP5 | `9bb48924` | **Stopped** (stop rule 8): 8 seeds, $3.20, all with light shafts in the backdrop; [Q0131](../questions/open/0131-carrier-media-light-shafts.md); no media installed, the Carrier stays locked (`NoMedia`) |
+| WP6 | `0fcce364`, `201411e3`, this commit | `hangar` throughput scenario; goldens and sandbox re-recorded at schema 57, proved 8/8, and latent 8/8 on the final tree against `main`'s values; final worlds byte-identical to WP3's (and so WP0's); held-out seeds byte-identical to `main`'s; records |
+
+**Deviations decided while building (each recorded here, none moves a measured world):**
+
+1. A hangar unit authors the same launch weapon as both `weapon` and `air_weapon` (the catalog's way of a weapon of
+   both planes); validation allows one launch weapon per plane.
+2. Arcs are half-widths, as every arc of the catalog: `InterceptorBeam`'s Arc 19.6875 is authored 9.84375.
+3. A member docks at edge distance ≤ `ARRIVAL_TOUCH_MARGIN` (0.15), the follow order's arrival, not at exactly 0.
+4. The first launch of a channel happens on the weapon phase's release tick (`start_launch_channel`); later tries in
+   the hangar phase.
+5. A member with no valid target (none, or its weapon cannot hit the hangar's target) is sent home at once (D-6's
+   last row), and docks on contact.
+6. `HangarSpec` and `HangarDeath` live in `sim_types::commands` (beside `ArchetypeCapabilities`), the hangar state in
+   `sim_core::hangar`, and start members are stocked in `prepare_spawn`, so a trained Carrier and a spawned one start
+   alike.
+7. `release_tracking_for` (a turret's tracked targets) also forgets members that dock.
+8. Interceptor values the plan left to WP3: scan range 5.0 (the `CWeapon` default `MinScanRange`), silhouette
+   `LightProngs`, looks `prism_beam`/`beam_burn` (the Enclave's existing instant beam look), and the launch weapon has
+   `weapon_class: None` (no upgrade reaches it).
+9. H-9's splash clause holds by construction: splash and effect searches read neither flag (tested for automatic
+   targeting; splash shares the search).
+10. The client has no double-click "select all of type" to change; `can_pick` covers click, box and order targets.
+11. The client's command feedback gained the new `GameCommandError` variants (`UnselectableRecipient`,
+    `UntargetableTarget`).
+12. The held-beam table (`HeldBeams::capacity_for`) bounds a member through its hangar units (cap over the hangar
+    unit's supply times `max_count`), which raises the shipped table from 800 to the pool share, 1,536.
+13. Tests that iterate every shipped archetype through a player command leave out archetypes that are not
+    `selectable` (admission drops them, D-8; H-9 pins it).
+14. The `hangar` throughput row adds 12 hangar units (96 members at full magazines) to the first army of a 200-unit
+    `pulse_bot` battle, found by property. It does not keep about 100 members in flight: over its measured ticks 6.6
+    members are launched on average (a 900-tick trace: at most 18), because the enemy shoots the engaged Carriers'
+    members down, a rebuild takes 214 ticks, and the Carriers out of reach keep theirs docked. It measures launches,
+    docks, deaths and rebuilds every tick, not a hundred members flying; a heavier row waits for a matrix battle with
+    the Carrier (§14).
+15. B-8's row no longer exists in `DESIGN.md`, so the note on the Interceptor's priority (20 in the data, not 19) is
+    recorded here instead.
+
+**Not done:** WP5's media (Q0131, blocking for the media only) and so H-20 (steady state and valgrind with Carriers
+cycling) and H-21. When the media lands, H-20 is run then, and `mothership_carrier` and `saucer_interceptor` join
+`required_set.ron`.
+
+**Owner questions.** Q0129 is closed on `main` with its resolution. Q0130 is open; its default (a), interceptors hover,
+is what is built (B-229). Q0131 is new and open.
