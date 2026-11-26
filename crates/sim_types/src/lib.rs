@@ -85,7 +85,7 @@ pub use upgrades::{
 };
 pub use weapon::{
     default_projectile_lifetime_ticks, AllowedMovement, AttackVisibility, Attribute,
-    AttributeBonuses, MagazineLaunch, MissileMover, MissilePhase, MissileValidation,
+    AttributeBonuses, MagazineLaunch, MissileMover, MissilePhase, MissileValidation, PhaseEnd,
     ProjectileTargetLossBehavior, SplashCliff, SplashImpact, SplashLine, SplashLineAxis,
     SplashLineOrigin, SplashShape, SplashSpec, SplashZone, StructureStrike, TurretIdle, WeaponSpec,
     DEFAULT_PROJECTILE_LIFETIME_TICKS,

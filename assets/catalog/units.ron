@@ -25,11 +25,13 @@
 // range bands of speed phases its missile may fly (plan 2026-11-27-weapon-delivery D-2). Each
 // mover is `(up_to_range, phases)`: chosen at the release when the edge-to-edge distance is at
 // most `up_to_range` (`IfRangeLTE`; `None` on the last mover, which admits any distance); each
-// phase `(speed, acceleration, max_speed, ends_after)` in world units per tick and per tick
-// squared (a Normal speed v is 0.056 v per tick, a Normal acceleration a is 0.003136 a), `speed`
-// `None` carrying the speed in and `ends_after` the path flown at which the next phase starts
-// (the midpoint of the phase's `Outro`; `None` on the last phase). With movers, `projectile_speed`
-// is the missile's top speed. Omitted: a constant `projectile_speed`.
+// phase `(speed, acceleration, max_speed, ends)` in world units per tick and per tick squared (a
+// Normal speed v is 0.056 v per tick, a Normal acceleration a is 0.003136 a), `speed` `None`
+// carrying the speed in and `ends` where the next phase starts (`None` on the last phase only):
+// `Flown(x)` once the path flown since the release reaches x (a positive `Outro`, its midpoint),
+// `Remaining(x)` once at most x is left to the impact (a negative `Outro`, its magnitude; plan
+// 2026-11-28-missile-movers-b52 D-2). With movers, `projectile_speed` is the missile's top speed.
+// Omitted: a constant `projectile_speed`.
 (
     attack_snapshot_cap_ticks: Some(25),
     units: [
@@ -687,8 +689,8 @@
                 // mover IonCannonsWeapon has the same phases, so the last band admits any distance.
                 // Plan 2026-11-27-weapon-delivery D-2, D-3 (B-52).
                 missile_movers: [
-                    (up_to_range: Some(1.0), phases: [(speed: Some(1.05), acceleration: 0.0, max_speed: 1.05, ends_after: None)]),
-                    (up_to_range: None, phases: [(speed: Some(0.336), acceleration: 0.0, max_speed: 0.336, ends_after: Some(1.25)), (speed: None, acceleration: 0.18816, max_speed: 2.24, ends_after: None)]),
+                    (up_to_range: Some(1.0), phases: [(speed: Some(1.05), acceleration: 0.0, max_speed: 1.05, ends: None)]),
+                    (up_to_range: None, phases: [(speed: Some(0.336), acceleration: 0.0, max_speed: 0.336, ends: Some(Flown(1.25))), (speed: None, acceleration: 0.18816, max_speed: 2.24, ends: None)]),
                 ],
                 weapon_class: Some("enclave_air_weapons"),
                 upgrade_bonus_per_level: 1.0,

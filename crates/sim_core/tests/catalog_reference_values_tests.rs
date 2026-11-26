@@ -23,7 +23,9 @@
 use sim_core::catalog::UnitArchetype;
 use sim_core::WeaponSpec;
 use sim_types::upgrades::UpgradeEffect;
-use sim_types::{AttackCommand, AttackVisibility, AttributeFlags, SimAngle, SimScalar, TurretIdle};
+use sim_types::{
+    AttackCommand, AttackVisibility, AttributeFlags, PhaseEnd, SimAngle, SimScalar, TurretIdle,
+};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -5531,9 +5533,9 @@ fn shipped_spell_visibility_follows_starcraft() -> TestResult {
 }
 
 /// One speed phase of a 5.0.14 missile mover in world units and ticks (`Speed`, `Acceleration`,
-/// `MaxSpeed`, `Outro`'s midpoint), converted as the catalog's speeds and accelerations are: a
-/// Normal speed `v` is `0.056 v` per tick, a Normal acceleration `a` is `0.003136 a` per tick
-/// squared (plan `2026-11-27-weapon-delivery` §2).
+/// `MaxSpeed`, `Outro`'s midpoint, a path flown), converted as the catalog's speeds and
+/// accelerations are: a Normal speed `v` is `0.056 v` per tick, a Normal acceleration `a` is
+/// `0.003136 a` per tick squared (plan `2026-11-27-weapon-delivery` §2).
 type PhaseRow = (Option<f32>, f32, f32, Option<f32>);
 
 /// One mover of a launch effect's `Movers`: its `IfRangeLTE` bound (`None` on the last, which
@@ -5631,11 +5633,16 @@ fn missile_movers_follow_starcraft() -> TestResult {
                         (None, None) => true,
                         _ => false,
                     };
+                    let same_end = match (phase.ends, ends) {
+                        (Some(PhaseEnd::Flown(got)), Some(want)) => close(got, want),
+                        (None, None) => true,
+                        _ => false,
+                    };
                     assert!(
                         same(phase.speed, start)
                             && close(phase.acceleration, acceleration)
                             && close(phase.max_speed, max)
-                            && same(phase.ends_after, ends),
+                            && same_end,
                         "{name} {block} mover {index}: {phase:?} ({source})"
                     );
                 }

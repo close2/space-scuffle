@@ -4296,8 +4296,8 @@ fn edited_missile_movers_change_a_flight_without_recompiling() -> TestResult {
             bundle.finish()?;
             flight
         };
-    let long_band = "(up_to_range: None, phases: [(speed: Some(0.672), acceleration: 0.43904, max_speed: 11.2, ends_after: None)])";
-    let slower = "(up_to_range: None, phases: [(speed: Some(0.672), acceleration: 0.0, max_speed: 0.672, ends_after: None)])";
+    let long_band = "(up_to_range: None, phases: [(speed: Some(0.672), acceleration: 0.43904, max_speed: 11.2, ends: None)])";
+    let slower = "(up_to_range: None, phases: [(speed: Some(0.672), acceleration: 0.0, max_speed: 0.672, ends: None)])";
     let at_five = (
         shipped(5.0)?,
         edited("slow-long-band", long_band, slower, 5.0)?,
@@ -4306,7 +4306,7 @@ fn edited_missile_movers_change_a_flight_without_recompiling() -> TestResult {
         at_five.1 > at_five.0,
         "a slower long band flies longer: {at_five:?}"
     );
-    let short_band = "(up_to_range: Some(3.0), phases: [(speed: Some(0.056), acceleration: 0.03136, max_speed: 1.12, ends_after: Some(0.3)), (speed: None, acceleration: 0.43904, max_speed: 11.2, ends_after: None)]),";
+    let short_band = "(up_to_range: Some(3.0), phases: [(speed: Some(0.056), acceleration: 0.03136, max_speed: 1.12, ends: Some(Flown(0.3))), (speed: None, acceleration: 0.43904, max_speed: 11.2, ends: None)]),";
     let at_two = (shipped(2.0)?, edited("no-short-band", short_band, "", 2.0)?);
     assert!(
         at_two.1 < at_two.0,

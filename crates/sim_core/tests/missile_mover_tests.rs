@@ -9,7 +9,10 @@
 //! release, and it is kept when the target closes in (W-4); a mover missile fuels out as a
 //! constant one does (W-7) and, when its target is lost, flies its profile on to the last point
 //! (W-8); its renderer event lasts the flight the same integration gives over the drawn path
-//! (W-9).
+//! (W-9). Plan `2026-11-28-missile-movers-b52` D-2 adds target-relative ends: a phase ends once
+//! the path left to the impact is within its end, checked after each step against the target
+//! where it now stands (M-2, M-3) and once at the release (M-4), and the renderer event
+//! integrates the same rule (M-7).
 //!
 //! # How it fits
 //! The weapon is a scratch copy of a shipped ground missile weapon found by property (a ground
@@ -26,8 +29,8 @@
 use sim_core::{ActiveProjectile, SimWorld, UnitArchetype, WeaponSpec};
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
-    AttackVisibility, CombatEventVisual, EntityId, MissileMover, MissilePhase, MoverType, PlayerId,
-    PlayerView, ShapeKind, SimScalar, SimVec2, Tick, TickBundle, UnitOrder, UnitTypeId,
+    AttackVisibility, CombatEventVisual, EntityId, MissileMover, MissilePhase, MoverType, PhaseEnd,
+    PlayerId, PlayerView, ShapeKind, SimScalar, SimVec2, Tick, TickBundle, UnitOrder, UnitTypeId,
     TICKS_PER_SECOND,
 };
 
@@ -58,13 +61,22 @@ fn value(s: SimScalar) -> f64 {
     raw / 4_294_967_296.0
 }
 
-/// A phase with the given values, world units per tick and per tick squared.
+/// A phase with the given values, world units per tick and per tick squared; its end, if any,
+/// a path flown.
 fn phase(speed: Option<f64>, acceleration: f64, max: f64, ends: Option<f64>) -> MissilePhase {
     MissilePhase {
         speed: speed.map(scalar),
         acceleration: scalar(acceleration),
         max_speed: scalar(max),
-        ends_after: ends.map(scalar),
+        ends: ends.map(|after| PhaseEnd::Flown(scalar(after))),
+    }
+}
+
+/// A phase ending once at most `within` world units are left to the impact.
+fn phase_within(speed: Option<f64>, acceleration: f64, max: f64, within: f64) -> MissilePhase {
+    MissilePhase {
+        ends: Some(PhaseEnd::Remaining(scalar(within))),
+        ..phase(speed, acceleration, max, None)
     }
 }
 
@@ -277,14 +289,31 @@ impl Bench {
     }
 }
 
+/// Whether `phase`'s end is due after `travelled` of `path`, a target standing still (plan
+/// `2026-11-28-missile-movers-b52` D-2).
+fn due(phase: &MissilePhase, travelled: f64, path: f64) -> bool {
+    match phase.ends {
+        Some(PhaseEnd::Flown(after)) => travelled >= value(after),
+        Some(PhaseEnd::Remaining(within)) => path - travelled <= value(within),
+        None => false,
+    }
+}
+
 /// The oracle of D-2's integration in `f64` (exact for the dyadic values used here): the tick
-/// on which a missile flying `phases` covers `path`, the speed and phase rules as the plan
-/// states them, and the speed it reaches on each tick.
+/// on which a missile flying `phases` covers `path` towards a target standing still, the speed
+/// and phase rules as the plans state them (the ends checked once at the release and after
+/// each step), and the speed it reaches on each tick.
 fn oracle(phases: &[MissilePhase], path: f64) -> (u32, Vec<f64>) {
     let mut index = 0;
     let mut speed = phases[0].speed.map_or(0.0, value);
     let mut travelled = 0.0;
     let mut speeds = Vec::new();
+    while index + 1 < phases.len() && due(&phases[index], travelled, path) {
+        index += 1;
+        if let Some(start) = phases[index].speed {
+            speed = value(start);
+        }
+    }
     for tick in 1..=10_000 {
         let p = &phases[index];
         let next = (speed + value(p.acceleration)).min(value(p.max_speed));
@@ -294,11 +323,7 @@ fn oracle(phases: &[MissilePhase], path: f64) -> (u32, Vec<f64>) {
         }
         travelled += step;
         speed = next;
-        while index + 1 < phases.len()
-            && phases[index]
-                .ends_after
-                .is_some_and(|e| travelled >= value(e))
-        {
+        while index + 1 < phases.len() && due(&phases[index], travelled, path) {
             index += 1;
             if let Some(start) = phases[index].speed {
                 speed = value(start);
@@ -455,6 +480,154 @@ fn the_band_is_chosen_once_at_the_release() -> TestResult {
         flight.states.iter().all(|state| state.mover == Some(1)),
         "the band chosen at the release is kept"
     );
+    Ok(())
+}
+
+/// The two-phase mover of M-2 to M-4 and M-7: a constant 0.25 until at most 4 world units are
+/// left to the impact, then accelerating from the speed carried in.
+fn kill_phase_mover() -> Vec<MissilePhase> {
+    vec![
+        phase_within(Some(0.25), 0.0, 0.25, 4.0),
+        phase(None, 0.25, 2.0, None),
+    ]
+}
+
+/// M-2 (plan `2026-11-28-missile-movers-b52` D-2): at a target standing still, the missile
+/// switches on the first tick after whose step the path left is at most the end's 4 world
+/// units, and lands on the oracle's tick, for a table of paths around the end.
+#[test]
+fn a_phase_ends_once_the_path_left_is_within_its_end() -> TestResult {
+    let phases = kill_phase_mover();
+    let probe = bench(0x5A0, scalar(6.0), only(phases.clone()), |_| {})?;
+    let radius = value(probe.shooter_radius);
+    // Paths 4.125 to 9: the switch at the release tick's step, a few ticks in, and far in.
+    for (seed, path) in (0x5A1_u64..).zip([4.125, 4.25, 4.5, 4.75, 5.0, 5.5, 6.25, 9.0]) {
+        let edge = path - radius;
+        let mut bench = bench(seed, scalar(edge), only(phases.clone()), |_| {})?;
+        let (expected, speeds) = oracle(&phases, path);
+        let flight = bench.fly(|_| Ok(()))?;
+        assert_eq!(flight.ticks(), Some(expected), "path {path}");
+        for (index, state) in flight.states.iter().enumerate() {
+            let left = path - value(state.travelled);
+            assert_eq!(
+                state.phase,
+                u8::from(left <= 4.0),
+                "path {path}, tick {index} of the flight, {left} left"
+            );
+            assert_eq!(
+                value(state.speed),
+                speeds[index],
+                "path {path}, tick {index}"
+            );
+        }
+        assert_eq!(
+            flight.states.first().map(|first| first.travelled),
+            Some(scalar(0.25)),
+            "path {path}: released outside the end, its first step is the first phase's"
+        );
+    }
+    Ok(())
+}
+
+/// The tick of the flight (0 the release tick's step) on which `flight`'s missile entered its
+/// second phase.
+fn switch_tick(flight: &Flight) -> Option<usize> {
+    flight.states.iter().position(|state| state.phase == 1)
+}
+
+/// M-3: the end follows the target. Released 9 world units of path away, the same missile at a
+/// target walking towards the launcher switches earlier, and at one walking away later, than
+/// at a target standing still; the band chosen at the release is kept throughout (W-4's rule).
+#[test]
+fn a_target_relative_end_follows_a_moving_target() -> TestResult {
+    let movers = vec![
+        MissileMover {
+            up_to_range: Some(SimScalar::ONE),
+            phases: vec![phase(Some(1.0), 0.0, 1.0, None)],
+        },
+        MissileMover {
+            up_to_range: None,
+            phases: kill_phase_mover(),
+        },
+    ];
+    let mut switches = Vec::new();
+    // Towards a point in front of the launcher, or away to the bench's far side.
+    for (seed, walk) in (0x5B0_u64..).zip([None, Some(SHOOTER.0 + 3), Some(30)]) {
+        let mut bench = bench(seed, scalar(8.5), movers.clone(), |_| {})?;
+        let flight = bench.fly(|bench| {
+            let Some(x) = walk else {
+                return Ok(());
+            };
+            let to = SimVec2::from_i32(x, SHOOTER.1);
+            bench
+                .world
+                .entities
+                .get_mut(&bench.target)
+                .ok_or("the target exists")?
+                .issue_order(UnitOrder::Move { target: to }, false)
+                .map_err(|error| format!("{error:?}"))?
+                .then_some(())
+                .ok_or_else(|| "the target took its move".to_owned())
+        })?;
+        assert!(
+            flight.states.iter().all(|state| state.mover == Some(1)),
+            "walk {walk:?}: the band chosen at the release is kept"
+        );
+        switches.push(switch_tick(&flight).ok_or("the missile reached its kill phase")?);
+    }
+    let (still, towards, away) = (switches[0], switches[1], switches[2]);
+    assert!(towards < still, "towards the launcher: {towards} < {still}");
+    assert!(away > still, "away from the launcher: {away} > {still}");
+    Ok(())
+}
+
+/// M-4: a missile released with at most the end's distance left starts in the next phase, its
+/// first step that phase's integration from the speed carried in; a positive `Flown` end is
+/// never entered at the release, however short.
+#[test]
+fn the_release_enters_a_phase_whose_end_is_already_due() -> TestResult {
+    let mut inside = bench(0x5C0, scalar(1.0), only(kill_phase_mover()), |_| {})?;
+    let flight = inside.fly(|_| Ok(()))?;
+    let first = flight.states.first().ok_or("the missile flew a tick")?;
+    // From 0.25 carried in, accelerating 0.25: the release tick's step is 0.375.
+    assert_eq!(
+        (first.phase, first.travelled, first.speed),
+        (1, scalar(0.375), scalar(0.5)),
+        "it starts in its kill phase"
+    );
+    let shortest = vec![
+        phase(Some(0.25), 0.0, 0.25, Some(1.0 / 64.0)),
+        phase(Some(1.0), 0.0, 1.0, None),
+    ];
+    let mut flown = bench(0x5C1, scalar(1.0), only(shortest), |_| {})?;
+    let flight = flown.fly(|_| Ok(()))?;
+    let first = flight.states.first().ok_or("the missile flew a tick")?;
+    assert_eq!(
+        first.travelled,
+        scalar(0.25),
+        "the first step is the first phase's"
+    );
+    assert_eq!(
+        (first.phase, first.speed),
+        (1, SimScalar::ONE),
+        "then its path-flown end is due"
+    );
+    Ok(())
+}
+
+/// M-7: the renderer event of a missile with a target-relative end lasts the flight the same
+/// integration gives over the drawn path, a launch inside the end distance included.
+#[test]
+fn a_target_relative_missiles_event_lasts_its_integrated_flight() -> TestResult {
+    let phases = kill_phase_mover();
+    for (seed, edge) in (0x5D0_u64..).zip([0.5, 2.0, 3.5, 4.0, 4.5, 5.0, 9.0]) {
+        let mut bench = bench(seed, scalar(edge), only(phases.clone()), |_| {})?;
+        let (ticks, _) = oracle(&phases, edge.max(0.05));
+        let flight = bench.fly(|_| Ok(()))?;
+        #[expect(clippy::cast_precision_loss, reason = "a small tick count")]
+        let expected = ticks.max(1) as f32 / f32::from(TICKS_PER_SECOND);
+        assert_eq!(flight.duration_secs, Some(expected), "edge {edge}");
+    }
     Ok(())
 }
 

@@ -638,9 +638,23 @@ pub struct MissilePhase {
     /// Greatest speed in the phase, world units per tick (`MaxSpeed`); positive. A speed
     /// carried in above it drops to it on the phase's first tick.
     pub max_speed: SimScalar,
-    /// Path length flown since the release, world units, at which the next phase starts (the
-    /// midpoint of the phase's `Outro`, D-3); `None` on the last phase and only there.
-    pub ends_after: Option<SimScalar>,
+    /// Where the phase ends and the next begins (`Outro`, plan `2026-11-28-missile-movers-b52`
+    /// D-2): `None` on the last phase and only there.
+    pub ends: Option<PhaseEnd>,
+}
+
+/// The end of a missile phase: `StarCraft` II's `Outro`, whose sign picks the reference point
+/// ("source-relative outros are positive and target-relative outros are negative"; plan
+/// `2026-11-28-missile-movers-b52` D-2). Its value is positive, in world units.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PhaseEnd {
+    /// The phase ends once the missile has flown this path since its release, world units (a
+    /// positive `Outro`; the midpoint of its blend, plan `2026-11-27-weapon-delivery` D-3).
+    Flown(SimScalar),
+    /// The phase ends once the missile's remaining path to its impact is at most this many world
+    /// units (a negative `Outro`, its magnitude). The remaining path is the centre distance to the
+    /// aim point less the target's radius, the quantity the impact test reads.
+    Remaining(SimScalar),
 }
 
 /// What a weapon's missile re-checks about its target in flight: `StarCraft` II's
@@ -1034,11 +1048,12 @@ mod tests {
     /// Plan `2026-11-27-weapon-delivery` D-2: a weapon that leaves its missile movers out
     /// flies its constant `projectile_speed` (an empty list); authored movers read in order,
     /// each with its range bound (`None` admits any distance) and its phases, a phase's
-    /// omitted start speed and end read as `None`.
+    /// omitted start speed and end read as `None`. Plan `2026-11-28-missile-movers-b52` D-2: a
+    /// phase's end reads in both forms, `Flown(x)` and `Remaining(x)`.
     #[test]
     fn missile_movers_default_to_none_and_read_bands_and_phases(
     ) -> Result<(), Box<dyn std::error::Error>> {
-        use super::{MissileMover, MissilePhase, WeaponSpec};
+        use super::{MissileMover, MissilePhase, PhaseEnd, WeaponSpec};
         let text = ron::to_string(&missile_weapon())?;
         let field = "missile_movers:[]";
         assert!(text.contains(field), "premise: the field is written");
@@ -1049,9 +1064,11 @@ mod tests {
         let half = SimScalar::HALF.raw();
         let written = format!(
             "missile_movers:[(up_to_range:Some({two}),phases:[(speed:Some({half}),\
-             acceleration:{zero},max_speed:{half},ends_after:Some({one}))]),\
+             acceleration:{zero},max_speed:{half},ends:Some(Flown({one}))),\
+             (speed:None,acceleration:{half},max_speed:{two},ends:Some(Remaining({half}))),\
+             (speed:None,acceleration:{zero},max_speed:{two},ends:None)]),\
              (up_to_range:None,phases:[(speed:None,acceleration:{half},max_speed:{two},\
-             ends_after:None)])]",
+             ends:None)])]",
             two = scalar(2 * one),
             half = scalar(half),
             zero = scalar(0),
@@ -1063,12 +1080,26 @@ mod tests {
             vec![
                 MissileMover {
                     up_to_range: Some(SimScalar::from_i32(2)),
-                    phases: vec![MissilePhase {
-                        speed: Some(SimScalar::HALF),
-                        acceleration: SimScalar::ZERO,
-                        max_speed: SimScalar::HALF,
-                        ends_after: Some(SimScalar::ONE),
-                    }],
+                    phases: vec![
+                        MissilePhase {
+                            speed: Some(SimScalar::HALF),
+                            acceleration: SimScalar::ZERO,
+                            max_speed: SimScalar::HALF,
+                            ends: Some(PhaseEnd::Flown(SimScalar::ONE)),
+                        },
+                        MissilePhase {
+                            speed: None,
+                            acceleration: SimScalar::HALF,
+                            max_speed: SimScalar::from_i32(2),
+                            ends: Some(PhaseEnd::Remaining(SimScalar::HALF)),
+                        },
+                        MissilePhase {
+                            speed: None,
+                            acceleration: SimScalar::ZERO,
+                            max_speed: SimScalar::from_i32(2),
+                            ends: None,
+                        },
+                    ],
                 },
                 MissileMover {
                     up_to_range: None,
@@ -1076,7 +1107,7 @@ mod tests {
                         speed: None,
                         acceleration: SimScalar::HALF,
                         max_speed: SimScalar::from_i32(2),
-                        ends_after: None,
+                        ends: None,
                     }],
                 },
             ]

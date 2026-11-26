@@ -1954,8 +1954,8 @@
                 // SpineCrawlerWeapon has no mover). A Normal speed v is 0.056 v per tick, an acceleration a is
                 // 0.003136 a per tick squared. Plan 2026-11-27-weapon-delivery D-2, D-3 (B-52).
                 missile_movers: [
-                    (up_to_range: Some(3.0), phases: [(speed: Some(0.056), acceleration: 0.03136, max_speed: 1.12, ends_after: Some(0.3)), (speed: None, acceleration: 0.43904, max_speed: 11.2, ends_after: None)]),
-                    (up_to_range: None, phases: [(speed: Some(0.672), acceleration: 0.43904, max_speed: 11.2, ends_after: None)]),
+                    (up_to_range: Some(3.0), phases: [(speed: Some(0.056), acceleration: 0.03136, max_speed: 1.12, ends: Some(Flown(0.3))), (speed: None, acceleration: 0.43904, max_speed: 11.2, ends: None)]),
+                    (up_to_range: None, phases: [(speed: Some(0.672), acceleration: 0.43904, max_speed: 11.2, ends: None)]),
                 ],
                 weapon_class: None,
                 upgrade_bonus_per_level: 0.0,
