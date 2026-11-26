@@ -27,3 +27,5 @@ Recommendation: (a), because it is exact and local; (c) if the straight canyon l
 cost.
 
 ## Answer
+
+- **Option (c): Straight diagonals moved onto the high side.** Keep the straight 45° diagonal cliff look by drawing each diagonal through the low cells' corners so it lies entirely on high ground (in its own plan), avoiding both the sawtooth staircase look of Option (a) and low-ground units clipping into rock under Option (b).
