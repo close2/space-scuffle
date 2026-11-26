@@ -120,6 +120,13 @@ impl Canonical for String {
     }
 }
 
+/// A box encodes as the value it holds: boxing a field changes no checksum.
+impl<T: Canonical> Canonical for Box<T> {
+    fn encode(&self, encoder: &mut Encoder) {
+        (**self).encode(encoder);
+    }
+}
+
 impl<T: Canonical> Canonical for Option<T> {
     fn encode(&self, encoder: &mut Encoder) {
         match self {

@@ -608,7 +608,7 @@ fn b12_a_sieged_unit_scans_to_its_siege_weapon_range() -> TestResult {
     let tank = world.entities.get_mut(&chooser).ok_or("tank")?;
     tank.is_sieged = true;
     tank.is_immobile = true;
-    tank.siege_weapon = Some(cannon);
+    tank.siege_weapon = Some(Box::new(cannon));
     step(&mut world, 0, None);
     assert_eq!(acquired(&world, chooser), Some(target));
     Ok(())

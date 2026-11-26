@@ -257,7 +257,7 @@ fn every_public_entity_field_changes_the_world_checksum() {
             is_immobile => true,
             unpushable => true,
             is_sieged => true,
-            siege_weapon => Some(weapon()),
+            siege_weapon => Some(Box::new(weapon())),
             active_mode => Some("fixture-mode".to_owned()),
             channeling_remaining_ticks => 7,
             pending_ability => Some((1, Some(point(3, 4)), Some(EntityId(2)))),
@@ -669,7 +669,7 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
                 .entities
                 .get_mut(&EntityId(1))
                 .expect("fixture entity exists")
-                .siege_weapon = Some(weapon.clone());
+                .siege_weapon = Some(Box::new(weapon.clone()));
             world.compute_checksum()
         },
     );
@@ -697,7 +697,7 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
                 .entities
                 .get_mut(&EntityId(1))
                 .expect("fixture entity exists")
-                .siege_weapon = Some(weapon);
+                .siege_weapon = Some(Box::new(weapon));
             world.compute_checksum()
         },
     );
@@ -718,7 +718,7 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
                 .entities
                 .get_mut(&EntityId(1))
                 .expect("fixture entity exists")
-                .siege_weapon = Some(weapon);
+                .siege_weapon = Some(Box::new(weapon));
             world.compute_checksum()
         },
     );
@@ -736,7 +736,7 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
                 .entities
                 .get_mut(&EntityId(1))
                 .expect("fixture entity exists")
-                .siege_weapon = Some(weapon);
+                .siege_weapon = Some(Box::new(weapon));
             world.compute_checksum()
         },
     );
