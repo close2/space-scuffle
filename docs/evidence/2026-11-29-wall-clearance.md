@@ -174,6 +174,26 @@ Predictions this gives (each package restates its own before measuring):
 - **WP3:** one `wall_contact` at `r + m` per walking unit-tick, about 109,600 × 1,100 Ir ≈ 0.12 G, **+0.4 %**, unless
   shared with the settle.
 
-### B-243 (mesher check)
+### B-243 (mesher check): confirmed and filed
 
-See the hand-back of WP0 and the `DESIGN.md` §4 row, if filed.
+A scratch program (`~/scratch/wall-clearance/mesher_check/`, never committed; source kept as
+`scripts/mesher_check_main.rs`) links the client crate of `c49082af` and runs its public CPU mesher functions,
+`dual_corner_levels` and `generate_wall_profile`, over every dual cell and threshold run of
+`maps/showcase_canyon.scmap.ron` as `emit_dual_cell` and `emit_cliff_walls` do (edges with a ramp corner are left
+out: their rows sit at the edge, with no jitter). No frame was rendered. For each profile row with the horizontal
+normal `d` (the canonical rows, and plain wall bottoms at the edge itself) it measures the row's offset from the cell
+edge along `d`, which points from the high cell to the low one, the side a body at the cliff's foot walks on.
+
+Of 11,866 such rows, 5,501 are moved towards the low side; the largest offset is **0.0600** (edge (38.0, 34.5),
+height 4.50), and the largest towards the high side 0.0599. The jitter is symmetric, as `WALL_JITTER_AMPLITUDE ·
+(2h − 1)` says. So a body the simulation holds tangent to a cliff is drawn up to 0.06 inside the cliff's face.
+B-243 is filed in `DESIGN.md` §4 as a deferred client follow-up, outside this plan (§11.1, §13).
+
+### Left to the orchestrator
+
+- **Moved worlds since `Gated`'s last re-base** (plan §5.3 item 1, §8 WP0 "Base figures"): not measured here. It
+  needs `Gated`'s WP0b scripts and arms, and `Gated` WP1 was running its own heavy measurements; whether `Gated`
+  recorded the Broodlings merge `0f0608cd` is to be verified with its orchestrator first.
+- **The owner's Q0134 answer** asks for dedicated tests of large groups through narrow sections and round corners,
+  against which any later clearance change is judged. The plan predates the answer and WP0 does not build them; they
+  need an amendment that places them (the meter of this package measures them as it measures the showcase).
