@@ -1384,3 +1384,31 @@ never push each other. This changes Amendment 3, items 1 and 2, and §6.2's H-1.
   in the solve, which also removes the second-order outward drift of a tangential step.
 - C′-3's transfer treats a held body's partner as unable to move only when it is fixed or holding; an attacking
   partner takes the transfer along its ring.
+
+## Amendment 3b (orchestrator, 2026-11-29): precedence under the owner's 3a guidance, and C-2
+
+Amendment 3a (owner guidance: attacking units may be nudged by allies; Hold Position never moves; enemies never push)
+exposed a conflict the stopped build resolved the wrong way (evidence §10): its ring step turned an attacker's step
+after E-2's bound, so the turned step could close on an enemy, and putting E-2 last pushed attackers out of their band.
+This amendment follows from the owner's change of rule mid-package; it is not a further failure amendment.
+
+1. **Precedence.** Being nudgeable is a permission, not a duty. For an attacking body the admissible correction is the
+   one that satisfies, in order: (i) E-2 (it closes on no enemy beyond its share), (ii) its weapon band (its distance to
+   its current target does not leave the band), (iii) D-δ's ring direction. The correction is the friend correction
+   projected onto that admissible set; if the set is empty (an attacker pinned between its target and an enemy), the
+   attacker is **fixed for its friend pairs on that application**, and its partner takes the whole correction, exactly
+   like a body held by terrain (C′-3). No step that has passed E-2 is modified afterwards (E-2 is the last word on any
+   enemy-facing component).
+2. **Terrain transfer respects E-2.** C′-3's transfer to a partner is itself bounded by E-2 for that partner; a
+   transfer that would close the partner on an enemy is projected, and if nothing is admissible the pair keeps its
+   overlap for that application (reported). This closes the `enemy-press` seed 288 case of evidence §10.
+3. **C-2 accepted with attribution.** Callgrind attributes the whole Solver delta (+0.245 %) to `intent_heading` being
+   inlined into `step_toward`, functions whose source WP1 does not change; the solver's own functions cost the same as
+   main's. Code-generation shifts in unchanged functions are accepted for a latent package when (a) callgrind attributes
+   them to unchanged source and (b) behaviour is byte-identical (H-6). Recorded as an orchestrator decision; the cost of
+   record is re-measured at WP4.
+
+Acceptance after 3b: H-1 (holding) = 0; H-1b out-of-band = 0; H-2 (repaired) = 0; enemy overlap within E-2's bound
+everywhere, Broodling spawn overlaps excluded as spawn-placement (B-236) and Abduct's pull excluded from H-1 as an
+ability displacement, both reported separately; H-5, H-7, H-6 as before. A failure after 3b stops the package for the
+owner (Q-draft).
