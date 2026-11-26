@@ -289,7 +289,7 @@ plus the route_trace boxes and the matrix, without fitting to the showcase (the 
 the presentation separately: a jitter that never moves a wall row towards the walkable side is a client-only
 follow-up, not part of this fix.
 
-## 8. Draft question (provisional number, not filed)
+## 8. Owner question (filed as [Q0134](../questions/open/0134-wall-clearance.md))
 
 ````markdown
 # Q0134: How much room should walking units keep from walls?
