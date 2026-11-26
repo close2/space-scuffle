@@ -1314,6 +1314,14 @@ fn banshee(world: &SimWorld) -> Result<UnitArchetype, String> {
     })
 }
 
+/// The shipped structure whose air weapon flies movers: the Missile Turret analogue.
+fn missile_turret(world: &SimWorld) -> Result<UnitArchetype, String> {
+    one_archetype(world, "the Missile Turret analogue", |arch| {
+        matches!(arch.shape, ShapeKind::BuildingDome { .. })
+            && !movers_of(arch.air_weapon.as_ref()).is_empty()
+    })
+}
+
 /// What a volley did: the ticks on which its missiles were released and on which its target's
 /// vitals dropped.
 struct Volley {
@@ -1413,8 +1421,8 @@ fn the_viking_torpedoes_land_after_their_flight() -> TestResult {
 
 /// M-12: `attacker`'s two missiles at an unarmed, held `victim`, at each `(edge, ticks)` of
 /// `table` (§2.4), each land `ticks` after their own release, the release tick counted, the
-/// second released the weapon's strike interval after the first, and nothing lands on a release
-/// tick.
+/// second released the weapon's strike interval after the first, and no missile lands on its own
+/// release tick.
 fn volleys_land_on_the_table(
     seed: u64,
     attacker: &UnitArchetype,
@@ -1449,10 +1457,8 @@ fn volleys_land_on_the_table(
             attacker.slug
         );
         assert!(
-            seen.strikes
-                .iter()
-                .all(|tick| !seen.releases.contains(tick)),
-            "{}, edge {edge}: no strike on a release tick",
+            seen.strikes[0] > first && seen.strikes[1] > second,
+            "{}, edge {edge}: no missile strikes on its own release tick",
             attacker.slug
         );
     }
@@ -1494,8 +1500,118 @@ fn the_liberator_and_banshee_rockets_land_after_their_flight() -> TestResult {
     )
 }
 
-/// M-15: a Viking analogue's torpedo whose target dies or cloaks undetected in flight is missed
-/// on the last point, its phases running out on the lost target (W-13's rule).
+/// M-12: the Missile Turret analogue's missiles fly `LongboltMissileWeapon` (S9, S10: 0.56 until
+/// 4 is left to the target, then accelerating 0.6272 to 1.12), landing on §2.4's ticks over its
+/// radius 1.125.
+#[test]
+fn the_missile_turret_missiles_land_after_their_flight() -> TestResult {
+    let world = sim_fixtures::world(
+        GameMap::new(8, 8, MapCell::default_ground(CliffLevel(0)))?,
+        1,
+    );
+    let turret = missile_turret(&world)?;
+    assert_eq!(
+        turret.collision_radius,
+        scalar(1.125),
+        "§2.4's attacker radius"
+    );
+    let air_victim = viking(&world)?;
+    volleys_land_on_the_table(
+        0x750,
+        &turret,
+        &air_victim,
+        &[
+            (0.5, 2),
+            (1.0, 3),
+            (2.0, 4),
+            (3.0, 5),
+            (4.0, 7),
+            (5.0, 8),
+            (6.0, 10),
+            (7.0, 12),
+        ],
+    )
+}
+
+/// The path left from `state`'s position to its aim point, less the target's `radius`: the
+/// quantity a target-relative end reads after each step (D-2).
+fn left(state: &ActiveProjectile, radius: SimScalar) -> SimScalar {
+    (state.target_pos - state.current_pos).length() - radius
+}
+
+/// M-13: the Missile Turret analogue's missile switches to its kill phase on the first tick
+/// after whose step at most 4 world units are left, at an air target holding 6 away and at one
+/// flying at the Turret from beyond its range (released at most 7 away); the approaching target
+/// is struck earlier than a target standing at its release distance would be (the oracle over
+/// the shipped phases).
+#[test]
+fn the_missile_turret_kill_phase_starts_4_from_the_target() -> TestResult {
+    let world = sim_fixtures::world(
+        GameMap::new(8, 8, MapCell::default_ground(CliffLevel(0)))?,
+        1,
+    );
+    let turret = missile_turret(&world)?;
+    let phases = movers_of(turret.air_weapon.as_ref())
+        .first()
+        .ok_or("the Turret's mover")?
+        .phases
+        .clone();
+    let air_victim = viking(&world)?;
+    let within = scalar(4.0);
+    for (seed, (edge, approach)) in (0x760_u64..).zip([(6.0, false), (10.0, true)]) {
+        let mut bench = shipped_duel(
+            seed,
+            &turret,
+            &air_victim,
+            scalar(12.0),
+            scalar(edge),
+            seeing(12),
+        )?;
+        let radius = bench.target_radius;
+        let turret_at = bench.world.entities[&bench.shooter].position;
+        if approach {
+            bench
+                .world
+                .entities
+                .get_mut(&bench.target)
+                .ok_or("the target exists")?
+                .issue_order(UnitOrder::Move { target: turret_at }, false)
+                .map_err(|error| format!("{error:?}"))?;
+        }
+        let mut released_at = None;
+        let flight = bench.fly(|bench| {
+            let target = bench.world.entities[&bench.target].position;
+            released_at = Some((target - turret_at).length() - bench.shooter_radius - radius);
+            Ok(())
+        })?;
+        assert!(
+            flight.states.iter().any(|state| state.phase == 1),
+            "edge {edge}: the kill phase is reached"
+        );
+        for (index, state) in flight.states.iter().enumerate() {
+            assert_eq!(
+                state.phase,
+                u8::from(left(state, radius) <= within),
+                "edge {edge}, tick {index} of the flight: {:?} left",
+                left(state, radius)
+            );
+        }
+        if approach {
+            let release = released_at.ok_or("released")?;
+            assert!(release <= scalar(7.0), "released within range: {release:?}");
+            let (still, _) = oracle(&phases, value(bench.shooter_radius + release));
+            let ticks = flight.ticks().ok_or("the approaching target is struck")?;
+            assert!(
+                ticks < still,
+                "approaching from {release:?}: struck after {ticks} ticks, a still target after {still}"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// M-15: a Viking or Missile Turret analogue's missile whose target dies or cloaks undetected in
+/// flight is missed on the last point, its phases running out on the lost target (W-13's rule).
 #[test]
 fn a_viking_torpedos_lost_target_is_missed_on_the_last_point() -> TestResult {
     let world = sim_fixtures::world(
@@ -1507,6 +1623,16 @@ fn a_viking_torpedos_lost_target_is_missed_on_the_last_point() -> TestResult {
     for (seed, (case, loss)) in (0x710_u64..).zip(losses) {
         let bench = shipped_duel(seed, &viking, &viking, scalar(10.0), scalar(6.0), |_| {})?;
         lands_on_the_last_point(bench, loss, &format!("Viking, {case}"))?;
+    }
+    // The Missile Turret analogue's missile, released 6 away, its target lost while it is still
+    // outside its kill phase: the phases run out on the lost target's last point.
+    // The Turret analogue detects (as 5.0.14's does), so its copy here does not: a cloaked
+    // target is then undetected.
+    let turret = missile_turret(&world)?;
+    let blind = |copy: &mut UnitArchetype| copy.detection_radius = None;
+    for (seed, (case, loss)) in (0x718_u64..).zip(losses) {
+        let bench = shipped_duel(seed, &turret, &viking, scalar(10.0), scalar(6.0), blind)?;
+        lands_on_the_last_point(bench, loss, &format!("Missile Turret, {case}"))?;
     }
     Ok(())
 }
@@ -1555,6 +1681,7 @@ fn every_finder_matches_exactly_one_shipped_archetype() -> TestResult {
         viking(&world)?,
         liberator(&world)?,
         banshee(&world)?,
+        missile_turret(&world)?,
     ];
     let mut slugs: Vec<&str> = found.iter().map(|arch| arch.slug.as_str()).collect();
     slugs.sort_unstable();

@@ -5568,11 +5568,10 @@ const SC2_UNIT_MISSILE_SPEEDS: [ConstantMissileRow; 17] = [
 ];
 
 /// M-8: the structures' constant missiles, as [`SC2_UNIT_MISSILE_SPEEDS`].
-const SC2_STRUCTURE_MISSILE_SPEEDS: [ConstantMissileRow; 4] = [
+const SC2_STRUCTURE_MISSILE_SPEEDS: [ConstantMissileRow; 3] = [
     ("Photon Cannon", "ground_weapon", 1.008, "PhotonCannonLM ammo PhotonCannonWeapon, liberty MoverData:407-416 (MaxSpeed 18)", None),
     ("Photon Cannon", "air_weapon", 1.008, "PhotonCannonLM ammo PhotonCannonWeapon, liberty MoverData:407-416 (MaxSpeed 18)", None),
     ("Spore Crawler", "air_weapon", 1.05, "SporeCrawler ammo SporeCrawlerWeapon (the default ##id##Weapon), Mover MissileDefault (liberty UnitData:8868-8872)", None),
-    ("Missile Turret", "air_weapon", 0.56, "LongboltMissileLM ammo LongboltMissileWeapon, liberty MoverData:589-600: movers with a target-relative end, WP5", Some("B-52")),
 ];
 
 /// M-8: every shipped missile weapon without movers flies the constant of its 5.0.14 mover, or
@@ -5611,11 +5610,22 @@ fn constant_missile_speeds_follow_starcraft() -> TestResult {
     Ok(())
 }
 
+/// Where a 5.0.14 missile phase ends, world units (`Outro` read by its sign, plan
+/// `2026-11-28-missile-movers-b52` D-2): after a path flown (a positive `Outro`'s midpoint), or
+/// once a path is left to the target (a negative `Outro`'s magnitude).
+#[derive(Debug, Clone, Copy)]
+enum End {
+    /// A path flown since the release.
+    Flown(f32),
+    /// A path left to the impact.
+    Remaining(f32),
+}
+
 /// One speed phase of a 5.0.14 missile mover in world units and ticks (`Speed`, `Acceleration`,
-/// `MaxSpeed`, `Outro`'s midpoint, a path flown), converted as the catalog's speeds and
-/// accelerations are: a Normal speed `v` is `0.056 v` per tick, a Normal acceleration `a` is
-/// `0.003136 a` per tick squared (plan `2026-11-27-weapon-delivery` §2).
-type PhaseRow = (Option<f32>, f32, f32, Option<f32>);
+/// `MaxSpeed`, `Outro`), converted as the catalog's speeds and accelerations are: a Normal speed
+/// `v` is `0.056 v` per tick, a Normal acceleration `a` is `0.003136 a` per tick squared (plan
+/// `2026-11-27-weapon-delivery` §2).
+type PhaseRow = (Option<f32>, f32, f32, Option<End>);
 
 /// One mover of a launch effect's `Movers`: its `IfRangeLTE` bound (`None` on the last, which
 /// admits any distance) and its phases.
@@ -5623,7 +5633,7 @@ type MoverRow = (Option<f32>, &'static [PhaseRow]);
 
 /// W-18 (plan `2026-11-27-weapon-delivery` D-2): every shipped weapon with missile movers, by
 /// analogue and block, with the 5.0.14 movers of its launch effect.
-const SC2_MISSILE_MOVERS: [(&str, &str, &[MoverRow], f32, &str); 5] = [
+const SC2_MISSILE_MOVERS: [(&str, &str, &[MoverRow], f32, &str); 6] = [
     (
         "Phoenix",
         "air_weapon",
@@ -5637,7 +5647,7 @@ const SC2_MISSILE_MOVERS: [(&str, &str, &[MoverRow], f32, &str); 5] = [
             (
                 None,
                 &[
-                    (Some(0.336), 0.0, 0.336, Some(1.25)),
+                    (Some(0.336), 0.0, 0.336, Some(End::Flown(1.25))),
                     (None, 0.18816, 2.24, None),
                 ],
             ),
@@ -5655,7 +5665,7 @@ const SC2_MISSILE_MOVERS: [(&str, &str, &[MoverRow], f32, &str); 5] = [
             (
                 Some(3.0),
                 &[
-                    (Some(0.056), 0.03136, 1.12, Some(0.3)),
+                    (Some(0.056), 0.03136, 1.12, Some(End::Flown(0.3))),
                     (None, 0.43904, 11.2, None),
                 ],
             ),
@@ -5677,7 +5687,7 @@ const SC2_MISSILE_MOVERS: [(&str, &str, &[MoverRow], f32, &str); 5] = [
             (
                 None,
                 &[
-                    (Some(0.112), 0.0, 0.112, Some(0.6875)),
+                    (Some(0.112), 0.0, 0.112, Some(End::Flown(0.6875))),
                     (Some(0.112), 0.175616, 1.568, None),
                 ],
             ),
@@ -5696,7 +5706,7 @@ const SC2_MISSILE_MOVERS: [(&str, &str, &[MoverRow], f32, &str); 5] = [
             (
                 None,
                 &[
-                    (Some(0.448), 0.0, 0.448, Some(3.0)),
+                    (Some(0.448), 0.0, 0.448, Some(End::Flown(3.0))),
                     (Some(0.896), 0.0, 0.896, None),
                 ],
             ),
@@ -5712,6 +5722,24 @@ const SC2_MISSILE_MOVERS: [(&str, &str, &[MoverRow], f32, &str); 5] = [
         &[(None, &[(Some(0.56), 0.06272, 2.8, None)])],
         2.8,
         "BacklashRocketsLM, liberty EffectData:2558-2563 (plan 2026-11-28-missile-movers-b52 S8)",
+    ),
+    (
+        "Missile Turret",
+        "air_weapon",
+        &[
+            // LongboltMissileWeapon (liberty MoverData:589-600), the ammo unit's own mover
+            // (UnitData:11605-11608): Guidance at Speed 10, MaxSpeed 10 until 4 from the target
+            // (Outro -4), then the "kill phase" accelerating 200 to MaxSpeed 20.
+            (
+                None,
+                &[
+                    (Some(0.56), 0.0, 0.56, Some(End::Remaining(4.0))),
+                    (None, 0.6272, 1.12, None),
+                ],
+            ),
+        ],
+        1.12,
+        "LongboltMissileLM, liberty EffectData:1789-1794 (plan 2026-11-28-missile-movers-b52 S9, S10)",
     ),
 ];
 
@@ -5760,7 +5788,10 @@ fn missile_movers_follow_starcraft() -> TestResult {
                         _ => false,
                     };
                     let same_end = match (phase.ends, ends) {
-                        (Some(PhaseEnd::Flown(got)), Some(want)) => close(got, want),
+                        (Some(PhaseEnd::Flown(got)), Some(End::Flown(want)))
+                        | (Some(PhaseEnd::Remaining(got)), Some(End::Remaining(want))) => {
+                            close(got, want)
+                        }
                         (None, None) => true,
                         _ => false,
                     };

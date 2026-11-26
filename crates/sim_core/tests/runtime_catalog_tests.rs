@@ -4446,3 +4446,32 @@ fn an_edited_flown_end_changes_the_viking_flight_without_recompiling() -> TestRe
     );
     Ok(())
 }
+
+/// The Missile Turret analogue: the structure whose air weapon flies movers.
+fn is_missile_turret(archetype: &sim_core::catalog::UnitArchetype) -> bool {
+    matches!(archetype.shape, ShapeKind::BuildingDome { .. })
+        && archetype
+            .air_weapon
+            .as_ref()
+            .is_some_and(|weapon| !weapon.missile_movers.is_empty())
+}
+
+/// M-17: the Missile Turret analogue's `Remaining` end is catalog data read at run time: in a
+/// copied `structures.ron`, a kill phase that starts 1 from the target instead of 4 lengthens the
+/// flight at edge 6, in the same binary.
+#[test]
+fn an_edited_remaining_end_changes_the_turret_flight_without_recompiling() -> TestResult {
+    let (shipped, edited) = shipped_and_edited_flight(
+        "turret-later-kill-phase",
+        1,
+        ("ends: Some(Remaining(4.0))", "ends: Some(Remaining(1.0))"),
+        is_missile_turret,
+        sim_types::MoverType::Air,
+        6.0,
+    )?;
+    assert!(
+        edited > shipped,
+        "a later kill phase flies longer: {shipped} -> {edited}"
+    );
+    Ok(())
+}
