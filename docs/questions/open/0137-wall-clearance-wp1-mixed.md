@@ -30,3 +30,5 @@ itself would allow the next leg.
 Recommendation: (a).
 
 ## Answer
+
+- **Option (a): Keep the corner hand-off fix (`B-240`) merged.** Cutting corner-cutting hand-offs from `1,586 → 0` in the large-crowd chokepoint/corner/hairpin scenes and to `0` on every showcase run is a clear root-cause fix; minor mixed secondary shifts are acceptable while `B-241` and the ramp wait for the movement redesign and WP3.
