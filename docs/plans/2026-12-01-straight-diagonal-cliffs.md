@@ -27,7 +27,7 @@ figures (D-8). Half of every step cell on a ground diagonal is drawn at the low 
 the step's outer corner, or anywhere on that cell's outer half, is drawn hanging over the cliff by up to the full
 cliff height. The terrain plan's D-4 brink check (limit 0.2, today 0.077) cannot hold there for any straight
 diagonal on the high side. The owner's option text names this ("units on the high plateau stand up to half a cell
-over the drawn edge"), and draft question **Q0138** (§13) asks the owner to confirm its measured size.
+over the drawn edge"), and draft question **Q0139** (§13) asks the owner to confirm its measured size.
 
 **Status of this document:** a stage 1 blueprint under charter §6, written against `main` at `0c16a3a9` on branch
 `diagonal-cliffs-plan`. It is a full plan, because it changes cliff look across maps and spans two work packages.
@@ -37,8 +37,8 @@ over the drawn edge"), and draft question **Q0138** (§13) asks the owner to con
 - Later decisions are appended as `## Amendment N (orchestrator, YYYY-MM-DD): <decision>`, numbered from 1.
 - An `## As built` section follows the merge.
 - **Numbers are provisional, next free at merge.** The new bug row is **B-246** (`DESIGN.md` §4 ends at B-245, and no
-  open branch names B-246). The draft question is **Q0138**. Branch `wall-clearance-wp1` names Q0138 as the number
-  its own draft would take "if it is ever filed", so whichever question is filed first takes Q0138 and the other
+  open branch names B-246). The draft question is **Q0139**. Branch `wall-clearance-wp1` names Q0139 as the number
+  its own draft would take "if it is ever filed", so whichever question is filed first takes Q0139 and the other
   takes the next free number.
 - **No simulation change.** No file under `crates/sim_*` or `assets/` changes (§6). A change there is a stop (§9).
 
@@ -163,7 +163,7 @@ within a 3×3 block of a ramp. The goldens' synthetic map and a new diagonal fix
 | No drawn rock in a walkable cell: W1, `cliff_boundary_tests.rs` T-B1, T-B2 with their derived τ, ε | D-1 (cut is inside `X`), D-3, D-4; T-B on five maps |
 | Keep T-A, the seams test, the 4×4 counts, the star polygon, no mitre beside a ramp, `dual_floor_level_beside` | D-3 (T-A's monotone argument extended), D-5, D-7; T-C unchanged |
 | Isolated inner corners, saddles, diagonals meeting ramps or narrow plateaus | D-2 table, D-7 |
-| Trade-off in high-ground area and brink overhang, measured like D-4 (limit 0.2, now 0.077) | D-8, T-K, Q0138 |
+| Trade-off in high-ground area and brink overhang, measured like D-4 (limit 0.2, now 0.077) | D-8, T-K, Q0139 |
 | Red-first CPU test that runs are straight, with a derived tolerance | T-S1 |
 | Mesher golden re-records with reasons | §5.1 |
 | Review capture under `~/scratch/straight-diagonals/review/`, four columns, physical GPU through `with-gpu-lock` | §5.2 |
@@ -371,7 +371,7 @@ states it ("units on the high plateau stand up to half a cell over the drawn edg
 
 - The 0.2 limit **stays** for every cell that is not cut. T-K checks this on the mesh, and stop rule 6 enforces it.
 - In cut cells, the figure is **reported**, not limited: T-K prints the table above, measured from the mesh.
-- The owner confirms the size through draft Q0138 (§13). Until then the plan builds (c) as answered.
+- The owner confirms the size through draft Q0139 (§13). Until then the plan builds (c) as answered.
 
 **On the low side**, no unit is cut by rock (W1). A low unit pressed against a step's outer corner `C` stands
 `0.707` from the drawn foot, where today it touches it.
@@ -592,7 +592,7 @@ Views, rows of `contact_sheet.png` (`montage`, as in the terrain plan's `contact
 - the figures: cuts per map, high ground per step and per map (D-8), T-K's per-radius drops in cut and uncut cells,
   and T-S1's largest chamfer deviation per run.
 
-The owner reviews the WP2 sheet and answers Q0138 from it if it is filed.
+The owner reviews the WP2 sheet and answers Q0139 from it if it is filed.
 
 ---
 
@@ -748,12 +748,12 @@ For `DESIGN.md` §4. The number is provisional, next free at merge.
 
 ---
 
-## 13. Question draft
+## 13. Owner question (filed as [Q0139](../questions/open/0139-diagonal-cliff-overhang.md))
 
 Not filed by this commit. Filing it is the orchestrator's call, and the default is what WP2 builds.
 
 ```
-# Q0138: Straight diagonal cliffs draw high-ground units hanging over the cliff. Is that size acceptable?
+# Q0139: Straight diagonal cliffs draw high-ground units hanging over the cliff. Is that size acceptable?
 
 - **Asked:** 2026-12-01
 - **Blocking:** no
