@@ -1282,7 +1282,19 @@
                 backswing_ticks: 9,
                 random_delay_ticks: (-1.1161, 2.2321),
                 splash: None,
-                projectile_speed: Some(1.5),
+                // The top speed of the mover below: VikingFighterMissile MaxSpeed 28 x 0.056.
+                projectile_speed: Some(1.568),
+                // 5.0.14 LanzerTorpedoesLM (liberty EffectData:1707-1712) names no Movers, so each torpedo
+                // flies its ammo unit VikingFighterWeapon's mover VikingFighterMissile (UnitData:6901-6905;
+                // MoverData:531-567, defined in no other layer): two Throw phases at Speed 2, MaxSpeed 2
+                // (merged, plan rule 2), switched at phase 1's Outro 0.625,0.75 (midpoint 0.6875); then
+                // Guidance from Speed 2 accelerating 56 to MaxSpeed 28, phase 3 carrying the
+                // acceleration on (the editor's carry-over rule, S11), so phases 2 and 3 merge. Speed 2 is
+                // 0.112 per tick, Acceleration 56 is 0.175616 per tick squared. Throw direction and
+                // gravity are not modelled (B-231). Plan 2026-11-28-missile-movers-b52 D-1, S2, S3 (B-52).
+                missile_movers: [
+                    (up_to_range: None, phases: [(speed: Some(0.112), acceleration: 0.0, max_speed: 0.112, ends: Some(Flown(0.6875))), (speed: Some(0.112), acceleration: 0.175616, max_speed: 1.568, ends: None)]),
+                ],
                 weapon_class: Some("directorate_ship_weapons"),
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 0.0,

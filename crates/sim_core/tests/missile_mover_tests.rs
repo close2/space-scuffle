@@ -88,7 +88,9 @@ fn only(phases: Vec<MissilePhase>) -> Vec<MissileMover> {
     }]
 }
 
-/// A shipped mobile ground archetype whose ground weapon is a missile without an area.
+/// A shipped mobile ground archetype whose ground weapon is a constant missile (no movers)
+/// without an area: a template, any such archetype serves (its weapon is replaced or stripped),
+/// and no mover data can change which one it is (plan `2026-11-28-missile-movers-b52` M-14).
 fn missile_archetype(world: &SimWorld) -> Result<UnitArchetype, String> {
     world
         .catalog
@@ -96,10 +98,38 @@ fn missile_archetype(world: &SimWorld) -> Result<UnitArchetype, String> {
         .filter(|arch| arch.mover_type == MoverType::Ground && arch.max_speed > SimScalar::ZERO)
         .find(|arch| {
             arch.weapon_against(MoverType::Ground, None)
-                .is_some_and(|w| w.projectile_speed.is_some() && w.splash.is_none())
+                .is_some_and(|w| {
+                    w.projectile_speed.is_some()
+                        && w.missile_movers.is_empty()
+                        && w.splash.is_none()
+                })
         })
         .cloned()
-        .ok_or_else(|| "the shipped catalog has a ground missile weapon".to_owned())
+        .ok_or_else(|| "the shipped catalog has a constant ground missile weapon".to_owned())
+}
+
+/// The one shipped archetype for which `is` holds, or an error naming `what` and how many
+/// matched: a finder selects one unit by a property unique to it (plan
+/// `2026-11-28-missile-movers-b52` M-14), so an archetype that gains the property later makes
+/// the finder fail instead of silently testing another unit.
+fn one_archetype(
+    world: &SimWorld,
+    what: &str,
+    is: impl Fn(&UnitArchetype) -> bool,
+) -> Result<UnitArchetype, String> {
+    let found: Vec<&UnitArchetype> = world.catalog.archetypes().filter(|arch| is(arch)).collect();
+    match found.as_slice() {
+        [one] => Ok((*one).clone()),
+        other => Err(format!(
+            "{what}: one shipped archetype, found {:?}",
+            other.iter().map(|arch| &arch.slug).collect::<Vec<_>>()
+        )),
+    }
+}
+
+/// The movers of `weapon`, empty for none.
+fn movers_of(weapon: Option<&WeaponSpec>) -> &[MissileMover] {
+    weapon.map_or(&[], |w| w.missile_movers.as_slice())
 }
 
 /// The next free archetype identity.
@@ -768,37 +798,24 @@ fn unarmed(sight: SimScalar) -> impl FnOnce(&mut UnitArchetype) {
     }
 }
 
-/// The shipped mobile air unit whose air weapon flies movers: the Phoenix analogue.
+/// The shipped mobile air unit whose air weapon's movers start with a bounded band (5.0.14's
+/// `MissileDefault` up to 1): the Phoenix analogue.
 fn air_mover_unit(world: &SimWorld) -> Result<UnitArchetype, String> {
-    world
-        .catalog
-        .archetypes()
-        .find(|arch| {
-            arch.mover_type == MoverType::Air
-                && arch.max_speed > SimScalar::ZERO
-                && arch
-                    .air_weapon
-                    .as_ref()
-                    .is_some_and(|w| !w.missile_movers.is_empty())
-        })
-        .cloned()
-        .ok_or_else(|| "the shipped catalog has an air weapon with movers".to_owned())
+    one_archetype(world, "the Phoenix analogue", |arch| {
+        arch.mover_type == MoverType::Air
+            && arch.max_speed > SimScalar::ZERO
+            && movers_of(arch.air_weapon.as_ref())
+                .first()
+                .is_some_and(|mover| mover.up_to_range.is_some())
+    })
 }
 
 /// The shipped structure whose ground weapon flies movers: the Spine Crawler analogue.
 fn ground_mover_structure(world: &SimWorld) -> Result<UnitArchetype, String> {
-    world
-        .catalog
-        .archetypes()
-        .find(|arch| {
-            matches!(arch.shape, ShapeKind::BuildingDome { .. })
-                && arch
-                    .ground_weapon
-                    .as_ref()
-                    .is_some_and(|w| !w.missile_movers.is_empty())
-        })
-        .cloned()
-        .ok_or_else(|| "the shipped catalog has a structure ground weapon with movers".to_owned())
+    one_archetype(world, "the Spine Crawler analogue", |arch| {
+        matches!(arch.shape, ShapeKind::BuildingDome { .. })
+            && !movers_of(arch.ground_weapon.as_ref()).is_empty()
+    })
 }
 
 /// A duel on open ground between the shipped `attacker` (a structure when it has a dome) of
@@ -1211,27 +1228,19 @@ fn a_mover_weapons_release_shows_its_attacker() -> TestResult {
 /// energy-costing spell at a position: the High Templar analogue (Psionic Storm). The Ravager
 /// analogue's bile costs no energy and the Queen analogue has an air weapon block.
 fn bolt_caster(world: &SimWorld) -> Result<UnitArchetype, String> {
-    let found: Vec<&UnitArchetype> = world
-        .catalog
-        .archetypes()
-        .filter(|arch| {
-            arch.mover_type == MoverType::Ground
-                && arch.max_speed > SimScalar::ZERO
-                && arch.air_weapon.is_none()
-                && arch
-                    .weapon
-                    .as_ref()
-                    .is_some_and(|w| w.projectile_speed.is_some() && w.missile_movers.is_empty())
-                && arch.abilities.iter().any(|ability| {
-                    ability.target_kind == AbilityTargetKind::TargetPosition
-                        && ability.energy_cost > SimScalar::ZERO
-                })
-        })
-        .collect();
-    match found.as_slice() {
-        [one] => Ok((*one).clone()),
-        other => Err(format!("one bolt caster, found {}", other.len())),
-    }
+    one_archetype(world, "the High Templar analogue", |arch| {
+        arch.mover_type == MoverType::Ground
+            && arch.max_speed > SimScalar::ZERO
+            && arch.air_weapon.is_none()
+            && arch
+                .weapon
+                .as_ref()
+                .is_some_and(|w| w.projectile_speed.is_some() && w.missile_movers.is_empty())
+            && arch.abilities.iter().any(|ability| {
+                ability.target_kind == AbilityTargetKind::TargetPosition
+                    && ability.energy_cost > SimScalar::ZERO
+            })
+    })
 }
 
 /// M-9: the High Templar analogue's bolt, released at a held target 0.63 and 5.9 world units away
@@ -1267,5 +1276,183 @@ fn the_bolt_flies_missile_defaults_speed() -> TestResult {
             "edge {edge}: one tick before a bolt of 1.0"
         );
     }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------------------------
+// The shipped movers of plan `2026-11-28-missile-movers-b52` (M-12, M-15, M-16; WP3 to WP5)
+// ---------------------------------------------------------------------------------------------
+
+/// The shipped mobile air unit whose air weapon flies movers and reaches 9 world units: the
+/// Viking analogue.
+fn viking(world: &SimWorld) -> Result<UnitArchetype, String> {
+    one_archetype(world, "the Viking analogue", |arch| {
+        arch.mover_type == MoverType::Air
+            && arch.max_speed > SimScalar::ZERO
+            && arch.air_weapon.as_ref().is_some_and(|w| {
+                !w.missile_movers.is_empty() && w.max_range == SimScalar::from_i32(9)
+            })
+    })
+}
+
+/// What a volley did: the ticks on which its missiles were released and on which its target's
+/// vitals dropped.
+struct Volley {
+    releases: Vec<u32>,
+    strikes: Vec<u32>,
+}
+
+/// Orders `bench`'s shooter to attack and steps until `strikes` drops of the target's vitals, or
+/// 200 ticks; every renderer missile event counts as a release.
+fn volley(bench: &mut Bench, strikes: usize) -> Result<Volley, String> {
+    bench
+        .world
+        .entities
+        .get_mut(&bench.shooter)
+        .ok_or("the shooter exists")?
+        .issue_order(UnitOrder::attack(bench.target), false)
+        .map_err(|error| format!("{error:?}"))?;
+    let mut last = bench.vitals(bench.target);
+    let mut seen = Volley {
+        releases: Vec::new(),
+        strikes: Vec::new(),
+    };
+    for tick in 1..=200 {
+        let snapshot = bench.world.step(&bundle(tick));
+        let released = snapshot
+            .combat_events
+            .iter()
+            .filter(|event| matches!(event, CombatEventVisual::ProjectileVisual { .. }))
+            .count();
+        seen.releases.extend(std::iter::repeat_n(tick, released));
+        let now = bench.vitals(bench.target);
+        if now != last {
+            seen.strikes.push(tick);
+            last = now;
+        }
+        if seen.strikes.len() == strikes {
+            return Ok(seen);
+        }
+    }
+    Err(format!(
+        "{strikes} strikes within 200 ticks: {:?}",
+        seen.strikes
+    ))
+}
+
+/// Gives a copied attacker `sight` world units of sight, so a target at its full range is seen.
+fn seeing(sight: i32) -> impl FnOnce(&mut UnitArchetype) {
+    move |copy: &mut UnitArchetype| copy.sight_radius = SimScalar::from_i32(sight)
+}
+
+/// M-12: the Viking analogue's two torpedoes, released 4 ticks apart (`PeriodicPeriodArray 0,
+/// 0.21`), each land on §2.4's tick after their own release (`VikingFighterMissile`, S3), the
+/// release tick counted, and nothing lands on a release tick.
+#[test]
+fn the_viking_torpedoes_land_after_their_flight() -> TestResult {
+    let world = sim_fixtures::world(
+        GameMap::new(8, 8, MapCell::default_ground(CliffLevel(0)))?,
+        1,
+    );
+    let viking = viking(&world)?;
+    let table = [
+        (0.5, 9),
+        (2.0, 12),
+        (4.0, 14),
+        (6.0, 15),
+        (8.0, 16),
+        (9.0, 17),
+    ];
+    for (seed, (edge, expected)) in (0x700_u64..).zip(table) {
+        let mut bench = shipped_duel(
+            seed,
+            &viking,
+            &viking,
+            scalar(12.0),
+            scalar(edge),
+            seeing(12),
+        )?;
+        let seen = volley(&mut bench, 2)?;
+        let (first, second) = (seen.releases[0], seen.releases[1]);
+        assert_eq!(second - first, 4, "edge {edge}: the volley's interval");
+        assert_eq!(
+            seen.strikes,
+            vec![first + expected - 1, second + expected - 1],
+            "edge {edge}: each torpedo after its own {expected}-tick flight"
+        );
+        assert!(
+            seen.strikes
+                .iter()
+                .all(|tick| !seen.releases.contains(tick)),
+            "edge {edge}: no strike on a release tick"
+        );
+    }
+    Ok(())
+}
+
+/// M-15: a Viking analogue's torpedo whose target dies or cloaks undetected in flight is missed
+/// on the last point, its phases running out on the lost target (W-13's rule).
+#[test]
+fn a_viking_torpedos_lost_target_is_missed_on_the_last_point() -> TestResult {
+    let world = sim_fixtures::world(
+        GameMap::new(8, 8, MapCell::default_ground(CliffLevel(0)))?,
+        1,
+    );
+    let viking = viking(&world)?;
+    let losses: [(&str, Loss); 2] = [("dies", dies), ("cloaks", cloaks)];
+    for (seed, (case, loss)) in (0x710_u64..).zip(losses) {
+        let bench = shipped_duel(seed, &viking, &viking, scalar(10.0), scalar(6.0), |_| {})?;
+        lands_on_the_last_point(bench, loss, &format!("Viking, {case}"))?;
+    }
+    Ok(())
+}
+
+/// M-16: the Viking analogue's next volley follows its period from the release, not from the
+/// impact, though each torpedo flies 15 ticks of a 36-tick period (W-14's rule).
+#[test]
+fn the_viking_cooldown_runs_from_the_release() -> TestResult {
+    let world = sim_fixtures::world(
+        GameMap::new(8, 8, MapCell::default_ground(CliffLevel(0)))?,
+        1,
+    );
+    let viking = viking(&world)?;
+    let weapon = viking.air_weapon.clone().ok_or("armed")?;
+    let mut bench = shipped_duel(0x720, &viking, &viking, scalar(10.0), scalar(6.0), |copy| {
+        if let Some(weapon) = copy.air_weapon.as_mut() {
+            weapon.random_delay_min = SimScalar::ZERO;
+            weapon.random_delay_max = SimScalar::ZERO;
+        }
+    })?;
+    let seen = volley(&mut bench, 6)?;
+    let interval = u32::from(weapon.strike_interval_ticks);
+    let period = u32::from(weapon.period_ticks);
+    let r = &seen.releases;
+    assert!(r.len() >= 5, "three volleys released: {r:?}");
+    assert_eq!(
+        (r[1] - r[0], r[2] - r[0], r[3] - r[2], r[4] - r[2]),
+        (interval, period, interval, period),
+        "volleys one period apart from their releases: {r:?}"
+    );
+    Ok(())
+}
+
+/// M-14 (plan `2026-11-28-missile-movers-b52`): every analogue finder of this file matches
+/// exactly one shipped archetype, so a weapon that gains movers never redirects another test.
+#[test]
+fn every_finder_matches_exactly_one_shipped_archetype() -> TestResult {
+    let world = sim_fixtures::world(
+        GameMap::new(8, 8, MapCell::default_ground(CliffLevel(0)))?,
+        1,
+    );
+    let found = [
+        air_mover_unit(&world)?,
+        ground_mover_structure(&world)?,
+        bolt_caster(&world)?,
+        viking(&world)?,
+    ];
+    let mut slugs: Vec<&str> = found.iter().map(|arch| arch.slug.as_str()).collect();
+    slugs.sort_unstable();
+    slugs.dedup();
+    assert_eq!(slugs.len(), found.len(), "each finder names its own unit");
     Ok(())
 }

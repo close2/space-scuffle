@@ -5547,7 +5547,7 @@ type ConstantMissileRow = (
 /// missile weapon without movers, from the 5.0.14 mover its launch flies (the launch's `Movers`,
 /// else its ammo unit's `Mover`; `MaxSpeed × 0.056` per tick, 3200 accelerations instant).
 /// `MissileDefault` (`core` MoverData:13-25) and its children fly 18.75, 1.05 per tick.
-const SC2_UNIT_MISSILE_SPEEDS: [ConstantMissileRow; 20] = [
+const SC2_UNIT_MISSILE_SPEEDS: [ConstantMissileRow; 19] = [
     ("Roach", "weapon", 1.05, "AcidSalivaLM ammo AcidSalivaWeapon, liberty MoverData:670-679", None),
     ("Marauder", "weapon", 1.12, "PunisherGrenadesLM Movers PunisherGrenadesWeapon, liberty MoverData:662-669 (MaxSpeed 20)", None),
     ("Stalker", "weapon", 1.05, "ParticleDisruptors ammo StalkerWeapon, a MissileDefault child (liberty MoverData:601)", None),
@@ -5565,7 +5565,6 @@ const SC2_UNIT_MISSILE_SPEEDS: [ConstantMissileRow; 20] = [
     ("Queen", "weapon", 2.24, "AcidSpinesLM Movers AcidSpinesWeapon, liberty MoverData:610-619 (Speed 40)", None),
     ("Queen", "ground_weapon", 2.24, "AcidSpinesLM Movers AcidSpinesWeapon, liberty MoverData:610-619 (Speed 40)", None),
     ("Queen", "air_weapon", 2.24, "TalonsLM ammo TalonsMissileWeapon, swarm MoverData:335-344 (Speed 40)", None),
-    ("Viking", "air_weapon", 1.5, "LanzerTorpedoesLM ammo VikingFighterMissile, liberty MoverData:531-567: movers, WP3", Some("B-52")),
     ("Liberator", "air_weapon", 1.2, "LiberatorDamageMissileLM ammo LiberatorMissile, void MoverData:384-422: movers, WP4", Some("B-52")),
     ("Banshee", "weapon", 1.2, "BacklashRocketsLM Movers BacklashRocketsLMWeapon, liberty MoverData:485-510: movers, WP4", Some("B-52")),
 ];
@@ -5626,7 +5625,7 @@ type MoverRow = (Option<f32>, &'static [PhaseRow]);
 
 /// W-18 (plan `2026-11-27-weapon-delivery` D-2): every shipped weapon with missile movers, by
 /// analogue and block, with the 5.0.14 movers of its launch effect.
-const SC2_MISSILE_MOVERS: [(&str, &str, &[MoverRow], f32, &str); 2] = [
+const SC2_MISSILE_MOVERS: [(&str, &str, &[MoverRow], f32, &str); 3] = [
     (
         "Phoenix",
         "air_weapon",
@@ -5668,6 +5667,25 @@ const SC2_MISSILE_MOVERS: [(&str, &str, &[MoverRow], f32, &str); 2] = [
         ],
         11.2,
         "ImpalerTentacleLM, liberty EffectData:2151-2162 (S10, S11)",
+    ),
+    (
+        "Viking",
+        "air_weapon",
+        &[
+            // VikingFighterMissile (liberty MoverData:531-567), the ammo unit VikingFighterWeapon's
+            // mover (UnitData:6901-6905): two Throw phases at Speed 2 merged (rule 2), switched at
+            // phase 1's Outro 0.625,0.75 (midpoint 0.6875); then Guidance from Speed 2 accelerating
+            // 56 to MaxSpeed 28, phase 3 carrying the acceleration (S11), so phases 2 and 3 merge.
+            (
+                None,
+                &[
+                    (Some(0.112), 0.0, 0.112, Some(0.6875)),
+                    (Some(0.112), 0.175616, 1.568, None),
+                ],
+            ),
+        ],
+        1.568,
+        "LanzerTorpedoesLM, liberty EffectData:1707-1712 (plan 2026-11-28-missile-movers-b52 S2, S3)",
     ),
 ];
 
