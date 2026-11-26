@@ -5,7 +5,8 @@
 //! Proves through the production client (`support/battle_harness.rs`, no renderer) that a unit
 //! arriving after another left is drawn by the departed unit's parked entity exactly as a fresh
 //! spawn would draw it (R-3), that nothing picks, selects or presents a parked entity (R-4, R-7),
-//! that a departed unit's looks are released and never reach the reused entity's new unit (R-5),
+//! that a departed unit's looks and sustained beam are released and never reach the reused
+//! entity's new unit (R-5; the beam is held by a Carrier's interceptor),
 //! that a battle beyond the pool's bound still draws every unit and says so (R-6), and that every
 //! way a battle ends leaves no bubble behind (R-11).
 //!
@@ -13,11 +14,6 @@
 //! The pixel half of R-3 is `render_pool_gpu_tests.rs` (R-8); the steady-state and allocation
 //! halves are `sync_steady_state_tests.rs` (R-1, R-2) and `sync_allocation_count_tests.rs`
 //! (R-1v); the map's own decisions and the bound are unit-tested in `client::render_pool`.
-//!
-//! # Limits
-//! R-5's sustained-beam half is not here: every shipped unit whose weapon holds a beam (the
-//! catalog's `sustain` looks) has no media yet, and the client refuses to draw a unit without
-//! media. The Carrier's interceptors hold one, so H-20 (plan §9) covers it with their media.
 //!
 //! # Invariants verified
 //! - Every unit is found by catalog property and media present, never by slug.
@@ -653,6 +649,74 @@ fn a_departed_units_looks_are_released_and_never_reach_the_reused_bubble() {
     assert!(
         looks(&new_track).is_empty(),
         "a plain unit holds no look: {new_track:?}"
+    );
+}
+
+/// R-5's beam half: a Carrier's interceptor (a hangar member, whose weapon holds a sustained
+/// beam) that holds a beam departs, and a plain unit arrives on the same tick: the beam ends, and
+/// no beam names the arrival, which is drawn by a parked entity.
+#[test]
+fn a_departed_members_beam_ends_and_never_follows_the_reused_bubble() {
+    let mut harness = Harness::battle();
+    ready(&mut harness);
+    let assets = battle_harness::assets();
+    let kinds = Kinds::find(harness.world_mut(), &assets);
+    let cycle = unit_cycling::stage_hangars(harness.world_mut(), &assets);
+    let member_kind = cycle.member;
+    let beams = |harness: &Harness| -> Vec<EntityId> {
+        let world = harness.world();
+        harness
+            .app
+            .world()
+            .resource::<client::effects::beams::HeldBeams>()
+            .slots()
+            .iter()
+            .map(|slot| slot.attacker)
+            .filter(|attacker| {
+                world
+                    .entities
+                    .get(attacker)
+                    .is_some_and(|unit| unit.unit_type_id == member_kind)
+            })
+            .collect()
+    };
+    let mut beaming = Vec::new();
+    for _ in 0..1_000 {
+        tick(&mut harness);
+        beaming = beams(&harness);
+        if !beaming.is_empty() {
+            break;
+        }
+    }
+    let member = *beaming.first().expect("an interceptor holds a beam");
+    let reused_before = map(&harness).stats().reused;
+    harness
+        .world_mut()
+        .entities
+        .get_mut(&member)
+        .expect("the member")
+        .hp = sim_types::SimScalar::ZERO;
+    let home = harness.simulated_position(harness.local_structure());
+    let place = harness.open_ground(home, 8.0);
+    let arrival = harness
+        .world_mut()
+        .spawn_unit(kinds.ground[1], LOCAL_PLAYER, sim_position(place))
+        .expect("open ground");
+    step_until_presented(&mut harness, arrival, Some(member));
+    run_ticks(&mut harness, 5);
+    let held = harness
+        .app
+        .world()
+        .resource::<client::effects::beams::HeldBeams>()
+        .slots()
+        .iter()
+        .map(|slot| slot.attacker)
+        .collect::<Vec<_>>();
+    assert!(!held.contains(&member), "the departed member's beam ended");
+    assert!(!held.contains(&arrival), "no beam names the arrival");
+    assert!(
+        map(&harness).stats().reused > reused_before,
+        "the arrival was drawn by a parked entity"
     );
 }
 

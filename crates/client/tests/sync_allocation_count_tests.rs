@@ -50,6 +50,11 @@
 //!   warm-up of `4 × L_max` ticks and windows of `2 × L_max` and `4 × L_max` ticks, `L_max`
 //!   being the Broodling's longest life read from the data (plan `2026-11-29-render-entity-pool`
 //!   R-1v). Their parent is `brood_cycle_frames_allocate_nothing`.
+//! - `hangar_cycle_live_frames` and `hangar_cycle_baseline_frames` are the same pair with two
+//!   Carriers cycling their interceptors (launch, attack, dock, relaunch), driven from the
+//!   presented snapshot by a system both children run; three warm-up cycles, then windows of two
+//!   and four cycles, each the last warm-up cycle's length (plan `2026-11-28-carrier-interceptors`
+//!   H-20). Their parent is `hangar_cycle_frames_allocate_nothing`.
 //!
 //! **Invariants asserted.** Two runs of the live child at the same frame count report the same
 //! window count (the measurement is deterministic); the full app's difference equals the baseline's (the client's
@@ -136,6 +141,12 @@ enum Variant {
     BroodCycleLive,
     /// The battle driver alone on the same staged battle.
     BroodCycleBaseline,
+    /// The live synchroniser and battle driver on the default battle with every mobile unit
+    /// killed and two Carriers cycling their interceptors through launch, attack, dock and
+    /// relaunch, driven from the snapshot (plan `2026-11-28-carrier-interceptors` H-20).
+    HangarCycleLive,
+    /// The battle driver and the cycle's driver alone on the same staged battle.
+    HangarCycleBaseline,
 }
 
 impl Variant {
@@ -151,12 +162,24 @@ impl Variant {
             Self::EffectBaseline => "effect_baseline_frames",
             Self::BroodCycleLive => "brood_cycle_live_frames",
             Self::BroodCycleBaseline => "brood_cycle_baseline_frames",
+            Self::HangarCycleLive => "hangar_cycle_live_frames",
+            Self::HangarCycleBaseline => "hangar_cycle_baseline_frames",
         }
     }
 
     /// Whether the child stages the Broodlings' battle, one 40 ms tick per frame.
     fn cycles_broods(self) -> bool {
         matches!(self, Self::BroodCycleLive | Self::BroodCycleBaseline)
+    }
+
+    /// Whether the child stages the Carriers' battle, one 40 ms tick per frame.
+    fn cycles_hangars(self) -> bool {
+        matches!(self, Self::HangarCycleLive | Self::HangarCycleBaseline)
+    }
+
+    /// Whether units arrive and leave on the child's own clocks, one 40 ms tick per frame.
+    fn cycles_units(self) -> bool {
+        self.cycles_broods() || self.cycles_hangars()
     }
 
     /// Whether a splash event is sent every frame.
@@ -173,7 +196,10 @@ impl Variant {
     fn presents(self) -> bool {
         !matches!(
             self,
-            Self::Baseline | Self::RunningBaseline | Self::BroodCycleBaseline
+            Self::Baseline
+                | Self::RunningBaseline
+                | Self::BroodCycleBaseline
+                | Self::HangarCycleBaseline
         )
     }
 }
@@ -279,7 +305,7 @@ fn watch_gas_crew(session: Res<'_, BattleSession>, mut crew: ResMut<'_, GasCrew>
 
 /// Broodlings the watcher of the Broodlings' children tracks at once; more alive is a failure of
 /// the child, never a silent miscount.
-const BROOD_SLOTS: usize = 16;
+const BROOD_SLOTS: usize = 32;
 
 /// The Broodlings of the Broodlings' children and how often, across all frames so far, one
 /// arrived in or left the presented snapshot (plan `2026-11-29-render-entity-pool` R-1v).
@@ -444,12 +470,17 @@ fn planted_allocation() {
     drop(std::hint::black_box(Vec::<u8>::with_capacity(64)));
 }
 
+/// What [`stage_variant`] stages: the gas crew, the cycling kind's watcher and the Carriers'
+/// driver, each where the variant has one.
+type Staged = (Option<GasCrew>, Option<BroodWatch>, Option<HangarDriver>);
+
 /// Stages what `variant` needs in `simulation` before its session begins: the gas crew and the
-/// held images of the running children, or the Broodlings' battle of the brood children.
+/// held images of the running children, the Broodlings' battle of the brood children, or the
+/// Carriers' battle of the hangar children.
 fn stage_variant(
     variant: Variant,
     simulation: &mut sim_core::SimWorld,
-) -> Result<(Option<GasCrew>, Option<BroodWatch>), Box<dyn std::error::Error>> {
+) -> Result<Staged, Box<dyn std::error::Error>> {
     let crew = if variant.is_running() {
         let crew = add_gas_crew(simulation)?;
         hold_attack_snapshot(simulation)?;
@@ -468,7 +499,43 @@ fn stage_variant(
             overflowed: false,
         }
     });
-    Ok((crew, brood))
+    let hangars = variant.cycles_hangars().then(|| {
+        HangarDriver(unit_cycling::stage_hangars(
+            simulation,
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets"),
+        ))
+    });
+    let brood = brood.or_else(|| {
+        hangars.map(|driver| BroodWatch {
+            kind: driver.0.member,
+            lifetime: 0,
+            present: [None; BROOD_SLOTS],
+            arrived: 0,
+            departed: 0,
+            overflowed: false,
+        })
+    });
+    Ok((crew, brood, hangars))
+}
+
+/// The Carriers' cycle of the hangar children (plan `2026-11-28-carrier-interceptors` H-20).
+#[derive(Resource, Clone, Copy, Debug)]
+struct HangarDriver(unit_cycling::HangarCycle);
+
+/// Cycles to complete before a hangar child's window: the first fills the magazines, the rest
+/// bring the render pool to its regime.
+const HANGAR_WARM_CYCLES: u32 = 3;
+
+/// Frames a hangar child may take to complete its warm-up cycles.
+const HANGAR_WARM_LIMIT: u32 = 20_000;
+
+/// Drives the Carriers' cycle from the presented snapshot, before the tick. Reads the snapshot
+/// and writes the world in place: the simulation allocates only for each new target.
+fn drive_hangars(mut session: ResMut<'_, BattleSession>, mut driver: ResMut<'_, HangarDriver>) {
+    let members = driver.0.members_in(&session.frames.presented().bubbles);
+    if let Some(world) = session.world_mut() {
+        driver.0.advance(world, members);
+    }
 }
 
 /// Builds the app of `variant` with a fixed time step: on the real default battle, paused, or
@@ -482,10 +549,10 @@ fn steady_state_app(variant: Variant) -> Result<App, Box<dyn std::error::Error>>
     } else {
         DEFAULT_BATTLE_SCENARIO
     };
-    let ticking = variant.is_running() || variant.cycles_broods();
+    let ticking = variant.is_running() || variant.cycles_units();
     let definition = BattleDefinition::load(root.as_path(), scenario.as_ref())?;
     let mut simulation = definition.instantiate()?;
-    let (crew, brood) = stage_variant(variant, &mut simulation)?;
+    let (crew, brood, hangars) = stage_variant(variant, &mut simulation)?;
     let session = BattleSession::prepare(
         SessionGeneration::FIRST,
         &mut simulation,
@@ -521,7 +588,7 @@ fn steady_state_app(variant: Variant) -> Result<App, Box<dyn std::error::Error>>
         ..default()
     })
     .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
-        Duration::from_millis(if variant.cycles_broods() { 40 } else { 20 }),
+        Duration::from_millis(if variant.cycles_units() { 40 } else { 20 }),
     ))
     .add_systems(
         Startup,
@@ -536,9 +603,13 @@ fn steady_state_app(variant: Variant) -> Result<App, Box<dyn std::error::Error>>
     if let Some(watch) = brood {
         app.insert_resource(watch).add_systems(Last, watch_broods);
     }
+    if let Some(driver) = hangars {
+        app.insert_resource(driver)
+            .add_systems(Update, drive_hangars.before(advance_battle_ticks));
+    }
     if matches!(
         variant,
-        Variant::RunningBaseline | Variant::BroodCycleBaseline
+        Variant::RunningBaseline | Variant::BroodCycleBaseline | Variant::HangarCycleBaseline
     ) {
         app.add_systems(Update, advance_battle_ticks);
     }
@@ -1075,10 +1146,25 @@ fn measured_steady_frames(app: &mut App, frames: u32) {
 /// ticks, one tick a frame, a number read from the data, so both children of the pair measure
 /// the same ticks. Fails if the battle failed or, for a presenting child, nothing is presented.
 fn warm_up(app: &mut App, variant: Variant) -> TestResult {
+    if variant.cycles_hangars() {
+        let cycles = |app: &App| app.world().resource::<HangarDriver>().0.cycles;
+        let mut frames = 0;
+        while cycles(app) < HANGAR_WARM_CYCLES {
+            app.update();
+            frames += 1;
+            if frames > HANGAR_WARM_LIMIT {
+                return Err(format!(
+                    "{HANGAR_WARM_CYCLES} hangar cycles took more than {HANGAR_WARM_LIMIT} frames"
+                )
+                .into());
+            }
+        }
+    }
     let warm = app
         .world()
         .get_resource::<BroodWatch>()
         .map_or(WARM_FRAMES, |watch| 4 * watch.lifetime);
+    // A hangar child has warmed by whole cycles above; its watcher's lifetime is 0.
     for _ in 0..warm {
         app.update();
     }
@@ -1108,6 +1194,12 @@ fn run_child(variant: Variant) -> TestResult {
         .parse()?;
     let mut app = steady_state_app(variant)?;
     warm_up(&mut app, variant)?;
+    // A hangar child's window is counted in cycles: that many times the last warm-up cycle's
+    // ticks, one tick a frame, the same in both children of the pair.
+    let frames = app
+        .world()
+        .get_resource::<HangarDriver>()
+        .map_or(frames, |driver| frames * driver.0.last_cycle_ticks);
     let tick = |app: &App| {
         app.world()
             .resource::<BattleSession>()
@@ -1123,7 +1215,7 @@ fn run_child(variant: Variant) -> TestResult {
     let brood_before = app.world().get_resource::<BroodWatch>().copied();
     let pool_before = app.world().resource::<client::RenderEntityMap>().stats();
     measured_steady_frames(&mut app, frames);
-    if variant == Variant::BroodCycleLive {
+    if matches!(variant, Variant::BroodCycleLive | Variant::HangarCycleLive) {
         // The warm-up reached the regime: no arrival of the window spawned a render entity.
         let pool_after = app.world().resource::<client::RenderEntityMap>().stats();
         if pool_after.spawned != pool_before.spawned {
@@ -1134,7 +1226,7 @@ fn run_child(variant: Variant) -> TestResult {
         }
     }
     if let Some(before) = brood_before {
-        return check_brood_window(&app, frames, before, tick(&app) - ticked_from);
+        return check_brood_window(&app, frames, &before, tick(&app) - ticked_from);
     }
     if variant == Variant::EffectStream {
         check_effect_stream(&app, frames, spawned_before)?;
@@ -1190,7 +1282,7 @@ fn run_child(variant: Variant) -> TestResult {
 /// The Broodlings' children's check after their window of `frames` frames, in which the battle
 /// ran `ticked` ticks: one tick a frame, and at least two Broodlings arrived and two left, all
 /// tracked.
-fn check_brood_window(app: &App, frames: u32, before: BroodWatch, ticked: u32) -> TestResult {
+fn check_brood_window(app: &App, frames: u32, before: &BroodWatch, ticked: u32) -> TestResult {
     if ticked != frames {
         return Err(format!("the battle ran {ticked} ticks in {frames} frames").into());
     }
@@ -1200,11 +1292,14 @@ fn check_brood_window(app: &App, frames: u32, before: BroodWatch, ticked: u32) -
         .copied()
         .ok_or("invariant: a Broodlings' child has its watcher")?;
     if after.overflowed {
-        return Err(format!("more than {BROOD_SLOTS} Broodlings were presented at once").into());
+        return Err(format!(
+            "more than {BROOD_SLOTS} units of the cycling kind were presented at once"
+        )
+        .into());
     }
     if after.arrived < before.arrived + 2 || after.departed < before.departed + 2 {
         return Err(format!(
-            "Broodlings must arrive and leave in the window: {before:?} then {after:?}"
+            "units of the cycling kind (Broodlings or interceptors) must arrive and leave in the window: {before:?} then {after:?}"
         )
         .into());
     }
@@ -1385,6 +1480,16 @@ fn brood_cycle_live_frames() -> TestResult {
 #[test]
 fn brood_cycle_baseline_frames() -> TestResult {
     run_child(Variant::BroodCycleBaseline)
+}
+
+#[test]
+fn hangar_cycle_live_frames() -> TestResult {
+    run_child(Variant::HangarCycleLive)
+}
+
+#[test]
+fn hangar_cycle_baseline_frames() -> TestResult {
+    run_child(Variant::HangarCycleBaseline)
 }
 
 /// The parts of a DHAT profile (`dhatFileVersion` 2, JSON) this test reads.
@@ -1755,6 +1860,55 @@ fn brood_cycle_frames_allocate_nothing() -> TestResult {
          arriving and expiring, beyond the tick driver's and Bevy's own work\n{report}",
         live - baseline,
         long - short
+    );
+    Ok(())
+}
+
+/// H-20 under valgrind (plan `2026-11-28-carrier-interceptors` §6.4, plan
+/// `2026-11-29-render-entity-pool` §6.5): on the staged Carriers' battle, after a warm-up of
+/// three cycles, the live synchroniser's windows of two and four cycles (each the last warm-up
+/// cycle's length, measured in the child) differ by exactly what the battle driver's and the
+/// cycle driver's alone differ by: interceptors launching, docking and relaunching cost the
+/// client no allocation.
+#[test]
+fn hangar_cycle_frames_allocate_nothing() -> TestResult {
+    let runs: Vec<Run> = [Variant::HangarCycleLive, Variant::HangarCycleBaseline]
+        .into_iter()
+        .flat_map(|variant| {
+            [2, 4].map(|frames| Run {
+                variant,
+                frames,
+                repeat: 0,
+            })
+        })
+        .collect();
+    let directory = tempfile::tempdir()?;
+    let counts = count_all(&runs, directory.path())?;
+    let [live_short, live_long, base_short, base_long] = counts.as_slice() else {
+        return Err("invariant: count_all returns one count per run".into());
+    };
+    let report = format!(
+        "blocks allocated inside {WINDOW_FUNCTION} after {HANGAR_WARM_CYCLES} warm cycles; \
+         windows of 2 and 4 cycles:\n  live {} (process {}), {} (process {})\n  baseline {} \
+         (process {}), {} (process {})",
+        live_short.window,
+        live_short.total,
+        live_long.window,
+        live_long.total,
+        base_short.window,
+        base_short.total,
+        base_long.window,
+        base_long.total
+    );
+    println!("{report}");
+    let live = i128::from(live_long.window) - i128::from(live_short.window);
+    let baseline = i128::from(base_long.window) - i128::from(base_short.window);
+    assert_eq!(
+        live - baseline,
+        0,
+        "the client's battle sync systems allocated {} times over two cycles of interceptors \
+         launching, docking and relaunching, beyond the drivers' and Bevy's own work\n{report}",
+        live - baseline
     );
     Ok(())
 }

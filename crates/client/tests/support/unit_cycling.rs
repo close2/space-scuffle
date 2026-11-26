@@ -10,6 +10,10 @@
 //!   each player is killed and spawned again at a fixed cadence by [`AirCycle::advance`]; every
 //!   other cycle a ground unit replaces the air one on the same tick, so render entities move
 //!   between the air and ground layouts.
+//! - [`stage_hangars`]: every mobile unit is killed and two hangar units (the Carrier analogue,
+//!   found by its hangar) of the local player attack a durable, unarmed enemy air unit beside the
+//!   local base; [`HangarCycle::advance`] drives their members through launch, attack, dock and
+//!   relaunch from the presented snapshot (plan `2026-11-28-carrier-interceptors` H-20).
 //!
 //! # How tests use it
 //! Include it with `#[path = "support/unit_cycling.rs"]` and call a stage on the session's
@@ -263,5 +267,191 @@ pub fn stage_air_cycle(world: &mut SimWorld, assets: &Path) -> AirCycle {
         ground,
         units,
         cycles: 0,
+    }
+}
+
+/// Minerals and gas the hangars' owner is given, so their magazines are rebuilt to full.
+const HANGAR_RESOURCES: u32 = 1_000_000;
+
+/// Where a [`HangarCycle`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HangarPhase {
+    /// The hangars attack the target until every member is built and launched.
+    Launch,
+    /// The target is gone; members fly home until every one has docked.
+    Dock,
+}
+
+/// The H-20 stage after [`stage_hangars`]: two hangar units of the local player and their
+/// target, cycled by [`HangarCycle::advance`]. Fixed-size, so driving it allocates nothing but
+/// what the simulation allocates for a new target.
+#[derive(Debug, Clone, Copy)]
+pub struct HangarCycle {
+    /// The hangar units.
+    pub hosts: [EntityId; 2],
+    /// Their members' archetype.
+    pub member: UnitTypeId,
+    /// The target's archetype: a durable, unarmed air unit with media.
+    pub target_kind: UnitTypeId,
+    /// The current target.
+    pub target: EntityId,
+    /// Where targets appear, map units.
+    pub target_at: SimVec2,
+    /// The phase.
+    pub phase: HangarPhase,
+    /// Cycles completed (a cycle ends when every member has docked).
+    pub cycles: u32,
+    /// The tick the last cycle ended on.
+    pub cycle_end: u32,
+    /// Ticks the last completed cycle took.
+    pub last_cycle_ticks: u32,
+}
+
+impl HangarCycle {
+    /// Advances the cycle on `world`, given the number of member bubbles the presented snapshot
+    /// holds. Launch ends when no hangar has a member docked or building and every launched
+    /// member is presented: the target is killed. Dock ends when no member is presented and no
+    /// hangar has one launched: a new target is spawned and attacked. Returns whether a cycle
+    /// ended.
+    pub fn advance(&mut self, world: &mut SimWorld, presented_members: usize) -> bool {
+        let mut launched = 0_usize;
+        let mut waiting = false;
+        for host in self.hosts {
+            let Some(state) = world.entities.get(&host).and_then(|e| e.hangar()) else {
+                continue;
+            };
+            launched += usize::from(state.launched);
+            waiting |= !state.docked.is_empty() || state.queued > 0;
+        }
+        match self.phase {
+            HangarPhase::Launch => {
+                if !waiting && launched > 0 && presented_members == launched {
+                    if let Some(target) = world.entities.get_mut(&self.target) {
+                        target.hp = SimScalar::ZERO;
+                    }
+                    self.phase = HangarPhase::Dock;
+                }
+                false
+            }
+            HangarPhase::Dock => {
+                if presented_members > 0 || launched > 0 {
+                    return false;
+                }
+                self.target = world
+                    .spawn_unit(self.target_kind, PlayerId(1), self.target_at)
+                    .expect("open ground for a new target");
+                for host in self.hosts {
+                    if let Some(unit) = world.entities.get_mut(&host) {
+                        unit.issue_order(UnitOrder::attack(self.target), false)
+                            .expect("an attack order");
+                    }
+                }
+                self.phase = HangarPhase::Launch;
+                self.cycles += 1;
+                self.last_cycle_ticks = world.current_tick - self.cycle_end;
+                self.cycle_end = world.current_tick;
+                true
+            }
+        }
+    }
+
+    /// Member bubbles among `bubbles`.
+    pub fn members_in(&self, bubbles: &[sim_types::snapshot::BubbleRenderInstance]) -> usize {
+        bubbles
+            .iter()
+            .filter(|bubble| bubble.unit_type == self.member)
+            .count()
+    }
+}
+
+/// Stages H-20 on `world` (see the module docs): every mobile unit is killed, the local player
+/// is given ample resources, and two hangar units attack a durable unarmed enemy air unit with
+/// media, all beside the local base. `assets` is the shipped asset root.
+pub fn stage_hangars(world: &mut SimWorld, assets: &Path) -> HangarCycle {
+    let presentable = |slug: &str| {
+        assets
+            .join("textures")
+            .join(format!("{slug}.flipbook.ron"))
+            .is_file()
+    };
+    let (host, member) = world
+        .catalog
+        .archetypes()
+        .filter(|a| presentable(&a.slug))
+        .find_map(|a| {
+            a.capabilities
+                .hangar
+                .map(|hangar| (a.unit_type_id, hangar.member))
+        })
+        .expect("a shipped hangar unit with media");
+    let mut air: Vec<UnitTypeId> = world
+        .catalog
+        .archetypes()
+        .filter(|a| a.mover_type == MoverType::Air && a.max_speed > SimScalar::ZERO)
+        .filter(|a| a.capabilities.hangar.is_none() && a.selectable && a.unit_type_id != member)
+        .filter(|a| presentable(&a.slug))
+        .map(|a| a.unit_type_id)
+        .collect();
+    air.sort();
+    let target_kind = *air.first().expect("a plain air unit with media");
+    kill_mobile_units(world);
+    disarm(world, target_kind);
+    world
+        .catalog
+        .get_mut(target_kind)
+        .expect("the target kind")
+        .max_hp = SimScalar::from_i32(1_000_000);
+    let local = PlayerId(0);
+    if let Some(resources) = world.player_resources.get_mut(local) {
+        resources.minerals = HANGAR_RESOURCES;
+        resources.gas = HANGAR_RESOURCES;
+    }
+    let centre = map_centre(world);
+    let base = world
+        .entities
+        .values()
+        .filter(|e| e.owner == local && e.is_immobile)
+        .map(|e| (e.id, e.position))
+        .min_by_key(|(id, _)| *id)
+        .map(|(_, position)| position)
+        .expect("the local player has a base");
+    let toward = (centre - base).normalize_or_zero();
+    let places: Vec<SimVec2> = (8..30)
+        .map(|step| base + toward * SimScalar::from_i32(step))
+        .filter(|at| open_ground(world, *at))
+        .collect();
+    let at = *places
+        .first()
+        .expect("open ground between the base and the centre");
+    let hosts = [
+        world
+            .spawn_unit(host, local, at)
+            .expect("room for a hangar unit"),
+        world
+            .spawn_unit(host, local, at + SimVec2::from_i32(0, 3))
+            .expect("room for a second hangar unit"),
+    ];
+    let target_at = at + toward * SimScalar::from_i32(6);
+    let target = world
+        .spawn_unit(target_kind, PlayerId(1), target_at)
+        .expect("room for the target");
+    for host in hosts {
+        world
+            .entities
+            .get_mut(&host)
+            .expect("a hangar unit")
+            .issue_order(UnitOrder::attack(target), false)
+            .expect("an attack order");
+    }
+    HangarCycle {
+        hosts,
+        member,
+        target_kind,
+        target,
+        target_at,
+        phase: HangarPhase::Launch,
+        cycles: 0,
+        cycle_end: world.current_tick,
+        last_cycle_ticks: 0,
     }
 }

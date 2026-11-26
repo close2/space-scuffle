@@ -11,7 +11,9 @@
 //! slots grows (C-17). A battle in which units arrive and leave on their own clocks (Broodlings
 //! expiring) or at a test's cadence (air and ground units killed and spawned) creates and
 //! removes no asset and spawns no entity once the render pool has reached its regime (plan
-//! `2026-11-29-render-entity-pool` R-1, R-2).
+//! `2026-11-29-render-entity-pool` R-1, R-2), and so does one in which two Carriers cycle their
+//! interceptors through launch, attack, dock and relaunch (plan `2026-11-28-carrier-interceptors`
+//! H-20).
 //!
 //! # How it fits
 //! This is layers 1 and 2 of blueprint D-2 (`docs/plans/2026-11-03-close-phase-6-7-8-exits.md`).
@@ -1906,4 +1908,71 @@ fn air_units_cycling_create_and_remove_nothing() {
     assert_cycling_window_is_steady(&mut harness, period, &mut drive, &|bubble| {
         bubble.unit_type == air || bubble.unit_type == ground
     });
+}
+
+/// Ticks a hangar test drives the battle to complete its warm-up cycles before giving up.
+const HANGAR_CYCLE_LIMIT_TICKS: u32 = 20_000;
+
+/// Least window of H-20, in ticks (plan `2026-11-28-carrier-interceptors` §6.4: 600 ticks).
+const HANGAR_WINDOW_TICKS: u32 = 600;
+
+/// H-20 (plan `2026-11-28-carrier-interceptors` §6.4, plan `2026-11-29-render-entity-pool`
+/// §6.5): two hangar units (the Carrier analogue, found by its hangar) of the local player cycle
+/// their members through launch, attack, dock and relaunch against a durable unarmed enemy, the
+/// cycle driven by the presented snapshot (every member launched, then the target gone until
+/// every member has docked, then a new target). After the render pool reaches its regime
+/// (warm-up and window are multiples of the time one cycle took, measured), a window of at least
+/// 600 ticks creates and removes no asset and spawns no entity, with R-1's rules.
+#[test]
+fn hangar_members_cycling_create_and_remove_nothing() {
+    let mut harness = Harness::battle();
+    settle(&mut harness, true);
+    let assets = battle_harness::assets();
+    let stage = unit_cycling::stage_hangars(harness.world_mut(), &assets);
+    let cycle = std::cell::Cell::new(stage);
+    harness.resume();
+    let mut drive = |harness: &mut Harness| {
+        let mut state = cycle.get();
+        let members = state.members_in(
+            &harness
+                .app
+                .world()
+                .resource::<BattleSession>()
+                .frames
+                .presented()
+                .bubbles,
+        );
+        state.advance(harness.world_mut(), members);
+        cycle.set(state);
+    };
+    let start = harness.world().current_tick;
+    while cycle.get().cycles < 2 {
+        drive(&mut harness);
+        harness.step(1);
+        assert!(
+            harness.world().current_tick - start < HANGAR_CYCLE_LIMIT_TICKS,
+            "two hangar cycles within {HANGAR_CYCLE_LIMIT_TICKS} ticks: {:?}",
+            cycle.get()
+        );
+    }
+    let period = cycle.get().last_cycle_ticks;
+    assert!(period > 0, "a cycle takes time");
+    warm_to_regime(&mut harness, period, &mut drive);
+    let (member, target) = (stage.member, stage.target_kind);
+    let window = period.max(HANGAR_WINDOW_TICKS.div_ceil(3));
+    assert_cycling_window_is_steady(&mut harness, window, &mut drive, &|bubble| {
+        bubble.unit_type == member || bubble.unit_type == target
+    });
+    assert!(
+        cycle.get().cycles >= 3,
+        "the window ran whole cycles: {:?}",
+        cycle.get()
+    );
+    eprintln!(
+        "H-20: one cycle took {period} ticks at warm-up; window {} ticks; {} cycles in all; \
+         pool {:?}",
+        3 * window,
+        cycle.get().cycles,
+        pool_stats(&harness)
+    );
 }
