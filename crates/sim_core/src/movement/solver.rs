@@ -1210,9 +1210,8 @@ fn transferred_shares(
     (a, b): (&SolverBody, &SolverBody),
     held: (bool, bool),
 ) -> Option<(SimScalar, SimScalar)> {
-    if pair.moving_bound.is_none() {
-        return None;
-    }
+    // A friend pair carries D-α's moving bound; an enemy pair has none and takes no transfer.
+    pair.moving_bound?;
     let held_a = held.0 && pair.share_a > SimScalar::ZERO;
     let held_b = held.1 && pair.share_b > SimScalar::ZERO;
     let unmovable = |party: &ContactParty| party.fixed || party.anchored();

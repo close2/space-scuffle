@@ -504,10 +504,13 @@ fn position(world: &SimWorld, id: EntityId) -> Result<SimVec2, Box<dyn Error>> {
     Ok(world.entities.get(&id).ok_or("a unit")?.position)
 }
 
+/// One tick of a run: its checksum, contact iterations and terrain transfers.
+type TickRecord = (u64, u16, u32);
+
 /// The C1-T1 scene under `rules`: 64 friendly walkers and runners in an 8 × 8 block, packed at
 /// contact, given one `Move` to the block's far side; the per-tick checksums, contact iterations
 /// and terrain transfers of 160 ticks.
-fn converging_crowd(rules: MovementRules) -> Result<Vec<(u64, u16, u32)>, Box<dyn Error>> {
+fn converging_crowd(rules: MovementRules) -> Result<Vec<TickRecord>, Box<dyn Error>> {
     let mut world = scratch_world(rules, 0x0C1_0001)?;
     let pitch = 2.0 * world_units(SMALL) + 1.0 / 64.0;
     let mut crowd = Vec::new();
