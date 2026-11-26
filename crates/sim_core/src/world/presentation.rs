@@ -251,13 +251,24 @@ pub(crate) fn weapon_source(
     entity: &Entity,
     spec: &WeaponSpec,
 ) -> EffectSource {
+    weapon_source_with_mode(arch, entity, entity.active_siege_weapon(), spec)
+}
+
+/// [`weapon_source`] for a `spec` resolved through `UnitArchetype::weapon_against` with
+/// `mode_weapon` standing for the entity's active mode weapon: the weapon itself, or the copy
+/// the combat phase steps while it mutates the entity. The override is found by identity with
+/// `mode_weapon`.
+pub(crate) fn weapon_source_with_mode(
+    arch: &UnitArchetype,
+    entity: &Entity,
+    mode_weapon: Option<&WeaponSpec>,
+    spec: &WeaponSpec,
+) -> EffectSource {
     let is_air = arch
         .air_weapon
         .as_ref()
         .is_some_and(|air| std::ptr::eq(air, spec));
-    let is_override = entity
-        .active_siege_weapon()
-        .is_some_and(|mode_weapon| std::ptr::eq(mode_weapon, spec));
+    let is_override = mode_weapon.is_some_and(|mode_weapon| std::ptr::eq(mode_weapon, spec));
     let weapon = if is_air {
         WeaponKey {
             slot: WeaponSlot::Air,
