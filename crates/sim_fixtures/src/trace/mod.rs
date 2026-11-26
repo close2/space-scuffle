@@ -701,6 +701,28 @@ pub(crate) fn in_band(
     )
 }
 
+/// [`in_band`] with `entity` standing at `position` instead of where it stands.
+pub(crate) fn in_band_at(
+    world: &SimWorld,
+    (entity, arch): (&Entity, &UnitArchetype),
+    position: SimVec2,
+    enemy: &Entity,
+) -> bool {
+    let Ok(enemy_arch) = world.catalog.get(enemy.unit_type_id) else {
+        return false;
+    };
+    let Some(weapon) = weapon_against(arch, entity, enemy_arch) else {
+        return false;
+    };
+    within_band(
+        weapon,
+        arch,
+        enemy_arch,
+        position.distance(enemy.position),
+        SimScalar::ZERO,
+    )
+}
+
 /// Whether centres `distance` apart lie in `weapon`'s band between units of archetypes `arch`
 /// and `enemy_arch`, with `slop` extra reach.
 fn within_band(

@@ -47,9 +47,11 @@ use crate::harness::answers::{
     STUTTER_SHARE,
 };
 use crate::harness::corpus::{Cue, CueOrder, Role, Scenario};
-use crate::trace::contact_checks::{moved_by_others, standing_of, HELD_EPSILON};
+use crate::trace::contact_checks::{
+    left_band, moved_by_others, standing_of, FirstContactPairs, HELD_EPSILON,
+};
 use sim_core::SimWorld;
-use sim_types::EntityId;
+use sim_types::{EntityId, SimVec2};
 
 /// The answer columns of one scene (module documentation); every column not of the scene's
 /// family keeps its default.
@@ -97,6 +99,35 @@ pub struct KnownRow {
     pub lanes: LaneUse,
     /// Lanes: the final hull of the walkers' discs over their packed area.
     pub hull_ratio: f64,
+    /// H-1's first-contact exclusion (plan Amendment 3, item 6): unit-ticks of
+    /// [`Self::held_moved_ticks`] whose unit was, at the tick's start, in a pair that overlapped
+    /// beyond the dead band when it first met ([`FirstContactPairs`]).
+    pub held_moved_first_contact_ticks: u32,
+    /// H-1 as judged: [`Self::held_moved_ticks`] less the excluded ones.
+    pub held_moved_clean_ticks: u32,
+    /// H-1 as judged: the largest displacement of [`Self::held_moved_clean_ticks`].
+    pub held_moved_clean_max: f64,
+    /// H-2 as repaired (Amendment 3, item 4): unit-ticks, of either side, of a unit that proposed
+    /// no motion and that enemy pairs moved ([`SimWorld::enemy_pair_push`]), outside the
+    /// exclusion. The original count, [`Self::enemy_moved_ticks`], stays reported.
+    pub enemy_pair_moved_ticks: u32,
+    /// H-2 as repaired: the largest such displacement, world units.
+    pub enemy_pair_moved_max: f64,
+    /// H-1 as Amendment 3a redefines it (holding units only), judged: unit-ticks a unit holding at
+    /// the tick's start, outside the first-contact exclusion, was displaced by others.
+    pub hold_moved_clean_ticks: u32,
+    /// The largest displacement of [`Self::hold_moved_clean_ticks`], world units.
+    pub hold_moved_clean_max: f64,
+    /// H-1's exclusion for holding units: such unit-ticks in a first-contact pair.
+    pub hold_moved_first_contact_ticks: u32,
+    /// H-1b (reported): unit-ticks a unit attacking at the tick's start, not holding, was
+    /// displaced by others.
+    pub attack_moved_ticks: u32,
+    /// H-1b: the largest such displacement, world units.
+    pub attack_moved_max: f64,
+    /// H-1b, judged: unit-ticks on which that displacement took the unit out of its band
+    /// ([`left_band`]).
+    pub attack_left_band_ticks: u32,
 }
 
 impl KnownRow {
@@ -104,7 +135,10 @@ impl KnownRow {
     pub const HEADER: &'static str = "held_moved_ticks,held_moved_max,enemy_moved_ticks,\
         enemy_moved_max,enemy_pair_ov_max,rank_fo_max,rank_fo_over,rank_pair_ticks,wedge_passed,\
         wedge_ov_max,side_changes,stutter_windows,stutter_lag_max,stutter_short,stutter_fire_late,\
-        first_contact,fill_time,fill_max,lanes,hull_ratio,answer,hard,answer_failed";
+        first_contact,fill_time,fill_max,lanes,hull_ratio,answer,hard,answer_failed,\
+        held_moved_first_contact_ticks,held_moved_clean_ticks,held_moved_clean_max,\
+        enemy_pair_moved_ticks,enemy_pair_moved_max,hold_moved_clean_ticks,hold_moved_clean_max,\
+        hold_moved_first_contact_ticks,attack_moved_ticks,attack_moved_max,attack_left_band_ticks";
 
     /// The answer columns and `verdict` as CSV cells: lists joined by `/`, an absent tick empty,
     /// the failed parts joined by `+`.
@@ -125,7 +159,8 @@ impl KnownRow {
             .join("/");
         let tick = |value: Option<u32>| value.map_or_else(String::new, |v| v.to_string());
         format!(
-            "{},{:.9},{},{:.9},{:.5},{shares},{},{},{},{:.5},{},{},{},{},{},{},{},{},{}/{},{:.3},{},{},{}",
+            "{},{:.9},{},{:.9},{:.5},{shares},{},{},{},{:.5},{},{},{},{},{},{},{},{},{}/{},{:.3},{},{},{},\
+             {},{},{:.9},{},{:.9},{},{:.9},{},{},{:.9},{}",
             self.held_moved_ticks,
             self.held_moved_max,
             self.enemy_moved_ticks,
@@ -149,6 +184,17 @@ impl KnownRow {
             u8::from(verdict.holds),
             u8::from(verdict.hard),
             verdict.failed.join("+"),
+            self.held_moved_first_contact_ticks,
+            self.held_moved_clean_ticks,
+            self.held_moved_clean_max,
+            self.enemy_pair_moved_ticks,
+            self.enemy_pair_moved_max,
+            self.hold_moved_clean_ticks,
+            self.hold_moved_clean_max,
+            self.hold_moved_first_contact_ticks,
+            self.attack_moved_ticks,
+            self.attack_moved_max,
+            self.attack_left_band_ticks,
         )
     }
 }
@@ -170,6 +216,9 @@ struct Unit {
     /// Tick-start state for H-1 and H-2: held, proposed none, weapon cooldown; `None` before the
     /// first observation and while dead.
     before: Option<(bool, bool, u16)>,
+    /// Tick-start state for Amendment 3a's H-1 and H-1b: holding, attacking (and not holding),
+    /// and the position; `None` as [`Self::before`].
+    start: Option<(bool, bool, SimVec2)>,
 }
 
 /// One attacker's progress through a stutter cue.
@@ -213,6 +262,8 @@ pub struct KnownMeter {
     target: Option<(usize, f64)>,
     /// Surround-moving: `min(k, C)`.
     wanted: u32,
+    /// H-1's and H-2's first-contact exclusion, as of the latest observation.
+    first: FirstContactPairs,
 }
 
 impl KnownMeter {
@@ -244,6 +295,7 @@ impl KnownMeter {
                     at: point(entity.position),
                     step: None,
                     before: None,
+                    start: None,
                 })
             })
             .collect();
@@ -258,7 +310,9 @@ impl KnownMeter {
             open: None,
             target: None,
             wanted: 0,
+            first: FirstContactPairs::new(),
         };
+        meter.first.observe(world);
         meter.prepare(world, scenario);
         meter.record_states(world);
         Some(meter)
@@ -354,6 +408,16 @@ impl KnownMeter {
                         entity.weapon_cooldown_remaining,
                     ))
                 });
+            unit.start = world
+                .entities
+                .get(&unit.id)
+                .filter(|e| e.is_alive())
+                .and_then(|entity| {
+                    let arch = world.catalog.get(entity.unit_type_id).ok()?;
+                    let standing = standing_of(world, entity, arch);
+                    let attacking = standing.engaged && !standing.holding;
+                    Some((standing.holding, attacking, entity.position))
+                });
         }
     }
 
@@ -375,15 +439,44 @@ impl KnownMeter {
             let unit = &mut self.units[index];
             let moved = (now.0 - unit.at.0, now.1 - unit.at.1);
             if let Some((held, proposed_none, cooldown)) = unit.before {
+                let excluded = self.first.involves(unit.id);
                 let by_others = moved_by_others(held, proposed, moved);
                 if by_others > HELD_EPSILON {
                     self.row.held_moved_ticks += 1;
                     self.row.held_moved_max = self.row.held_moved_max.max(by_others);
+                    if excluded {
+                        self.row.held_moved_first_contact_ticks += 1;
+                    } else {
+                        self.row.held_moved_clean_ticks += 1;
+                        self.row.held_moved_clean_max =
+                            self.row.held_moved_clean_max.max(by_others);
+                    }
                 }
                 let by_others = moved_by_others(proposed_none, proposed, moved);
                 if unit.owner == 1 && by_others > HELD_EPSILON {
                     self.row.enemy_moved_ticks += 1;
                     self.row.enemy_moved_max = self.row.enemy_moved_max.max(by_others);
+                }
+                if let Some((holding, attacking, start)) = unit.start {
+                    let held = moved_by_others(holding, proposed, moved);
+                    if held > HELD_EPSILON && excluded {
+                        self.row.hold_moved_first_contact_ticks += 1;
+                    } else if held > HELD_EPSILON {
+                        self.row.hold_moved_clean_ticks += 1;
+                        self.row.hold_moved_clean_max = self.row.hold_moved_clean_max.max(held);
+                    }
+                    let attack = moved_by_others(attacking, proposed, moved);
+                    if attack > HELD_EPSILON {
+                        self.row.attack_moved_ticks += 1;
+                        self.row.attack_moved_max = self.row.attack_moved_max.max(attack);
+                        let left = left_band(world, unit.id, start);
+                        self.row.attack_left_band_ticks += u32::from(left);
+                    }
+                }
+                let pushed = to_f64(world.enemy_pair_push(unit.id)) > HELD_EPSILON;
+                if pushed && !excluded && by_others > HELD_EPSILON {
+                    self.row.enemy_pair_moved_ticks += 1;
+                    self.row.enemy_pair_moved_max = self.row.enemy_pair_moved_max.max(by_others);
                 }
                 if entity.weapon_cooldown_remaining > cooldown {
                     shots.push(index);
@@ -400,6 +493,7 @@ impl KnownMeter {
         self.observe_cue(&shots);
         self.observe_fill();
         self.record_states(world);
+        self.first.observe(world);
     }
 
     /// H-2's enemy overlap and deep-queue's per-rank friend overlap over every pair.

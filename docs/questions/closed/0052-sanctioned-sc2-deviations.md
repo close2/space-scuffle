@@ -50,3 +50,11 @@ Sanctioned by the owner's answer to [Q0112](0112-attacker-snapshot.md), option 2
   StarCraft II 5.0.14, and also at most 1 second (25 ticks) after the strike that made or last refreshed it. The cap
   is authored in `assets/catalog/units.ron` (`attack_snapshot_cap_ticks`); leaving it out gives the game's rule.
   Presentation only: no battle outcome, replay or checksum depends on it.
+
+## Addendum (2026-11-26): attacking units are never nudged under the Gated pipeline, from Q0121
+
+Sanctioned by the owner's answer to [Q0121](0121-nudge-under-new-movement.md), option (a), for plan
+`docs/plans/2026-11-27-gated-movement.md`:
+
+- **D-δ retired under `Gated`:** under the `Gated` pipeline no ally moves an attacking or holding unit, as in
+  StarCraft II. D-δ stays in force under `Solver` until that pipeline is deleted (the plan's WP5).

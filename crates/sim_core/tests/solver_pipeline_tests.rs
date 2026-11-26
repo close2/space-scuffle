@@ -298,7 +298,7 @@ fn an_idle_friend_is_pushed_along_the_line_of_centres() -> TestResult {
 /// its lane by more than that.
 #[test]
 fn a_waiting_friend_takes_at_most_half() {
-    use sim_core::movement::solver::{contact_shares, ContactParty, PairShares};
+    use sim_core::movement::solver::{contact_shares, ContactParty, PairShares, ShareRules};
     let mover = ContactParty {
         owner: PlayerId(0),
         push_priority: 10,
@@ -314,7 +314,14 @@ fn a_waiting_friend_takes_at_most_half() {
         ..mover
     };
     assert_eq!(
-        contact_shares(&mover, &waiting, true),
+        contact_shares(
+            &mover,
+            &waiting,
+            ShareRules {
+                moving_friends_push: true,
+                gated: false
+            }
+        ),
         PairShares::Weights(SimScalar::HALF, SimScalar::HALF)
     );
 }
