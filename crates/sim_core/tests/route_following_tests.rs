@@ -14,6 +14,10 @@
 //! WP4 (B-101): a corner waypoint keeps the unit's own radius plus the corner margin from the
 //! corner, whatever its radius tier.
 //!
+//! Plan `2026-11-29-wall-clearance` WP0: the scenes of its cases A (a body pushed off its leg, so
+//! that the leg cuts a corner ahead; B-241) and D (a body resting on a face at rounding depth
+//! beside its arc; B-240), checked against the route-clearance meter.
+//!
 //! # How it fits
 //! Runs whole ticks through `SimWorld::step` with scratch archetypes written in this file, so a
 //! rebalance of the shipped catalog cannot move these results. The trajectory metrics are those of
@@ -476,6 +480,120 @@ fn a_wide_unit_keeps_its_body_clear_of_the_corner_it_rounds() -> TestResult {
     assert!(
         (end.0 - COLUMN_GOAL.0).hypot(end.1 - COLUMN_GOAL.1) < 0.1,
         "arrived at {end:?}"
+    );
+    assert_eq!(world.diagnostics(), []);
+    Ok(())
+}
+
+// Scenes of plan `2026-11-29-wall-clearance` (WP0; evidence `2026-11-29-wall-grazing` cases A and
+// D). WP0 commits the scenes with checks of their own geometry only, read by the route-clearance
+// meter (`sim_fixtures::trace::route_clearance`); the route-following assertions on them are the
+// red tests of WP1 and WP2, which stay on the plan's branch until its window.
+
+/// Raw fixed-point depth of the case D scene, 2⁻²² world units: below the contact rule's 2⁻²⁰ and
+/// the tangent tolerance 2⁻¹⁴, so the body only rests on the wall, at rounding depth.
+const ROUNDING_DEPTH: SimScalar = SimScalar::from_raw(1 << 10);
+
+/// Case D's scene (B-240): a walker whose route is the arc round the corner (16, 16) of
+/// [`corner_world`] and then [`COLUMN_GOAL`], resting on the face y = 16 just before the corner,
+/// its disc [`ROUNDING_DEPTH`] inside the face. Returns the walker and the route it holds.
+fn rounding_depth_scene(world: &mut SimWorld) -> Result<(EntityId, Vec<SimVec2>), Box<dyn Error>> {
+    let goal = at(COLUMN_GOAL.0, COLUMN_GOAL.1);
+    let resting = SimVec2::new(
+        SimScalar::from_num(15.8),
+        SimScalar::from_num(16) + SMALL_RADIUS - ROUNDING_DEPTH,
+    );
+    let (unit, route) = routed_then_moved(world, at(10.5, 19.5), resting, goal, None)?;
+    world
+        .entities
+        .get_mut(&unit)
+        .ok_or("unit")?
+        .pos_at_tick_start = resting;
+    Ok((unit, route))
+}
+
+/// A 32×32 map with a solid block, cells x 16–19 and y 16–31: its south-west corner at (16, 16)
+/// is convex, and open ground lies south of it and west of it.
+fn block_world() -> Result<SimWorld, Box<dyn Error>> {
+    let mut map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?;
+    for y in 16..32 {
+        for x in 16..20 {
+            map.cell_mut(x, y)?.flags = CellFlags::empty();
+        }
+    }
+    world_on(map)
+}
+
+/// Orders a walker from `from` to `goal`, then places it at `to` as a push would (its position
+/// at the tick's start too). Returns the walker and the route it holds.
+fn ordered_then_placed(
+    world: &mut SimWorld,
+    from: SimVec2,
+    to: SimVec2,
+    goal: SimVec2,
+) -> Result<(EntityId, Vec<SimVec2>), Box<dyn Error>> {
+    let unit = spawn(world, from)?;
+    order(world, &[unit], UnitOrder::Move { target: goal });
+    let held = route(world, unit);
+    let entity = world.entities.get_mut(&unit).ok_or("unit")?;
+    entity.position = to;
+    entity.pos_at_tick_start = to;
+    Ok((unit, held))
+}
+
+/// The goal of case A's scene, east of the block, on the walker's straight route.
+const PUSHED_GOAL: (f64, f64) = (28.0, 15.0);
+
+/// Case A's scene (B-241): on [`block_world`], a walker ordered from (4, 15) to [`PUSHED_GOAL`]
+/// holds the straight route along y = 15, a unit clear of the block. A push moves it north to
+/// (8, 16.4), west of the block: the leg from there to the goal passes 0.16 from the corner
+/// (16, 16), inside its radius, though its centre line stays south of the block. Returns the
+/// walker and the route it holds.
+fn pushed_off_leg_scene(world: &mut SimWorld) -> Result<(EntityId, Vec<SimVec2>), Box<dyn Error>> {
+    let goal = at(PUSHED_GOAL.0, PUSHED_GOAL.1);
+    ordered_then_placed(world, at(4.0, 15.0), at(8.0, 16.4), goal)
+}
+
+/// The scenes are what they claim, as the route-clearance meter reads them: the case D walker
+/// touches the face (M-1) at a depth below the tangent tolerance, beside the arc it holds; the
+/// case A walker holds a straight route whose leg from where the push left it cuts the corner
+/// (M-5a), from open ground (no wall within the margin).
+#[test]
+fn the_wall_clearance_scenes_are_what_they_claim() -> TestResult {
+    use sim_fixtures::trace::route_clearance::{ClearanceMeter, WALL_PROBE_SLACK};
+    let mut world = corner_world()?;
+    let (unit, held) = rounding_depth_scene(&mut world)?;
+    assert!(held.len() >= 3, "an arc and the goal: {held:?}");
+    let mut meter = ClearanceMeter::new(Vec::new());
+    let now = world.current_tick;
+    meter.observe(&mut world, now);
+    let report = meter.finish();
+    let (sample, _) = report.updates.first().ok_or("the held route is seen")?;
+    assert_eq!(sample.entity, unit.0);
+    let clearance = sample.clearance.ok_or("the face is near")?;
+    assert!(
+        clearance < 0.0 && -clearance < WALL_PROBE_SLACK,
+        "{clearance}"
+    );
+
+    let mut world = block_world()?;
+    let (unit, held) = pushed_off_leg_scene(&mut world)?;
+    assert_eq!(held, [at(PUSHED_GOAL.0, PUSHED_GOAL.1)], "a straight route");
+    let mut meter = ClearanceMeter::new(Vec::new());
+    let now = world.current_tick;
+    meter.observe(&mut world, now);
+    let report = meter.finish();
+    let (sample, update) = report.updates.first().ok_or("the held route is seen")?;
+    assert_eq!(sample.entity, unit.0);
+    assert!(
+        update.cutting,
+        "the leg from the pushed body cuts the corner"
+    );
+    // No wall within the meter's reach counts as clear (`None`).
+    assert!(
+        sample.clearance.is_none_or(|c| c > 0.05),
+        "{:?}",
+        sample.clearance
     );
     assert_eq!(world.diagnostics(), []);
     Ok(())

@@ -44,6 +44,7 @@ pub mod focus;
 pub mod matrix;
 pub mod report;
 pub mod route;
+pub mod route_clearance;
 pub mod route_groups;
 pub mod route_overlap;
 pub mod summary;
