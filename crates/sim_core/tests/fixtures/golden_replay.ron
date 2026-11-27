@@ -540,8 +540,12 @@
 // death spawns encoded; with the schema at 61 and the section unhashed every checkpoint reproduced.
 // Behaviour: none in these worlds (no Swarm structure). Proved on native debug and release and
 // wasm32-wasip1 release and debug, each in a fresh target directory.
+// Re-recorded for plan 2026-12-01-death-spawns-and-hangar-commands WPB1 (checksum schema 62 -> 63): each
+// hangar's auto-build switch encoded; with the schema at 62 and the field unhashed every checkpoint
+// reproduced. Behaviour: none in these worlds (no hangar command). Proved on native debug and release
+// and wasm32-wasip1 release and debug, each in a fresh target directory.
 (
-    checksum_schema: 62,
+    checksum_schema: 63,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -567,25 +571,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0xac8332ef211f920e,
-        0xf500eedaa1c51556,
-        0x44ee41262f611503,
-        0x5494f8452fdeb992,
-        0x8a89d0f20d9925cf,
-        0xd4fe2830a4351a90,
-        0xdf88dcdadcd28b31,
-        0x2011f835a742f3b2,
-        0x758c0f602ef3019c,
-        0x04cceee9c6d7f5cc,
-        0xb44ef1f3be5f19c8,
-        0xdc21ed1eaf3423d1,
-        0x5101e7f894f56e56,
-        0xcba89e3a907dbab0,
-        0x1c82baabe318144a,
-        0x14f56b13d3c29f34,
-        0xdb2fdf84ab85b17b,
-        0x086266f75ab811bb,
-        0xcf04508182f8bbdb,
-        0xd5366174d3c447fb,
+        0x0dac09d6a9fce03a,
+        0x7c4d8b98ab3dc367,
+        0xd3e14e3f19674c94,
+        0x44460d0048414fd8,
+        0x0d448eac39b47124,
+        0x73eec92dbbcddde5,
+        0xfc243d81023a28af,
+        0x4d4f1de97d20f72a,
+        0x3c96aadfd8221a40,
+        0x439fc05199d03580,
+        0xb74960d26fe58139,
+        0x2b4591a137673ceb,
+        0x997bcea79589ecbf,
+        0x5f88b02e0f913b8a,
+        0xa56047cfd3f74b47,
+        0x6310a30cddd7d805,
+        0x78321fbd7cf37c51,
+        0x6dadda882f001fb9,
+        0x2124d977576a07cf,
+        0xcf7fe9b52672f971,
     ],
 )

@@ -106,6 +106,12 @@ pub struct PlayerView {
     /// listed. Skipped when empty, so a record without snapshots keeps its serialized bytes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attack_snapshots: Vec<AttackSnapshotView>,
+    /// The viewer's living hangar units outside any carrier, by entity ID (plan
+    /// `2026-12-01-death-spawns-and-hangar-commands` D-10): the card's hangar entries and the
+    /// focused unit's member line read them. Never holds another player's. Skipped when empty,
+    /// so a record without hangar units keeps its serialized bytes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hangars: Vec<HangarView>,
 }
 
 impl PlayerView {
@@ -132,6 +138,7 @@ impl PlayerView {
         self.rallies.clear();
         self.attack_revealed.clear();
         self.attack_snapshots.clear();
+        self.hangars.clear();
     }
 
     /// The jobs of `queue`, front of the queue first.
@@ -237,6 +244,47 @@ pub struct CarrierView {
     pub slots_used: u32,
     /// Passenger slots in all.
     pub capacity: u32,
+}
+
+/// One of the viewer's hangar units (plan `2026-12-01-death-spawns-and-hangar-commands` D-10):
+/// its members by where they are, its build queue and its switch. Counts are members; ticks are
+/// simulation ticks (25 per second).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HangarView {
+    /// The hangar unit.
+    pub entity: EntityId,
+    /// Members docked inside.
+    pub docked: u8,
+    /// Members launched and alive in the world.
+    pub launched: u8,
+    /// Member builds queued and paid for, the one building included.
+    pub queued: u8,
+    /// Members the hangar holds at most, docked, launched and queued together.
+    pub max_count: u8,
+    /// Builds queued at most, the one building included.
+    pub queue_size: u8,
+    /// Ticks the build in progress has run; 0 when nothing is queued.
+    pub build_progress: u16,
+    /// Ticks one build takes.
+    pub build_ticks: u16,
+    /// Whether the hangar queues builds by itself now.
+    pub auto_build: bool,
+    /// Whether the player may switch `auto_build`.
+    pub auto_build_toggle: bool,
+}
+
+impl HangarView {
+    /// Members docked, launched and queued together, the count `max_count` bounds.
+    #[must_use]
+    pub fn total(&self) -> u32 {
+        u32::from(self.docked) + u32::from(self.launched) + u32::from(self.queued)
+    }
+
+    /// Whether one more build may be queued: room under both `max_count` and `queue_size`.
+    #[must_use]
+    pub fn has_room(&self) -> bool {
+        self.total() < u32::from(self.max_count) && self.queued < self.queue_size
+    }
 }
 
 /// The stance of one of the viewer's units whose archetype declares modes.
@@ -475,6 +523,18 @@ mod tests {
                 struck: Tick(88),
                 bubble: still_image(EntityId(30)),
             }],
+            hangars: vec![HangarView {
+                entity: EntityId(31),
+                docked: 6,
+                launched: 1,
+                queued: 1,
+                max_count: 8,
+                queue_size: 5,
+                build_progress: 40,
+                build_ticks: 214,
+                auto_build: true,
+                auto_build_toggle: true,
+            }],
         }
     }
 
@@ -535,6 +595,41 @@ mod tests {
         );
         let back: PlayerView = ron::from_str(&text).expect("a missing list reads as empty");
         assert_eq!(back, view);
+    }
+
+    /// Plan `2026-12-01-death-spawns-and-hangar-commands` D-10: a view without hangar units
+    /// serializes without the field, so its bytes are those of a view written before it, and
+    /// such a view reads the list as empty; a non-empty list round-trips.
+    #[test]
+    fn a_view_without_hangars_keeps_its_bytes() {
+        let mut view = populated();
+        let with = ron::to_string(&view).expect("the view has no unserializable field");
+        assert!(with.contains("hangars"), "a non-empty list is written");
+        let back: PlayerView = ron::from_str(&with).expect("its own output parses");
+        assert_eq!(back, view);
+        view.hangars.clear();
+        let text = ron::to_string(&view).expect("the view has no unserializable field");
+        assert!(!text.contains("hangars"), "an empty list is skipped: {text}");
+        let back: PlayerView = ron::from_str(&text).expect("a missing list reads as empty");
+        assert_eq!(back, view);
+    }
+
+    /// Plan `2026-12-01-death-spawns-and-hangar-commands` D-9: a hangar has room while its
+    /// total is under `max_count` and its queue under `queue_size`.
+    #[test]
+    fn a_hangar_has_room_under_both_bounds() {
+        let base = populated().hangars[0];
+        assert_eq!(base.total(), 8);
+        assert!(!base.has_room(), "8 of 8");
+        let room = HangarView { docked: 5, ..base };
+        assert!(room.has_room());
+        let queue_full = HangarView {
+            docked: 0,
+            launched: 0,
+            queued: 5,
+            ..base
+        };
+        assert!(!queue_full.has_room(), "5 of 5 queued");
     }
 
     #[test]

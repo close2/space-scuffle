@@ -860,6 +860,12 @@ fn capable(
                 && MovementLayer::from_mover(archetype.mover_type) == MovementLayer::Ground
         }
         UnitOrder::UnloadAll => archetype.capabilities.transport_capacity > 0,
+        // The hangar commands go to every selected hangar unit (plan
+        // `2026-12-01-death-spawns-and-hangar-commands` D-6); whether its hangar has room, a
+        // build to cancel or a switch is the simulation's typed answer.
+        UnitOrder::HangarBuild
+        | UnitOrder::HangarCancelLast
+        | UnitOrder::SetHangarAutoBuild { .. } => archetype.capabilities.hangar.is_some(),
         // The simulation's rule (plan `2026-11-23-production-queue` D-3): a completed structure
         // that trains units has a rally; completion is `can_receive_order`'s check.
         // A structure that trains units has a rally (plan `2026-11-23-production-queue` D-3); a
@@ -980,7 +986,10 @@ fn order_subject<'w>(
         | UnitOrder::Load { .. }
         | UnitOrder::UnloadAll
         | UnitOrder::SetRally { .. }
-        | UnitOrder::Follow { .. } => return Ok(None),
+        | UnitOrder::Follow { .. }
+        | UnitOrder::HangarBuild
+        | UnitOrder::HangarCancelLast
+        | UnitOrder::SetHangarAutoBuild { .. } => return Ok(None),
     };
     let entity = entity.ok_or(SubmissionError::InvalidTarget(aimed_at))?;
     world

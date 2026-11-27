@@ -1392,8 +1392,12 @@ struct HangarSpecDef {
     build_ticks: u16,
     /// Builds queued at most.
     queue_size: u8,
-    /// Whether builds queue by themselves.
+    /// Whether a new hangar unit's builds queue by themselves (`AutoBuildOn`).
     auto_build: bool,
+    /// Whether the player may switch automatic builds (`AutoBuild`; plan
+    /// `2026-12-01-death-spawns-and-hangar-commands` D-7). Omitted: `false`.
+    #[serde(default)]
+    auto_build_toggle: bool,
     /// Centre-to-centre leash, world units.
     leash: f32,
     /// What happens to launched members when the hangar unit dies.
@@ -1427,6 +1431,7 @@ impl HangarSpecDef {
             build_ticks: self.build_ticks,
             queue_size: self.queue_size,
             auto_build: self.auto_build,
+            auto_build_toggle: self.auto_build_toggle,
             leash: SimScalar::from_f32_lossy(self.leash),
             on_death: self.on_death,
         })

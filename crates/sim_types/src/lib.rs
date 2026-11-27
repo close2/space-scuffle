@@ -65,7 +65,7 @@ pub use ids::{
 pub use math::{SimAngle, SimScalar, SimVec2};
 pub use placement::{PlacementFlag, PlacementFlags};
 pub use player_view::{
-    AbilityLockView, AttackSnapshotView, CarrierView, CastStateView, CommandOptionView,
+    AbilityLockView, AttackSnapshotView, CarrierView, CastStateView, CommandOptionView, HangarView,
     CommandSubject, ModeStateView, OptionLock, PlayerView, QueuedItem, QueuedJobView, RallyView,
     SiteRefusal, StructureQueueView, VisibleNodeView,
 };

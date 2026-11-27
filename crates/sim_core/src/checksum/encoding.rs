@@ -412,6 +412,8 @@ fields!(HangarState {
     build_progress,
     target,
     channel,
+    // Plan `2026-12-01-death-spawns-and-hangar-commands` D-7: the player's auto-build switch.
+    auto_build,
 });
 fields!(DockedMember {
     hp,
@@ -1141,6 +1143,14 @@ impl Canonical for UnitOrder {
                 target.encode(encoder);
                 kind.encode(encoder);
             }
+            // Plan `2026-12-01-death-spawns-and-hangar-commands` D-6: instant commands, never in
+            // an order queue, encoded for exhaustiveness as `CancelProduction` is.
+            Self::HangarBuild => 20_u8.encode(encoder),
+            Self::HangarCancelLast => 21_u8.encode(encoder),
+            Self::SetHangarAutoBuild { enabled } => {
+                22_u8.encode(encoder);
+                enabled.encode(encoder);
+            }
         }
     }
 }
@@ -1161,7 +1171,7 @@ mod tests {
         // Domain length, UTF-8 domain, schema u32, u16, i32, option tags/payload,
         // then UTF-8 string byte length and its two encoded bytes.
         let bytes = [
-            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 62, 0, 0, 0, 0x34, 0x12, 0xfe, 0xff,
+            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 63, 0, 0, 0, 0x34, 0x12, 0xfe, 0xff,
             0xff, 0xff, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0xc3, 0xa9,
         ];
         assert_eq!(encoder.finish(), xxh64(&bytes, 0));
@@ -1237,7 +1247,7 @@ mod tests {
             let mut encoder = Encoder::new("test");
             7_u32.encode(&mut encoder);
             text.as_str().encode(&mut encoder);
-            let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 62, 0, 0, 0];
+            let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 63, 0, 0, 0];
             bytes.extend([7, 0, 0, 0]);
             bytes.extend((length as u64).to_le_bytes());
             bytes.extend(text.as_bytes());
@@ -1262,7 +1272,7 @@ mod tests {
         // then the full remaining duration u32 (0x0001_0001), total, supply, the started flag
         // and payments.
         let bytes = [
-            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 62, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 63, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
             0x34, 0x12, 1, 0, 1, 0, 2, 0, 0, 0, 0x78, 0x56, 0x34, 0x12, 1, 3, 0, 0, 0, 4, 0, 0, 0,
         ];
         assert_eq!(digest(&queue), xxh64(&bytes, 0));
@@ -1273,7 +1283,7 @@ mod tests {
     #[test]
     fn rally_targets_encode_their_tag_and_payload() {
         use sim_types::{EntityId, RallyTarget, ResourceNodeId, SimScalar, SimVec2};
-        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 62, 0, 0, 0];
+        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 63, 0, 0, 0];
         let point = SimVec2::new(SimScalar::from_raw(0x0102), SimScalar::from_raw(-1));
         let mut bytes = header.to_vec();
         bytes.push(0);
@@ -1300,7 +1310,7 @@ mod tests {
     #[test]
     fn rally_routes_encode_their_count_slot_and_waypoints() {
         use sim_types::{EntityId, RallyRoute, RallyTarget, ResourceNodeId};
-        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 62, 0, 0, 0];
+        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 63, 0, 0, 0];
         let count = |n: u64| n.to_le_bytes();
         // No route.
         let mut bytes = header.to_vec();
@@ -1335,12 +1345,53 @@ mod tests {
         assert_eq!(digest(&vec![first, route]), xxh64(&bytes, 0));
     }
 
-    /// Plan `2026-12-01-death-spawns-and-hangar-commands` D-2: the schema the pending death
-    /// spawns are hashed under, after the strike magazine, the timed life and the impact spawn
-    /// (61, plan `2026-11-28-broodlings` D-7). The number is the next free at merge.
+    /// Plan `2026-12-01-death-spawns-and-hangar-commands` D-7: the schema the hangar's switch and
+    /// the hangar command tags are hashed under, after the pending death spawns (62, D-2). The
+    /// number is the next free at merge.
     #[test]
-    fn the_schema_is_62() {
-        assert_eq!(super::super::CHECKSUM_SCHEMA_VERSION, 62);
+    fn the_schema_is_63() {
+        assert_eq!(super::super::CHECKSUM_SCHEMA_VERSION, 63);
+    }
+
+    /// Plan `2026-12-01-death-spawns-and-hangar-commands` D-6: the hangar commands encode the
+    /// tags 20 and 21 alone, and 22 followed by the switch's byte, distinct from every other.
+    #[test]
+    fn the_hangar_commands_encode_their_tags() {
+        use sim_types::UnitOrder;
+        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 63, 0, 0, 0];
+        for (order, tail) in [
+            (UnitOrder::HangarBuild, vec![20]),
+            (UnitOrder::HangarCancelLast, vec![21]),
+            (UnitOrder::SetHangarAutoBuild { enabled: false }, vec![22, 0]),
+            (UnitOrder::SetHangarAutoBuild { enabled: true }, vec![22, 1]),
+        ] {
+            let mut bytes = header.to_vec();
+            bytes.extend(tail);
+            assert_eq!(digest(&order), xxh64(&bytes, 0), "{order:?}");
+        }
+    }
+
+    /// Plan `2026-12-01-death-spawns-and-hangar-commands` D-7: a hangar's state ends with its
+    /// switch's byte, after the channel's option tag.
+    #[test]
+    fn a_hangar_state_encodes_its_switch_last() {
+        use crate::hangar::HangarState;
+        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 63, 0, 0, 0];
+        for (auto_build, byte) in [(false, 0), (true, 1)] {
+            let state = HangarState {
+                docked: Vec::new(),
+                launched: 2,
+                queued: 1,
+                build_progress: 7,
+                target: None,
+                channel: None,
+                auto_build,
+            };
+            let mut bytes = header.to_vec();
+            bytes.extend([0, 0, 0, 0, 0, 0, 0, 0]); // no docked records (a u64 length)
+            bytes.extend([2, 1, 7, 0, 0, 0, byte]);
+            assert_eq!(digest(&state), xxh64(&bytes, 0), "{auto_build}");
+        }
     }
 
     /// Plan `2026-11-28-broodlings` D-7: a strike magazine encodes its option tag, then its armed
@@ -1349,7 +1400,7 @@ mod tests {
     #[test]
     fn a_strike_magazine_and_a_timed_life_encode_their_tags_and_counts() {
         use crate::entity::StrikeMagazineState;
-        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 62, 0, 0, 0];
+        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 63, 0, 0, 0];
         let mut bytes = header.to_vec();
         bytes.push(0);
         assert_eq!(digest(&None::<StrikeMagazineState>), xxh64(&bytes, 0));
@@ -1372,7 +1423,7 @@ mod tests {
     #[test]
     fn an_impact_spawn_encodes_its_unit_count_range_life_and_order() {
         use sim_types::{ImpactSpawn, SimScalar, SpawnOrder, TimedLifeSpec, UnitTypeId};
-        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 62, 0, 0, 0];
+        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 63, 0, 0, 0];
         let spawn = ImpactSpawn {
             unit: UnitTypeId(48),
             per_strike: 1,
@@ -1401,7 +1452,7 @@ mod tests {
     fn pending_death_spawns_encode_their_length_then_each_field() {
         use crate::world::death_spawns::PendingDeathSpawn;
         use sim_types::{PlayerId, SimAngle, SimScalar, SimVec2, UnitTypeId};
-        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 62, 0, 0, 0];
+        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 63, 0, 0, 0];
         let entry = PendingDeathSpawn {
             due_in: 0x0109,
             host: UnitTypeId(0x0203),
@@ -1426,7 +1477,7 @@ mod tests {
     #[test]
     fn a_phase_end_encodes_its_variant_tag_and_distance() {
         use sim_types::{PhaseEnd, SimScalar};
-        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 62, 0, 0, 0];
+        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 63, 0, 0, 0];
         let one = SimScalar::ONE.raw().to_le_bytes();
         for (end, tag) in [
             (PhaseEnd::Flown(SimScalar::ONE), 0),
@@ -1444,7 +1495,7 @@ mod tests {
     #[test]
     fn a_magazine_launch_encodes_its_tag_tries_and_interval() {
         use sim_types::MagazineLaunch;
-        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 62, 0, 0, 0];
+        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 63, 0, 0, 0];
         let mut bytes = header.to_vec();
         bytes.push(0);
         assert_eq!(digest(&None::<MagazineLaunch>), xxh64(&bytes, 0));
@@ -1462,7 +1513,7 @@ mod tests {
     #[test]
     fn a_follow_encodes_its_tag_target_and_kind() {
         use sim_types::{EntityId, FollowKind, UnitOrder};
-        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 62, 0, 0, 0];
+        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 63, 0, 0, 0];
         for (kind, byte) in [(FollowKind::Move, 0), (FollowKind::AcquireMove, 1)] {
             let order = UnitOrder::Follow {
                 target: EntityId(0x1234_5678),
@@ -1546,7 +1597,7 @@ mod tests {
 
     #[test]
     fn carrier_identity_has_explicit_option_tag_and_all_id_bytes() {
-        let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 62, 0, 0, 0];
+        let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 63, 0, 0, 0];
         bytes.push(0);
         assert_eq!(digest(&None::<sim_types::EntityId>), xxh64(&bytes, 0));
         bytes.pop();

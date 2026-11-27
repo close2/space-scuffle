@@ -320,6 +320,7 @@ mod tests {
             build_ticks: 214,
             queue_size: 5,
             auto_build: true,
+            auto_build_toggle: false,
             leash: 12.0,
             on_death: HangarDeath::KillMembers,
         });
@@ -439,6 +440,7 @@ mod tests {
             build_ticks: 214,
             queue_size: 5,
             auto_build: true,
+            auto_build_toggle: false,
             leash: sim_types::SimScalar::from_i32(12),
             on_death: HangarDeath::KillMembers,
         });

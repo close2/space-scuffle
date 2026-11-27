@@ -195,6 +195,9 @@ impl SimWorld {
                 | UnitOrder::Load { .. }
                 | UnitOrder::UnloadAll
                 | UnitOrder::SetRally { .. }
+                | UnitOrder::HangarBuild
+                | UnitOrder::HangarCancelLast
+                | UnitOrder::SetHangarAutoBuild { .. }
         ) {
             self.dispatch_game_command(command_index, cmd);
             return;
@@ -236,8 +239,8 @@ impl SimWorld {
         }
     }
 
-    /// Admits a construction, harvest, cancellation, transport or rally command through the
-    /// economy.
+    /// Admits a construction, harvest, cancellation, transport, rally or hangar command through
+    /// the economy.
     fn dispatch_game_command(&mut self, command_index: usize, cmd: &PlayerCommand) {
         let result = self.admit_game_command(cmd);
         if let Err(GameCommandError::Invariant(source)) = &result {

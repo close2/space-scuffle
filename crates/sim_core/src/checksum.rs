@@ -163,7 +163,11 @@ use std::collections::BTreeMap;
 /// `death-spawns`: its length, then each entry's countdown, host type, owner, point and heading),
 /// after the turret tracking (plan `2026-12-01-death-spawns-and-hangar-commands` D-2). The number
 /// is the next free at merge.
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 62;
+/// Schema 63 adds each hangar's auto-build switch, `HangarState::auto_build` (a `bool`), after
+/// `channel`, and the `UnitOrder` tags 20 to 22 (`HangarBuild`, `HangarCancelLast`,
+/// `SetHangarAutoBuild` and its `bool`) (plan `2026-12-01-death-spawns-and-hangar-commands` D-6,
+/// D-7). The number is the next free at merge.
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 63;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.

@@ -139,6 +139,21 @@ pub enum UnitOrder {
         #[serde(default)]
         kind: FollowKind,
     },
+    /// Queue one member build in each selected hangar unit (5.0.14 `CarrierHangar,Ammo1`, a
+    /// `ToSelection` button; plan `2026-12-01-death-spawns-and-hangar-commands` D-6), paid when
+    /// queued. An instant command: it never enters an order queue, and Shift is ignored.
+    HangarBuild,
+    /// Cancel the newest queued member build of each selected hangar unit for a full refund
+    /// (`HangarQueue5,CancelLast`; plan `2026-12-01-death-spawns-and-hangar-commands` D-6). An
+    /// instant command.
+    HangarCancelLast,
+    /// Switch automatic member builds of each selected hangar unit on or off (the `AutoBuild`
+    /// autocast; plan `2026-12-01-death-spawns-and-hangar-commands` D-6, D-7). An instant
+    /// command.
+    SetHangarAutoBuild {
+        /// On or off.
+        enabled: bool,
+    },
 }
 
 impl UnitOrder {
@@ -605,9 +620,14 @@ pub struct HangarSpec {
     pub build_ticks: u16,
     /// Builds queued at most (`QueueSize` of the hangar's queue), the one in progress included.
     pub queue_size: u8,
-    /// Whether builds are queued by themselves while the owner can pay (`AutoBuild`,
-    /// `AutoBuildOn`).
+    /// Whether a new hangar unit queues builds by itself while the owner can pay
+    /// (`AutoBuildOn`): the state of its switch at creation, `HangarState::auto_build` in
+    /// `sim_core` afterwards (plan `2026-12-01-death-spawns-and-hangar-commands` D-7).
     pub auto_build: bool,
+    /// Whether the player may switch automatic builds on and off (`AutoBuild`, an autocast;
+    /// plan `2026-12-01-death-spawns-and-hangar-commands` D-7). Omitted in RON: `false`.
+    #[serde(default)]
+    pub auto_build_toggle: bool,
     /// Centre-to-centre distance, world units, beyond which a launched member returns
     /// (`Leash`).
     pub leash: SimScalar,
@@ -764,6 +784,58 @@ mod tests {
         let authored = format!("death_spawn:Some({})", ron::to_string(&spawn)?);
         let read: ArchetypeCapabilities = ron::from_str(&text.replace(field, &authored))?;
         assert_eq!(read.death_spawn, Some(spawn));
+        Ok(())
+    }
+
+    /// Plan `2026-12-01-death-spawns-and-hangar-commands` D-6: the hangar commands read and write
+    /// as RON in a tick bundle, and an order written before them still reads unchanged.
+    #[test]
+    fn hangar_commands_round_trip_and_older_orders_read_unchanged(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        for order in [
+            UnitOrder::HangarBuild,
+            UnitOrder::HangarCancelLast,
+            UnitOrder::SetHangarAutoBuild { enabled: false },
+            UnitOrder::SetHangarAutoBuild { enabled: true },
+        ] {
+            let text = ron::to_string(&order)?;
+            assert_eq!(ron::from_str::<UnitOrder>(&text)?, order, "{text}");
+        }
+        assert_eq!(
+            ron::from_str::<UnitOrder>("SetHangarAutoBuild(enabled: false)")?,
+            UnitOrder::SetHangarAutoBuild { enabled: false }
+        );
+        assert_eq!(
+            ron::from_str::<UnitOrder>("Follow(target: (7))")?,
+            UnitOrder::Follow {
+                target: EntityId(7),
+                kind: FollowKind::Move,
+            }
+        );
+        Ok(())
+    }
+
+    /// Plan `2026-12-01-death-spawns-and-hangar-commands` D-7: a hangar that leaves
+    /// `auto_build_toggle` out may not be switched; an authored `true` reads.
+    #[test]
+    fn auto_build_toggle_defaults_to_false() -> Result<(), Box<dyn std::error::Error>> {
+        let spec = HangarSpec {
+            member: UnitTypeId(3),
+            max_count: 8,
+            start_count: 4,
+            build_ticks: 214,
+            queue_size: 5,
+            auto_build: true,
+            auto_build_toggle: true,
+            leash: SimScalar::from_i32(12),
+            on_death: HangarDeath::KillMembers,
+        };
+        let text = ron::to_string(&spec)?;
+        let field = ",auto_build_toggle:true";
+        assert!(text.contains(field), "premise: the field is written: {text}");
+        let omitted: HangarSpec = ron::from_str(&text.replace(field, ""))?;
+        assert!(!omitted.auto_build_toggle);
+        assert_eq!(ron::from_str::<HangarSpec>(&text)?, spec);
         Ok(())
     }
 }
