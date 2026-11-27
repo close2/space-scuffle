@@ -938,3 +938,13 @@ a slot that auto-build fills again at once: the cancel only helps after switchin
   `structures.ron`, `start_loadouts.ron`, `scenarios/*.ron`, `required_set.ron`. `movement/solver.rs` was read for its
   coincident-centre rule only.
 - Web search 2026-11-26 (S9): Liquipedia's Extractor page excerpt.
+
+## Amendment 1 (orchestrator, 2026-11-27): the `razed` row is judged on instructions while the host is loaded
+
+**What happened.** WPA4 stopped on stop rule 5. The new `razed` bench row ran 67 and 45 ticks/s, then 61 and 65 when re-run. The host load average was 87 to 96 on 16 cores during the measurements. With every death spawn cut to one unit, the row ran 46 and 48 ticks/s. So the low round is load noise on a costly scenario, not the mechanism. Instructions on the existing rows moved +0.010 %.
+
+**Decision.** Following the rule the wall-clearance and `Gated` packages used on this host (`Gated` C-0: no wall-clock figure of record above load 8), the `razed` row is judged by callgrind instruction count. That count is converted to ticks/s with the instructions-per-second rate of the existing rows, measured in the same session.
+- If the projection is at least 50 ticks/s, WPA4 completes: records, B-234 marked fixed, `DESIGN.md` §5 row marked "projected, loaded host".
+- If it is below 50, WPA4 stops, and the row is re-designed before merge, keeping its 12 structures and shrinking the army.
+
+CI's throughput job, run on a quiet runner, remains the arbiter after merge.
