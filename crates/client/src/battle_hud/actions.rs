@@ -38,7 +38,9 @@ use crate::battle_input::controls_open;
 use crate::battle_pipeline::commands::{BattleCommandQueue, SubmissionError};
 use crate::battle_pipeline::session::BattleSession;
 use crate::battle_selection::BattleSelection;
-use crate::input_bindings::{any_pressed, CANCEL_KEY, CONTROL_MODIFIERS, SHIFT_MODIFIERS};
+use crate::input_bindings::{
+    any_pressed, ALT_MODIFIERS, CANCEL_KEY, CONTROL_MODIFIERS, SHIFT_MODIFIERS,
+};
 use crate::input_policy::InputOwnership;
 use crate::lab_ui::LabState;
 
@@ -260,13 +262,15 @@ fn press_key(key: KeyCode, queued: bool, ctx: &mut CardContext<'_>) {
 pub struct HeldModifiers {
     control: bool,
     shift: bool,
+    alt: bool,
 }
 
 /// Reads the card's keys, and [`CANCEL_KEY`] as Back when it has no mode left to leave.
 ///
 /// Runs after [`collect_key_intent`](crate::battle_input::collect_key_intent), which has already
-/// cleared the mode on that key, so `mode_seen` remembers whether one was armed. Ctrl is ignored
-/// here, so Ctrl with a letter does nothing.
+/// cleared the mode on that key, so `mode_seen` remembers whether one was armed. Ctrl and Alt are
+/// ignored here, so Ctrl or Alt with a letter presses no card position: an Alt chord belongs to
+/// [`ALT_ACTION_KEYS`](crate::input_bindings::ALT_ACTION_KEYS).
 #[expect(
     clippy::needless_pass_by_value,
     clippy::too_many_arguments,
@@ -298,7 +302,11 @@ pub fn collect_card_keys(
             held.control = pressed;
         } else if SHIFT_MODIFIERS.contains(&event.key_code) {
             held.shift = pressed;
-        } else if let Some(viewer) = viewer.filter(|_| pressed && !event.repeat && !held.control) {
+        } else if ALT_MODIFIERS.contains(&event.key_code) {
+            held.alt = pressed;
+        } else if let Some(viewer) =
+            viewer.filter(|_| pressed && !event.repeat && !held.control && !held.alt)
+        {
             let mut ctx = CardContext {
                 session: &mut session,
                 selection: selection.ids(),
@@ -320,5 +328,6 @@ pub fn collect_card_keys(
     // recovers from a release that went to another window.
     held.control = any_pressed(&keyboard, &CONTROL_MODIFIERS);
     held.shift = any_pressed(&keyboard, &SHIFT_MODIFIERS);
+    held.alt = any_pressed(&keyboard, &ALT_MODIFIERS);
     *mode_seen = *mode;
 }

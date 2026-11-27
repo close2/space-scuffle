@@ -15,6 +15,12 @@
 //!     --scenario scenarios/showcase.ron --ticks 1500 --out ~/scratch/route/showcase
 //! ```
 //!
+//! Besides `units.csv`, `passes.csv`, `summary.md`, `overlap.csv`, `reversals.csv` and
+//! `groups.md`, the run writes the route-clearance meter's `clearance.csv`,
+//! `clearance_episodes.csv`, `clearance_routes.csv` and `clearance_summary.md` (plan
+//! `2026-11-29-wall-clearance` §6.1) unless `--clearance off` is given; `--clearance-box` sets
+//! that meter's reporting regions.
+//!
 //! # Invariants
 //! - Exits with status 2 on a usage error and 1 on any other failure, after printing it.
 

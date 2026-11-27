@@ -31,3 +31,14 @@ units floating on diagonal plateaus look wrong in the capture.
 ## Answer
 
 - **Fourth option (align simulation diagonal cliffs with the straight 45° edge):** After inspecting `brink_0.3125.png`, small high-ground units floating completely out over the low-ground floor looks broken, while sawtooth cliffs (`Q0136 (a)`) and low-ground rock clipping (`Q0136 (b)`) are also undesirable. Keep the straight 45° diagonal look, and plan a simulation-side follow-up that clips the walkable high-ground half-cell along the same 45° diagonal line (matching how StarCraft II achieves straight diagonal cliffs with neither floating high-ground units nor low-ground rock clipping). Track the current overhang as an open bug until that simulation-side diagonal cliff plan lands.
+
+## Resolution
+
+Planned in [`docs/plans/2026-12-02-diagonal-cliff-walkability.md`](../../plans/2026-12-02-diagonal-cliff-walkability.md)
+(the commit that closes this question; status Proposed). The drawing keeps the straight 45° diagonals. The cut
+predicate moves to `sim_map`, so drawing and simulation read one rule, and the simulation treats the triangle of a
+cut cell beyond the drawn foot as wall: the navigation mesh gets the foot as a diagonal wall and blocks the triangle,
+and clearance, traversal and placement follow. A body then stands its radius behind the drawn foot, as at every
+axis-aligned cliff (drop 0.077 under the smallest body, against 3.0 today). Until the plan lands, the overhang is the
+open bug **B-251** in `DESIGN.md` §4. The smaller overhang at square plateau corners (B-250) is asked separately in
+Q0146.

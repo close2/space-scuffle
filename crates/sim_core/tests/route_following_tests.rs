@@ -14,6 +14,11 @@
 //! WP4 (B-101): a corner waypoint keeps the unit's own radius plus the corner margin from the
 //! corner, whatever its radius tier.
 //!
+//! Plan `2026-11-29-wall-clearance` WP0: the scenes of its cases A (a body pushed off its leg, so
+//! that the leg cuts a corner ahead; B-241) and D (a body resting on a face at rounding depth
+//! beside its arc; B-240), checked against the route-clearance meter. The plan's tests of WP1 and
+//! WP2 on these scenes and three more are ignored until its window W opens (plan §5.2).
+//!
 //! # How it fits
 //! Runs whole ticks through `SimWorld::step` with scratch archetypes written in this file, so a
 //! rebalance of the shipped catalog cannot move these results. The trajectory metrics are those of
@@ -479,4 +484,467 @@ fn a_wide_unit_keeps_its_body_clear_of_the_corner_it_rounds() -> TestResult {
     );
     assert_eq!(world.diagnostics(), []);
     Ok(())
+}
+
+// Scenes of plan `2026-11-29-wall-clearance` (WP0; evidence `2026-11-29-wall-grazing` cases A and
+// D). WP0 commits the scenes with checks of their own geometry only, read by the route-clearance
+// meter (`sim_fixtures::trace::route_clearance`); the route-following assertions on them are the
+// red tests of WP1 and WP2, which stay on the plan's branch until its window.
+
+/// Raw fixed-point depth of the case D scene, 2⁻²² world units: below the contact rule's 2⁻²⁰ and
+/// the tangent tolerance 2⁻¹⁴, so the body only rests on the wall, at rounding depth.
+const ROUNDING_DEPTH: SimScalar = SimScalar::from_raw(1 << 10);
+
+/// Case D's scene (B-240): a walker whose route is the arc round the corner (16, 16) of
+/// [`corner_world`] and then [`COLUMN_GOAL`], resting on the face y = 16 just before the corner,
+/// its disc [`ROUNDING_DEPTH`] inside the face. Returns the walker and the route it holds.
+fn rounding_depth_scene(world: &mut SimWorld) -> Result<(EntityId, Vec<SimVec2>), Box<dyn Error>> {
+    let goal = at(COLUMN_GOAL.0, COLUMN_GOAL.1);
+    let resting = SimVec2::new(
+        SimScalar::from_num(15.8),
+        SimScalar::from_num(16) + SMALL_RADIUS - ROUNDING_DEPTH,
+    );
+    let (unit, route) = routed_then_moved(world, at(10.5, 19.5), resting, goal, None)?;
+    world
+        .entities
+        .get_mut(&unit)
+        .ok_or("unit")?
+        .pos_at_tick_start = resting;
+    Ok((unit, route))
+}
+
+/// A 32×32 map with a solid block, cells x 16–19 and y 16–31: its south-west corner at (16, 16)
+/// is convex, and open ground lies south of it and west of it.
+fn block_world() -> Result<SimWorld, Box<dyn Error>> {
+    let mut map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?;
+    for y in 16..32 {
+        for x in 16..20 {
+            map.cell_mut(x, y)?.flags = CellFlags::empty();
+        }
+    }
+    world_on(map)
+}
+
+/// Orders a walker from `from` to `goal`, then places it at `to` as a push would (its position
+/// at the tick's start too). Returns the walker and the route it holds.
+fn ordered_then_placed(
+    world: &mut SimWorld,
+    from: SimVec2,
+    to: SimVec2,
+    goal: SimVec2,
+) -> Result<(EntityId, Vec<SimVec2>), Box<dyn Error>> {
+    let unit = spawn(world, from)?;
+    order(world, &[unit], UnitOrder::Move { target: goal });
+    let held = route(world, unit);
+    let entity = world.entities.get_mut(&unit).ok_or("unit")?;
+    entity.position = to;
+    entity.pos_at_tick_start = to;
+    Ok((unit, held))
+}
+
+/// The goal of case A's scene, east of the block, on the walker's straight route.
+const PUSHED_GOAL: (f64, f64) = (28.0, 15.0);
+
+/// Case A's scene (B-241): on [`block_world`], a walker ordered from (4, 15) to [`PUSHED_GOAL`]
+/// holds the straight route along y = 15, a unit clear of the block. A push moves it north to
+/// (8, 16.4), west of the block: the leg from there to the goal passes 0.16 from the corner
+/// (16, 16), inside its radius, though its centre line stays south of the block. Returns the
+/// walker and the route it holds.
+fn pushed_off_leg_scene(world: &mut SimWorld) -> Result<(EntityId, Vec<SimVec2>), Box<dyn Error>> {
+    let goal = at(PUSHED_GOAL.0, PUSHED_GOAL.1);
+    ordered_then_placed(world, at(4.0, 15.0), at(8.0, 16.4), goal)
+}
+
+/// The scenes are what they claim, as the route-clearance meter reads them: the case D walker
+/// touches the face (M-1) at a depth below the tangent tolerance, beside the arc it holds; the
+/// case A walker holds a straight route whose leg from where the push left it cuts the corner
+/// (M-5a), from open ground (no wall within the margin).
+#[test]
+fn the_wall_clearance_scenes_are_what_they_claim() -> TestResult {
+    use sim_fixtures::trace::route_clearance::{ClearanceMeter, WALL_PROBE_SLACK};
+    let mut world = corner_world()?;
+    let (unit, held) = rounding_depth_scene(&mut world)?;
+    assert!(held.len() >= 3, "an arc and the goal: {held:?}");
+    let mut meter = ClearanceMeter::new(Vec::new());
+    let now = world.current_tick;
+    meter.observe(&mut world, now);
+    let report = meter.finish();
+    let (sample, _) = report.updates.first().ok_or("the held route is seen")?;
+    assert_eq!(sample.entity, unit.0);
+    let clearance = sample.clearance.ok_or("the face is near")?;
+    assert!(
+        clearance < 0.0 && -clearance < WALL_PROBE_SLACK,
+        "{clearance}"
+    );
+
+    let mut world = block_world()?;
+    let (unit, held) = pushed_off_leg_scene(&mut world)?;
+    assert_eq!(held, [at(PUSHED_GOAL.0, PUSHED_GOAL.1)], "a straight route");
+    let mut meter = ClearanceMeter::new(Vec::new());
+    let now = world.current_tick;
+    meter.observe(&mut world, now);
+    let report = meter.finish();
+    let (sample, update) = report.updates.first().ok_or("the held route is seen")?;
+    assert_eq!(sample.entity, unit.0);
+    assert!(
+        update.cutting,
+        "the leg from the pushed body cuts the corner"
+    );
+    // No wall within the meter's reach counts as clear (`None`).
+    assert!(
+        sample.clearance.is_none_or(|c| c > 0.05),
+        "{:?}",
+        sample.clearance
+    );
+    assert_eq!(world.diagnostics(), []);
+    Ok(())
+}
+
+// Tests of plan `2026-11-29-wall-clearance` WP1 (B-240) and WP2 (B-241). All but two fail on the
+// plan's base; the two that pass already (the narrow gap and the fresh-route property) guard what
+// WP2 must keep. All are ignored until their package opens in window W (plan §5.2), so no gate runs
+// them before; the package removes its tests' `ignore`, makes them pass, and records each red run
+// in the evidence (`docs/evidence/2026-11-29-wall-clearance.md`).
+
+/// The step rule's slack, 2⁻¹⁴ world units (`movement::tuning::WALL_PROBE_SLACK`, not exported).
+const PROBE_SLACK: SimScalar = SimScalar::from_raw(1 << 18);
+
+/// Whether the step rule lets a ground body of terrain radius `radius` walk from `from` to `to`,
+/// as steering's `probe_permits` asks it (contact plan D-3, R-3), from the public predicates: the
+/// centre rule, then the disc at `radius` along the leg, else the disc of its clearance at `from`
+/// less [`PROBE_SLACK`]. A centre on the wall keeps the centre rule alone.
+fn step_rule_permits(world: &mut SimWorld, radius: SimScalar, from: SimVec2, to: SimVec2) -> bool {
+    use sim_map::PathRequestWithVision;
+    let request = |r: SimScalar| PathRequestWithVision {
+        start: from,
+        goal: from,
+        radius: r,
+        vision: None,
+        block_unexplored_ramps: false,
+        known_structures: None,
+    };
+    if !SimWorld::is_position_pathable(&world.map, from, to) {
+        return false;
+    }
+    if from == to
+        || world
+            .pathfinder
+            .segment_is_passable(&world.map, &request(radius), from, to)
+    {
+        return true;
+    }
+    let allowed = world
+        .pathfinder
+        .wall_contact(&world.map, &request(radius), from)
+        .map_or(radius, |contact| {
+            let root = contact.distance_sq.max(0).unsigned_abs().isqrt();
+            SimScalar::from_raw(i64::try_from(root).unwrap_or(i64::MAX)).min(radius)
+        });
+    let swept = allowed.saturating_sub(PROBE_SLACK);
+    swept <= SimScalar::ZERO
+        || world
+            .pathfinder
+            .segment_is_passable(&world.map, &request(swept), from, to)
+}
+
+/// The step `unit` took in the tick just played, world units.
+fn achieved_step(world: &SimWorld, unit: EntityId) -> (f64, f64) {
+    let entity = &world.entities[&unit];
+    let (now, before) = (point(entity.position), point(entity.pos_at_tick_start));
+    (now.0 - before.0, now.1 - before.1)
+}
+
+/// WP1 red (case D, B-240): a walker resting on the face at rounding depth beside the corner
+/// keeps its arc: after the tick, its next aim is a point of the arc, not the goal through the
+/// corner, because the step rule refuses it the leg past that point; and over the next 40 ticks
+/// no step reverses the one before (plan §8 WP1).
+///
+/// The leg to the kept arc point itself is not asked of the step rule: the funnel places that
+/// point at the radius plus the corner margin from the vertex, 0.0023 below the face's tangent
+/// line, so from a body tangent to the face its leg dips about 6 × 10⁻⁴ into the radius and the
+/// step slides along the face until the point is in its view (B-242's grazing, WP3's subject).
+#[test]
+fn a_body_resting_on_a_wall_at_rounding_depth_keeps_the_arc_round_the_corner() -> TestResult {
+    use sim_fixtures::trace::blocking::is_reversal;
+    let mut world = corner_world()?;
+    let (unit, held) = rounding_depth_scene(&mut world)?;
+    let goal = at(COLUMN_GOAL.0, COLUMN_GOAL.1);
+    tick(&mut world, Vec::new());
+    let now = route(&world, unit);
+    let next = *now.first().ok_or("a route")?;
+    assert!(
+        next != goal && held.contains(&next),
+        "the arc {held:?} was handed off: route {now:?}"
+    );
+    let position = world.entities[&unit].position;
+    let past = *now.get(1).ok_or("a point past the kept one")?;
+    assert!(
+        !step_rule_permits(&mut world, SMALL_RADIUS, position, past),
+        "the arc point {next:?} is kept though the leg from {position:?} past it to {past:?} is \
+         walkable"
+    );
+    let mut last = achieved_step(&world, unit);
+    for _ in 0..40 {
+        tick(&mut world, Vec::new());
+        let step = achieved_step(&world, unit);
+        assert!(
+            !is_reversal(last, step),
+            "tick {}: {last:?} then {step:?}",
+            world.current_tick
+        );
+        last = step;
+    }
+    assert_eq!(world.diagnostics(), []);
+    Ok(())
+}
+
+/// WP1 red (B-240, plan D-1): a walker really wedged in the face beside the corner, its disc 0.1
+/// inside it, hands its arc off only along a leg the disc that fits where it stands can walk.
+#[test]
+fn a_wedged_body_hands_off_only_along_a_leg_its_fitting_disc_can_walk() -> TestResult {
+    let mut world = corner_world()?;
+    let goal = at(COLUMN_GOAL.0, COLUMN_GOAL.1);
+    let wedged = at(15.8, 16.275);
+    let (unit, _) = routed_then_moved(&mut world, at(10.5, 19.5), wedged, goal, None)?;
+    world
+        .entities
+        .get_mut(&unit)
+        .ok_or("unit")?
+        .pos_at_tick_start = wedged;
+    for _ in 0..10 {
+        let before = world.entities[&unit].position;
+        tick(&mut world, Vec::new());
+        let position = world.entities[&unit].position;
+        if let Some(&next) = route(&world, unit).first() {
+            assert!(
+                step_rule_permits(&mut world, SMALL_RADIUS, position, next),
+                "tick {}: from {position:?} (was {before:?}) the leg to {next:?} goes deeper",
+                world.current_tick
+            );
+        }
+    }
+    assert_eq!(world.diagnostics(), []);
+    Ok(())
+}
+
+/// The route-check period of the movement tuning (`ROUTE_CHECK_PERIOD`, not exported), ticks.
+const ROUTE_CHECK_PERIOD: u32 = 8;
+
+/// WP2 red (case A, B-241): a walker pushed off its leg so that the leg cuts the corner ahead
+/// drops it within [`ROUTE_CHECK_PERIOD`] ticks, takes a route that rounds the corner, never
+/// brings its disc onto the corner's vertex, and arrives.
+#[test]
+#[ignore = "red until plan 2026-11-29-wall-clearance WP2 (B-241), window W"]
+fn a_body_pushed_off_its_leg_replans_before_it_reaches_the_corner() -> TestResult {
+    let mut world = block_world()?;
+    let (unit, held) = pushed_off_leg_scene(&mut world)?;
+    let goal = point(at(PUSHED_GOAL.0, PUSHED_GOAL.1));
+    let vertex = (16.0, 16.0);
+    let rounding = 0.375 + 0.05 + 1e-3;
+    let (mut dropped, mut rounds) = (None, false);
+    let mut closest = f64::INFINITY;
+    for elapsed in 1..=300_u32 {
+        tick(&mut world, Vec::new());
+        let now = route(&world, unit);
+        if dropped.is_none() && now != held {
+            dropped = Some(elapsed);
+        }
+        rounds |= now.iter().any(|&p| {
+            let p = point(p);
+            (p.0 - vertex.0).hypot(p.1 - vertex.1) <= rounding
+        });
+        let p = point(world.entities[&unit].position);
+        closest = closest.min((p.0 - vertex.0).hypot(p.1 - vertex.1));
+    }
+    let dropped = dropped.ok_or("the cutting route is never dropped")?;
+    assert!(
+        dropped <= ROUTE_CHECK_PERIOD,
+        "dropped after {dropped} ticks"
+    );
+    assert!(rounds, "no route after the push rounds the corner");
+    assert!(
+        closest >= 0.375 - 1.0 / 16_384.0,
+        "the body came {closest} from the corner's vertex"
+    );
+    let end = point(world.entities[&unit].position);
+    assert!(
+        (end.0 - goal.0).hypot(end.1 - goal.1) < 0.5,
+        "ended at {end:?}"
+    );
+    assert_eq!(world.diagnostics(), []);
+    Ok(())
+}
+
+/// WP2 red (B-241, plan D-2 item 2): a walker resting on the corner's vertex, whose straight leg
+/// to the goal its disc cannot walk though the leg's centre line passes, has its step refused
+/// and drops that route at once.
+#[test]
+#[ignore = "red until plan 2026-11-29-wall-clearance WP2 (B-241), window W"]
+fn a_refused_step_whose_leg_the_disc_cannot_walk_drops_the_route() -> TestResult {
+    let mut world = block_world()?;
+    let goal = at(PUSHED_GOAL.0, PUSHED_GOAL.1);
+    let touching = at(15.625, 15.98);
+    let (unit, held) = ordered_then_placed(&mut world, at(4.0, 15.0), touching, goal)?;
+    assert_eq!(held, [goal], "a straight route");
+    assert!(
+        !step_rule_permits(&mut world, SMALL_RADIUS, touching, goal),
+        "the premise: the disc cannot walk the leg"
+    );
+    tick(&mut world, Vec::new());
+    let now = route(&world, unit);
+    assert!(now != held, "the cutting route {held:?} is kept");
+    assert_eq!(world.diagnostics(), []);
+    Ok(())
+}
+
+/// A 32×32 map split by a one-cell wall at x = 16, with a one-cell gap at y = 8: the gap is 1
+/// world unit wide.
+fn gap_world() -> Result<SimWorld, Box<dyn Error>> {
+    let mut map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?;
+    for y in (0..32).filter(|&y| y != 8) {
+        map.cell_mut(16, y)?.flags = CellFlags::empty();
+    }
+    world_on(map)
+}
+
+/// WP2 (B-241, the documented intent of `route_is_usable`): a walker pushed into a narrow gap,
+/// its disc 0.075 inside the gap's south side, keeps a route it can follow: on every tick it
+/// holds a route to its goal, and it walks out of the gap and arrives.
+#[test]
+#[ignore = "WP2 test of plan 2026-11-29-wall-clearance (B-241), window W; passes on the base"]
+fn a_body_pushed_into_a_narrow_gap_keeps_a_route_it_can_follow() -> TestResult {
+    let mut world = gap_world()?;
+    let goal = at(24.5, 8.5);
+    let pushed = at(16.5, 8.3);
+    let (unit, held) = ordered_then_placed(&mut world, at(12.5, 8.5), pushed, goal)?;
+    assert_eq!(held, [goal], "a straight route through the gap");
+    let mut arrived = None;
+    for elapsed in 1..=200_u32 {
+        tick(&mut world, Vec::new());
+        let p = point(world.entities[&unit].position);
+        if (p.0 - 24.5).hypot(p.1 - 8.5) < 0.1 {
+            arrived = Some(elapsed);
+            break;
+        }
+        let now = route(&world, unit);
+        assert_eq!(
+            now.last(),
+            Some(&goal),
+            "tick {}: route {now:?} at {p:?}",
+            world.current_tick
+        );
+    }
+    let arrived = arrived.ok_or("the walker does not arrive")?;
+    // 8 units at 0.126 a tick is 64 ticks; the rest is the way out of the gap.
+    assert!(arrived <= 90, "arrived after {arrived} ticks");
+    assert_eq!(world.diagnostics(), []);
+    Ok(())
+}
+
+/// WP2 red (plan D-2 item 5): a freshly searched route's first leg passes the held-leg test from
+/// its start. Starts are drawn by a seeded generator beside the walls of the showcase canyon map
+/// (both showcase scenarios play on it) and of this file's corner and block maps, tangent to the
+/// nearest wall, at rounding depth inside it, and 0.05 and 0.1 inside it; goals anywhere a centre
+/// may stand. For bodies of radius 0.375 and 0.5, the first leg of every route the pathfinder
+/// returns passes [`step_rule_permits`] from its start.
+#[test]
+#[ignore = "WP2 test of plan 2026-11-29-wall-clearance (B-241), window W; passes on the base"]
+fn a_fresh_route_passes_its_own_held_leg_test() -> TestResult {
+    use rand::{Rng, SeedableRng};
+    use sim_fixtures::trace::route::{start_battle, RouteTraceArgs};
+    let args = RouteTraceArgs::parse(
+        ["--scenario", "scenarios/showcase.ron", "--out", "unused"].map(str::to_owned),
+    )?;
+    let mut worlds = vec![start_battle(&args)?, corner_world()?, block_world()?];
+    let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0x0011_EF7E);
+    let depths = [
+        SimScalar::ZERO,
+        ROUNDING_DEPTH,
+        SimScalar::from_num(0.05),
+        SimScalar::from_num(0.1),
+    ];
+    let (mut searched, mut failures) = (0_u32, Vec::new());
+    for world in &mut worlds {
+        let (w, h) = (world.map.width(), world.map.height());
+        let draw = |rng: &mut rand_chacha::ChaCha8Rng| {
+            at(
+                rng.gen_range::<f64, _>(1.0..f64::from(w) - 1.0),
+                rng.gen_range::<f64, _>(1.0..f64::from(h) - 1.0),
+            )
+        };
+        for case in 0..400_u32 {
+            let radius = if case % 2 == 0 {
+                SMALL_RADIUS
+            } else {
+                SimScalar::from_num(0.5)
+            };
+            let depth = depths[usize::try_from(case / 2 % 4)?];
+            let (near, goal) = (draw(&mut rng), draw(&mut rng));
+            let Some(start) = beside_wall(world, near, radius, depth) else {
+                continue;
+            };
+            if !SimWorld::is_position_pathable(&world.map, goal, goal) {
+                continue;
+            }
+            let request = PathRequest {
+                start,
+                goal,
+                radius,
+            };
+            let Ok(path) = world.pathfinder.find_path(&world.map, &request) else {
+                continue;
+            };
+            let Some(&first) = path.waypoints.iter().find(|&&p| p != start) else {
+                continue;
+            };
+            searched += 1;
+            if !step_rule_permits(world, radius, start, first) {
+                failures.push((radius, depth, start, first));
+            }
+        }
+    }
+    assert!(searched >= 300, "only {searched} routes searched");
+    assert!(
+        failures.is_empty(),
+        "{} of {searched} fresh first legs fail the held-leg test, e.g. {:?}",
+        failures.len(),
+        &failures[..failures.len().min(5)]
+    );
+    Ok(())
+}
+
+/// The point `depth` inside the wall nearest `near` (within 3 world units) for a body of terrain
+/// radius `radius`: on the line from the wall's nearest point to `near`, `radius − depth` from the
+/// wall. `None` when no wall is near, `near` lies on the wall, or the point is not walkable.
+fn beside_wall(
+    world: &mut SimWorld,
+    near: SimVec2,
+    radius: SimScalar,
+    depth: SimScalar,
+) -> Option<SimVec2> {
+    use sim_map::PathRequestWithVision;
+    if !SimWorld::is_position_pathable(&world.map, near, near) {
+        return None;
+    }
+    let request = PathRequestWithVision {
+        start: near,
+        goal: near,
+        radius: radius + SimScalar::from_num(3),
+        vision: None,
+        block_unexplored_ramps: false,
+        known_structures: None,
+    };
+    let contact = world.pathfinder.wall_contact(&world.map, &request, near)?;
+    let (wall, away) = (point(contact.point), point(near));
+    let (dx, dy) = (away.0 - wall.0, away.1 - wall.1);
+    let length = dx.hypot(dy);
+    if length <= 0.0 {
+        return None;
+    }
+    let offset = f64::from(radius.to_f32()) - f64::from(depth.to_f32());
+    let start = SimVec2::new(
+        contact.point.x + SimScalar::from_num(dx / length * offset),
+        contact.point.y + SimScalar::from_num(dy / length * offset),
+    );
+    SimWorld::is_position_pathable(&world.map, start, start).then_some(start)
 }

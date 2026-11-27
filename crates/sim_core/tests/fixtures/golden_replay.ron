@@ -540,6 +540,16 @@
 // death spawns encoded; with the schema at 61 and the section unhashed every checkpoint reproduced.
 // Behaviour: none in these worlds (no Swarm structure). Proved on native debug and release and
 // wasm32-wasip1 release and debug, each in a fresh target directory.
+// Re-recorded for plan 2026-11-29-wall-clearance WP1 (B-240): a corner is handed off only along a
+// leg the step rule (`probe_permits`) lets the body walk, and the wedged escape is gone. The first
+// changed checkpoint is index 3 (ticks 151 to 200): on tick 151 rhino beetle 15 at (30.24, 29.71),
+// at the foot of the ramp, keeps its corner (30.42, 29.96), which the base handed off on the wedged
+// escape. Proof: a scratch build of WP1 with the rule off reproduces the previous checksums at every
+// checkpoint.
+// Re-recorded on merging main 2a90a9b4 (schema 62) into wall-clearance WP1: the WP1 change above on the
+// schema-62 world. First changed checkpoint against main's list: index 3 (ticks 151 to 200), WP1's tick-151
+// hand-off. Proof: the merged tree with main's locomotion (the rule off) reproduces main's list at every
+// checkpoint.
 // Re-recorded for plan 2026-12-01-death-spawns-and-hangar-commands WPB1 (checksum schema 62 -> 63): each
 // hangar's auto-build switch encoded; with the schema at 62 and the field unhashed every checkpoint
 // reproduced. Behaviour: none in these worlds (no hangar command). Proved on native debug and release
@@ -574,22 +584,22 @@
         0x0dac09d6a9fce03a,
         0x7c4d8b98ab3dc367,
         0xd3e14e3f19674c94,
-        0x44460d0048414fd8,
-        0x0d448eac39b47124,
-        0x73eec92dbbcddde5,
-        0xfc243d81023a28af,
-        0x4d4f1de97d20f72a,
-        0x3c96aadfd8221a40,
-        0x439fc05199d03580,
-        0xb74960d26fe58139,
-        0x2b4591a137673ceb,
-        0x997bcea79589ecbf,
-        0x5f88b02e0f913b8a,
-        0xa56047cfd3f74b47,
-        0x6310a30cddd7d805,
-        0x78321fbd7cf37c51,
-        0x6dadda882f001fb9,
-        0x2124d977576a07cf,
-        0xcf7fe9b52672f971,
+        0x9c64b15a7756ac71,
+        0xe4eeded0bc03cd79,
+        0x7a1f7e34d6d14236,
+        0x4bb0a513e697e4ad,
+        0xd047050aa3c0411f,
+        0x1c7763848e1ed755,
+        0x631ac310166254fd,
+        0xba21ae866fa87041,
+        0x6a9a24fb7025eac2,
+        0xaea8bdc4c2e6c8ff,
+        0x63bf70f773972e1a,
+        0xfcaed850c5750c49,
+        0x4061e2a3ff5be7c8,
+        0x3df1cb1a87e78023,
+        0xf1a902df2d85857d,
+        0x898608d88fddd30e,
+        0x488abb1ab3e516e3,
     ],
 )

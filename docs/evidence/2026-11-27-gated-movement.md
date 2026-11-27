@@ -896,3 +896,64 @@ Amendment 3b, item 3**; the cost of record is re-measured at WP4.
 Every hard check of Amendment 3b's acceptance holds under `Gated`: H-1 (holding) 0, H-1b out of band 0, H-2 (repaired)
 0, enemy overlap within E-2's bound everywhere, with the two exclusions reported apart; H-5 ≤ 2⁻¹⁰, H-7 lag 1, H-6
 identity. WP1 is ready for the package gate.
+
+
+## 12. Base re-measured after wall-clearance WP1 (window W), 2026-11-27
+
+Recorded by wall-clearance WP1's implementation agent, as plan `2026-11-29-wall-clearance` §5.3 asks; the `Gated`
+amendment that adopts it is the orchestrator's. **Tree:** branch `wall-clearance-wp1` `0c8969e9`: `main` `e5ebc043`
+(with `Gated` WP1 latent and brood-lord-cost) plus wall-clearance WP1 (B-240: a corner is handed off only along a
+leg `probe_permits` lets the body walk). WP2 of that plan is parked, so this is the window's only re-base. Each
+measurement used WP0b's command lines (`scripts/measure.sh`, run as `~/scratch/wall-clearance/scripts/measure_wc.sh`
+with the binary tag and output directory parameterised), release binaries of the tree in fresh target directories,
+arm catalogs `assets/{S,R,L,G}-wcm`, `--jobs 8`, under the gate lock. Full tables:
+`~/scratch/gated-movement/rebase-wcw1/` (`harness_SRL.md` from `movement_harness --aggregate`, `matrix_{S,R,L}.md`
+and `matrix_bounds_S.md` from `scripts/matrix_base.py`, `perf_table.md`, `hard-G.md`); runs in
+`~/scratch/wall-clearance/wp1/worldsm/`.
+
+**What moved against the previous base** (`c46b080d`, behaviour-identical to §11's head under S, R and L):
+- Harness, seeds 1 to 1,000: only gap, corner and lanes move (WP1 reaches walks round corners). No threshold
+  verdict turns from holds to fails under S, R or L; T4 corner turns to holds under S and R (give-ups 7 and 9 → 0).
+- Matrix, 24 seeds: battle 40 only (7 of 24 seeds under S and R, 3 under L), no winner flip, no Class R battle.
+  Battles 31 and 33, both clashes and the mirror are byte-identical.
+
+**Harness under S / R / L** (development seeds 1 to 1,000; the reference for `Gated` WP2's step rule):
+
+| Family | M1 S / R / L | M1-hi S / R / L | M2 S / R / L | Give-ups S / R / L |
+|---|---|---|---|---|
+| gap | 1.12 / 1.15 / 17.64 | 0.28 / 0.30 / 3.69 | 0.0285 / 0.0286 / 0.0633 | 56 / 49 / 441 |
+| arc | 2.40 / 2.41 / 3.20 | 0.19 / 0.18 / 1.98 | 0.0490 / 0.0489 / 0.0991 | 318 / 316 / 25 |
+| cross | 1.19 / 1.19 / 4.27 | 0.49 / 0.49 / 1.36 | 0.0216 / 0.0216 / 0.0344 | 2 / 2 / 152 |
+| corridor | 0.00 / 0.00 / 8.77 | 0.00 / 0.00 / 2.82 | 0.0040 / 0.0040 / 0.0437 | 20 / 20 / 275 |
+| corner | 0.41 / 0.39 / 21.00 | 0.10 / 0.09 / 4.69 | 0.0182 / 0.0182 / 0.0618 | 0 / 0 / 0 |
+| hold-line | 29.06 / 30.02 / 73.29 | 1.52 / 1.88 / 18.67 | 0.1176 / 0.1224 / 0.1635 | — / — / — |
+| enemy-press | 10.60 / 10.87 / 10.31 | 1.53 / 1.47 / 6.01 | 0.0915 / 0.0930 / 0.1231 | — / — / — |
+| deep-queue | 68.83 / 24.95 / 69.91 | 1.66 / 5.42 / 32.23 | 0.0989 / 0.0832 / 0.2501 | — / — / — |
+| wedge | 0.00 / 0.00 / 0.00 | 0.00 / 0.00 / 0.00 | 0.0062 / 0.0062 / 0.0001 | — / — / — |
+| hallway | 0.00 / 0.00 / 0.01 | 0.00 / 0.00 / 0.01 | 0.0034 / 0.0034 / 0.0063 | — / — / — |
+| stutter | 50.07 / 50.07 / 52.04 | 49.52 / 49.52 / 28.71 | 0.3544 / 0.3544 / 0.4557 | — / — / — |
+| surround-moving | 6.59 / 6.65 / 5.88 | 2.28 / 2.30 / 3.51 | 0.0812 / 0.0811 / 0.1023 | — / — / — |
+| lanes | 1.10 / 1.12 / 30.55 | 0.19 / 0.19 / 6.39 | 0.0353 / 0.0356 / 0.1030 | — / — / — |
+
+**Matrix.** Expectation failures 2 / 32 (S), 1 / 30 (R), 3 / 22 (L) on the seeds of record / all 24 seeds, as before;
+give-ups 14, 15, 0. Per-battle tables in `matrix_{S,R,L}.md`; S's 95 % bounds in `matrix_bounds_S.md`.
+
+**Arm G, hard checks** (`gated/wp1/scripts/hard3b.py`; `Gated` latent on the tree): harness H-1 holding 0, H-1b out of
+band 0, H-2 repaired 0, enemy overlap 0 %, H-5 0, H-7 lag 1, attackers moved 2,253,979 (enemy-press), 5,558,
+4,505 and 119,463, as in §11.3; matrix H-1 432 (battle 37a) and H-1b out of band 24 (battle 20), the two exclusions,
+H-2 pair 0; clashes as in §11.3 (attackers moved 53,814 and 23,783). Battle 40 moves on 7 seeds under G.
+
+**Throughput** (instructions:u, median of 3; C-1's R and C-2's S and L references):
+
+| Scenario | S | R | L | G |
+|---|---|---|---|---|
+| flat64 | 16.4476 G | 24.2406 G | 9.7399 G | 27.1206 G |
+| flat128 | 10.9502 G | 10.9502 G | 10.1610 G | 11.1437 G |
+| canyon | 27.1418 G | 39.1396 G | 17.4859 G | 37.1231 G |
+| casters | 21.9452 G | 26.2567 G | 15.1933 G | 29.3010 G |
+| hangar | 9.2297 G | 9.8573 G | 6.8847 G | 10.8624 G |
+| brood | 9.0679 G | 9.7239 G | 6.7099 G | 10.8885 G |
+
+Against §11.6's head: within ±0.005 % except the canyon (S −1.01 %, R −0.19 %, L +0.87 %, G −0.66 %). The load never
+fell below 8 during the window, so no ticks per second is of record; by instructions the canyon under R projects to
+about 54.9 ticks/s from WP0b's 55 (measured under load 16: 54, 49, 54).

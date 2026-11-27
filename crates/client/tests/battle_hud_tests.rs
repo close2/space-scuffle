@@ -231,6 +231,7 @@ fn a_layout_without_the_command_panel_gives_its_room_to_the_world() {
     let mut harness = skirmish();
     harness.app.insert_resource(HudLayout {
         command_panel: false,
+        minimap: false,
     });
     harness.step(2);
     let top = {
