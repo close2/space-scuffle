@@ -788,6 +788,23 @@ units floating on diagonal plateaus look wrong in the capture.
 
 ---
 
+## Amendment 1 (orchestrator, 2026-11-27): T-K's convex half-cut quadrants are reported, not limited; B-250
+
+**Finding.** Stop rule 6 fired on `main` itself. The plan said T-K passes on `main` with an uncut maximum of 0.077.
+Sampled as written, it does not. At every convex corner whose low side is ground, a high-ground body at clearance 0
+from both edges stands over the foot of `main`'s 45° half cut: 2.84 below its plateau for radius 0.3125, and 5.84 on
+a two-level corner. This plan does not touch that drawing; the 0.077 figure came from the terrain plan's D-4 check,
+which sampled only the straight brink.
+
+**Decision.**
+- T-K limits every uncut sample to 0.2 (largest 0.1987; 0.160 on `main`).
+- T-K reports the convex half-cut quadrants. Their figures are identical on `main` and on this plan's tree.
+- The pre-existing overhang at convex corners is registered as **B-250** in `DESIGN.md` §4. It is a presentation
+  bug: units at a convex cliff corner on high ground are drawn hanging over the cut. It sits with Q0139, whose answer
+  covers the same trade-off for cut cells. Its fix (for example, a rounded convex corner kept on the high side) is
+  planned after Q0139 is answered.
+- This is a correction of the plan's premise, not a change to any limit or constant.
+
 ## As built
 
 Built on branch `diagonal-cliffs` (worktree `.claude/worktrees/diagonal-cliffs`, target
