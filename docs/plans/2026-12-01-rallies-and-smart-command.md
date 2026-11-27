@@ -710,7 +710,7 @@ An outline only. It is re-planned as an amendment when it starts, against the mo
 
 ---
 
-## 16. Owner question drafts (provisional numbers, not filed)
+## 16. Owner questions (filed as [Q0140](../questions/open/0140-unit-exit-placement.md) and [Q0141](../questions/open/0141-rally-waypoint-cap.md))
 
 ```markdown
 # Q0140: Where should a newly trained unit leave its building when no rally is set?
