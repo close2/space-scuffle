@@ -215,7 +215,14 @@ SuiteCatalog(
         // 2026-11-24-attacker-snapshot P-16). The synchroniser, its render pool, the indicators
         // it spawns and the bubble material it writes are its own subject (plan
         // 2026-11-29-render-entity-pool §1, WP1).
-        "client/sync_allocation_count_tests": (class: Valgrind, triggers: [
+        // Exclusive (plan 2026-11-11-faster-gates §3.6, R-4): its memory estimate is 56.9 GiB
+        // and its peak running alone 66.4 GiB, against the slice's high of 66 GiB and maximum of
+        // 70 GiB, so it cannot share the slice with any other target, the GPU lane included.
+        // Beside other jobs on the rallies-wp3 package gate (tree e98eddc8) the slice thrashed
+        // and the run hung for 26,440 s at 61.7 GiB and 0.3 CPU-seconds; alone it passed in 415 s.
+        // Evidence: ~/scratch/logs/gate/e98eddc8eb7e3146b797d25045433d754cd18e74/package/lanes.tsv
+        // and client__sync_allocation_count_tests.log there (estimate_mib 58293, the hang's row).
+        "client/sync_allocation_count_tests": (class: Valgrind, exclusive: true, triggers: [
             "crates/client/src/{battle_pipeline/**,presentation.rs,runtime_battle/**,player_presentation/**,effects/**,battle_hud/attack_snapshots.rs,minimap/**}",
             "crates/client/src/{scene_controller.rs,render_pool.rs,indicators.rs,bubble_shader.rs}",
         ]),
