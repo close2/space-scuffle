@@ -84,6 +84,10 @@ const BRINK_LATTICE: u32 = 16;
 /// `1/√2` in `f64`.
 const INV_SQRT2: f64 = std::f64::consts::FRAC_1_SQRT_2;
 
+/// Environment variable naming a directory: when set, T-S1 writes every measured wall vertex of
+/// each map there as `<map>.csv` (kind, x, z, deviation), for the review capture's overlay.
+const DEVIATIONS_VAR: &str = "SPACE_SCUFFLE_DIAGONAL_DEVIATIONS_OUT";
+
 /// `τ` of `map`'s mesh, after asserting its premise: every vertex lies within `M` of the
 /// origin horizontally, `M = max(width, height)` (the border dual cells reach half a cell past
 /// the map, below `M`).
@@ -139,6 +143,8 @@ struct RunLines {
     /// Depth around which canonical rows jitter, and by how much at most.
     row_depth: f64,
     row_jitter: f64,
+    /// The widest gap between two foot vertices along the run.
+    max_gap: f64,
 }
 
 impl RunLines {
@@ -184,6 +190,9 @@ fn ground_run_lines(map: &GameMap) -> Vec<RunLines> {
                 rim_depth: -f64::from(FOOT_WIDTH + RIM_WIDTH),
                 row_depth: -f64::from(FOOT_WIDTH),
                 row_jitter: f64::from(WALL_JITTER_AMPLITUDE),
+                // The largest column spacing along a chamfer: a cut cell's centre column to the
+                // dual cell's centre (D-4).
+                max_gap: INV_SQRT2,
             }
         })
         .collect()
@@ -209,6 +218,10 @@ fn void_run_lines(map: &GameMap) -> Vec<RunLines> {
             rim_depth: -f64::from(WALL_JITTER_AMPLITUDE + RIM_WIDTH) * INV_SQRT2,
             row_depth: -setback,
             row_jitter: setback,
+            // The two profiles of one 45° cut stand at its midpoints, each moved by the setback
+            // along its own axis, so they are `√2·setback` closer than the midpoints' `1/√2` and
+            // the gap across a corner as much wider.
+            max_gap: INV_SQRT2 + std::f64::consts::SQRT_2 * f64::from(WALL_JITTER_AMPLITUDE),
         })
         .collect()
 }
@@ -230,8 +243,14 @@ fn is_canonical_row(lines: &RunLines, y: f32) -> bool {
     rows == rows.round() && y > foot_top && y < rim_bottom
 }
 
-/// T-S1's measure for one run: every failure, as text.
-fn chamfer_deviations(mesh: &MapMesh, lines: &RunLines, tau: f64) -> Vec<String> {
+/// T-S1's measure for one run: every failure, as text. Every vertex measured is appended to
+/// `samples` as a CSV row `kind,x,z,deviation` (the deviation beyond its slack, world units).
+fn chamfer_deviations(
+    mesh: &MapMesh,
+    lines: &RunLines,
+    tau: f64,
+    samples: &mut Vec<String>,
+) -> Vec<String> {
     let mut failures = Vec::new();
     let mut foot_positions = Vec::new();
     let mut worst = 0.0_f64;
@@ -255,6 +274,7 @@ fn chamfer_deviations(mesh: &MapMesh, lines: &RunLines, tau: f64) -> Vec<String>
             };
             let off = (depth - expected).abs() - slack;
             worst = worst.max(off.max(0.0));
+            samples.push(format!("{},{},{},{}", lines.name, p.x, p.z, off.max(0.0)));
             if off > tau {
                 failures.push(format!(
                     "{} along {:?}: {what} vertex {p} at depth {depth:.5}, expected {expected:.5} \
@@ -265,7 +285,7 @@ fn chamfer_deviations(mesh: &MapMesh, lines: &RunLines, tau: f64) -> Vec<String>
         }
     }
     // Continuity: the foot covers the corridor's interval without a gap wider than the largest
-    // column spacing (D-4).
+    // column spacing (D-4; for a void run, D-6's).
     foot_positions.push(lines.along.0 + 0.5);
     foot_positions.push(lines.along.1 - 0.5);
     foot_positions.sort_by(f64::total_cmp);
@@ -273,7 +293,7 @@ fn chamfer_deviations(mesh: &MapMesh, lines: &RunLines, tau: f64) -> Vec<String>
         .windows(2)
         .map(|w| w[1] - w[0])
         .fold(0.0, f64::max);
-    if gap > INV_SQRT2 + tau {
+    if gap > lines.max_gap + tau {
         failures.push(format!(
             "{} along {:?}: the foot leaves a gap of {gap:.5}",
             lines.name, lines.along
@@ -304,11 +324,17 @@ fn assert_runs_are_straight(name: &str, map: &GameMap, expect_ground_runs: bool)
         "{name}: ground runs {}",
         ground.len()
     );
+    let mut samples = vec!["kind,x,z,deviation".to_owned()];
     let failures: Vec<String> = ground
         .iter()
         .chain(&void)
-        .flat_map(|lines| chamfer_deviations(&mesh, lines, tau))
+        .flat_map(|lines| chamfer_deviations(&mesh, lines, tau, &mut samples))
         .collect();
+    if let Some(directory) = std::env::var_os(DEVIATIONS_VAR).map(std::path::PathBuf::from) {
+        std::fs::create_dir_all(&directory).expect("the export directory is created");
+        std::fs::write(directory.join(format!("{name}.csv")), samples.join("\n"))
+            .expect("the export is written");
+    }
     assert!(
         failures.is_empty(),
         "{name}: {} vertices off their run's lines, e.g.:\n{}",

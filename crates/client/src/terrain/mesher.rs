@@ -5,7 +5,8 @@
 //! # Architectural Responsibilities
 //! - **Dual-Grid Marching Squares:** Evaluates cell centers as dual vertices and edge
 //!   midpoints as contour crossings, producing exact cell-aligned cliff lines with 45° cuts at
-//!   convex corners and square, mitred corners at concave ones.
+//!   convex corners and square, mitred corners at concave ones, and straight chamfers along 45°
+//!   staircases (see **Diagonals**).
 //! - **Watertight Chunk Boundaries:** Boundary edges depend strictly on local cell corner
 //!   levels, guaranteeing bit-identical vertex positions and normals on shared chunk seams.
 //! - **Simulation Height Matching:** Ramp quads sample authoritative heights directly from
@@ -47,7 +48,11 @@
 //!   from the high cell only (plan D-3, owner question Q0136). A concave corner whose low cell is
 //!   void, in a dual cell without a ramp corner, keeps the 45° cut through its two edge midpoints
 //!   instead: no walkable cell lies beside it, so the abyss canyons stay straight (plan
-//!   `docs/plans/2026-12-01-straight-diagonal-cliffs.md` D-6).
+//!   `docs/plans/2026-12-01-straight-diagonal-cliffs.md` D-6). Along a 45° staircase whose low
+//!   side is ground, a convex corner backed by plateau is cut along its cell's anti-diagonal
+//!   instead (the full cut of **Diagonals**), and the concave corners on that line join the
+//!   chamfer; an isolated concave corner stays square, and rectangle corners, ridges one or two
+//!   cells wide and corners within a cell of a ramp keep the 45° half cut.
 //! - **Setback:** on an edge whose low corner is ground, every wall profile is moved
 //!   [`FOOT_WIDTH`] into the high cell and its toe is the edge midpoint itself, so the foot ends
 //!   on the edge and the jitter ([`WALL_JITTER_AMPLITUDE`] at most [`FOOT_WIDTH`]) stays behind
@@ -57,10 +62,36 @@
 //!   abyss or the map's border) is set back by [`WALL_JITTER_AMPLITUDE`] only, so no wall row of
 //!   any edge lies on its low side.
 //!
+//! # Diagonals
+//! A 45° staircase cliff whose low side is ground draws as one straight chamfer whose foot runs
+//! through the low cells' corners, wholly on the high side (plan
+//! `docs/plans/2026-12-01-straight-diagonal-cliffs.md`, owner question Q0136, answer (c); tested
+//! by `tests/diagonal_cliff_tests.rs`; module `diagonal`):
+//! - **The predicate ([`full_cut`], D-1)** reads the 3x3 block of cells around a cell `X`: `X` is
+//!   convex at its corner `C`, the three cells behind the opposite corner `O` are high, at least
+//!   one of `C`'s neighbouring corners is a concave corner with ground below, and no cell of the
+//!   block is a ramp. A cell has at most one cut, over a run of thresholds.
+//! - **The 4x4 block:** a dual cell without a ramp corner reads the 4x4 block of cells around it
+//!   once and learns its corner cells' cuts. It is a cut's `C` (the cut cell's bit is cleared), an
+//!   end `P` of its foot (the chamfer runs through the dual cell's centre to a mitred junction), or
+//!   its `O` (the floor stops at the rim top, and the wall between the two rim-top crossings of
+//!   the dual edges is emitted there, once). Its threshold runs group by the effective case: the
+//!   marching case together with the cuts that hold (D-5).
+//! - **Shared functions:** the cut cell's centre column, the rim-top crossings of the dual edges
+//!   and their columns, the columns' toes and the rim-top anchors are pure functions of the cut,
+//!   so chunk seams and stacked runs stay watertight, and every floor vertex on a rim-top line or
+//!   a foot is a wall vertex bit for bit. [`chamfer_mitre`] serves every junction: the square
+//!   nook, the straight chamfer, a chamfer meeting an axis wall, and two chamfers at a 90° apex.
+//!
 //! # Coordinate Conventions
 //! - Simulation X maps to Bevy X.
 //! - Simulation Y maps to Bevy Z.
 //! - Simulation altitude maps to Bevy Y.
+
+mod diagonal;
+
+pub use diagonal::full_cut;
+use diagonal::{DualCuts, RunKey};
 
 use bevy::prelude::*;
 use bevy::render::mesh::{MeshVertexAttribute, VertexAttributeValues};
@@ -263,26 +294,23 @@ pub fn dual_floor_level_beside(map: &GameMap, di: u32, dj: u32, corner: usize) -
     levels[corner % 4].min(neighbours)
 }
 
-/// Whether cell `cell` has a full cut at its corner in direction `dir` (`(dx, dy)`, each `±1`)
-/// at threshold `t` (plan `docs/plans/2026-12-01-straight-diagonal-cliffs.md` D-1): a convex
-/// corner of a staircase whose straight diagonal is drawn through the low cells' corners.
-///
-/// This is the plan's WP0 stub: it holds nowhere, so the mesher draws what it drew before the
-/// plan, and the tests written against the predicate fail until WP2 replaces it.
-#[must_use]
-pub fn full_cut(_map: &GameMap, _cell: (i32, i32), _dir: (i32, i32), _t: i32) -> bool {
-    false
-}
-
 /// The mitre of a wall junction whose two walls have the unit low-side normals `n1` and `n2`
-/// (world XZ): the vector a profile row's signed offset is taken along, so that the row lies the
-/// same distance behind both walls' lines.
+/// (world XZ, `n1·n2 > -1`): the vector a profile row's signed offset is taken along, so that a
+/// row at offset `k` lies exactly `-k` behind both walls' lines (plan
+/// `2026-12-01-straight-diagonal-cliffs` D-3):
 ///
-/// This is the plan's WP0 stub (plan `2026-12-01-straight-diagonal-cliffs` D-3): the sum of the
-/// two normals, the square nook's mitre, which is right only for perpendicular axis normals.
+/// `m(n₁, n₂) = (n₁ + n₂) / (1 + n₁·n₂)`, so `m·n₁ = m·n₂ = 1`.
+///
+/// It is `n` itself for a straight chamfer (`n₁ = n₂`, returned unchanged, bit for bit), the sum
+/// `d₁ + d₂` bit for bit for a square nook of two perpendicular axis normals (`n₁·n₂ = 0`
+/// exactly), and `(n_axis + n)/(1 + 1/√2)` where a chamfer meets an axis wall.
 #[must_use]
 pub fn chamfer_mitre(n1: Vec2, n2: Vec2) -> Vec2 {
-    n1 + n2
+    if n1 == n2 {
+        n1
+    } else {
+        (n1 + n2) / (1.0 + n1.dot(n2))
+    }
 }
 
 /// Cells `(x, y)` at the corners of dual cell `(di, dj)`, in corner order bottom-left,
@@ -415,7 +443,10 @@ pub struct MarchingCase {
 // other three quadrants, listed from the corner diagonal to the nook, which sees the whole L (the
 // mitre moves the centre towards it), so the floor's triangle fan from that corner covers the L
 // with every vertex once and chunk seams meet vertex for vertex; a void lone low corner draws
-// `VOID_NOOK_CASES` instead. Saddles 5 and 10 resolve low-connected: two
+// `VOID_NOOK_CASES` instead. A dual cell that a full cut touches overrides an entry (module
+// documentation, Diagonals): at the cut's corner C the cut cell's bit is cleared, and at an end P
+// of its foot the cut's edge midpoint is replaced by the chamfer through the centre (any of the
+// cases 3, 6, 7, 9, 11, 12, 13, 14). Saddles 5 and 10 resolve low-connected: two
 // lone-high cuts, so the drawn plateaus meet only at the centre, as the simulation's cells do
 // (plan `2026-11-30-terrain-and-air-indicators` D-3).
 const MARCHING_CASES: [MarchingCase; 16] = {
@@ -1200,13 +1231,14 @@ impl DualCell {
     }
 
     /// The direction a concave corner's mitre takes its offsets along, for walls ending at
-    /// midpoints `m1` and `m2` at threshold `tb`: the sum of both edges' `d`, which points into
+    /// midpoints `m1` and `m2` at threshold `tb`: [`chamfer_mitre`] of both edges' `d`, their
+    /// sum, which points into
     /// the quadrant diagonal to the lone low corner. When that quadrant is a ramp's (the only
     /// corner of such a dual cell that can be a ramp), the corner stands at the centre unmitred,
     /// as rule R6's centre profile does, because the ramp's footprint is its own (R1).
     fn mitre(&self, m1: EdgeMidpoint, m2: EdgeMidpoint, tb: i32) -> Vec2 {
         if self.ramp_mask == 0 {
-            self.midpoint_d(m1, tb) + self.midpoint_d(m2, tb)
+            chamfer_mitre(self.midpoint_d(m1, tb), self.midpoint_d(m2, tb))
         } else {
             Vec2::ZERO
         }
@@ -1277,13 +1309,16 @@ impl DualCell {
 }
 
 /// Section 1 of [`build_chunk_mesh`] for one dual cell: for every run of thresholds that share
-/// a marching case, the raised plateau polygon at the run's top level and its cliff walls; then
-/// the low floor polygon at the cell's lowest level.
+/// an effective case (the marching case, with the cuts that touch the dual cell, plan
+/// `2026-12-01-straight-diagonal-cliffs` D-5), the raised plateau polygon at the run's top level
+/// and its cliff walls; then the low floor polygon at the cell's lowest level.
 ///
 /// A dual cell with a ramp corner classifies that corner from its neighbours
 /// ([`dual_corner_levels`]), clips its floors to its non-ramp quadrants and leaves the ramp's
 /// edges to the ramp pass (rules R1, R4 to R6); one with four ramp corners emits nothing. A dual
-/// cell without a ramp corner is emitted exactly as before those rules existed.
+/// cell without a ramp corner is emitted exactly as before those rules existed. A dual cell that
+/// no full cut touches is emitted exactly as before the diagonal plan, except a void concave
+/// corner's 45° cut (D-6).
 fn emit_dual_cell(
     map: &GameMap,
     di: u32,
@@ -1295,46 +1330,26 @@ fn emit_dual_cell(
     if cell.ramp_mask == 0x0F {
         return;
     }
+    let cuts = DualCuts::read(map, &cell, di, dj);
     let (lo, hi) = (cell.lo, cell.hi);
 
     // Evaluate threshold runs for t in (lo + 1)..=hi
-    if hi > lo {
-        let mut t = lo + 1;
-        while t <= hi {
-            let curr_case = cell.case_for_t(t);
-            let ta = t;
-            let mut tb = t;
-            while tb < hi && cell.case_for_t(tb + 1) == curr_case {
-                tb += 1;
-            }
-
-            if curr_case != 0 && curr_case != 15 {
-                let mcase = cell.marching_case(curr_case);
-
-                // Emit the region's parts as floor at H(tb), contour vertices inset by the
-                // wall's setback and, where the rim is, the rim (W1); a concave corner's centre
-                // mitred along both its edges.
-                let nook = mcase.segments.iter().find(|seg| seg.through_centre);
-                for part in mcase.regions {
-                    let polygon = region_polygon(&cell, part, |vref| match vref {
-                        DualVertexRef::Corner(c) => cell.corner_coord(c),
-                        DualVertexRef::Midpoint(m) => {
-                            cell.midpoint_coord(m)
-                                - cell.midpoint_d(m, tb) * cell.floor_inset(m, tb)
-                        }
-                        DualVertexRef::Centre => nook.map_or(cell.centre, |seg| {
-                            cell.mitred_centre(seg.start, seg.end, tb)
-                        }),
-                    });
-                    emit_dual_floor(map, &cell, &polygon, cliff_level_height(tb), scratch, stats);
-                }
-
-                emit_cliff_walls(&cell, mcase.segments, ta, tb, scratch, stats);
-            }
-
-            t = tb + 1;
+    let mut t = lo + 1;
+    while t <= hi {
+        let key = cuts.key(&cell, t);
+        let ta = t;
+        let mut tb = t;
+        while tb < hi && cuts.key(&cell, tb + 1) == key {
+            tb += 1;
         }
+        if key.side != 0 {
+            diagonal::emit_cut_run(map, &cell, &cuts, key, ta, tb, scratch, stats);
+        } else if key.case != 0 && key.case != 15 {
+            emit_marching_run(map, &cell, key.case, ta, tb, scratch, stats);
+        }
+        t = tb + 1;
     }
+    diagonal::emit_cut_chains(&cuts, scratch, stats);
 
     // PERFORMANCE RATIONALE:
     // Why: Emitting a full floor quad at every level of a cliff cell would draw low ground hidden
@@ -1344,16 +1359,54 @@ fn emit_dual_cell(
     // Trade-off: A case lookup per cliff cell instead of one quad, in exchange for no hidden
     // fragments and watertight chunk boundaries.
     if lo >= 0 {
-        let case = if hi > lo { cell.case_for_t(lo + 1) } else { 0 };
-        for part in cell.marching_case(case).low_regions {
-            let polygon = region_polygon(&cell, part, |vref| match vref {
-                DualVertexRef::Corner(c) => cell.corner_coord(c),
-                DualVertexRef::Midpoint(m) => cell.midpoint_coord(m),
-                DualVertexRef::Centre => cell.centre,
-            });
-            emit_dual_floor(map, &cell, &polygon, cliff_level_height(lo), scratch, stats);
+        let key = if hi > lo {
+            cuts.key(&cell, lo + 1)
+        } else {
+            RunKey::FLAT
+        };
+        if key.side != 0 || cuts.clips_floor_at(lo) {
+            diagonal::emit_cut_low_floor(map, &cell, &cuts, key, lo, scratch, stats);
+        } else {
+            for part in cell.marching_case(key.case).low_regions {
+                let polygon = region_polygon(&cell, part, |vref| match vref {
+                    DualVertexRef::Corner(c) => cell.corner_coord(c),
+                    DualVertexRef::Midpoint(m) => cell.midpoint_coord(m),
+                    DualVertexRef::Centre => cell.centre,
+                });
+                emit_dual_floor(map, &cell, &polygon, cliff_level_height(lo), scratch, stats);
+            }
         }
     }
+}
+
+/// One threshold run `ta..=tb` of marching case `case` of a dual cell that no chamfer runs
+/// through: the region's parts as floor at `H(tb)`, contour vertices inset by the wall's setback
+/// and, where the rim is, the rim (W1), a concave corner's centre mitred along both its edges;
+/// then the cliff walls.
+fn emit_marching_run(
+    map: &GameMap,
+    cell: &DualCell,
+    case: usize,
+    ta: i32,
+    tb: i32,
+    scratch: &mut MesherScratch,
+    stats: &mut MeshStats,
+) {
+    let mcase = cell.marching_case(case);
+    let nook = mcase.segments.iter().find(|seg| seg.through_centre);
+    for part in mcase.regions {
+        let polygon = region_polygon(cell, part, |vref| match vref {
+            DualVertexRef::Corner(c) => cell.corner_coord(c),
+            DualVertexRef::Midpoint(m) => {
+                cell.midpoint_coord(m) - cell.midpoint_d(m, tb) * cell.floor_inset(m, tb)
+            }
+            DualVertexRef::Centre => nook.map_or(cell.centre, |seg| {
+                cell.mitred_centre(seg.start, seg.end, tb)
+            }),
+        });
+        emit_dual_floor(map, cell, &polygon, cliff_level_height(tb), scratch, stats);
+    }
+    emit_cliff_walls(cell, mcase.segments, ta, tb, scratch, stats);
 }
 
 /// Most vertices a floor polygon of one dual cell can have: a marching region has at most six,
@@ -1393,6 +1446,19 @@ impl FloorPolygon {
 
     fn points(&self) -> &[Vec2] {
         &self.points[..self.len]
+    }
+
+    /// Inserts `p` before the vertex at `index` (at the end for `index == len`).
+    fn insert(&mut self, index: usize, p: Vec2) {
+        debug_assert!(
+            self.len < FLOOR_POLYGON_CAPACITY && index <= self.len,
+            "invariant: a dual-cell floor polygon has at most {FLOOR_POLYGON_CAPACITY} vertices"
+        );
+        if self.len < FLOOR_POLYGON_CAPACITY && index <= self.len {
+            self.points.copy_within(index..self.len, index + 1);
+            self.points[index] = p;
+            self.len += 1;
+        }
     }
 
     /// Sutherland–Hodgman clip against the half-plane `normal · (p - origin) <= 0`. `normal` has
