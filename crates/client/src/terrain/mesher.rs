@@ -260,6 +260,28 @@ pub fn dual_floor_level_beside(map: &GameMap, di: u32, dj: u32, corner: usize) -
     levels[corner % 4].min(neighbours)
 }
 
+/// Whether cell `cell` has a full cut at its corner in direction `dir` (`(dx, dy)`, each `±1`)
+/// at threshold `t` (plan `docs/plans/2026-12-01-straight-diagonal-cliffs.md` D-1): a convex
+/// corner of a staircase whose straight diagonal is drawn through the low cells' corners.
+///
+/// This is the plan's WP0 stub: it holds nowhere, so the mesher draws what it drew before the
+/// plan, and the tests written against the predicate fail until WP2 replaces it.
+#[must_use]
+pub fn full_cut(_map: &GameMap, _cell: (i32, i32), _dir: (i32, i32), _t: i32) -> bool {
+    false
+}
+
+/// The mitre of a wall junction whose two walls have the unit low-side normals `n1` and `n2`
+/// (world XZ): the vector a profile row's signed offset is taken along, so that the row lies the
+/// same distance behind both walls' lines.
+///
+/// This is the plan's WP0 stub (plan `2026-12-01-straight-diagonal-cliffs` D-3): the sum of the
+/// two normals, the square nook's mitre, which is right only for perpendicular axis normals.
+#[must_use]
+pub fn chamfer_mitre(n1: Vec2, n2: Vec2) -> Vec2 {
+    n1 + n2
+}
+
 /// Cells `(x, y)` at the corners of dual cell `(di, dj)`, in corner order bottom-left,
 /// bottom-right, top-right, top-left. Dual cell `(di, dj)` is centred on the shared corner
 /// `(di, dj)` of these four cells.
@@ -2203,6 +2225,282 @@ mod tests {
     #[test]
     fn jitter_amplitude_fits_behind_the_setback() {
         const { assert!(WALL_JITTER_AMPLITUDE <= FOOT_WIDTH) };
+    }
+
+    /// A 3x3 map whose cell `(i, j)` has level `levels[j][i]` (-1 abyss), with `ramp` (if any)
+    /// turned into a level-0 north-ascending ramp cell. The block of cell `(1, 1)` is the map.
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "block indices are below 3 and levels between 0 and 4"
+    )]
+    fn block_map(levels: [[i32; 3]; 3], ramp: Option<(u32, u32)>) -> GameMap {
+        let mut map = GameMap::new(3, 3, MapCell::default_ground(CliffLevel(0)))
+            .expect("invariant: 3x3 is a valid map size");
+        for (j, row) in levels.iter().enumerate() {
+            for (i, &level) in row.iter().enumerate() {
+                let cell = map
+                    .cell_mut(i as u32, j as u32)
+                    .expect("invariant: the cell lies on the 3x3 map");
+                if level < 0 {
+                    cell.terrain_kind = TerrainKind::Abyss;
+                } else {
+                    cell.cliff_level = CliffLevel(level as u8);
+                }
+            }
+        }
+        if let Some((x, y)) = ramp {
+            let cell = map
+                .cell_mut(x, y)
+                .expect("invariant: the ramp lies on the 3x3 map");
+            cell.cliff_level = CliffLevel(0);
+            cell.ramp = Some(RampDir::North);
+        }
+        map
+    }
+
+    /// A staircase step for direction `(1, 1)`, rows `j = 0..3` bottom to top: `X = (1, 1)` at 1,
+    /// its low neighbours `L1 = (2, 1)` and `L2 = (1, 2)` and the diagonal `K = (2, 2)` at 0,
+    /// everything else at 1, so both neighbouring corners are ground concave corners.
+    const RUN_CELL: [[i32; 3]; 3] = [[1, 1, 1], [1, 1, 0], [1, 0, 0]];
+
+    /// T-S2 (plan `2026-12-01-straight-diagonal-cliffs` §4.1): the full cut follows its 3x3 block.
+    /// Each case names the block, the direction, the thresholds at which the cut holds, and why.
+    /// One case of T-S2: why, the block, the direction, and the thresholds at which it is cut.
+    type BlockCase = (&'static str, [[i32; 3]; 3], (i32, i32), &'static [i32]);
+
+    #[test]
+    fn full_cut_follows_the_block() {
+        let mut run_end = RUN_CELL;
+        run_end[2][0] = 0;
+        let mut rectangle = RUN_CELL;
+        rectangle[2][0] = 0;
+        rectangle[0][2] = 0;
+        let void_only = [[1, 1, 1], [1, 1, -1], [1, -1, -1]];
+        let mut open_behind = RUN_CELL;
+        open_behind[0][0] = 0;
+        let mut saddle = RUN_CELL;
+        saddle[2][2] = 1;
+        let stacked = [[2, 2, 2], [2, 2, 0], [2, 1, 0]];
+        let low_backing = [[2, 2, 2], [2, 3, 0], [3, 0, 0]];
+        let cases: [BlockCase; 10] = [
+            (
+                "a run cell: two ground concave corners",
+                RUN_CELL,
+                (1, 1),
+                &[1],
+            ),
+            (
+                "a run's end at a straight wall: one concave corner",
+                run_end,
+                (1, 1),
+                &[1],
+            ),
+            (
+                "a rectangle corner: no concave corner beside it",
+                rectangle,
+                (1, 1),
+                &[],
+            ),
+            (
+                "a void-only run: no concave corner has ground below",
+                void_only,
+                (1, 1),
+                &[],
+            ),
+            (
+                "the corner opposite C is not interior (a ridge)",
+                open_behind,
+                (1, 1),
+                &[],
+            ),
+            ("a saddle: K is high", saddle, (1, 1), &[1]),
+            ("the run's direction only", RUN_CELL, (-1, -1), &[]),
+            ("the run's direction only", RUN_CELL, (1, -1), &[]),
+            (
+                "stacked: the cut run is max(L1, L2) < t <= level(X)",
+                stacked,
+                (1, 1),
+                &[2],
+            ),
+            ("the backing caps the cut run", low_backing, (1, 1), &[1, 2]),
+        ];
+        let mut failures = Vec::new();
+        for (why, levels, dir, holds) in cases {
+            let map = block_map(levels, None);
+            for t in 0..=4 {
+                let expected = holds.contains(&t);
+                if full_cut(&map, (1, 1), dir, t) != expected {
+                    failures.push(format!("{why}: dir {dir:?} t {t}: expected {expected}"));
+                }
+            }
+        }
+        for y in 0..3 {
+            for x in 0..3 {
+                let map = block_map(RUN_CELL, Some((x, y)));
+                if full_cut(&map, (1, 1), (1, 1), 1) {
+                    failures.push(format!(
+                        "a ramp at ({x}, {y}) of the block: expected no cut"
+                    ));
+                }
+            }
+        }
+        // The control: the same block without a ramp is cut, so the ramp cases test the ramp.
+        if !full_cut(&block_map(RUN_CELL, None), (1, 1), (1, 1), 1) {
+            failures.push("the run cell without a ramp: expected a cut".to_owned());
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    /// The four diagonal unit normals `(±1, ±1)/√2`.
+    fn diagonal_normals() -> [Vec2; 4] {
+        let h = std::f32::consts::FRAC_1_SQRT_2;
+        [
+            Vec2::new(h, h),
+            Vec2::new(-h, h),
+            Vec2::new(-h, -h),
+            Vec2::new(h, -h),
+        ]
+    }
+
+    /// The pairs of low-side normals a junction can join (plan `2026-12-01-straight-diagonal-
+    /// cliffs` D-3), named: a straight chamfer `(n, n)`, the 135° and 225° junctions of a chamfer
+    /// and an axis wall (both orders), the 90° apex of two chamfers, and the square nook of two
+    /// axis walls.
+    fn junction_pairs() -> Vec<(&'static str, Vec2, Vec2)> {
+        let mut pairs = Vec::new();
+        for n in diagonal_normals() {
+            pairs.push(("straight chamfer", n, n));
+            for axis in [Vec2::new(n.x.signum(), 0.0), Vec2::new(0.0, n.y.signum())] {
+                pairs.push(("chamfer to axis", n, axis));
+                pairs.push(("axis to chamfer", axis, n));
+            }
+            pairs.push(("90° apex", n, n.perp()));
+        }
+        for d in AXIS_DIRECTIONS {
+            pairs.push(("square nook", d, d.perp()));
+        }
+        pairs
+    }
+
+    /// 64 junction points: 32 dual-cell centres (integer coordinates) and 32 cell centres (half
+    /// integers), so the jitter hash takes 64 different keys.
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "the grid indices are below 8 and exact in f32"
+    )]
+    fn junction_points() -> impl Iterator<Item = Vec2> {
+        (0..64_u32).map(|k| {
+            let base = Vec2::new((k % 8) as f32 * 3.0 + 1.0, (k / 8) as f32 * 5.0 + 2.0);
+            if k % 2 == 0 {
+                base
+            } else {
+                base + Vec2::splat(0.5)
+            }
+        })
+    }
+
+    /// T-A3 (plan `2026-12-01-straight-diagonal-cliffs` §4.1): every row of a junction's profile
+    /// stays behind both of its walls' lines, rows other than the toe on a ground side by
+    /// `FOOT_WIDTH − WALL_JITTER_AMPLITUDE`; the toe is the junction point bit for bit; the mitre
+    /// meets both normals at exactly 1, so a row's depth behind each line is its offset; and the
+    /// square nook's mitre is `d₁ + d₂` bit for bit, so the terrain plan's corners do not move.
+    ///
+    /// Tolerances, derived. A row `p + m·k` is one multiply and one add per component on values
+    /// below `M`, at most `2·ulp(M)` per component, and its projection onto a unit normal adds at
+    /// most `√2` times that: `4·ulp(M)`. The mitre `(n₁ + n₂)/(1 + n₁·n₂)` is at most five
+    /// roundings of values up to 2 per component, and its dot with a unit normal at most
+    /// `8·ulp(2)`.
+    #[test]
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "the largest coordinate's exponent is a small integer"
+    )]
+    fn junction_rows_stay_behind_both_lines() {
+        let m_extent = junction_points()
+            .map(|p| p.x.max(p.y))
+            .fold(0.0_f32, f32::max);
+        let ulp = |v: f32| 2.0_f64.powi(v.log2().floor() as i32 - 23);
+        let row_tolerance = 4.0 * ulp(m_extent);
+        let mitre_tolerance = 8.0 * ulp(2.0);
+        let behind = f64::from(FOOT_WIDTH - WALL_JITTER_AMPLITUDE);
+        let mut failures = Vec::new();
+        let mut checked = 0_usize;
+        for (name, n1, n2) in junction_pairs() {
+            let m = chamfer_mitre(n1, n2);
+            for n in [n1, n2] {
+                let meet = f64::from(m.x) * f64::from(n.x) + f64::from(m.y) * f64::from(n.y);
+                if (meet - 1.0).abs() > mitre_tolerance {
+                    failures.push(format!("{name} {n1} {n2}: mitre {m} meets {n} at {meet}"));
+                }
+            }
+            if name == "square nook"
+                && (m.x.to_bits(), m.y.to_bits()) != ((n1 + n2).x.to_bits(), (n1 + n2).y.to_bits())
+            {
+                failures.push(format!("square nook {n1} {n2}: mitre {m} is not d1 + d2"));
+            }
+            let facing = (n1 + n2).normalize();
+            for level_a in 0..=4 {
+                for level_b in -1..level_a {
+                    for ta in (level_b + 1)..=level_a {
+                        for tb in ta..=level_a {
+                            for p in junction_points() {
+                                let frame = ProfileFrame {
+                                    p,
+                                    offset: m,
+                                    facing,
+                                };
+                                let rows =
+                                    wall_profile_rows(frame, level_a, level_b, ta, tb, false);
+                                let foot = level_b >= 0 && level_b == ta - 1;
+                                for (k, row) in rows.iter().enumerate() {
+                                    checked += 1;
+                                    let is_toe = foot && k + 1 == rows.len();
+                                    let limit = if level_b >= 0 && !is_toe {
+                                        -behind
+                                    } else {
+                                        0.0
+                                    } + row_tolerance;
+                                    for n in [n1, n2] {
+                                        let depth = f64::from(n.x)
+                                            * (f64::from(row.xz.x) - f64::from(p.x))
+                                            + f64::from(n.y)
+                                                * (f64::from(row.xz.y) - f64::from(p.y));
+                                        if depth > limit {
+                                            failures.push(format!(
+                                                "{name} {n1} {n2} levels {level_a}/{level_b} run {ta}..={tb} p {p}: \
+                                                 row {k} at y {} lies {depth} along {n} (limit {limit})",
+                                                row.y
+                                            ));
+                                        }
+                                    }
+                                }
+                                let toe = rows
+                                    .last()
+                                    .map(|row| (row.xz.x.to_bits(), row.xz.y.to_bits()));
+                                if foot && toe != Some((p.x.to_bits(), p.y.to_bits())) {
+                                    failures.push(format!(
+                                        "{name} {n1} {n2} p {p}: toe is not the junction point"
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(checked > 0, "the sweep checked no row");
+        assert!(
+            failures.is_empty(),
+            "{} of {checked} rows, toes or mitres fail, e.g.:\n{}",
+            failures.len(),
+            failures
+                .iter()
+                .take(12)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
     }
 
     #[test]
