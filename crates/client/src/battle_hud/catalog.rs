@@ -82,6 +82,23 @@ pub struct ArchetypeCommands {
     pub raises: Vec<UnitTypeId>,
     /// Why this identity cannot be shown, if it cannot.
     pub unpresentable: Option<String>,
+    /// Its hangar's card facts, if it has a hangar (plan
+    /// `2026-12-01-death-spawns-and-hangar-commands` D-9).
+    pub hangar: Option<HangarCommands>,
+}
+
+/// What the card needs of a hangar (plan `2026-12-01-death-spawns-and-hangar-commands` D-9):
+/// the member it builds, its price, and whether the player may switch automatic builds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HangarCommands {
+    /// The member archetype, which names the build entry and the count line.
+    pub member: UnitTypeId,
+    /// One member's mineral cost.
+    pub minerals: u32,
+    /// One member's gas cost.
+    pub gas: u32,
+    /// Whether automatic builds may be switched (`HangarSpec::auto_build_toggle`).
+    pub auto_build_toggle: bool,
 }
 
 /// A mode of the catalog, interned in catalog order (by archetype, then by ability).
@@ -291,6 +308,15 @@ fn commands_of(
             .map(|structure| structure.unit_type_id)
             .collect(),
         unpresentable,
+        hangar: archetype.capabilities.hangar.and_then(|spec| {
+            let member = units.get(spec.member).ok()?;
+            Some(HangarCommands {
+                member: spec.member,
+                minerals: member.mineral_cost,
+                gas: member.gas_cost,
+                auto_build_toggle: spec.auto_build_toggle,
+            })
+        }),
     }
 }
 

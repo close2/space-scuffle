@@ -832,7 +832,10 @@ mod tests {
         };
         let text = ron::to_string(&spec)?;
         let field = ",auto_build_toggle:true";
-        assert!(text.contains(field), "premise: the field is written: {text}");
+        assert!(
+            text.contains(field),
+            "premise: the field is written: {text}"
+        );
         let omitted: HangarSpec = ron::from_str(&text.replace(field, ""))?;
         assert!(!omitted.auto_build_toggle);
         assert_eq!(ron::from_str::<HangarSpec>(&text)?, spec);

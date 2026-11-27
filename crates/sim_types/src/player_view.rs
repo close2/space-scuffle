@@ -609,7 +609,10 @@ mod tests {
         assert_eq!(back, view);
         view.hangars.clear();
         let text = ron::to_string(&view).expect("the view has no unserializable field");
-        assert!(!text.contains("hangars"), "an empty list is skipped: {text}");
+        assert!(
+            !text.contains("hangars"),
+            "an empty list is skipped: {text}"
+        );
         let back: PlayerView = ron::from_str(&text).expect("a missing list reads as empty");
         assert_eq!(back, view);
     }

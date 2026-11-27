@@ -20,6 +20,11 @@
 //! and arm a cast mode (plan `2026-11-10-spellcaster-mechanics` D-10). Energy and cooldown are
 //! locks, read from [`PlayerView::cast_states`], because they belong to the units, not to money.
 //!
+//! A selection holding a hangar unit shows its three hangar entries after Unload and Cancel Build:
+//! build one member at every selected hangar unit, cancel the newest build of one, and switch
+//! automatic builds, read from [`PlayerView::hangars`] (plan
+//! `2026-12-01-death-spawns-and-hangar-commands` D-9). They too take their position's key.
+//!
 //! A selection holding production structures ends its root list with one rally entry per rally
 //! slot of their abilities, named by data, each arming [`CommandMode::Rally`] (plan
 //! `2026-11-25-rallies` D-8). Like every entry they take their position's key (B-214, Q0115).
@@ -36,11 +41,11 @@ use std::fmt::Write;
 
 use bevy::prelude::*;
 use sim_types::{
-    AttackCommand, CommandOptionView, CommandSubject, EntityId, OptionLock, PlayerView, UnitOrder,
-    UnitTypeId,
+    AttackCommand, CommandOptionView, CommandSubject, EntityId, HangarView, OptionLock, PlayerView,
+    UnitOrder, UnitTypeId,
 };
 
-use super::catalog::{ArchetypeCommands, CastCommand, CastId, ModeCommand, ModeId};
+use super::catalog::{ArchetypeCommands, CastCommand, CastId, HangarCommands, ModeCommand, ModeId};
 use super::model::{HudModel, SelectedFact};
 use crate::battle_input::command_mode::CommandMode;
 use crate::battle_pipeline::commands::{CastTarget, ModeDirection};
@@ -89,6 +94,10 @@ pub enum CardAction {
     NextPage,
     /// Show the previous page, or the root from a list's first page.
     Back,
+    /// Cancel the newest member build of one selected hangar unit: the one with the most builds
+    /// queued, lowest ID first ([`hangar_cancel_recipient`]; plan
+    /// `2026-12-01-death-spawns-and-hangar-commands` D-9).
+    CancelHangarBuild,
 }
 
 /// Which list the card is showing, and how far through it.
@@ -199,6 +208,20 @@ pub enum CardLabel {
         /// The rally slot.
         slot: u8,
     },
+    /// Build one hangar member, named by the member's catalog identity (plan
+    /// `2026-12-01-death-spawns-and-hangar-commands` D-9).
+    HangarBuild(UnitTypeId),
+    /// Cancel the newest hangar build; `requeue` when the hangar it goes to builds by itself, so
+    /// the tooltip warns that the build will be queued again (Q0138's default (a)).
+    HangarCancel {
+        /// Whether automatic builds will queue the cancelled build again.
+        requeue: bool,
+    },
+    /// The hangar's automatic builds switch, showing its state.
+    HangarAutoBuild {
+        /// Whether every selected hangar unit that may switch builds by itself.
+        on: bool,
+    },
     /// The next page.
     More,
     /// The previous page.
@@ -220,7 +243,20 @@ pub enum CardLock {
     Cooldown,
     /// Every unit that could cast it has less energy than it costs.
     NeedsEnergy,
+    /// No selected hangar unit has room for another build, in its count or its queue.
+    HangarFull,
+    /// No selected hangar unit has a build queued.
+    NothingQueued,
 }
+
+/// Tooltip of a hangar build entry with no room in any selected hangar.
+pub const HANGAR_FULL_TEXT: &str = "The hangar is full";
+
+/// Tooltip of a hangar cancel entry with nothing queued.
+pub const NOTHING_QUEUED_TEXT: &str = "No build queued";
+
+/// Tooltip of a hangar cancel entry whose hangar builds by itself (Q0138's default (a)).
+pub const REQUEUE_TEXT: &str = "Auto-build will queue again";
 
 /// Tooltip of a mode entry whose units are all switching.
 pub const TRANSFORMING_TEXT: &str = "Transforming";
@@ -340,6 +376,84 @@ fn carries_passengers(view: &PlayerView, id: EntityId) -> bool {
     view.carriers
         .binary_search_by_key(&id, |carrier| carrier.entity)
         .is_ok_and(|index| view.carriers[index].slots_used > 0)
+}
+
+/// The view of the viewer's hangar unit `id`, if it is one.
+fn hangar_view(view: &PlayerView, id: EntityId) -> Option<&HangarView> {
+    view.hangars
+        .binary_search_by_key(&id, |hangar| hangar.entity)
+        .ok()
+        .and_then(|index| view.hangars.get(index))
+}
+
+/// The selected hangar units with their hangar's card facts and their view, in selection order.
+fn hangar_holders<'a>(
+    model: &'a HudModel,
+    facts: &'a [SelectedFact],
+) -> impl Iterator<Item = (HangarCommands, Option<&'a HangarView>)> + 'a {
+    facts
+        .iter()
+        .filter(|fact| !fact.foundation)
+        .filter_map(move |fact| {
+            let commands = model.catalog.archetype(fact.unit_type)?.hangar?;
+            Some((commands, hangar_view(&model.view, fact.id)))
+        })
+}
+
+/// The selected hangar unit a cancel goes to: the one with the most builds queued, lowest ID
+/// first, as UI policy beside the shortest-queue rule of training (plan
+/// `2026-12-01-death-spawns-and-hangar-commands` D-9). `None` when none has a build queued.
+#[must_use]
+pub fn hangar_cancel_recipient<'a>(
+    model: &'a HudModel,
+    facts: &[SelectedFact],
+) -> Option<&'a HangarView> {
+    facts
+        .iter()
+        .filter(|fact| !fact.foundation)
+        .filter_map(|fact| hangar_view(&model.view, fact.id))
+        .filter(|hangar| hangar.queued > 0)
+        .min_by_key(|hangar| (std::cmp::Reverse(hangar.queued), hangar.entity))
+}
+
+/// Calls `emit` with the hangar entries of the selection, if it holds a hangar unit (plan
+/// `2026-12-01-death-spawns-and-hangar-commands` D-9): build (to the whole selection, priced,
+/// locked when no selected hangar has room), cancel (to one, locked when nothing is queued), and
+/// the switch, when some selected hangar may switch.
+fn hangar_entries(model: &HudModel, facts: &[SelectedFact], mut emit: impl FnMut(CardEntry)) {
+    let Some((first, _)) = hangar_holders(model, facts).next() else {
+        return;
+    };
+    let room = hangar_holders(model, facts).any(|(_, view)| view.is_some_and(HangarView::has_room));
+    emit(CardEntry {
+        action: CardAction::Order(UnitOrder::HangarBuild),
+        label: CardLabel::HangarBuild(first.member),
+        lock: (!room).then_some(CardLock::HangarFull),
+        price: Some(CardPrice {
+            minerals: first.minerals,
+            gas: first.gas,
+            supply: 0,
+        }),
+    });
+    let recipient = hangar_cancel_recipient(model, facts);
+    emit(CardEntry {
+        lock: recipient.is_none().then_some(CardLock::NothingQueued),
+        ..CardEntry::free(
+            CardAction::CancelHangarBuild,
+            CardLabel::HangarCancel {
+                requeue: recipient.is_some_and(|hangar| hangar.auto_build),
+            },
+        )
+    });
+    let switchable =
+        || hangar_holders(model, facts).filter(|(commands, _)| commands.auto_build_toggle);
+    if switchable().next().is_some() {
+        let on = switchable().all(|(_, view)| view.is_some_and(|hangar| hangar.auto_build));
+        emit(CardEntry::free(
+            CardAction::Order(UnitOrder::SetHangarAutoBuild { enabled: !on }),
+            CardLabel::HangarAutoBuild { on },
+        ));
+    }
 }
 
 /// The lock of `option`, media first: a player cannot do anything about that one.
@@ -636,6 +750,7 @@ fn root_entries(model: &HudModel, facts: &[SelectedFact], mut emit: impl FnMut(C
             CardLabel::CancelBuild,
         ));
     }
+    hangar_entries(model, facts, &mut emit);
     // `options` sorts every train before every research, and each list by catalog identity.
     for option in &view.options {
         match option.subject {
@@ -756,6 +871,10 @@ fn label_text(label: CardLabel, model: &HudModel) -> &str {
             .archetype(structure)
             .and_then(|archetype| archetype.rally_labels.get(usize::from(slot)))
             .map_or("", String::as_str),
+        CardLabel::HangarBuild(member) => model.catalog.label(member),
+        CardLabel::HangarCancel { .. } => "Cancel last build",
+        CardLabel::HangarAutoBuild { on: true } => "Auto-build: On",
+        CardLabel::HangarAutoBuild { on: false } => "Auto-build: Off",
         CardLabel::More => "More",
         CardLabel::Back => "Back",
     }
@@ -767,6 +886,8 @@ fn write_lock(tooltip: &mut String, lock: CardLock, model: &HudModel) {
         CardLock::Transforming => tooltip.write_str(TRANSFORMING_TEXT),
         CardLock::Cooldown => tooltip.write_str(COOLDOWN_TEXT),
         CardLock::NeedsEnergy => tooltip.write_str(NEEDS_ENERGY_TEXT),
+        CardLock::HangarFull => tooltip.write_str(HANGAR_FULL_TEXT),
+        CardLock::NothingQueued => tooltip.write_str(NOTHING_QUEUED_TEXT),
         CardLock::Option(OptionLock::MissingStructure(unit_type)) => {
             write!(tooltip, "Requires {}", model.catalog.label(unit_type))
         }
@@ -799,9 +920,15 @@ fn write_price(tooltip: &mut String, price: CardPrice) {
 fn write_text(text: &mut SlotText, slot: &CardSlot, model: &HudModel) {
     text.caption.clear();
     text.tooltip.clear();
+    // A hangar build names its member by the catalog: "Build <member>".
+    let verb = if matches!(slot.label, CardLabel::HangarBuild(_)) {
+        "Build "
+    } else {
+        ""
+    };
     let _ = write!(
         text.caption,
-        "{}  {}",
+        "{}  {verb}{}",
         key_caption(slot.key),
         label_text(slot.label, model)
     );
@@ -809,6 +936,8 @@ fn write_text(text: &mut SlotText, slot: &CardSlot, model: &HudModel) {
         write_lock(&mut text.tooltip, lock, model);
     } else if let Some(price) = slot.price {
         write_price(&mut text.tooltip, price);
+    } else if slot.label == (CardLabel::HangarCancel { requeue: true }) {
+        text.tooltip.push_str(REQUEUE_TEXT);
     }
 }
 
@@ -2158,6 +2287,203 @@ mod tests {
             card.fixed_text.each_ref().map(|text| text.caption.as_ptr()),
             pointers
         );
+        Ok(())
+    }
+
+    // Plan `2026-12-01-death-spawns-and-hangar-commands` §6.5: the hangar's entries.
+
+    /// A hangar unit of `ME` (the shipped one, found by property) at `x`, and its member's cost.
+    fn hangar_unit(world: &mut SimWorld, x: i32) -> Outcome<(EntityId, UnitTypeId, u32)> {
+        let host = type_where(world, |a| a.capabilities.hangar.is_some())?;
+        let member = world
+            .catalog
+            .get(host)?
+            .capabilities
+            .hangar
+            .ok_or("a hangar")?
+            .member;
+        let cost = world.catalog.get(member)?.mineral_cost;
+        let at = SimVec2::new(SimScalar::from_i32(x), SimScalar::from_i32(40));
+        Ok((world.spawn_unit(host, ME, at)?, member, cost))
+    }
+
+    /// Steps `world` one tick with `orders` of `ME`.
+    fn order(world: &mut SimWorld, orders: Vec<(Vec<EntityId>, UnitOrder)>) {
+        let commands = orders
+            .into_iter()
+            .map(|(entities, order)| sim_types::PlayerCommand {
+                player_id: ME,
+                entities,
+                order,
+                queue: false,
+            })
+            .collect();
+        let tick = world.current_tick;
+        world.step(&sim_types::TickBundle {
+            tick: Tick(tick),
+            commands,
+            state_checksum: None,
+        });
+    }
+
+    fn fund(world: &mut SimWorld, minerals: u32) -> TestResult {
+        world.player_resources[ME.slot().ok_or("slot")?].minerals = minerals;
+        Ok(())
+    }
+
+    /// HC-11: a hangar unit alone shows Attack, Build, Cancel and Auto-build at positions 0 to 3
+    /// with the first four keys; Build is priced at the member's cost and named by it; Cancel is
+    /// locked until a build is queued; Build is locked when the hangar is full; Auto-build
+    /// reads On.
+    #[test]
+    fn hc11_a_hangar_unit_shows_build_cancel_and_auto_build() -> TestResult {
+        let mut world = flat_world()?;
+        let (carrier, member, cost) = hangar_unit(&mut world, 30)?;
+        let card = card_for(&world, &[carrier]);
+        assert_eq!(
+            labels(&card),
+            [
+                CardLabel::Attack,
+                CardLabel::HangarBuild(member),
+                CardLabel::HangarCancel { requeue: false },
+                CardLabel::HangarAutoBuild { on: true },
+            ]
+        );
+        for (slot, key) in card.slots.iter().flatten().zip(COMMAND_CARD_KEYS) {
+            assert_eq!(slot.key, key);
+        }
+        let build = slot_with(&card, CardLabel::HangarBuild(member)).ok_or("build")?;
+        assert_eq!(build.action, CardAction::Order(UnitOrder::HangarBuild));
+        assert_eq!(
+            build.price,
+            Some(CardPrice {
+                minerals: cost,
+                gas: 0,
+                supply: 0
+            })
+        );
+        assert_eq!(build.lock, None);
+        assert!(card.text[1].caption.ends_with(&format!(
+            "Build {}",
+            world.catalog.get(member)?.display_name
+        )));
+        let cancel =
+            slot_with(&card, CardLabel::HangarCancel { requeue: false }).ok_or("cancel")?;
+        assert_eq!(cancel.lock, Some(CardLock::NothingQueued));
+        assert_eq!(card.text[2].tooltip, NOTHING_QUEUED_TEXT);
+        let switch = slot_with(&card, CardLabel::HangarAutoBuild { on: true }).ok_or("switch")?;
+        assert_eq!(
+            switch.action,
+            CardAction::Order(UnitOrder::SetHangarAutoBuild { enabled: false })
+        );
+        assert!(card.text[3].caption.ends_with("Auto-build: On"));
+
+        // Auto-build fills the hangar: Build is locked, Cancel enabled and warns of the re-queue.
+        fund(&mut world, 1000)?;
+        order(&mut world, Vec::new());
+        let card = card_for(&world, &[carrier]);
+        let build = slot_with(&card, CardLabel::HangarBuild(member)).ok_or("build")?;
+        assert_eq!(build.lock, Some(CardLock::HangarFull));
+        assert_eq!(card.text[1].tooltip, HANGAR_FULL_TEXT);
+        let cancel = slot_with(&card, CardLabel::HangarCancel { requeue: true }).ok_or("cancel")?;
+        assert_eq!(cancel.lock, None);
+        assert_eq!(card.text[2].tooltip, REQUEUE_TEXT);
+
+        // Switched off, the entry reads Off and offers to switch on; Cancel no longer warns.
+        order(
+            &mut world,
+            vec![(
+                vec![carrier],
+                UnitOrder::SetHangarAutoBuild { enabled: false },
+            )],
+        );
+        let card = card_for(&world, &[carrier]);
+        let switch = slot_with(&card, CardLabel::HangarAutoBuild { on: false }).ok_or("off")?;
+        assert_eq!(
+            switch.action,
+            CardAction::Order(UnitOrder::SetHangarAutoBuild { enabled: true })
+        );
+        assert!(card.text[3].caption.ends_with("Auto-build: Off"));
+        assert!(slot_with(&card, CardLabel::HangarCancel { requeue: false }).is_some());
+        assert_eq!(card.text[2].tooltip, "");
+        Ok(())
+    }
+
+    /// HC-13: a hangar unit with other units shows the hangar entries once, at the positions
+    /// that follow; a selection without a hangar unit shows none.
+    #[test]
+    fn hc13_a_mixed_selection_shows_the_hangar_entries_once() -> TestResult {
+        let mut world = flat_world()?;
+        let (a, member, _) = hangar_unit(&mut world, 30)?;
+        let (b, _, _) = hangar_unit(&mut world, 40)?;
+        let unit = worker(&mut world)?;
+        let card = card_for(&world, &[unit, a, b]);
+        let hangar_labels: Vec<CardLabel> = labels(&card)
+            .into_iter()
+            .filter(|label| {
+                matches!(
+                    label,
+                    CardLabel::HangarBuild(_)
+                        | CardLabel::HangarCancel { .. }
+                        | CardLabel::HangarAutoBuild { .. }
+                )
+            })
+            .collect();
+        assert_eq!(
+            hangar_labels,
+            [
+                CardLabel::HangarBuild(member),
+                CardLabel::HangarCancel { requeue: false },
+                CardLabel::HangarAutoBuild { on: true },
+            ]
+        );
+        for (slot, key) in card.slots.iter().flatten().zip(COMMAND_CARD_KEYS) {
+            assert_eq!(slot.key, key, "keys by position");
+        }
+        let card = card_for(&world, &[unit]);
+        assert!(labels(&card).iter().all(|label| !matches!(
+            label,
+            CardLabel::HangarBuild(_)
+                | CardLabel::HangarCancel { .. }
+                | CardLabel::HangarAutoBuild { .. }
+        )));
+        Ok(())
+    }
+
+    /// HC-12 (the rule): a cancel goes to the selected hangar unit with the most builds queued,
+    /// the lowest ID on a tie; a hangar that cannot build more keeps Build enabled while another
+    /// selected one has room.
+    #[test]
+    fn hc12_a_cancel_goes_to_the_hangar_with_the_most_queued() -> TestResult {
+        let mut world = flat_world()?;
+        let (a, member, _) = hangar_unit(&mut world, 30)?;
+        let (b, _, _) = hangar_unit(&mut world, 40)?;
+        fund(&mut world, 1000)?;
+        order(
+            &mut world,
+            vec![(vec![a, b], UnitOrder::SetHangarAutoBuild { enabled: false })],
+        );
+        order(&mut world, vec![(vec![a, b], UnitOrder::HangarBuild)]);
+        order(&mut world, vec![(vec![b], UnitOrder::HangarBuild)]);
+        let model = model_of(&world, &[]);
+        let facts = [fact(&world, a), fact(&world, b)];
+        assert_eq!(
+            hangar_cancel_recipient(&model, &facts).map(|hangar| hangar.entity),
+            Some(b)
+        );
+        order(&mut world, vec![(vec![b], UnitOrder::HangarCancelLast)]);
+        let model = model_of(&world, &[]);
+        assert_eq!(
+            hangar_cancel_recipient(&model, &facts).map(|hangar| hangar.entity),
+            Some(a.min(b)),
+            "a tie goes to the lower ID"
+        );
+        for _ in 0..3 {
+            order(&mut world, vec![(vec![a], UnitOrder::HangarBuild)]);
+        }
+        let card = card_for(&world, &[a, b]);
+        let build = slot_with(&card, CardLabel::HangarBuild(member)).ok_or("build")?;
+        assert_eq!(build.lock, None, "b still has room");
         Ok(())
     }
 }

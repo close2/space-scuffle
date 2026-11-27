@@ -27,10 +27,11 @@ use crate::upgrades::OVERCLOCK_ABILITY_SLUG;
 use crate::{Entity, SimWorld};
 use sim_map::PlacementFailureReason;
 use sim_types::{
-    AbilityEffectSpec, AbilityLockView, AttackSnapshotView, CarrierView, CastStateView, HangarView,
-    CommandOptionView, CommandSubject, ModeStateView, PlacementFlag, PlayerId, PlayerStatusView,
-    PlayerView, QueuedItem, QueuedJobView, RallyTarget, RallyView, ResourceNodeId, ShapeKind,
-    SiteRefusal, StructureQueueView, Tick, UnitTypeId, VisibilityState, VisibleNodeView,
+    AbilityEffectSpec, AbilityLockView, AttackSnapshotView, CarrierView, CastStateView,
+    CommandOptionView, CommandSubject, HangarView, ModeStateView, PlacementFlag, PlayerId,
+    PlayerStatusView, PlayerView, QueuedItem, QueuedJobView, RallyTarget, RallyView,
+    ResourceNodeId, ShapeKind, SiteRefusal, StructureQueueView, Tick, UnitTypeId, VisibilityState,
+    VisibleNodeView,
 };
 
 impl SimWorld {
@@ -399,7 +400,11 @@ fn site_refusal(rejection: &BuildRejection) -> SiteRefusal {
 /// The view of one hangar unit `entity` with state `state` and hangar `spec` (plan
 /// `2026-12-01-death-spawns-and-hangar-commands` D-10). A docked count beyond `u8` cannot occur
 /// (it is bounded by `max_count`) and saturates.
-fn hangar_view(entity: sim_types::EntityId, state: &crate::hangar::HangarState, spec: &sim_types::HangarSpec) -> HangarView {
+fn hangar_view(
+    entity: sim_types::EntityId,
+    state: &crate::hangar::HangarState,
+    spec: &sim_types::HangarSpec,
+) -> HangarView {
     HangarView {
         entity,
         docked: u8::try_from(state.docked.len()).unwrap_or(u8::MAX),

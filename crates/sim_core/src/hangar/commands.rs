@@ -133,7 +133,11 @@ impl SimWorld {
         if entity.hangar.is_none() || !entity.is_completed {
             return None;
         }
-        self.catalog.get(entity.unit_type_id).ok()?.capabilities.hangar
+        self.catalog
+            .get(entity.unit_type_id)
+            .ok()?
+            .capabilities
+            .hangar
     }
 
     /// Applies `command` to the hangar unit `id` of hangar `spec`, or says why it cannot.
@@ -229,7 +233,10 @@ mod tests {
             try_queue_build(&mut state, &spec, &mut resources, (15, 2)),
             Ok(())
         );
-        assert_eq!((state.queued, resources.minerals, resources.gas), (1, 985, 998));
+        assert_eq!(
+            (state.queued, resources.minerals, resources.gas),
+            (1, 985, 998)
+        );
         for _ in 0..4 {
             try_queue_build(&mut state, &spec, &mut resources, (15, 0)).expect("room");
         }

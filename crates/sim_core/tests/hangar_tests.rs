@@ -927,6 +927,10 @@ impl Deck {
     }
 }
 
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "compared with a command's outcome, which is a `Result`"
+)]
 fn accepted(recipients: usize) -> Result<sim_core::economy::GameCommandReceipt, GameCommandError> {
     Ok(sim_core::economy::GameCommandReceipt::Accepted { recipients })
 }
@@ -948,7 +952,10 @@ fn hc1_a_build_queues_one_paid_member_until_the_hangar_or_queue_is_full() -> Tes
     let carrier = deck.carrier(ME, 20)?;
     deck.auto_off(vec![carrier])?;
     assert_eq!(deck.state(carrier)?.docked.len(), 4);
-    assert_eq!(deck.order(vec![carrier], UnitOrder::HangarBuild), accepted(1));
+    assert_eq!(
+        deck.order(vec![carrier], UnitOrder::HangarBuild),
+        accepted(1)
+    );
     let queued_on = deck.tick;
     assert_eq!(deck.state(carrier)?.queued, 1);
     assert_eq!(deck.minerals(ME)?, 1000 - deck.cost);
@@ -966,7 +973,10 @@ fn hc1_a_build_queues_one_paid_member_until_the_hangar_or_queue_is_full() -> Tes
     let room = usize::from(deck.spec.max_count) - deck.state(carrier)?.total();
     let expected = room.min(usize::from(deck.spec.queue_size));
     for _ in 0..expected {
-        assert_eq!(deck.order(vec![carrier], UnitOrder::HangarBuild), accepted(1));
+        assert_eq!(
+            deck.order(vec![carrier], UnitOrder::HangarBuild),
+            accepted(1)
+        );
     }
     assert_eq!(usize::from(deck.state(carrier)?.queued), expected);
     assert_eq!(
@@ -1118,7 +1128,10 @@ fn hc4_the_switch_stops_and_restarts_automatic_builds() -> TestResult {
     );
     let state = deck.state(carrier)?;
     assert!(state.auto_build);
-    assert_eq!(state.queued, 4, "queued on the switching tick's hangar phase");
+    assert_eq!(
+        state.queued, 4,
+        "queued on the switching tick's hangar phase"
+    );
     assert_eq!(deck.minerals(ME)?, 1000 - 4 * deck.cost);
 
     let mut fixed = new_deck()?;
@@ -1176,7 +1189,11 @@ fn hc6_a_cancel_under_auto_build_is_queued_again() -> TestResult {
     let carrier = deck.carrier(ME, 20)?;
     deck.set_minerals(ME, deck.cost)?;
     deck.step(Vec::new());
-    assert_eq!(deck.state(carrier)?.queued, 1, "premise: auto-build queued one");
+    assert_eq!(
+        deck.state(carrier)?.queued,
+        1,
+        "premise: auto-build queued one"
+    );
     assert_eq!(deck.minerals(ME)?, 0);
     deck.step(Vec::new());
     assert_eq!(
@@ -1233,7 +1250,11 @@ fn hc7_hangar_commands_are_admitted_like_every_game_command() -> TestResult {
         queue: true,
     }]);
     assert_eq!(outcomes, vec![accepted(1)]);
-    assert_eq!(deck.state(carrier)?.queued + 1, queued, "Shift acts at once");
+    assert_eq!(
+        deck.state(carrier)?.queued + 1,
+        queued,
+        "Shift acts at once"
+    );
     assert!(deck.world.entities[&carrier].order_queue.is_empty());
 
     // A member, launched at an enemy in range, is unselectable.

@@ -54,7 +54,10 @@
 //!   Carriers cycling their interceptors (launch, attack, dock, relaunch), driven from the
 //!   presented snapshot by a system both children run; three warm-up cycles, then windows of two
 //!   and four cycles, each the last warm-up cycle's length (plan `2026-11-28-carrier-interceptors`
-//!   H-20). Their parent is `hangar_cycle_frames_allocate_nothing`.
+//!   H-20). The live child also selects one Carrier, so the HUD's model, focus and card refreshes
+//!   derive its hangar entries and members line every tick (plan
+//!   `2026-12-01-death-spawns-and-hangar-commands` HC-16). Their parent is
+//!   `hangar_cycle_frames_allocate_nothing`.
 //! - `razing_cycle_live_frames` and `razing_cycle_baseline_frames` are the same pair with a
 //!   weaponless enemy structure carrying the shipped death spawn with the most units raised and
 //!   killed every 200 ticks by a system both children run, so its units arrive and expire on
@@ -593,6 +596,33 @@ fn drive_hangars(mut session: ResMut<'_, BattleSession>, mut driver: ResMut<'_, 
     }
 }
 
+/// Selects the hangar unit `host` for the local player and adds the HUD's model, focus and card
+/// refreshes after the live synchroniser, so the hangar's card entries and members line are
+/// derived on every tick while the members cycle (plan
+/// `2026-12-01-death-spawns-and-hangar-commands` HC-16).
+fn add_hangar_card(app: &mut App, host: sim_types::EntityId) {
+    let mut presentation = client::battle_presentation::BattlePresentation::default();
+    presentation.controlled = Some(sim_types::PlayerId(0));
+    let mut selection = client::battle_selection::BattleSelection::default();
+    selection.select_only(host);
+    app.insert_resource(presentation)
+        .insert_resource(selection)
+        .init_resource::<client::battle_hud::model::HudModel>()
+        .init_resource::<client::battle_hud::feed::BattleFeed>()
+        .init_resource::<client::battle_hud::card::CommandCard>()
+        .init_resource::<client::battle_input::command_mode::CommandMode>()
+        .add_systems(
+            Update,
+            (
+                client::battle_hud::model::refresh_hud_model,
+                client::battle_hud::model::refresh_hud_focus,
+                client::battle_hud::card::refresh_command_card,
+            )
+                .chain()
+                .after(client::sync_live_battle_system),
+        );
+}
+
 /// Adds what [`stage_variant`] staged to `app`: the gas crew's and the cycling kind's watchers,
 /// the Carriers' and the razing drivers (before the tick), and the battle driver of a baseline
 /// child that ticks.
@@ -607,6 +637,9 @@ fn add_staged(app: &mut App, variant: Variant, staged: &Staged) {
     if let Some(driver) = hangars {
         app.insert_resource(driver)
             .add_systems(Update, drive_hangars.before(advance_battle_ticks));
+        if variant == Variant::HangarCycleLive {
+            add_hangar_card(app, driver.0.hosts[0]);
+        }
     }
     if let Some(driver) = razing {
         app.insert_resource(driver)

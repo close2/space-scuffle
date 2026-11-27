@@ -1362,7 +1362,10 @@ mod tests {
         for (order, tail) in [
             (UnitOrder::HangarBuild, vec![20]),
             (UnitOrder::HangarCancelLast, vec![21]),
-            (UnitOrder::SetHangarAutoBuild { enabled: false }, vec![22, 0]),
+            (
+                UnitOrder::SetHangarAutoBuild { enabled: false },
+                vec![22, 0],
+            ),
             (UnitOrder::SetHangarAutoBuild { enabled: true }, vec![22, 1]),
         ] {
             let mut bytes = header.to_vec();

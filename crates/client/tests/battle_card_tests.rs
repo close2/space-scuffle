@@ -1723,3 +1723,140 @@ fn rally_entries_follow_the_selected_structures_slots() {
     assert!(captions[0].contains(one_labels[0].as_str()), "{captions:?}");
     assert!(captions[1].contains(two_labels[1].as_str()), "{captions:?}");
 }
+
+// --- The hangar's entries (plan 2026-12-01-death-spawns-and-hangar-commands §6.5) ---------------
+
+/// The shipped hangar unit's type, found by property.
+fn hangar_type(harness: &Harness) -> UnitTypeId {
+    harness
+        .world()
+        .catalog
+        .archetypes()
+        .find(|archetype| archetype.capabilities.hangar.is_some())
+        .expect("the catalog ships a hangar unit")
+        .unit_type_id
+}
+
+/// Two hangar units of the local player beside its first worker, both selected by clicks (the
+/// second with Shift), with the minerals set to `minerals`.
+fn two_hangars(harness: &mut Harness, minerals: u32) -> (EntityId, EntityId) {
+    harness
+        .world_mut()
+        .player_resources
+        .get_mut(LOCAL_PLAYER)
+        .expect("invariant: LOCAL_PLAYER has a player slot")
+        .minerals = minerals;
+    let worker = worker(harness);
+    let kind = hangar_type(harness);
+    let a = spawn_beside(harness, worker, kind, LOCAL_PLAYER);
+    let b = spawn_beside(harness, a, kind, LOCAL_PLAYER);
+    let middle = (harness.simulated_position(a) + harness.simulated_position(b)) * 0.5;
+    harness.look_at(middle);
+    harness.select(a);
+    harness.with_key_held(SHIFT_MODIFIERS[0], |harness| {
+        harness.select(b);
+    });
+    harness.step(1);
+    let mut selected = harness.selection().ids().to_vec();
+    selected.sort();
+    let mut wanted = vec![a, b];
+    wanted.sort();
+    assert_eq!(selected, wanted, "both hangar units are selected");
+    (a, b)
+}
+
+/// HC-12: E (and a click on its slot) sends one `HangarBuild` with the whole selection; R sends
+/// `HangarCancelLast` to the selected hangar unit with the most builds queued; T sends
+/// `SetHangarAutoBuild { enabled: false }`, after which the entry reads Off; a refusal of the
+/// simulation reaches the feed with its sentence.
+#[test]
+fn hc12_hangar_keys_and_clicks_reach_the_simulation() {
+    let mut harness = skirmish();
+    let (a, b) = two_hangars(&mut harness, 0);
+    let build = CardLabel::HangarBuild(
+        harness
+            .world()
+            .catalog
+            .get(hangar_type(&harness))
+            .unwrap()
+            .capabilities
+            .hangar
+            .unwrap()
+            .member,
+    );
+    let position = position_of_label(&harness, build);
+    assert_eq!(
+        key_at(&harness, position),
+        KeyCode::KeyE,
+        "Attack Q, Build E"
+    );
+
+    tap_label(&mut harness, CardLabel::HangarAutoBuild { on: true });
+    let orders = pending(&harness);
+    assert_eq!(orders.len(), 1);
+    assert_eq!(
+        orders[0].order,
+        UnitOrder::SetHangarAutoBuild { enabled: false }
+    );
+    run_ticks(&mut harness, 1);
+    harness.step(1);
+    assert!(
+        position_of(&harness, |action| {
+            *action == CardAction::Order(UnitOrder::SetHangarAutoBuild { enabled: true })
+        })
+        .is_some(),
+        "the switch now reads Off: {:?}",
+        card(&harness).slots
+    );
+
+    // With no minerals the simulation refuses, and the feed says why.
+    harness.tap_key(KeyCode::KeyE);
+    let orders = pending(&harness);
+    assert_eq!(orders.len(), 1);
+    assert_eq!(orders[0].order, UnitOrder::HangarBuild);
+    let mut recipients = orders[0].entities.clone();
+    recipients.sort();
+    let mut both = vec![a, b];
+    both.sort();
+    assert_eq!(recipients, both, "a build goes to the whole selection");
+    run_ticks(&mut harness, 1);
+    harness.step(1);
+    assert!(
+        feed_lines(&harness)
+            .iter()
+            .any(|line| line.contains("not enough minerals")),
+        "{:?}",
+        feed_lines(&harness)
+    );
+
+    // Funded, a click builds one in each; a second build in b makes b the one a cancel takes.
+    fund(&mut harness);
+    click_slot(&mut harness, position);
+    assert_eq!(pending(&harness)[0].order, UnitOrder::HangarBuild);
+    run_ticks(&mut harness, 1);
+    let order_b = PlayerCommand {
+        player_id: LOCAL_PLAYER,
+        entities: vec![b],
+        order: UnitOrder::HangarBuild,
+        queue: false,
+    };
+    let session = harness.app.world_mut().resource_mut::<BattleSession>();
+    let session = session.into_inner();
+    let (world, queue) = session.world_and_commands();
+    queue
+        .submit(world.expect("a world"), order_b)
+        .expect("admitted");
+    run_ticks(&mut harness, 1);
+    harness.step(1);
+    let queued = |harness: &Harness, id: EntityId| {
+        harness.world().entities[&id]
+            .hangar()
+            .map_or(0, |state| state.queued)
+    };
+    assert_eq!((queued(&harness, a), queued(&harness, b)), (1, 2));
+    tap_label(&mut harness, CardLabel::HangarCancel { requeue: false });
+    let orders = pending(&harness);
+    assert_eq!(orders.len(), 1);
+    assert_eq!(orders[0].order, UnitOrder::HangarCancelLast);
+    assert_eq!(orders[0].entities, [b], "the one with the most queued");
+}

@@ -292,7 +292,7 @@ fn draw_command_panel(
                 geometry.selection_column = Some(selection.max_rect());
                 geometry.queue_column = Some(queue.max_rect());
                 geometry.card_column = Some(card.max_rect());
-                draw_selection(selection, surfaces.model);
+                draw_selection(selection, surfaces.model, geometry);
                 draw_queue(queue, surfaces, intent, geometry);
                 draw_card(card, surfaces, intent, geometry);
             });
@@ -425,9 +425,9 @@ fn draw_card(
 }
 
 /// Draws what is selected: one unit with its bars, or several as names and counts.
-fn draw_selection(ui: &mut egui::Ui, model: &HudModel) {
+fn draw_selection(ui: &mut egui::Ui, model: &HudModel, geometry: &mut HudGeometry) {
     if let Some(focus) = model.focus {
-        draw_focused_unit(ui, model, focus);
+        draw_focused_unit(ui, model, focus, geometry);
     } else {
         egui::ScrollArea::vertical()
             .id_salt("battle_selection_groups")
@@ -439,7 +439,12 @@ fn draw_selection(ui: &mut egui::Ui, model: &HudModel) {
     }
 }
 
-fn draw_focused_unit(ui: &mut egui::Ui, model: &HudModel, focus: FocusedUnit) {
+fn draw_focused_unit(
+    ui: &mut egui::Ui,
+    model: &HudModel,
+    focus: FocusedUnit,
+    geometry: &mut HudGeometry,
+) {
     ui.strong(model.catalog.label(focus.unit_type));
     ui.small("Health");
     ui.add(
@@ -454,6 +459,11 @@ fn draw_focused_unit(ui: &mut egui::Ui, model: &HudModel, focus: FocusedUnit) {
                 .desired_height(BAR_HEIGHT)
                 .fill(SHIELD_COLOR),
         );
+    }
+    // Plan `2026-12-01-death-spawns-and-hangar-commands` D-10: the hangar's members, cached.
+    if focus.hangar.is_some() && !model.hangar_line.is_empty() {
+        let line = ui.small(model.hangar_line.as_str());
+        geometry.hangar_line = visible(&line, ui.clip_rect());
     }
 }
 

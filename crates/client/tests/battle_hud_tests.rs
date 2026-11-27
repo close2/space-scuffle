@@ -637,6 +637,93 @@ fn an_inspected_enemy_shows_name_and_health_only() {
     assert_eq!(focus.shield, None, "another player's shield stays private");
 }
 
+/// HC-14 (plan `2026-12-01-death-spawns-and-hangar-commands` §6.5): the focused hangar unit's
+/// panel shows a members line read from the view (docked, out, building with progress, the
+/// switch), rewritten only when a number changes, and none for another player's hangar unit.
+#[test]
+fn a_focused_hangar_unit_shows_its_members_line() {
+    let mut harness = skirmish();
+    let worker = workers(&harness, LOCAL_PLAYER)[0];
+    let kind = harness
+        .world()
+        .catalog
+        .archetypes()
+        .find(|arch| arch.capabilities.hangar.is_some())
+        .expect("the catalog ships a hangar unit")
+        .unit_type_id;
+    let member = harness
+        .world()
+        .catalog
+        .get(kind)
+        .unwrap()
+        .capabilities
+        .hangar
+        .unwrap()
+        .member;
+    let member_name = harness
+        .world()
+        .catalog
+        .get(member)
+        .unwrap()
+        .display_name
+        .clone();
+    harness
+        .world_mut()
+        .player_resources
+        .get_mut(LOCAL_PLAYER)
+        .unwrap()
+        .minerals = 15;
+    let place = harness.open_ground(harness.simulated_position(worker), 4.0);
+    let own = harness
+        .world_mut()
+        .spawn_unit(kind, LOCAL_PLAYER, battle_harness::sim_position(place))
+        .unwrap();
+    run_ticks(&mut harness, 2);
+
+    harness.select(own);
+    let focus = model(&harness).focus.expect("one unit shows its bars");
+    let hangar = focus.hangar.expect("the player sees their own hangar");
+    assert_eq!((hangar.docked, hangar.launched, hangar.queued), (4, 0, 1));
+    let line = model(&harness).hangar_line.clone();
+    assert!(
+        line.starts_with(&format!("{member_name}s: 4 docked, 0 out, building 1 (")),
+        "{line}"
+    );
+    assert!(line.ends_with("· auto-build on"), "{line}");
+    let pointer = (
+        model(&harness).hangar_line.as_ptr(),
+        model(&harness).hangar_line.capacity(),
+    );
+    // Paused, nothing changes for 100 frames, and the line is never rewritten.
+    for _ in 0..100 {
+        harness.step(1);
+        assert_eq!(model(&harness).hangar_line, line);
+        assert_eq!(
+            (
+                model(&harness).hangar_line.as_ptr(),
+                model(&harness).hangar_line.capacity()
+            ),
+            pointer
+        );
+    }
+    run_ticks(&mut harness, 10);
+    assert_ne!(model(&harness).hangar_line, line, "progress rewrote it");
+
+    // An enemy hangar unit, spawned only now so neither fights the other before this point.
+    let foe = {
+        let beside = battle_harness::sim_position(harness.open_ground(place, 4.0));
+        harness.world_mut().spawn_unit(kind, ENEMY, beside).unwrap()
+    };
+    run_ticks(&mut harness, 2);
+    harness.select(foe);
+    assert_eq!(harness.selection().inspected(), Some(foe));
+    let focus = model(&harness)
+        .focus
+        .expect("an inspected unit shows its bar");
+    assert_eq!(focus.hangar, None, "another player's hangar stays private");
+    assert_eq!(model(&harness).hangar_line, "");
+}
+
 // --- The bar's controls --------------------------------------------------------------------------
 
 #[test]
