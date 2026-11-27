@@ -657,7 +657,7 @@ pub fn root_with_two_rally_slots(slug: &str) -> tempfile::TempDir {
         .expect("shipped structures");
     // The first rally ability authored over several lines is a multi-slot one.
     let start = text
-        .find("rally: Some((max_waypoints: 4, slots: [\n")
+        .find("rally: Some((max_waypoints: 32, slots: [\n")
         .expect("a structure with several rally slots");
     let end = start + text[start..].find("])),").expect("a closed rally ability") + "])),".len();
     let block = &text[start..end];
@@ -669,7 +669,7 @@ pub fn root_with_two_rally_slots(slug: &str) -> tempfile::TempDir {
     let row = text
         .find(&format!("slug: \"{slug}\""))
         .expect("the structure's row");
-    let one_slot = "rally: Some((max_waypoints: 4, slots: [(label: \"Set Rally Point\")])),";
+    let one_slot = "rally: Some((max_waypoints: 32, slots: [(label: \"Set Rally Point\")])),";
     let at = row
         + text[row..]
             .find(one_slot)

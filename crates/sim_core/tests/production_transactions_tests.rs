@@ -520,33 +520,31 @@ fn two_mobile_producers_take_exits_in_stable_id_order() -> TestResult {
     let next = f.world.next_entity_id;
     f.world.update_production_and_buffs();
     // Plan `2026-11-23-production-queue` D-9 (B-66): the lower id takes ring 0's one free
-    // cell, (2, 2); the second no longer waits but takes the first cell of ring 1 clockwise
-    // from its minimum corner, (1, 1).
+    // cell, (2, 2); the second no longer waits but takes ring 1's first cell, which with no
+    // rally is its cell nearest the map's centre (S-exit-order, Q0140): (5, 5).
     assert_eq!(f.world.next_entity_id, next + 2);
     assert_eq!(f.world.entities[&first].production_queue.len(), 0);
     assert_eq!(f.world.entities[&second].production_queue.len(), 0);
     let at = |id: u32| f.world.entities[&EntityId(id)].position;
     let cell = |x: i32, y: i32| point(x, y) + SimVec2::new(SimScalar::HALF, SimScalar::HALF);
     assert_eq!(at(next), cell(2, 2));
-    assert_eq!(at(next + 1), cell(1, 1));
+    assert_eq!(at(next + 1), centre(from_map_centre(&f, (1, 1, 5, 5))[0]));
+    assert_eq!(at(next + 1), cell(5, 5));
     assert_eq!(f.world.production_blocks(), []);
     f.world.validate_supply_ledger()?;
     Ok(())
 }
 
 /// An air product ignores ground walls and meets only air bodies. Ring 0's cells are walls,
-/// each holding an air body: the unit appears on ring 1's first cell clockwise (plan
-/// `2026-11-23-production-queue` D-9, B-66; before it, the job waited). With the air bodies gone,
-/// the next one appears on ring 0's first cell, a ground wall.
+/// each holding an air body: the unit appears on ring 1's first cell, its cell nearest the map's
+/// centre with no rally (plan `2026-11-23-production-queue` D-9, B-66, and S-exit-order; before
+/// D-9, the job waited). With the air bodies gone, the next one appears on ring 0's first cell,
+/// a ground wall.
 #[test]
 fn air_training_ignores_ground_walls_but_respects_air_occupants() -> TestResult {
     let mut f = Fixture::new()?;
     f.world.catalog.get_mut(f.product)?.mover_type = sim_types::MoverType::Air;
     let placed = f.world.map.structures()[&f.producer].clone();
-    let (left, bottom) = (
-        i32::try_from(placed.top_left.0)?,
-        i32::try_from(placed.top_left.1)?,
-    );
     let mut blockers = Vec::new();
     for y in placed.top_left.1 - 1..=placed.top_left.1 + u32::from(placed.height) {
         for x in placed.top_left.0 - 1..=placed.top_left.0 + u32::from(placed.width) {
@@ -567,14 +565,13 @@ fn air_training_ignores_ground_walls_but_respects_air_occupants() -> TestResult 
             }
         }
     }
-    let cell = |x: i32, y: i32| point(x, y) + SimVec2::new(SimScalar::HALF, SimScalar::HALF);
     f.admit()?;
     let next = f.world.next_entity_id;
     f.world.update_production_and_buffs();
     assert_eq!(f.world.next_entity_id, next + 1);
     assert_eq!(
         f.world.entities[&EntityId(next)].position,
-        cell(left - 2, bottom - 2)
+        centre(from_map_centre(&f, ring_bounds(&f, 1)?)[0])
     );
     assert_eq!(f.world.production_blocks(), []);
     for id in blockers {
@@ -590,7 +587,7 @@ fn air_training_ignores_ground_walls_but_respects_air_occupants() -> TestResult 
     assert_eq!(f.world.next_entity_id, next + 2);
     assert_eq!(
         f.world.entities[&EntityId(next + 1)].position,
-        cell(left - 1, bottom - 1)
+        centre(from_map_centre(&f, ring_bounds(&f, 0)?)[0])
     );
     assert_eq!(f.world.entities[&f.producer].production_queue.len(), 0);
     assert_eq!(f.world.diagnostics(), []);
@@ -806,13 +803,17 @@ fn fractional_mobile_producer_walled_at_ring_zero_places_on_ring_one() -> TestRe
     let next = f.world.next_entity_id;
     f.world.update_production_and_buffs();
     // The producer's own disc touches the wall, so no ring-0 cell connects to it; plan
-    // `2026-11-23-production-queue` D-9 (B-66) places the unit on ring 1's first cell clockwise,
-    // (1, 0), instead of holding the paid job.
+    // `2026-11-23-production-queue` D-9 (B-66) places the unit on ring 1's first cell instead of
+    // holding the paid job: with no rally, its cell nearest the map's centre (S-exit-order), (5, 4).
     assert_eq!(f.world.next_entity_id, next + 1);
     assert_eq!(f.world.entities[&producer].position, origin);
     assert_eq!(
         f.world.entities[&EntityId(next)].position,
-        SimVec2::new(SimScalar::from_num(1.5), SimScalar::from_num(0.5))
+        centre(from_map_centre(&f, (1, 0, 5, 4))[0])
+    );
+    assert_eq!(
+        f.world.entities[&EntityId(next)].position,
+        SimVec2::new(SimScalar::from_num(5.5), SimScalar::from_num(4.5))
     );
     assert_eq!(f.world.entities[&producer].production_queue.len(), 0);
     assert_eq!(f.world.production_blocks(), []);
@@ -901,7 +902,8 @@ fn ring_bounds(f: &Fixture, step: i64) -> Result<(i64, i64, i64, i64), Box<dyn s
     ))
 }
 
-/// The cells of a ring clockwise from its minimum corner, as `exits.rs` walks them.
+/// The cells of a ring clockwise from its minimum corner: the walk `exits.rs` orders by distance
+/// to a rally, or with no rally starts at the cell nearest the map's centre ([`from_map_centre`]).
 fn clockwise(bounds: (i64, i64, i64, i64)) -> Vec<(i64, i64)> {
     let (left, bottom, right, top) = bounds;
     let mut cells: Vec<(i64, i64)> = (left..=right).map(|x| (x, bottom)).collect();
@@ -933,8 +935,8 @@ fn made(f: &Fixture, next: u32) -> SimVec2 {
 }
 
 /// B-66, P-5 (D-9): a producer walled in by a ring of 1×1 structures places its unit on the
-/// first cell of ring 1, clockwise from the minimum corner; the job leaves the queue and the
-/// ledger holds. (Replaces `real_structure_ring_preserves_paid_ready_job_until_removal`, whose
+/// first cell of ring 1, with no rally its cell nearest the map's centre (S-exit-order); the job
+/// leaves the queue and the ledger holds. (Replaces `real_structure_ring_preserves_paid_ready_job_until_removal`, whose
 /// premise, a stall, the plan removes.)
 #[test]
 fn a_ringed_producer_places_its_unit_on_the_next_ring() -> TestResult {
@@ -981,7 +983,7 @@ fn a_ringed_producer_places_its_unit_on_the_next_ring() -> TestResult {
         f.world.update_production_and_buffs();
         assert_eq!(f.world.diagnostics(), []);
         assert_eq!(f.world.production_blocks(), []);
-        let expected = centre(clockwise(ring_bounds(&f, 1)?)[0]);
+        let expected = centre(from_map_centre(&f, ring_bounds(&f, 1)?)[0]);
         assert_eq!(made(&f, next), expected, "radius {radius:?}");
         assert!(f.world.entities[&f.producer].production_queue.is_empty());
         f.world.validate_supply_ledger()?;
@@ -990,7 +992,7 @@ fn a_ringed_producer_places_its_unit_on_the_next_ring() -> TestResult {
 }
 
 /// B-66, P-5: bodies standing on every cell of ring 0 do not stall production: the unit appears
-/// on ring 1's first free cell clockwise, here its minimum corner.
+/// on ring 1's first free cell, with no rally its cell nearest the map's centre (S-exit-order).
 #[test]
 fn units_crowding_the_ring_do_not_stall_production() -> TestResult {
     let mut f = Fixture::new()?;
@@ -999,7 +1001,10 @@ fn units_crowding_the_ring_do_not_stall_production() -> TestResult {
     let next = f.world.next_entity_id;
     f.world.update_production_and_buffs();
     assert_eq!(f.world.diagnostics(), []);
-    assert_eq!(made(&f, next), centre(clockwise(ring_bounds(&f, 1)?)[0]));
+    assert_eq!(
+        made(&f, next),
+        centre(from_map_centre(&f, ring_bounds(&f, 1)?)[0])
+    );
     Ok(())
 }
 
@@ -1044,5 +1049,107 @@ fn the_unit_exits_nearest_the_rally_point() -> TestResult {
         let ring = ring_bounds(&f, i64::from(crowded))?;
         assert_eq!(Some(made(&f, next)), nearest(ring), "crowded {crowded}");
     }
+    Ok(())
+}
+
+/// The cells of a ring in the order `exits.rs` tries them with no rally (owner answer to Q0140,
+/// S-exit-order): the clockwise walk of [`clockwise`], started at the cell whose centre is
+/// nearest the centre of `f`'s map (squared fixed-point distance; on a tie, the cell earlier in
+/// the clockwise walk).
+fn from_map_centre(f: &Fixture, bounds: (i64, i64, i64, i64)) -> Vec<(i64, i64)> {
+    let mut cells = clockwise(bounds);
+    let centre = (
+        i128::from(f.world.map.width()) << 31,
+        i128::from(f.world.map.height()) << 31,
+    );
+    let distance = |cell: &(i64, i64)| {
+        let at = centre_raw(*cell);
+        let (dx, dy) = (at.0 - centre.0, at.1 - centre.1);
+        dx * dx + dy * dy
+    };
+    let start = (0..cells.len())
+        .min_by_key(|&index| (distance(&cells[index]), index))
+        .unwrap_or(0);
+    cells.rotate_left(start);
+    cells
+}
+
+/// The centre of `cell` in raw Q32.32 world units.
+fn centre_raw(cell: (i64, i64)) -> (i128, i128) {
+    (
+        (i128::from(cell.0) << 32) + (1_i128 << 31),
+        (i128::from(cell.1) << 32) + (1_i128 << 31),
+    )
+}
+
+/// Trains one fixture product at `producer` with no rally and returns where it appeared.
+fn train_at(f: &mut Fixture, producer: EntityId) -> Result<SimVec2, Box<dyn std::error::Error>> {
+    f.world
+        .try_queue_production(PlayerId(0), &[producer], f.product)?;
+    let next = f.world.next_entity_id;
+    f.world.update_production_and_buffs();
+    assert_eq!(f.world.diagnostics(), []);
+    Ok(made(f, next))
+}
+
+/// S-exit-order (owner answer to Q0140; plan `2026-12-01-rallies-and-smart-command` Amendment 1):
+/// with no rally, the unit appears on the ring-0 cell nearest the map's centre, not on the
+/// ring's minimum corner.
+#[test]
+fn with_no_rally_the_unit_exits_on_the_ring_cell_nearest_the_map_centre() -> TestResult {
+    let mut f = Fixture::new()?;
+    let ring = ring_bounds(&f, 0)?;
+    let expected = from_map_centre(&f, ring)[0];
+    assert_ne!(
+        expected,
+        clockwise(ring)[0],
+        "the fixture tells the rules apart"
+    );
+    let producer = f.producer;
+    assert_eq!(train_at(&mut f, producer)?, centre(expected));
+    Ok(())
+}
+
+/// S-exit-order: two producers placed point-symmetrically about the centre of a symmetric
+/// (flat, square) map give point-symmetric exits, so symmetric spawns behave identically.
+#[test]
+fn mirrored_producers_on_a_symmetric_map_exit_on_mirrored_cells() -> TestResult {
+    let mut f = Fixture::new()?;
+    let placed = f.world.map.structures()[&f.producer].clone();
+    let (width, height) = (f.world.map.width(), f.world.map.height());
+    let mirror_x = width - placed.top_left.0 - u32::from(placed.width);
+    let mirror_y = height - placed.top_left.1 - u32::from(placed.height);
+    let mirrored = f
+        .world
+        .spawn_structure(f.producer_type, PlayerId(0), mirror_x, mirror_y)?;
+    let producer = f.producer;
+    let first = train_at(&mut f, producer)?;
+    let second = train_at(&mut f, mirrored)?;
+    let reflect = |at: SimVec2| {
+        SimVec2::new(
+            SimScalar::from_i32(i32::try_from(width).unwrap_or(i32::MAX)) - at.x,
+            SimScalar::from_i32(i32::try_from(height).unwrap_or(i32::MAX)) - at.y,
+        )
+    };
+    assert_eq!(second, reflect(first));
+    Ok(())
+}
+
+/// S-exit-order: with the start cell taken, the unit appears on the next cell clockwise from
+/// it; with all of ring 0 taken, on ring 1's cell nearest the map's centre.
+#[test]
+fn blocked_exits_fall_through_clockwise_then_to_the_outer_ring() -> TestResult {
+    let mut f = Fixture::new()?;
+    let order = from_map_centre(&f, ring_bounds(&f, 0)?);
+    f.world
+        .spawn_unit(f.product, PlayerId(1), centre(order[0]))?;
+    let producer = f.producer;
+    assert_eq!(train_at(&mut f, producer)?, centre(order[1]));
+
+    let mut f = Fixture::new()?;
+    crowd_ring(&mut f)?;
+    let outer = from_map_centre(&f, ring_bounds(&f, 1)?);
+    let producer = f.producer;
+    assert_eq!(train_at(&mut f, producer)?, centre(outer[0]));
     Ok(())
 }

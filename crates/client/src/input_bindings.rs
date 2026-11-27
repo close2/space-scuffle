@@ -143,12 +143,12 @@ pub const ACTION_KEYS: [&[KeyCode]; 10] = [
 ];
 
 /// One-line summary of the battle controls, shown in the inspector.
-pub const BATTLE_CONTROLS_HELP: &str = "Left click selects, drag boxes, Shift adds. Right click \
-moves, attacks, gathers, builds or boards by its target, Shift queues; with a structure it sets \
-the rally, and Shift adds a rally waypoint. H holds, X stops. Escape cancels a command mode. \
-Ctrl+0-9 assigns a group, 0-9 recalls it. On the minimap, left click moves the camera and right \
-click orders; Space jumps to the latest alert; Alt+click pings; Alt+F and Alt+T toggle colours \
-and terrain.";
+pub const BATTLE_CONTROLS_HELP: &str = "Left click selects, drag boxes, Shift adds. Right click: \
+each unit does what it can with the target (moves, attacks, follows, gathers, builds or boards), \
+Shift queues; with a structure it sets the rally, and Shift adds a rally waypoint. H holds, X \
+stops. Escape cancels a command mode. Ctrl+0-9 assigns a group, 0-9 recalls it. On the minimap, \
+left click moves the camera and right click orders; Space jumps to the latest alert; Alt+click \
+pings; Alt+F and Alt+T toggle colours and terrain.";
 
 /// Returns whether any key of `keys` is held.
 #[must_use]

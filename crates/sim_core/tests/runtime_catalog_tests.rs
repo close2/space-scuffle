@@ -3846,7 +3846,7 @@ fn rally_slots_are_read_at_run_time() -> TestResult {
     let path = bundle.directory.join(FILES[1]);
     let text = std::fs::read_to_string(&path)?;
     let two_slots = text
-        .find("rally: Some((max_waypoints: 4, slots: [\n")
+        .find("rally: Some((max_waypoints: 32, slots: [\n")
         .ok_or("no structure with a slot list over several lines")?;
     let end = two_slots + text[two_slots..].find("])),").ok_or("unterminated")? + "])),".len();
     let hall_slug = text[..two_slots]
@@ -3859,7 +3859,7 @@ fn rally_slots_are_read_at_run_time() -> TestResult {
     let mut one_slot = text.clone();
     one_slot.replace_range(
         two_slots..end,
-        "rally: Some((max_waypoints: 4, slots: [(label: \"Set Rally Point\")])),",
+        "rally: Some((max_waypoints: 32, slots: [(label: \"Set Rally Point\")])),",
     );
     let one_slot = one_slot.replacen("kinds: [Mineral], slot: 1)", "kinds: [Mineral])", 3);
     std::fs::write(&path, &one_slot)?;

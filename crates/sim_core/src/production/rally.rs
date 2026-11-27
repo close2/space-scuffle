@@ -412,10 +412,17 @@ impl SimWorld {
     /// | Waypoint | Order |
     /// |---|---|
     /// | a point | `Move` to it |
-    /// | a node | `Harvest` when admission accepts the child for it; else `Move` to its centre |
-    /// | a unit of the child's player, not carried | `Load` when admission accepts the child as its passenger; else `Move` to where it stands now (B-163) |
-    /// | another player's unit, not carried | `AttackTarget { origin: Explicit }` when the child can attack it (S11, D-6); else `Move` to where it stands now (Q0105's rule, B-187) |
+    /// | a node whose harvest admission accepts for the child | `Harvest` |
+    /// | a node whose harvest it refuses (no harvester, a bare geyser) | `Move` to its centre |
+    /// | one's own carrier, not carried | `Load` when admission accepts the child as its passenger; else as the next row |
+    /// | one's own mobile unit, not carried | `Follow { Move }` (plan `2026-11-26-follow-order` D-9, B-163 fixed) |
+    /// | one's own structure | `Move` to where it stands |
+    /// | another player's unit, not carried, that the child can attack | `AttackTarget { origin: Explicit }` (S11, D-6) |
+    /// | another player's unit, not carried, that the child cannot attack | `Follow { Move }` when it is mobile (B-166, B-187 fixed); else `Move` to where it stands |
     /// | a unit, carried | none this time; the waypoint stays |
+    ///
+    /// The rows, in this order, are `rally_tests::the_rally_order_table_is_as_documented`'s
+    /// (plan `2026-12-01-rallies-and-smart-command` P-3).
     ///
     /// A refused order is skipped, so the next waypoint's order becomes the first issued, as a
     /// refused player order would leave the unit. An invariant failure is reported as a

@@ -58,6 +58,12 @@
 //!   presented snapshot by a system both children run; three warm-up cycles, then windows of two
 //!   and four cycles, each the last warm-up cycle's length (plan `2026-11-28-carrier-interceptors`
 //!   H-20). Their parent is `hangar_cycle_frames_allocate_nothing`.
+//! - `smart_mixed_live_frames` and `smart_mixed_baseline_frames` (the variant `smart_mixed`) are
+//!   the same pair on the shipped skirmish, resumed, after one right click of a mixed selection on
+//!   the local transport, planned by `smart_plan` and queued by `submit_smart` before the warm-up:
+//!   two ground soldiers board it and an armed air unit follows it, so boarders walk and the
+//!   follower flies through the window (plan `2026-12-01-rallies-and-smart-command` P-6). Their
+//!   parent is `smart_mixed_frames_allocate_nothing`.
 //! - `razing_cycle_live_frames` and `razing_cycle_baseline_frames` are the same pair with a
 //!   weaponless enemy structure carrying the shipped death spawn with the most units raised and
 //!   killed every 200 ticks by a system both children run, so its units arrive and expire on
@@ -156,6 +162,12 @@ enum Variant {
     HangarCycleLive,
     /// The battle driver and the cycle's driver alone on the same staged battle.
     HangarCycleBaseline,
+    /// The live synchroniser and battle driver on the resumed skirmish after a mixed right click
+    /// on the local transport: boarders walk to it and an air unit follows it (plan
+    /// `2026-12-01-rallies-and-smart-command` P-6, the variant `smart_mixed`).
+    SmartMixedLive,
+    /// The battle driver alone after the same click.
+    SmartMixedBaseline,
     /// The live synchroniser and battle driver on the default battle with every mobile unit
     /// killed and an enemy structure with a death spawn raised and killed every 200 ticks, so
     /// its units arrive and expire on their own clocks (plan
@@ -180,6 +192,8 @@ impl Variant {
             Self::BroodCycleBaseline => "brood_cycle_baseline_frames",
             Self::HangarCycleLive => "hangar_cycle_live_frames",
             Self::HangarCycleBaseline => "hangar_cycle_baseline_frames",
+            Self::SmartMixedLive => "smart_mixed_live_frames",
+            Self::SmartMixedBaseline => "smart_mixed_baseline_frames",
             Self::RazingCycleLive => "razing_cycle_live_frames",
             Self::RazingCycleBaseline => "razing_cycle_baseline_frames",
         }
@@ -205,6 +219,11 @@ impl Variant {
         self.cycles_broods() || self.cycles_hangars() || self.cycles_razing()
     }
 
+    /// Whether the child plays the mixed right click of the variant `smart_mixed`.
+    fn clicks_smart_mixed(self) -> bool {
+        matches!(self, Self::SmartMixedLive | Self::SmartMixedBaseline)
+    }
+
     /// Whether a splash event is sent every frame.
     fn streams_effects(self) -> bool {
         matches!(self, Self::EffectStream | Self::EffectBaseline)
@@ -223,6 +242,7 @@ impl Variant {
                 | Self::RunningBaseline
                 | Self::BroodCycleBaseline
                 | Self::HangarCycleBaseline
+                | Self::SmartMixedBaseline
                 | Self::RazingCycleBaseline
         )
     }
@@ -646,6 +666,195 @@ fn planted_allocation() {
     drop(std::hint::black_box(Vec::<u8>::with_capacity(64)));
 }
 
+/// The mixed group of the variant `smart_mixed`: two ground soldiers and an armed air unit of the
+/// local player and the local transport they right-click, all presentable by their shipped
+/// media.
+#[derive(Resource, Clone, Copy, Debug)]
+struct MixedGroup {
+    soldiers: [sim_types::EntityId; 2],
+    flyer: sim_types::EntityId,
+    carrier: sim_types::EntityId,
+}
+
+/// Map distance, in world units, from the soldiers to the transport: their walk to board lasts
+/// past the warm-up and the longer window (96 ticks, under 4 s at a soldier's speed).
+const MIXED_CARRIER_DISTANCE: i32 = 22;
+
+/// Spawns the [`MixedGroup`] near the local base of `simulation`, on ground cells both bodies
+/// can stand on; unit types are chosen by capability and by shipped media under `assets`.
+fn stage_mixed_group(
+    simulation: &mut sim_core::SimWorld,
+    assets: &Path,
+) -> Result<MixedGroup, Box<dyn std::error::Error>> {
+    let local = sim_types::PlayerId(0);
+    let find = |test: &dyn Fn(&sim_core::catalog::UnitArchetype) -> bool, what: &'static str| {
+        simulation
+            .catalog
+            .archetypes()
+            .find(|a| {
+                !a.is_immobile_by_default()
+                    && assets
+                        .join("textures")
+                        .join(format!("{}.flipbook.ron", a.slug))
+                        .is_file()
+                    && test(a)
+            })
+            .map(|a| a.unit_type_id)
+            .ok_or(what)
+    };
+    let soldier = find(
+        &|a| {
+            a.mover_type == sim_types::MoverType::Ground
+                && a.capabilities.harvester.is_none()
+                && !a.capabilities.can_construct
+                && a.capabilities.transport_capacity == 0
+        },
+        "a presentable ground soldier",
+    )?;
+    let carrier = find(
+        &|a| a.capabilities.transport_capacity > 0,
+        "a presentable transport",
+    )?;
+    let flyer = find(
+        &|a| {
+            a.mover_type == sim_types::MoverType::Air
+                && a.capabilities.transport_capacity == 0
+                && client::battle_pipeline::commands::is_armed(a)
+        },
+        "a presentable armed air unit",
+    )?;
+    let base = simulation
+        .entities
+        .values()
+        .find(|e| e.owner == local && e.is_immobile)
+        .map(|e| e.position)
+        .ok_or("a local base")?;
+    let walkable = |world: &sim_core::SimWorld, at: sim_types::SimVec2| {
+        (-1..=1).all(|dx: i32| {
+            (-1..=1).all(|dy: i32| {
+                let probe = at
+                    + sim_types::SimVec2::new(
+                        sim_types::SimScalar::from_i32(dx),
+                        sim_types::SimScalar::from_i32(dy),
+                    );
+                world
+                    .map
+                    .world_to_cell(probe)
+                    .ok()
+                    .and_then(|(x, y)| world.map.cell(x, y).ok())
+                    .is_some_and(|cell| {
+                        cell.flags.contains(sim_map::CellFlags::GROUND_PATHABLE)
+                            && !cell.flags.intersects(
+                                sim_map::CellFlags::OCCUPIED_BY_STRUCTURE
+                                    | sim_map::CellFlags::UNPASSABLE_CLIFF,
+                            )
+                    })
+            })
+        })
+    };
+    let around = |world: &sim_core::SimWorld, distance: i32| {
+        (0..16)
+            .map(|step| {
+                let angle = f64::from(step) * std::f64::consts::TAU / 16.0;
+                let offset = sim_types::SimVec2::new(
+                    sim_types::SimScalar::from_num(angle.cos() * f64::from(distance)),
+                    sim_types::SimScalar::from_num(angle.sin() * f64::from(distance)),
+                );
+                base + offset
+            })
+            .find(|at| walkable(world, *at))
+            .ok_or("open ground near the local base")
+    };
+    // Each body on its own open ground, clear of structures and cliffs.
+    let first = around(simulation, 6)?;
+    let second = around(simulation, 8)?;
+    let beside = around(simulation, 10)?;
+    let far = around(simulation, 6 + MIXED_CARRIER_DISTANCE)?;
+    let soldiers = [
+        simulation.spawn_unit(soldier, local, first)?,
+        simulation.spawn_unit(soldier, local, second)?,
+    ];
+    let flyer = simulation.spawn_unit(flyer, local, beside)?;
+    let carrier = simulation.spawn_unit(carrier, local, far)?;
+    Ok(MixedGroup {
+        soldiers,
+        flyer,
+        carrier,
+    })
+}
+
+/// The mixed right click: the client's own plan of a right click by the group on its transport
+/// (`smart_plan`) queued by the client's own submission (`submit_smart`), as the pointer would.
+/// Fails unless it gives the soldiers `Load` and the air unit `Follow`.
+fn click_smart_mixed(app: &mut App, group: MixedGroup) -> TestResult {
+    let local = sim_types::PlayerId(0);
+    let mut session = app.world_mut().resource_mut::<BattleSession>();
+    let (world, queue) = session.world_and_commands();
+    let world = world.ok_or("invariant: the prepared session holds its world")?;
+    let ground = world.entities[&group.carrier].position;
+    let target = client::battle_input::context_order::PointerTarget::Friendly(
+        group.carrier,
+        Vec3::new(ground.x.to_f32(), 0.0, ground.y.to_f32()),
+    );
+    let selection = [
+        group.soldiers[0],
+        group.soldiers[1],
+        group.flyer,
+        group.carrier,
+    ];
+    let plan = client::battle_input::context_order::smart_plan(world, local, &selection, target);
+    let orders: Vec<_> = plan.orders.iter().map(|entry| &entry.order).collect();
+    let expected = [
+        &sim_types::UnitOrder::Load {
+            carrier: group.carrier,
+        },
+        &sim_types::UnitOrder::Follow {
+            target: group.carrier,
+            kind: sim_types::FollowKind::Move,
+        },
+    ];
+    if orders != expected {
+        return Err(format!("the mixed click planned {orders:?}").into());
+    }
+    queue.submit_smart(world, local, &plan, false)?;
+    Ok(())
+}
+
+/// The `smart_mixed` children's check after their window of `frames` 20 ms frames, in which the
+/// battle ran `ticked` ticks: one 40 ms tick every other frame, and the soldiers are still
+/// walking to board and the air unit still follows, so the orders ran through the whole window.
+fn check_mixed_window(app: &App, group: MixedGroup, ticked: u32, frames: u32) -> TestResult {
+    if ticked != frames / 2 {
+        return Err(format!("the battle ran {ticked} ticks in {frames} frames").into());
+    }
+    let session = app.world().resource::<BattleSession>();
+    let world = session
+        .world()
+        .ok_or("invariant: the running session holds its world")?;
+    for soldier in group.soldiers {
+        let entity = &world.entities[&soldier];
+        let boarding = matches!(
+            entity.order_queue.front(),
+            Some(sim_types::UnitOrder::Load { carrier }) if *carrier == group.carrier
+        );
+        if !boarding || entity.is_loaded_in_transport() {
+            return Err(format!(
+                "{soldier:?} must still walk to board after the window: {:?}",
+                entity.order_queue
+            )
+            .into());
+        }
+    }
+    let follower = &world.entities[&group.flyer];
+    if !matches!(
+        follower.order_queue.front(),
+        Some(sim_types::UnitOrder::Follow { target, .. }) if *target == group.carrier
+    ) {
+        return Err(format!("the air unit must still follow: {:?}", follower.order_queue).into());
+    }
+    Ok(())
+}
+
 /// What [`stage_variant`] stages: the gas crew, the cycling kind's watcher, the Carriers' driver
 /// and the razing driver, each where the variant has one.
 type Staged = (
@@ -751,7 +960,7 @@ fn drive_hangars(mut session: ResMut<'_, BattleSession>, mut driver: ResMut<'_, 
 
 /// Adds what [`stage_variant`] staged to `app`: the gas crew's and the cycling kind's watchers,
 /// the Carriers' and the razing drivers (before the tick), and the battle driver of a baseline
-/// child that ticks.
+/// child that ticks (the `smart_mixed` baseline among them).
 fn add_staged(app: &mut App, variant: Variant, staged: &Staged) {
     let &(crew, brood, hangars, razing) = staged;
     if let Some(crew) = crew {
@@ -774,6 +983,7 @@ fn add_staged(app: &mut App, variant: Variant, staged: &Staged) {
             | Variant::BroodCycleBaseline
             | Variant::HangarCycleBaseline
             | Variant::RazingCycleBaseline
+            | Variant::SmartMixedBaseline
     ) {
         app.add_systems(Update, advance_battle_ticks);
     }
@@ -785,15 +995,20 @@ fn steady_state_app(variant: Variant) -> Result<App, Box<dyn std::error::Error>>
     let root = client::ResolvedAssetsRoot::from_directory(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets"),
     )?;
-    let scenario = if variant.is_running() {
+    let scenario = if variant.is_running() || variant.clicks_smart_mixed() {
         SKIRMISH_SCENARIO
     } else {
         DEFAULT_BATTLE_SCENARIO
     };
-    let ticking = variant.is_running() || variant.cycles_units();
+    let ticking = variant.is_running() || variant.cycles_units() || variant.clicks_smart_mixed();
     let definition = BattleDefinition::load(root.as_path(), scenario.as_ref())?;
     let mut simulation = definition.instantiate()?;
     let (crew, brood, hangars, razing) = stage_variant(variant, &mut simulation)?;
+    let mixed = if variant.clicks_smart_mixed() {
+        Some(stage_mixed_group(&mut simulation, root.as_path())?)
+    } else {
+        None
+    };
     let session = BattleSession::prepare(
         SessionGeneration::FIRST,
         &mut simulation,
@@ -839,6 +1054,10 @@ fn steady_state_app(variant: Variant) -> Result<App, Box<dyn std::error::Error>>
         ),
     );
     add_staged(&mut app, variant, &(crew, brood, hangars, razing));
+    if let Some(group) = mixed {
+        click_smart_mixed(&mut app, group)?;
+        app.insert_resource(group);
+    }
     if variant.presents() {
         app.add_systems(
             Update,
@@ -1404,21 +1623,33 @@ fn warm_up(app: &mut App, variant: Variant) -> TestResult {
     Ok(())
 }
 
-/// Runs one child: returns at once without `FRAMES_ENV`, otherwise warms the app of `variant`
-/// and runs the requested number of frames, paused or, for a running variant, ticking.
-fn run_child(variant: Variant) -> TestResult {
+/// The frame count `FRAMES_ENV` asks the child of `variant` for, or `None` when it is not set
+/// and the child does nothing (a plain `cargo test`).
+/// # Errors
+/// The variable is not UTF-8 or not a number.
+fn requested_frames(variant: Variant) -> Result<Option<u32>, Box<dyn std::error::Error>> {
     let Some(frames) = std::env::var_os(FRAMES_ENV) else {
         println!(
             "{}: {FRAMES_ENV} is not set, so this child does nothing; \
              steady_state_frames_allocate_nothing runs it under valgrind",
             variant.child_test()
         );
+        return Ok(None);
+    };
+    Ok(Some(
+        frames
+            .to_str()
+            .ok_or_else(|| format!("{FRAMES_ENV} is not UTF-8"))?
+            .parse()?,
+    ))
+}
+
+/// Runs one child: returns at once without `FRAMES_ENV`, otherwise warms the app of `variant`
+/// and runs the requested number of frames, paused or, for a running variant, ticking.
+fn run_child(variant: Variant) -> TestResult {
+    let Some(frames) = requested_frames(variant)? else {
         return Ok(());
     };
-    let frames: u32 = frames
-        .to_str()
-        .ok_or_else(|| format!("{FRAMES_ENV} is not UTF-8"))?
-        .parse()?;
     let mut app = steady_state_app(variant)?;
     warm_up(&mut app, variant)?;
     // A hangar child's window is counted in cycles: that many times the last warm-up cycle's
@@ -1463,6 +1694,9 @@ fn run_child(variant: Variant) -> TestResult {
         check_effect_stream(&app, frames, spawned_before)?;
     }
     let after = tick(&app);
+    if let Some(group) = app.world().get_resource::<MixedGroup>().copied() {
+        return check_mixed_window(&app, group, after - before, frames);
+    }
     if !variant.is_running() {
         if after != 0 {
             return Err(format!("the battle must stay paused, but reached tick {after}").into());
@@ -1725,6 +1959,16 @@ fn hangar_cycle_live_frames() -> TestResult {
 #[test]
 fn hangar_cycle_baseline_frames() -> TestResult {
     run_child(Variant::HangarCycleBaseline)
+}
+
+#[test]
+fn smart_mixed_live_frames() -> TestResult {
+    run_child(Variant::SmartMixedLive)
+}
+
+#[test]
+fn smart_mixed_baseline_frames() -> TestResult {
+    run_child(Variant::SmartMixedBaseline)
 }
 
 #[test]
@@ -2281,6 +2525,56 @@ fn dhat_json_reads_through_ron() -> TestResult {
             window: 3,
             total: 3
         }
+    );
+    Ok(())
+}
+
+/// P-6 under valgrind (plan `2026-12-01-rallies-and-smart-command`, the variant `smart_mixed`):
+/// after a mixed right click on the local transport, queued before the warm-up, the live
+/// synchroniser's windows of [`SHORT_FRAMES`] and [`LONG_FRAMES`] running frames differ by
+/// exactly what the battle driver's alone differ by, while two boarders walk and an air unit
+/// follows: the mixed orders cost the live battle sync no allocation. The baseline keeps the tick
+/// driver and the same click, so the simulation's own allocations cancel.
+#[test]
+fn smart_mixed_frames_allocate_nothing() -> TestResult {
+    let runs: Vec<Run> = [Variant::SmartMixedLive, Variant::SmartMixedBaseline]
+        .into_iter()
+        .flat_map(|variant| {
+            [SHORT_FRAMES, LONG_FRAMES].map(|frames| Run {
+                variant,
+                frames,
+                repeat: 0,
+            })
+        })
+        .collect();
+    let directory = tempfile::tempdir()?;
+    let counts = count_all(&runs, directory.path())?;
+    let [live_short, live_long, base_short, base_long] = counts.as_slice() else {
+        return Err("invariant: count_all returns one count per run".into());
+    };
+    let report = format!(
+        "blocks allocated inside {WINDOW_FUNCTION} after {WARM_FRAMES} warm frames; windows of \
+         {SHORT_FRAMES} and {LONG_FRAMES} frames:\n  live {} (process {}), {} (process {})\n  \
+         baseline {} (process {}), {} (process {})",
+        live_short.window,
+        live_short.total,
+        live_long.window,
+        live_long.total,
+        base_short.window,
+        base_short.total,
+        base_long.window,
+        base_long.total
+    );
+    println!("{report}");
+    let live = i128::from(live_long.window) - i128::from(live_short.window);
+    let baseline = i128::from(base_long.window) - i128::from(base_short.window);
+    assert_eq!(
+        live - baseline,
+        0,
+        "the client's battle sync systems allocated {} times over {} frames of mixed smart \
+         orders running, beyond the tick driver's and Bevy's own work\n{report}",
+        live - baseline,
+        LONG_FRAMES - SHORT_FRAMES
     );
     Ok(())
 }

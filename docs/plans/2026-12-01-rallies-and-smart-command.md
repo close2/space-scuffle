@@ -710,7 +710,7 @@ An outline only. It is re-planned as an amendment when it starts, against the mo
 
 ---
 
-## 16. Owner questions (filed as [Q0140](../questions/open/0140-unit-exit-placement.md) and [Q0141](../questions/open/0141-rally-waypoint-cap.md))
+## 16. Owner questions (filed as [Q0140](../questions/closed/0140-unit-exit-placement.md) and [Q0141](../questions/closed/0141-rally-waypoint-cap.md))
 
 ```markdown
 # Q0140: Where should a newly trained unit leave its building when no rally is set?
@@ -764,3 +764,71 @@ Recommendation: (c) if you can check in game; otherwise (a).
 ## Answer
 
 ```
+
+## Amendment 1 (orchestrator note, owner answers Q0140/Q0141, 2026-11-27)
+
+**Q0140: a sanctioned symmetric deviation, not (a) or (c) as drafted.**
+- When a producer has no rally, the exit-placement ring scan starts at the perimeter spot nearest the map centre.
+  Break ties deterministically by the ring's existing index order, and state the rule.
+- The scan then proceeds clockwise, then to wider rings when blocked.
+- With a rally set, keep today's nearest-to-rally rule.
+- Compute the centre from the map's dimensions in fixed point. No float, no authored side field.
+- Record the deviation as a Q0052 addendum, "S-exit-order", with the owner's reasoning: fairness, so symmetric spawns
+  behave identically and units spawn facing the battlefield.
+- Close B-167 in DESIGN.md, and move Q0140 to closed/.
+- This changes simulation behaviour wherever a unit is trained with no rally. Find every measured world it reaches:
+  goldens, matrix, harness, showcase, held-out runs and benches.
+  - If any world moves, restate it with traces under AGENTS.md §8. An owner-dictated move is not a stop.
+  - If a golden moves, re-record it. Use the 4-build proof only if the checksum format changes; it shouldn't, since
+    no new hashed state is added.
+- Red-first tests:
+  - mirrored producers on a symmetric map give mirrored exit spots;
+  - the start spot is the one nearest the centre;
+  - blocked spots fall through clockwise, then to the outer ring.
+- Throughput: if a sim_core hot path changes, compare callgrind instructions per tick on the 400-unit row.
+
+**Q0141 (c).**
+- Set `max_waypoints` to 32 for every producer in structures.ron.
+- A Shift-click past the cap is ignored, so keep today's refusal path unless its user-visible effect differs; say
+  what it is.
+- Add or update the test that pins the cap from the catalog.
+- Close B-215 and move Q0141 to closed/.
+
+**Then:**
+- merge origin/main if it has moved;
+- run the targeted tests, plus valgrind and steady state if the client changed;
+- run `cargo gate quick` and workspace clippy;
+- commit unsigned with the trailers;
+- report the head by SendMessage. Don't push.
+
+---
+
+## As built
+
+Built on branch `rallies` (from `main` `b2ba4621`); evidence in
+[`docs/evidence/2026-12-01-rallies-and-smart-command.md`](../evidence/2026-12-01-rallies-and-smart-command.md).
+Numbers: B-247 was free on `main` and every open branch (B-246 and B-250 are `diagonal-cliffs`', B-248 and B-249 the
+minimap plan's proposals), and Q0140 and Q0141 were filed on `main` before WP0, so the provisional numbers stand.
+
+| WP | Commit | What |
+|---|---|---|
+| WP0 | `54852435` | B-163 fixed, B-214 removed (Q0052 addendum S-rally-keys), B-247 registered; P-0: 8 skirmish right clicks, **0** resolved differently per member; the 483-file world baseline |
+| WP1 | `b8547023` | `smart_plan`, `SmartPlan`, `SmartOrder`, `friendly_rows`; `takes` and `order_subject` shared by the queue; `submit_smart`; the help line; P-1, P-2, P-6 and the valgrind pair `smart_mixed`. Worlds 483/483 identical; skirmish stage log identical |
+| WP2 | `e32c744a` | `give_rally_order`'s doc table; P-3 and P-4 with their mutations. Worlds 483/483 identical |
+| WP3 | `202dddb5` | Defaults (b) of Q0140 and Q0141: B-167 and B-215 reworded, open |
+| WP4 | this commit | Records, pointers, evidence, this section |
+| WP3 (Amendment 1) | `b1ec5f0d` and its records commit | S-exit-order (Q0140): with no rally, exits are tried clockwise from the ring cell nearest the map's centre; `max_waypoints: 32` (Q0141 (c)). B-167 removed, B-215 fixed, Q0140 and Q0141 closed. Worlds 483/483 identical; the skirmish won 4 ticks sooner (6,338), first difference at tick 2,264, entity 16 |
+
+Recorded differences from the text above (scoping, Q0002):
+- **P-6's third command** is the selected base's rally on the transport. D-1 gives at most two unit entries on any
+  shipped target (a carrier: `Load` and `Follow`), so the steady-state click is two plan entries plus the rally.
+- **P-4's fall-through mutation** is "an empty chosen slot falls through to the first slot holding a route": the
+  plan's "`slot_used_by` skips an empty slot" leaves a worker with no accepting slot on the shipped data and so cannot
+  fail the test (evidence §3.1).
+- **P-2's "no partial queue"** is proved in the `context_order` unit tests (`a_plan_is_queued_whole_or_not_at_all`,
+  a plan whose recipient died after it was built), since no input event can kill a member between planning and
+  submission.
+- **The clicked unit itself** takes no row (D-1's "nothing for `u` itself"), so a lone unit right-clicking itself
+  now gives an empty plan and the queue's `EmptySelection` refusal, where the single-order rule moved it to the
+  ground under the pointer. P-0 found no such click in the skirmish.
+- **`card.rs`** names S-rally-keys instead of the removed B-214 in two doc comments (WP1).

@@ -1101,9 +1101,11 @@ fn cap_of(b: &Base, producer: EntityId) -> Result<usize, Box<dyn std::error::Err
     ))
 }
 
-/// P-4 (D-3, B-165, B-215): Shift appends a waypoint until the route holds the cap the row
-/// authors; the next Shift-click is refused with `RallyWaypointsFull` and changes nothing, and a
-/// click without Shift starts the route again.
+/// P-4 (D-3, B-165) and the owner's answer to Q0141 (c), B-215 closed: Shift appends a waypoint
+/// until the route holds the cap the row authors (32); the next Shift-click is ignored, refused
+/// with `RallyWaypointsFull` and changing nothing, and a click without Shift starts the route
+/// again. The targets are distinct points on an 8-wide grid of the 32-cell map, clear of the
+/// producers and the nodes.
 #[test]
 fn shift_appends_waypoints_up_to_the_cap() -> TestResult {
     let mut b = Base::new()?;
@@ -1111,7 +1113,10 @@ fn shift_appends_waypoints_up_to_the_cap() -> TestResult {
     assert!(cap > 1, "a cap that allows waypoints");
     let targets: Vec<RallyTarget> = (0..=cap)
         .zip(0_u32..)
-        .map(|(_, i)| RallyTarget::Point(at(10.5 + 2.0 * f64::from(i), 26.5)))
+        .map(|(_, i)| {
+            let (column, row) = (f64::from(i % 8), f64::from(i / 8));
+            RallyTarget::Point(at(9.5 + 2.0 * column, 18.5 + 2.0 * row))
+        })
         .collect();
     for (i, &target) in targets.iter().enumerate().take(cap) {
         assert_eq!(
@@ -1308,13 +1313,12 @@ fn could_attack(
 /// product of a structure without workers whose weapons do not reach the target, found in the
 /// catalog by that rule) follows the enemy (B-166's remaining half, fixed by plan
 /// `2026-11-26-follow-order` D-9).
-#[test]
-fn a_unit_that_cannot_attack_follows_the_enemy() -> TestResult {
-    let b = Base::new()?;
+/// A producer without workers and a product of it that cannot attack `b`'s soldier (its weapons
+/// do not reach it), found in the catalog by that rule, as `(producer, product)`.
+fn unattacking_pair(b: &Base) -> Result<(UnitTypeId, UnitTypeId), Box<dyn std::error::Error>> {
     let target_type = b.soldier;
     let faction = b.world.catalog.get(b.soldier)?.faction;
-    let mut found = None;
-    'search: for producer in b.world.catalog.archetypes().filter(|arch| {
+    for producer in b.world.catalog.archetypes().filter(|arch| {
         arch.faction == faction
             && matches!(arch.shape, ShapeKind::BuildingDome { .. })
             && arch.capabilities.auto_rally.is_none()
@@ -1331,12 +1335,18 @@ fn a_unit_that_cannot_attack_follows_the_enemy() -> TestResult {
                 continue;
             }
             if !could_attack(product.unit_type_id, target_type)? {
-                found = Some((producer.unit_type_id, product.unit_type_id));
-                break 'search;
+                return Ok((producer.unit_type_id, product.unit_type_id));
             }
         }
     }
-    let (producer_type, product) = found.ok_or("no product that cannot attack the soldier")?;
+    Err("no product that cannot attack the soldier".into())
+}
+
+#[test]
+fn a_unit_that_cannot_attack_follows_the_enemy() -> TestResult {
+    let b = Base::new()?;
+    let target_type = b.soldier;
+    let (producer_type, product) = unattacking_pair(&b)?;
     let mut b = Base::new()?;
     let producer = b.world.spawn_structure(producer_type, PlayerId(0), 20, 4)?;
     // Within the producer's sight: a follow of an enemy its player never saw ends at once (plan
@@ -1548,5 +1558,175 @@ fn a_new_unit_following_its_rally_unit_stops_when_it_dies() -> TestResult {
     b.tick();
     b.tick();
     assert_eq!(b.orders(child), []);
+    Ok(())
+}
+
+/// P-4, B-217 (plan `2026-12-01-rallies-and-smart-command` D-4, §2.2 rule 4): the mirror of
+/// [`the_queen_analogue_uses_no_rally`]. With the worker rally cleared (a rally on the structure
+/// itself) and only the army rally set, a new worker gets no order: it is refused by the army
+/// slot's use rule (`-;Worker`), and nothing falls through to it.
+#[test]
+fn a_worker_gets_no_order_while_only_the_army_rally_is_set() -> TestResult {
+    let mut h = TwoSlotBase::new()?;
+    let hatch = RallyTarget::Unit(h.hatch);
+    h.set(hatch, Some(h.worker_slot))?;
+    let ground = RallyTarget::Point(at(16.5, 26.5));
+    h.set(ground, Some(h.army_slot))?;
+    assert_eq!(h.routes(), [RallyRoute::single(h.army_slot, ground)]);
+    let (worker, _) = h.base.train(h.hatch, h.worker)?;
+    assert_eq!(
+        h.base.front_order(worker),
+        None,
+        "no fall-through to the army rally"
+    );
+    Ok(())
+}
+
+/// One row of P-3's table and the front order its child had on its spawn tick.
+type RowFront = (usize, Option<UnitOrder>);
+
+/// P-3's row 9: the barracks' rally is set on `rider`, which then boards `carrier`; the next
+/// soldier's front order on its spawn tick. Checks that the waypoint on the carried unit stays.
+fn carried_row(
+    b: &mut Base,
+    rider: EntityId,
+    carrier: EntityId,
+) -> Result<Option<UnitOrder>, Box<dyn std::error::Error>> {
+    let barracks = b.barracks;
+    b.set_rally(barracks, RallyTarget::Unit(rider))?;
+    b.command(vec![rider], UnitOrder::Load { carrier })?;
+    for _ in 0..400 {
+        if b.world.entities[&rider].is_loaded_in_transport() {
+            break;
+        }
+        b.tick();
+    }
+    assert!(
+        b.world.entities[&rider].is_loaded_in_transport(),
+        "the rider boarded"
+    );
+    let (carried, _) = b.train(barracks, b.soldier)?;
+    assert_eq!(
+        b.waypoints(barracks),
+        [RallyTarget::Unit(rider)],
+        "the waypoint on a carried unit stays"
+    );
+    Ok(b.front_order(carried))
+}
+
+/// P-3's rows 8 and 7, trained in that order, on an enemy soldier within the sight of a second
+/// producer whose `follower` cannot attack it (so the follow does not end at once, plan
+/// `2026-11-26-follow-order` D-5); the enemy and the two `(row, front order)` pairs.
+fn enemy_rows(
+    b: &mut Base,
+    follower_producer: UnitTypeId,
+    follower: UnitTypeId,
+) -> Result<(EntityId, Vec<RowFront>), Box<dyn std::error::Error>> {
+    let producer = b
+        .world
+        .spawn_structure(follower_producer, PlayerId(0), 20, 4)?;
+    let enemy = b.world.spawn_unit(b.soldier, PlayerId(1), at(24.5, 12.5))?;
+    let mut rows = Vec::new();
+    for (index, producer, product) in [(8, producer, follower), (7, b.barracks, b.soldier)] {
+        b.shift_rally(producer, RallyTarget::Unit(enemy), false)?;
+        let (child, _) = b.train(producer, product)?;
+        rows.push((index, b.front_order(child)));
+    }
+    Ok((enemy, rows))
+}
+
+/// P-3 (B-163's record; plan `2026-12-01-rallies-and-smart-command` WP2): one constructed base
+/// gives a new unit each row of `give_rally_order`'s documented table, in its order, and the
+/// child's front order on its spawn tick is the row's:
+/// 1. a point: `Move` to it;
+/// 2. a node, the child a harvester: `Harvest`;
+/// 3. a node, the child no harvester: `Move` to the node;
+/// 4. one's own carrier: `Load`;
+/// 5. one's own mobile unit: `Follow { Move }`;
+/// 6. one's own structure: `Move` to it;
+/// 7. another player's unit the child can attack: `AttackTarget { Explicit }`;
+/// 8. another player's mobile unit it cannot attack: `Follow { Move }`;
+/// 9. a carried unit: no order, and the waypoint stays.
+///
+/// The enemy rows are trained last, the followed one first, so the attacked enemy is alive when
+/// both children appear.
+#[test]
+fn the_rally_order_table_is_as_documented() -> TestResult {
+    let (follower_producer, follower) = unattacking_pair(&Base::new()?)?;
+    let mut b = Base::new()?;
+    let carrier_type = b
+        .world
+        .catalog
+        .archetypes()
+        .find(|arch| arch.capabilities.transport_capacity > 0)
+        .ok_or("no carrier in the catalog")?
+        .unit_type_id;
+    let carrier = b
+        .world
+        .spawn_unit(carrier_type, PlayerId(0), at(12.5, 22.5))?;
+    let friend = b.world.spawn_unit(b.soldier, PlayerId(0), at(16.5, 16.5))?;
+    let rider = b.world.spawn_unit(b.soldier, PlayerId(0), at(12.5, 25.5))?;
+    let (barracks, soldier, hall, worker) = (b.barracks, b.soldier, b.hall, b.worker);
+    let point = at(14.5, 26.5);
+    let field = ResourceNodeId(0);
+    let mut fronts: Vec<RowFront> = Vec::new();
+    let mut row = |b: &mut Base,
+                   index: usize,
+                   producer: EntityId,
+                   product: UnitTypeId,
+                   target: RallyTarget|
+     -> Result<EntityId, Box<dyn std::error::Error>> {
+        b.set_rally(producer, target)?;
+        let (child, _) = b.train(producer, product)?;
+        fronts.push((index, b.front_order(child)));
+        Ok(child)
+    };
+    row(&mut b, 1, barracks, soldier, RallyTarget::Point(point))?;
+    row(&mut b, 2, hall, worker, RallyTarget::Node(field))?;
+    let walker = row(&mut b, 3, barracks, soldier, RallyTarget::Node(field))?;
+    b.assert_walks_to_node(walker, field.0)?;
+    row(&mut b, 4, barracks, soldier, RallyTarget::Unit(carrier))?;
+    row(&mut b, 5, barracks, soldier, RallyTarget::Unit(friend))?;
+    row(&mut b, 6, barracks, soldier, RallyTarget::Unit(hall))?;
+    fronts.push((9, carried_row(&mut b, rider, carrier)?));
+    let (enemy, enemy_rows) = enemy_rows(&mut b, follower_producer, follower)?;
+    fronts.extend(enemy_rows);
+    fronts.sort_by_key(|(index, _)| *index);
+
+    let hall_at = b.world.entities[&hall].position;
+    let follow = |target| {
+        Some(UnitOrder::Follow {
+            target,
+            kind: FollowKind::Move,
+        })
+    };
+    let walked_to_hall = |order: &Option<UnitOrder>| {
+        // The hall's centre lies inside its footprint, which movement admission moves to the
+        // nearest point a body can stand on (S-4): within its half diagonal and a body.
+        matches!(order, Some(UnitOrder::Move { target })
+            if (*target - hall_at).length_sq() < SimScalar::from_num(36))
+    };
+    assert_eq!(fronts.len(), 9, "one child per row: {fronts:?}");
+    assert_eq!(
+        fronts[0].1,
+        Some(UnitOrder::Move { target: point }),
+        "row 1"
+    );
+    assert_eq!(
+        fronts[1].1,
+        Some(UnitOrder::Harvest { target: field }),
+        "row 2"
+    );
+    assert!(
+        matches!(fronts[2].1, Some(UnitOrder::Move { .. })),
+        "row 3: {:?}",
+        fronts[2]
+    );
+    assert_eq!(fronts[3].1, Some(UnitOrder::Load { carrier }), "row 4");
+    assert_eq!(fronts[4].1, follow(friend), "row 5");
+    assert!(walked_to_hall(&fronts[5].1), "row 6: {:?}", fronts[5]);
+    assert_eq!(fronts[6].1, Some(UnitOrder::attack(enemy)), "row 7");
+    assert_eq!(fronts[7].1, follow(enemy), "row 8");
+    assert_eq!(fronts[8].1, None, "row 9");
     Ok(())
 }

@@ -434,6 +434,228 @@ fn shift_right_click_on_a_mineral_queues_after_a_move() {
     );
 }
 
+// --- The per-unit smart command (plan 2026-12-01-rallies-and-smart-command, B-222) -------------
+
+/// A presentable mobile unit type of the catalog that `wanted` accepts, chosen by capability and
+/// by its shipped media, never by name.
+fn presentable_type(
+    harness: &Harness,
+    wanted: impl Fn(&sim_core::UnitArchetype) -> bool,
+) -> UnitTypeId {
+    let assets = battle_harness::assets();
+    harness
+        .world()
+        .catalog
+        .archetypes()
+        .find(|archetype| {
+            !archetype.is_immobile_by_default()
+                && battle_harness::presentable(&assets, &archetype.slug)
+                && wanted(archetype)
+        })
+        .map(|archetype| archetype.unit_type_id)
+        .expect("the catalog ships a presentable unit of this role")
+}
+
+/// Spawns a unit of `unit_type` for `owner` at `at`, a map position, and shows its bubble.
+fn spawn_shown(
+    harness: &mut Harness,
+    unit_type: UnitTypeId,
+    owner: sim_types::PlayerId,
+    at: Vec2,
+) -> EntityId {
+    let unit = harness
+        .world_mut()
+        .spawn_unit(unit_type, owner, battle_harness::sim_position(at))
+        .expect("open ground for the unit");
+    harness.resume();
+    harness.step(3);
+    harness.pause();
+    unit
+}
+
+/// Selects `units` through the mouse: a click on the first, Shift-clicks on the rest.
+fn select_all(harness: &mut Harness, units: &[EntityId]) {
+    harness.select(units[0]);
+    for unit in &units[1..] {
+        let at = harness.unit_on_screen(*unit);
+        harness.with_key_held(SHIFT_MODIFIERS[0], |harness| {
+            harness.click(MouseButton::Left, at);
+        });
+    }
+    let mut expected = units.to_vec();
+    expected.sort();
+    let mut selected = harness.selection().ids().to_vec();
+    selected.sort();
+    assert_eq!(selected, expected, "the whole group is selected");
+}
+
+/// Plan `2026-12-01-rallies-and-smart-command` P-2: two ground soldiers, an armed air unit and
+/// the transport itself right-click the transport. The soldiers board it and the air unit, which
+/// cannot board, follows it (5.0.14: `move` takes the smart command on one's own unit, S2, S6),
+/// both in the same tick's bundle; the transport takes nothing. The marker shows, and with Shift
+/// every entry is queued.
+#[test]
+fn a_mixed_selection_right_clicking_its_transport_boards_and_follows_it() {
+    let mut harness = skirmish();
+    let origin = harness.simulated_position(workers(&harness)[0]);
+    let soldier_type = presentable_type(&harness, |a| {
+        a.mover_type == sim_types::MoverType::Ground
+            && a.capabilities.harvester.is_none()
+            && !a.capabilities.can_construct
+            && a.capabilities.transport_capacity == 0
+    });
+    let carrier_type = presentable_type(&harness, |a| a.capabilities.transport_capacity > 0);
+    let flyer_type = presentable_type(&harness, |a| {
+        a.mover_type == sim_types::MoverType::Air
+            && a.capabilities.transport_capacity == 0
+            && client::battle_pipeline::commands::is_armed(a)
+    });
+    // Each body on its own open ground, clear of structures and cliffs.
+    let spots = [5.0, 6.5, 8.0, 10.0].map(|distance| harness.open_ground(origin, distance));
+    let marines = [
+        spawn_shown(&mut harness, soldier_type, LOCAL_PLAYER, spots[0]),
+        spawn_shown(&mut harness, soldier_type, LOCAL_PLAYER, spots[1]),
+    ];
+    let flyer = spawn_shown(&mut harness, flyer_type, LOCAL_PLAYER, spots[2]);
+    let carrier = spawn_shown(&mut harness, carrier_type, LOCAL_PLAYER, spots[3]);
+    harness.look_at(spots[1]);
+    select_all(&mut harness, &[marines[0], marines[1], flyer, carrier]);
+
+    let at = harness.unit_on_screen(carrier);
+    harness.click(MouseButton::Right, at);
+
+    let orders = pending(&harness);
+    let follow = UnitOrder::Follow {
+        target: carrier,
+        kind: FollowKind::Move,
+    };
+    let mut boarders = marines.to_vec();
+    boarders.sort();
+    let mut captured: Vec<_> = orders
+        .iter()
+        .map(|command| {
+            (
+                command.order.clone(),
+                command.entities.clone(),
+                command.queue,
+            )
+        })
+        .collect();
+    for (_, entities, _) in &mut captured {
+        entities.sort();
+    }
+    assert_eq!(
+        captured,
+        [
+            (UnitOrder::Load { carrier }, boarders, false),
+            (follow.clone(), vec![flyer], false),
+        ],
+        "status: {}",
+        harness.status()
+    );
+    assert!(
+        matches!(harness.marker(), Some((OrderMarkerKind::Move, _))),
+        "a move marker"
+    );
+
+    harness.resume();
+    harness.step(1);
+    harness.pause();
+    assert!(
+        pending(&harness).is_empty(),
+        "both went into one tick's bundle"
+    );
+    let front = |unit: EntityId| harness.world().entities[&unit].order_queue.front().cloned();
+    for marine in marines {
+        assert_eq!(
+            front(marine),
+            Some(UnitOrder::Load { carrier }),
+            "{marine:?}"
+        );
+    }
+    assert_eq!(front(flyer), Some(follow.clone()));
+    assert_eq!(front(carrier), None, "the transport is given nothing");
+
+    harness.with_key_held(SHIFT_MODIFIERS[0], |harness| {
+        let at = harness.unit_on_screen(carrier);
+        harness.click(MouseButton::Right, at);
+    });
+    let queued = pending(&harness);
+    assert_eq!(queued.len(), 2, "status: {}", harness.status());
+    assert!(
+        queued.iter().all(|command| command.queue),
+        "Shift queues every entry"
+    );
+}
+
+/// P-2: a worker and a soldier right-clicking a mineral get a harvest and a move to the field in
+/// the same tick (the soldier was given nothing before, B-222). After 200 ticks the worker is
+/// still harvesting the field and the soldier has arrived beside it.
+#[test]
+fn a_worker_and_a_soldier_right_clicking_a_mineral_harvest_and_walk() {
+    let mut harness = skirmish();
+    let (worker, node) = worker_and_mineral(&mut harness);
+    let soldier = soldier_beside(&mut harness, worker);
+    select_all(&mut harness, &[worker, soldier]);
+
+    let position = node_on_screen(&mut harness, node);
+    harness.click(MouseButton::Right, position);
+
+    let orders = pending(&harness);
+    assert_eq!(orders.len(), 2, "status: {}", harness.status());
+    assert_eq!(orders[0].order, UnitOrder::Harvest { target: node });
+    assert_eq!(orders[0].entities, [worker]);
+    let UnitOrder::Move { target: walk_to } = orders[1].order else {
+        panic!("the soldier walks: {:?}", orders[1].order);
+    };
+    assert_eq!(orders[1].entities, [soldier]);
+
+    harness.resume();
+    harness.step(1);
+    assert!(
+        pending(&harness).is_empty(),
+        "both went into one tick's bundle"
+    );
+    let start = harness.world().current_tick;
+    while harness.world().current_tick < start + 200 {
+        harness.step(1);
+    }
+    let world = harness.world();
+    let worker_now = &world.entities[&worker];
+    assert!(
+        matches!(worker_now.order_queue.front(), Some(UnitOrder::Harvest { target }) if *target == node),
+        "the worker is still on its field: {:?}",
+        worker_now.order_queue
+    );
+    let soldier_now = &world.entities[&soldier];
+    assert!(
+        soldier_now.order_queue.is_empty(),
+        "the soldier has arrived: {:?}",
+        soldier_now.order_queue
+    );
+    // The point under the pointer lies in the field's pick disc (1.0 round its position); the
+    // field is a 2x1 obstacle, so the nearest point a body can stand on is at most the disc, the
+    // footprint's half diagonal and the body's radius from the field's position, and the walker
+    // stops within half a cell of that point (arrival).
+    let radius = world
+        .catalog
+        .get(soldier_now.unit_type_id)
+        .expect("the soldier's archetype")
+        .terrain_radius
+        .to_f32();
+    let field = node_position(&harness, node);
+    let at = Vec2::new(
+        soldier_now.position.x.to_f32(),
+        soldier_now.position.y.to_f32(),
+    );
+    let bound = 1.0 + 1.25_f32.sqrt() + radius + 0.5;
+    assert!(
+        at.distance(field) <= bound,
+        "the soldier stands at {at}, {} from the field (bound {bound}; walked to {walk_to:?})",
+        at.distance(field)
+    );
+}
+
 // --- Right click on a friendly structure ---------------------------------------------------------
 
 #[test]

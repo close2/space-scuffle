@@ -45,7 +45,7 @@
             trains_units: ["welder_drone"],
             // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
             // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
-            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
+            rally: Some((max_waypoints: 32, slots: [(label: "Set Rally Point")])),
             researches_upgrades: [],
             ground_weapon: None,
             air_weapon: None,
@@ -98,7 +98,7 @@
             trains_units: ["welder_drone"],
             // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
             // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
-            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
+            rally: Some((max_waypoints: 32, slots: [(label: "Set Rally Point")])),
             researches_upgrades: [],
             ground_weapon: None,
             air_weapon: None,
@@ -149,7 +149,7 @@
             trains_units: ["welder_drone"],
             // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
             // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
-            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
+            rally: Some((max_waypoints: 32, slots: [(label: "Set Rally Point")])),
             researches_upgrades: [],
             ground_weapon: Some((
                 name: "Ibiks Cannons",
@@ -329,7 +329,7 @@
             trains_units: ["pulse_bot", "shock_golem", "jet_jumper", "specter_android"],
             // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
             // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
-            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
+            rally: Some((max_waypoints: 32, slots: [(label: "Set Rally Point")])),
             researches_upgrades: ["combat_shield", "overclock_stim", "concussive_shells"],
             ground_weapon: None,
             air_weapon: None,
@@ -595,7 +595,7 @@
             trains_units: ["napalm_wheeler", "railgun_crawler", "colossus_mech"],
             // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
             // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
-            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
+            rally: Some((max_waypoints: 32, slots: [(label: "Set Rally Point")])),
             researches_upgrades: ["infernal_preigniter", "drilling_claws", "smart_servos"],
             ground_weapon: None,
             air_weapon: None,
@@ -684,7 +684,7 @@
             trains_units: ["vector_interceptor", "repair_shuttle", "sky_bastion", "cloak_gunship", "omni_probe_drone"],
             // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
             // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
-            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
+            rally: Some((max_waypoints: 32, slots: [(label: "Set Rally Point")])),
             researches_upgrades: ["cloaking_field"],
             ground_weapon: None,
             air_weapon: None,
@@ -917,7 +917,7 @@
             trains_units: ["grav_harvester"],
             // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
             // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
-            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
+            rally: Some((max_waypoints: 32, slots: [(label: "Set Rally Point")])),
             researches_upgrades: [],
             ground_weapon: None,
             air_weapon: None,
@@ -1049,7 +1049,7 @@
             trains_units: ["psi_grey", "warp_strider", "prism_weaver", "astral_vagrant"],
             // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
             // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
-            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
+            rally: Some((max_waypoints: 32, slots: [(label: "Set Rally Point")])),
             researches_upgrades: [],
             ground_weapon: None,
             air_weapon: None,
@@ -1371,7 +1371,7 @@
             trains_units: ["flying_saucer", "prismatic_saucer", "mothership_carrier"],
             // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
             // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
-            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
+            rally: Some((max_waypoints: 32, slots: [(label: "Set Rally Point")])),
             researches_upgrades: [],
             ground_weapon: None,
             air_weapon: None,
@@ -1416,7 +1416,7 @@
             trains_units: ["stealth_eye_orb", "phase_prism_saucer", "void_goliath", "tripod_annihilator"],
             // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
             // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
-            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
+            rally: Some((max_waypoints: 32, slots: [(label: "Set Rally Point")])),
             researches_upgrades: [],
             ground_weapon: None,
             air_weapon: None,
@@ -1640,7 +1640,7 @@
             // SetOnGround 0; NotQueen on both (liberty ValidatorData:1598-1601). InfoArray 2
             // (SetValidators Failure) can never be set and is not authored. Waypoints: "up to four"
             // (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
-            rally: Some((max_waypoints: 4, slots: [
+            rally: Some((max_waypoints: 32, slots: [
                 (label: "Set Rally Point", used_by: NonWorkers, excludes: ["hive_matron"], on_resources: false),
                 (label: "Set Worker Rally Point", used_by: Workers, excludes: ["hive_matron"], smart_on_ground: false),
             ])),
@@ -1704,7 +1704,7 @@
             // SetOnGround 0; NotQueen on both (liberty ValidatorData:1598-1601). InfoArray 2
             // (SetValidators Failure) can never be set and is not authored. Waypoints: "up to four"
             // (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
-            rally: Some((max_waypoints: 4, slots: [
+            rally: Some((max_waypoints: 32, slots: [
                 (label: "Set Rally Point", used_by: NonWorkers, excludes: ["hive_matron"], on_resources: false),
                 (label: "Set Worker Rally Point", used_by: Workers, excludes: ["hive_matron"], smart_on_ground: false),
             ])),
@@ -1768,7 +1768,7 @@
             // SetOnGround 0; NotQueen on both (liberty ValidatorData:1598-1601). InfoArray 2
             // (SetValidators Failure) can never be set and is not authored. Waypoints: "up to four"
             // (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
-            rally: Some((max_waypoints: 4, slots: [
+            rally: Some((max_waypoints: 32, slots: [
                 (label: "Set Rally Point", used_by: NonWorkers, excludes: ["hive_matron"], on_resources: false),
                 (label: "Set Worker Rally Point", used_by: Workers, excludes: ["hive_matron"], smart_on_ground: false),
             ])),
@@ -1868,7 +1868,7 @@
             trains_units: ["razor_mantis"],
             // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
             // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
-            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
+            rally: Some((max_waypoints: 32, slots: [(label: "Set Rally Point")])),
             researches_upgrades: ["metabolic_boost", "adrenal_glands"],
             ground_weapon: None,
             air_weapon: None,
@@ -2134,7 +2134,7 @@
             trains_units: ["rhino_beetle"],
             // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
             // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
-            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
+            rally: Some((max_waypoints: 32, slots: [(label: "Set Rally Point")])),
             researches_upgrades: ["glial_reconstitution", "tunneling_claws"],
             ground_weapon: None,
             air_weapon: None,
@@ -2187,7 +2187,7 @@
             trains_units: ["volatile_tick"],
             // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
             // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
-            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
+            rally: Some((max_waypoints: 32, slots: [(label: "Set Rally Point")])),
             researches_upgrades: ["centrifugal_hooks"],
             ground_weapon: None,
             air_weapon: None,
@@ -2240,7 +2240,7 @@
             trains_units: ["thorn_viper"],
             // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
             // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
-            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
+            rally: Some((max_waypoints: 32, slots: [(label: "Set Rally Point")])),
             researches_upgrades: ["muscular_augments", "grooved_spines", "nanomuscular_swell"],
             ground_weapon: None,
             air_weapon: None,
@@ -2293,7 +2293,7 @@
             trains_units: ["burrow_scorpion"],
             // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
             // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
-            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
+            rally: Some((max_waypoints: 32, slots: [(label: "Set Rally Point")])),
             researches_upgrades: ["adaptive_talons", "seismic_spines"],
             ground_weapon: None,
             air_weapon: None,
@@ -2347,7 +2347,7 @@
             trains_units: ["sonic_bat", "sky_leviathan"],
             // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
             // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
-            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
+            rally: Some((max_waypoints: 32, slots: [(label: "Set Rally Point")])),
             researches_upgrades: [
                 "flyer_attacks_1", "flyer_attacks_2", "flyer_attacks_3",
                 "flyer_carapace_1", "flyer_carapace_2", "flyer_carapace_3",
@@ -2404,7 +2404,7 @@
             trains_units: ["spore_matriarch"],
             // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
             // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
-            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
+            rally: Some((max_waypoints: 32, slots: [(label: "Set Rally Point")])),
             researches_upgrades: [],
             ground_weapon: None,
             air_weapon: None,
@@ -2457,7 +2457,7 @@
             trains_units: ["mycelium_shaman"],
             // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
             // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
-            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
+            rally: Some((max_waypoints: 32, slots: [(label: "Set Rally Point")])),
             researches_upgrades: ["microbial_shroud", "neural_parasite"],
             ground_weapon: None,
             air_weapon: None,
@@ -2560,7 +2560,7 @@
             trains_units: ["stag_behemoth"],
             // Rally (liberty AbilData:859; core AbilData:671-701): one InfoArray entry, no filter.
             // Waypoints: "up to four" (TeamLiquid 2011, plan 2026-11-25-rallies S10, verify).
-            rally: Some((max_waypoints: 4, slots: [(label: "Set Rally Point")])),
+            rally: Some((max_waypoints: 32, slots: [(label: "Set Rally Point")])),
             researches_upgrades: ["chitinous_plating", "anabolic_synthesis"],
             ground_weapon: None,
             air_weapon: None,
