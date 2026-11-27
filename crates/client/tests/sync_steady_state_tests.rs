@@ -371,6 +371,9 @@ fn retained_buffers(world: &World) -> Vec<Buffer> {
     if let Some(selection) = world.get_resource::<BattleSelection>() {
         found.extend(selection.retained_buffers());
     }
+    if let Some(frame) = world.get_resource::<client::minimap::MinimapFrame>() {
+        found.extend(frame.retained_buffers());
+    }
     if let Some(map) = world.get_resource::<client::RenderEntityMap>() {
         found.extend(map.retained_buffers());
     }
@@ -2192,5 +2195,77 @@ fn frames_after_a_mixed_right_click_create_modify_and_remove_nothing() {
         marker_pool(&mut harness),
         pool,
         "the marker pool keeps its size"
+    );
+}
+
+/// Left-clicks open ground near the local workers, which clears the selection.
+fn click_open_ground(harness: &mut Harness) {
+    let worker = local_workers(harness)[0];
+    let home = harness.simulated_position(worker);
+    let ground = harness.open_ground(home, 6.0);
+    let on_screen = harness.ground_on_screen(ground);
+    harness.click(MouseButton::Left, on_screen);
+}
+
+/// One pass of the minimap's moving window: ticks, a selection made and cleared, the camera
+/// panned and back, over [`MINIMAP_FRAMES`] running frames.
+fn minimap_window(harness: &mut Harness) {
+    let worker = local_workers(harness)[0];
+    harness.resume();
+    for frame in 0..MINIMAP_FRAMES {
+        match frame {
+            16 => {
+                harness.select(worker);
+            }
+            48 => click_open_ground(harness),
+            80 | 104 => {
+                let world = harness.app.world_mut();
+                let mut cameras = world.query::<&mut client::RtsCamera>();
+                let mut camera = cameras.single_mut(world);
+                camera.target.x += if frame == 80 { 3.0 } else { -3.0 };
+            }
+            _ => {}
+        }
+        harness.step(1);
+    }
+    harness.pause();
+}
+
+/// Running frames of [`minimap_window`].
+const MINIMAP_FRAMES: usize = 128;
+
+/// M-S1 (plan `2026-12-01-minimap`): the minimap's retained buffers keep their address and
+/// capacity over running frames of the skirmish with ticks, a selection change back and forth
+/// and a camera pan, after a warm-up pass of the same, and the image is never recreated.
+#[test]
+fn the_minimap_keeps_its_buffers_through_ticks_selection_and_a_pan() {
+    let mut harness = skirmish();
+    settle(&mut harness, true);
+    minimap_window(&mut harness);
+    let frame = harness
+        .app
+        .world()
+        .resource::<client::minimap::MinimapFrame>();
+    let (marks_before, images) = (frame.marks_generation(), frame.images_created());
+    assert!(!frame.marks().is_empty(), "the minimap lists marks");
+    assert!(frame.fog_generation() > 0, "the fog bytes are built");
+    let selection_rebuilds = harness.world().current_tick;
+    let buffers = retained_buffers(harness.app.world());
+    minimap_window(&mut harness);
+    let frame = harness
+        .app
+        .world()
+        .resource::<client::minimap::MinimapFrame>();
+    assert!(
+        frame.marks_generation() > marks_before + 2,
+        "the window rebuilt the marks: {} then {} (ticks from {selection_rebuilds})",
+        marks_before,
+        frame.marks_generation()
+    );
+    assert_eq!(frame.images_created(), images, "no image is recreated");
+    assert_eq!(
+        moved(&buffers, &retained_buffers(harness.app.world())),
+        Vec::new(),
+        "retained buffers that moved or grew"
     );
 }

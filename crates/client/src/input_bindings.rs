@@ -99,6 +99,22 @@ pub const CONTROL_MODIFIERS: [KeyCode; 2] = [KeyCode::ControlLeft, KeyCode::Cont
 /// Adds to the selection on a click or drag, and queues an order on a right click.
 pub const SHIFT_MODIFIERS: [KeyCode; 2] = [KeyCode::ShiftLeft, KeyCode::ShiftRight];
 
+/// Turns a key into one of the [`ALT_ACTION_KEYS`]; while held, the command card's keys do
+/// nothing, so a chord never also presses a card position.
+pub const ALT_MODIFIERS: [KeyCode; 2] = [KeyCode::AltLeft, KeyCode::AltRight];
+
+/// With [`ALT_MODIFIERS`] held, toggles the minimap's terrain (`StarCraft` II's `MinimapTerrain`
+/// hotkey; plan `2026-12-01-minimap` D-10).
+pub const MINIMAP_TERRAIN_KEY: KeyCode = KeyCode::KeyT;
+
+/// With [`ALT_MODIFIERS`] held, switches the minimap between player and team colours
+/// (`StarCraft` II's `MinimapColors` hotkey; plan `2026-12-01-minimap` D-10).
+pub const MINIMAP_COLOR_KEY: KeyCode = KeyCode::KeyF;
+
+/// Every key acted on only with [`ALT_MODIFIERS`] held, grouped by action. A chord is its own
+/// binding: `Alt+T` is not the card position `T`.
+pub const ALT_ACTION_KEYS: [&[KeyCode]; 2] = [&[MINIMAP_TERRAIN_KEY], &[MINIMAP_COLOR_KEY]];
+
 /// Every action key, grouped by the action that owns it.
 pub const ACTION_KEYS: [&[KeyCode]; 9] = [
     &PAN_FORWARD_KEYS,
@@ -116,7 +132,8 @@ pub const ACTION_KEYS: [&[KeyCode]; 9] = [
 pub const BATTLE_CONTROLS_HELP: &str = "Left click selects, drag boxes, Shift adds. Right click: \
 each unit does what it can with the target (moves, attacks, follows, gathers, builds or boards), \
 Shift queues; with a structure it sets the rally, and Shift adds a rally waypoint. H holds, X \
-stops. Escape cancels a command mode. Ctrl+0-9 assigns a group, 0-9 recalls it.";
+stops. Escape cancels a command mode. Ctrl+0-9 assigns a group, 0-9 recalls it. Alt+T toggles the \
+minimap's terrain, Alt+F its colours.";
 
 /// Returns whether any key of `keys` is held.
 #[must_use]
@@ -125,6 +142,11 @@ pub fn any_pressed(keyboard: &ButtonInput<KeyCode>, keys: &[KeyCode]) -> bool {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "a failed test is a panic"
+)]
 mod tests {
     use super::*;
 
@@ -176,10 +198,32 @@ mod tests {
     }
 
     #[test]
-    fn modifiers_are_not_action_keys() {
-        for modifier in CONTROL_MODIFIERS.iter().chain(&SHIFT_MODIFIERS) {
+    fn no_alt_chord_is_bound_to_two_actions() {
+        let keys: Vec<KeyCode> = ALT_ACTION_KEYS
+            .iter()
+            .flat_map(|group| group.iter())
+            .copied()
+            .collect();
+        for (index, key) in keys.iter().enumerate() {
             assert!(
-                !ACTION_KEYS.iter().any(|group| group.contains(modifier)),
+                !keys[index + 1..].contains(key),
+                "Alt+{key:?} is bound to two actions"
+            );
+        }
+    }
+
+    #[test]
+    fn modifiers_are_not_action_keys() {
+        for modifier in CONTROL_MODIFIERS
+            .iter()
+            .chain(&SHIFT_MODIFIERS)
+            .chain(&ALT_MODIFIERS)
+        {
+            assert!(
+                !ACTION_KEYS
+                    .iter()
+                    .chain(&ALT_ACTION_KEYS)
+                    .any(|group| group.contains(modifier)),
                 "{modifier:?} must stay a modifier"
             );
         }

@@ -1,0 +1,20 @@
+// Minimap presentation (plan docs/plans/2026-12-01-minimap.md). Read at run time; changing it needs no rebuild.
+// Colours are sRGB in [0, 1]; durations are simulation ticks (25 per Faster second, Q0052 S-5; a 5.0.14 Normal
+// second is 25 / 1.4 ticks, plan §2.3).
+(
+    format_version: 1,
+    side_points: 172.0,               // the square's side in egui points inside the 180-point panel (D-14)
+    background: (0.0, 0.0, 0.0),      // core GameUIData:694 BackGroundColor
+    level_brightness: [0.55, 0.70, 0.85, 1.0], // cliff levels 0..=3 (art, Q0020)
+    unpathable_color: (0.06, 0.06, 0.08),
+    edge_mix: 0.6,
+    fog_darkening: (visible: 0.0, fogged: 0.45, unexplored: 0.85), // S2 lerp to black; levels are art (Q0020)
+    min_dot_px: 3.0,                  // core GameUIData:696 MinUnitDotSize
+    border_px: 1.0,                   // :693 BorderSize
+    border_color: (0.0, 0.0, 0.0),    // :691 UnitBorderColor
+    resource_color: (0.494, 0.749, 0.945), // :688 ResourceUnitColor 126,191,241
+    watchtower_color: (0.9, 0.9, 0.9),
+    watchtower_half: 1.0,
+    team_colors: (self: (0.0, 0.7333, 0.0), ally: (1.0, 1.0, 0.0), hostile: (1.0, 0.0, 0.0),
+                  neutral: (0.4941, 0.749, 0.945), selected: (0.0, 1.0, 0.0)), // :561-590 OverrideColors
+)
