@@ -42,13 +42,13 @@
 )]
 
 use bevy::prelude::*;
-use sim_map::grid::GameMap;
+use sim_map::grid::{GameMap, TerrainKind};
 
 use super::{
     chamfer_mitre, cliff_level_height, corner_direction, edge_setback, emit_dual_floor,
-    emit_wall_strip, surface_class, wall_profile_rows, DualCell, DualCorner, DualVertexRef,
-    EdgeMidpoint, FloorPolygon, MarchingCase, MeshStats, MesherScratch, ProfileFrame, SurfaceClass,
-    WallProfileRow, FLOOR_POLYGON_CAPACITY, MARCHING_CASES, RIM_WIDTH,
+    emit_wall_strip, wall_profile_rows, DualCell, DualCorner, DualVertexRef, EdgeMidpoint,
+    FloorPolygon, MarchingCase, MeshStats, MesherScratch, ProfileFrame, WallProfileRow,
+    FLOOR_POLYGON_CAPACITY, MARCHING_CASES, RIM_WIDTH,
 };
 
 /// The four corner directions `(dx, dy)` a cut can take, each component `±1`.
@@ -235,13 +235,25 @@ fn restrict(rows: Vec<WallProfileRow>, ta: i32, tb: i32) -> Vec<WallProfileRow> 
         .collect()
 }
 
-/// The marching level of cell `(x, y)` for the cut predicate: plateau level, -1 for the void,
-/// `None` for a ramp cell.
+/// The marching level of cell `(x, y)` for the cut predicate: plateau level, -1 for the void (the
+/// abyss or off the map), `None` for a ramp cell; the classification of `surface_class`.
+// PERFORMANCE RATIONALE:
+// Why: Every dual cell reads 16 cells through this function on each chunk rebuild, and
+// `surface_class` builds a ramp cell's profile, a walk along its run, that the predicate never
+// reads.
+// What: The cell's own fields decide the class: abyss first, then the ramp flag (a cell has a ramp
+// profile exactly when it has a ramp direction), then the cliff level.
+// Trade-off: A second copy of `surface_class`'s three-way rule, kept beside it and checked against
+// it by the unit test `cut_level_classifies_as_surface_class`.
 fn cut_level(map: &GameMap, x: i32, y: i32) -> Option<i32> {
-    match surface_class(map, x, y) {
-        SurfaceClass::Void => Some(-1),
-        SurfaceClass::Plateau(level) => Some(level),
-        SurfaceClass::Ramp(_) => None,
+    let (Ok(ux), Ok(uy)) = (u32::try_from(x), u32::try_from(y)) else {
+        return Some(-1);
+    };
+    match map.cell(ux, uy) {
+        Err(_) => Some(-1),
+        Ok(cell) if cell.terrain_kind == TerrainKind::Abyss => Some(-1),
+        Ok(cell) if cell.ramp.is_some() => None,
+        Ok(cell) => Some(i32::from(cell.cliff_level.0)),
     }
 }
 
@@ -327,10 +339,11 @@ impl DualCuts {
     // Why: Whether a corner cell is cut depends on its 3x3 block, so a dual cell depends on the
     // 4x4 block around it, and the four corners' blocks overlap.
     // What: The 16 cells are classified once into a stack array, and each corner's predicate reads
-    // its 3x3 window of it: 16 `surface_class` lookups per dual cell instead of 36.
-    // Trade-off: Every dual cell without a ramp corner pays 12 lookups more than the 2x2 read of
-    // `dual_corner_levels`, flat ones included (a flat dual cell can be the `O` of a cut), on the
-    // chunk rebuild path only; nothing is allocated.
+    // its 3x3 window of it: 16 cell lookups per dual cell instead of 36.
+    // A flat dual cell can only be the `O` of a cut, whose two low cells are the outward edge
+    // neighbours of one corner: 8 lookups rule that out first for nearly all flat ground.
+    // Trade-off: A dual cell with a contour pays 12 lookups more than the 2x2 read of
+    // `dual_corner_levels`, a flat one 8, on the chunk rebuild path only; nothing is allocated.
     pub(super) fn read(map: &GameMap, cell: &DualCell, di: u32, dj: u32) -> Self {
         if cell.ramp_mask != 0 {
             return Self::NONE;
@@ -338,6 +351,9 @@ impl DualCuts {
         let (Ok(x0), Ok(y0)) = (i32::try_from(di), i32::try_from(dj)) else {
             return Self::NONE;
         };
+        if cell.lo == cell.hi && !may_be_opposite(map, (x0, y0), cell.lo) {
+            return Self::NONE;
+        }
         // Block cell (i, j) is map cell (x0 - 2 + i, y0 - 2 + j).
         let mut block = [[None; 4]; 4];
         for (j, row) in block.iter_mut().enumerate() {
@@ -397,7 +413,22 @@ impl DualCuts {
     }
 }
 
-/// What dual cell is to a cut of its corner `k` in direction `dir` (plan D-2): the corner `C` when
+/// Whether the flat dual cell centred on grid point `centre`, all of whose corners have level
+/// `level`, can be the opposite corner `O` of a cut: some corner cell's two outward edge
+/// neighbours are both lower plateaus or void (a cut's `L₁` and `L₂`, convex at `C`), and neither
+/// is a ramp.
+fn may_be_opposite(map: &GameMap, centre: (i32, i32), level: i32) -> bool {
+    (0..4).any(|k| {
+        let o = corner_direction(k);
+        let (ox, oy) = (o.x as i32, o.y as i32);
+        // Corner k's cell, and its two neighbours away from the dual cell.
+        let cell = (centre.0 + (ox - 1) / 2, centre.1 + (oy - 1) / 2);
+        let low = |l: Option<i32>| l.is_some_and(|l| l < level);
+        low(cut_level(map, cell.0 + ox, cell.1)) && low(cut_level(map, cell.0, cell.1 + oy))
+    })
+}
+
+/// What a dual cell is to a cut of its corner `k` in direction `dir` (plan D-2): the corner `C` when
 /// `dir` points from the cell to the dual cell's centre, the opposite corner `O` when it points
 /// away, an end `P` of the foot otherwise.
 fn role(k: usize, dir: (i32, i32)) -> Role {
@@ -1043,6 +1074,41 @@ fn emit_column_chain(
                     scratch.indices.extend_from_slice(&tri);
                     stats.wall_indices += 3;
                 }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{surface_class, SurfaceClass};
+    use super::*;
+    use sim_map::grid::{CliffLevel, MapCell, RampDir};
+
+    /// `cut_level` classifies every cell as `surface_class` does: a plateau by its level, the
+    /// abyss and every cell off the map as the void, a ramp cell as a ramp.
+    #[test]
+    #[expect(clippy::expect_used, reason = "a failed test is a panic")]
+    fn cut_level_classifies_as_surface_class() {
+        let mut map = GameMap::new(4, 3, MapCell::default_ground(CliffLevel(2)))
+            .expect("invariant: 4x3 is a valid map size");
+        map.cell_mut(1, 1)
+            .expect("invariant: the cell lies on the map")
+            .terrain_kind = TerrainKind::Abyss;
+        map.cell_mut(2, 1)
+            .expect("invariant: the cell lies on the map")
+            .ramp = Some(RampDir::East);
+        map.cell_mut(3, 2)
+            .expect("invariant: the cell lies on the map")
+            .cliff_level = CliffLevel(0);
+        for y in -1..=3 {
+            for x in -1..=4 {
+                let expected = match surface_class(&map, x, y) {
+                    SurfaceClass::Void => Some(-1),
+                    SurfaceClass::Plateau(level) => Some(level),
+                    SurfaceClass::Ramp(_) => None,
+                };
+                assert_eq!(cut_level(&map, x, y), expected, "cell ({x}, {y})");
             }
         }
     }
