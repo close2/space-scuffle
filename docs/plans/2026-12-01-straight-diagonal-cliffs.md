@@ -748,7 +748,7 @@ For `DESIGN.md` §4. The number is provisional, next free at merge.
 
 ---
 
-## 13. Owner question (filed as [Q0139](../questions/open/0139-diagonal-cliff-overhang.md))
+## 13. Owner question (filed as [Q0139](../questions/closed/0139-diagonal-cliff-overhang.md))
 
 Not filed by this commit. Filing it is the orchestrator's call, and the default is what WP2 builds.
 
