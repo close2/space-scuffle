@@ -22,3 +22,6 @@ Recommendation: (a), unless you can check in game, then (c).
 
 ## Answer
 
+- **Sanctioned symmetric deviation (record in `Q0052` and close `B-167`):** When no rally is set, start the exit placement search at the building perimeter spot **nearest to the centre of the map** (instead of the lowest-coordinate corner) and proceed clockwise from there (then wider rings if blocked).
+
+**Reasoning:** Deliberate fairness departure from StarCraft II (where fixed-side spawning gives asymmetric advantages depending on spawn position/base placement). Orienting unrallied spawns relative to the map centre makes symmetric spawn positions behave identically and spawns units facing toward the battlefield rather than trapped against a back edge.

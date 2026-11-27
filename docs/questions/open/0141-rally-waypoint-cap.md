@@ -21,3 +21,4 @@ Recommendation: (c) if you can check in game; otherwise (a).
 
 ## Answer
 
+- **Option (c): Raise `max_waypoints` in `structures.ron` to `32` (ignoring extra Shift-clicks past the cap) and close `B-215`.** Simple data change that gives a generous StarCraft II-like rally queue without adding code complexity.
