@@ -764,3 +764,34 @@ Recommendation: (c) if you can check in game; otherwise (a).
 ## Answer
 
 ```
+
+---
+
+## As built
+
+Built on branch `rallies` (from `main` `b2ba4621`); evidence in
+[`docs/evidence/2026-12-01-rallies-and-smart-command.md`](../evidence/2026-12-01-rallies-and-smart-command.md).
+Numbers: B-247 was free on `main` and every open branch (B-246 and B-250 are `diagonal-cliffs`', B-248 and B-249 the
+minimap plan's proposals), and Q0140 and Q0141 were filed on `main` before WP0, so the provisional numbers stand.
+
+| WP | Commit | What |
+|---|---|---|
+| WP0 | `54852435` | B-163 fixed, B-214 removed (Q0052 addendum S-rally-keys), B-247 registered; P-0: 8 skirmish right clicks, **0** resolved differently per member; the 483-file world baseline |
+| WP1 | `b8547023` | `smart_plan`, `SmartPlan`, `SmartOrder`, `friendly_rows`; `takes` and `order_subject` shared by the queue; `submit_smart`; the help line; P-1, P-2, P-6 and the valgrind pair `smart_mixed`. Worlds 483/483 identical; skirmish stage log identical |
+| WP2 | `e32c744a` | `give_rally_order`'s doc table; P-3 and P-4 with their mutations. Worlds 483/483 identical |
+| WP3 | `202dddb5` | Defaults (b) of Q0140 and Q0141: B-167 and B-215 reworded, open |
+| WP4 | this commit | Records, pointers, evidence, this section |
+
+Recorded differences from the text above (scoping, Q0002):
+- **P-6's third command** is the selected base's rally on the transport. D-1 gives at most two unit entries on any
+  shipped target (a carrier: `Load` and `Follow`), so the steady-state click is two plan entries plus the rally.
+- **P-4's fall-through mutation** is "an empty chosen slot falls through to the first slot holding a route": the
+  plan's "`slot_used_by` skips an empty slot" leaves a worker with no accepting slot on the shipped data and so cannot
+  fail the test (evidence §3.1).
+- **P-2's "no partial queue"** is proved in the `context_order` unit tests (`a_plan_is_queued_whole_or_not_at_all`,
+  a plan whose recipient died after it was built), since no input event can kill a member between planning and
+  submission.
+- **The clicked unit itself** takes no row (D-1's "nothing for `u` itself"), so a lone unit right-clicking itself
+  now gives an empty plan and the queue's `EmptySelection` refusal, where the single-order rule moved it to the
+  ground under the pointer. P-0 found no such click in the skirmish.
+- **`card.rs`** names S-rally-keys instead of the removed B-214 in two doc comments (WP1).
