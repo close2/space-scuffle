@@ -118,6 +118,8 @@ struct MinimapShot {
     unpathable: [f32; 3],
     /// `background`, sRGB.
     background: [f32; 3],
+    /// `fog_darkening` of states 0 (unexplored), 1 (fogged) and 2 (visible).
+    darkening: [f32; 3],
     /// `HudGeometry::minimap` in egui points: `[left, top, right, bottom]`.
     hud: [f32; 4],
     /// Frames the node drew before the readback.
@@ -224,6 +226,34 @@ fn uniform(shot: &MinimapShot, x: u32, y: u32) -> bool {
     }) && clear_of_marks(shot, x as f32 + 0.5, y as f32 + 0.5)
 }
 
+/// Whether cell `(x, y)` and its 3×3 neighbourhood share one fog state, and no mark lies near
+/// it: its centre pixel is the cell's own colour darkened by that state alone.
+fn one_fog_state_and_clear(shot: &MinimapShot, x: u32, y: u32) -> bool {
+    let state = cell(shot, i64::from(x), i64::from(y)).map(|(_, _, state)| state);
+    (-1..=1).all(|dy| {
+        (-1..=1)
+            .all(|dx| cell(shot, i64::from(x) + dx, i64::from(y) + dy).map(|(_, _, s)| s) == state)
+    }) && clear_of_marks(shot, x as f32 + 0.5, y as f32 + 0.5)
+}
+
+/// sRGB channel `value` in `[0, 1]` as linear.
+fn srgb_to_linear(value: f64) -> f64 {
+    if value <= 0.04045 {
+        value / 12.92
+    } else {
+        ((value + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// Linear channel `value` in `[0, 1]` as sRGB.
+fn linear_to_srgb(value: f64) -> f64 {
+    if value <= 0.003_130_8 {
+        value * 12.92
+    } else {
+        1.055 * value.powf(1.0 / 2.4) - 0.055
+    }
+}
+
 /// Whether map point `(x, y)` lies more than a pixel clear of every mark's square.
 fn clear_of_marks(shot: &MinimapShot, x: f32, y: f32) -> bool {
     let px = shot.offset[0] + x * shot.scale;
@@ -250,21 +280,30 @@ fn assert_terrain(shot: &MinimapShot, texture: &Texture) {
         let Some((texel, kind, state)) = cell(shot, i64::from(x), i64::from(y)) else {
             continue;
         };
-        if !uniform(shot, x, y) {
-            continue;
-        }
         let pixel = cell_pixel(shot, texture, x, y);
-        if texel[1] == 0 {
-            for (channel, expected) in pixel.iter().zip(shot.unpathable) {
+        // An unwalkable cell's colour is one flat value whatever its neighbours' ground: only the
+        // fog, sampled bilinearly, and nearby marks could change its centre pixel. Since the
+        // terrain shows no structure (Amendment 1, A1.9), most unwalkable ground of the skirmish
+        // borders other cells, so it is checked wherever one fog state covers it and no mark is
+        // near, against the unwalkable colour darkened by that state.
+        if texel[1] == 0 && one_fog_state_and_clear(shot, x, y) {
+            let fog = f64::from(shot.darkening[usize::from(state)]);
+            for ((channel, colour), background) in
+                pixel.iter().zip(shot.unpathable).zip(shot.background)
+            {
+                let expected = linear_to_srgb(
+                    srgb_to_linear(f64::from(colour)) * (1.0 - fog)
+                        + srgb_to_linear(f64::from(background)) * fog,
+                );
                 let got = f64::from(*channel) / 255.0;
                 assert!(
-                    (got - f64::from(expected)).abs() <= UNPATHABLE_TOLERANCE,
+                    (got - expected).abs() <= UNPATHABLE_TOLERANCE,
                     "unwalkable cell ({x}, {y}) is {pixel:?}, not {:?}",
                     shot.unpathable
                 );
             }
             unpathable += 1;
-        } else if texel[2] == 0 && texel[0] % 85 == 0 {
+        } else if texel[1] != 0 && uniform(shot, x, y) && texel[2] == 0 && texel[0] % 85 == 0 {
             by_level.insert((texel[0] / 85, kind, state), luminance(pixel));
         }
     }
@@ -609,6 +648,11 @@ fn record(
             .collect(),
         unpathable: style.unpathable.srgb,
         background: style.background.srgb,
+        darkening: [
+            style.fog_darkening.unexplored,
+            style.fog_darkening.fogged,
+            style.fog_darkening.visible,
+        ],
         hud: [square.left(), square.top(), square.right(), square.bottom()],
         drawn: 0,
     };
@@ -766,6 +810,9 @@ struct MarksShot {
     /// The local 5×5 structure's centre and footprint side in cells.
     dome: [f32; 2],
     dome_side: f32,
+    /// The enemy's start structure (in the fog): centre and footprint `(w, h)` in cells (G-3′).
+    enemy_dome: [f32; 2],
+    enemy_dome_size: [f32; 2],
     /// sRGB colours.
     local_color: [f32; 3],
     enemy_color: [f32; 3],
@@ -929,6 +976,7 @@ fn g2_g3_dots_fog_and_a_steady_gpu_state_on_the_real_shader() -> TestResult {
         }
     }
     assert_fog_darkens(&shot, &player);
+    assert_no_structure_in_terrain(&shot, &player);
     // M-S3: the running steady window created nothing on the GPU.
     eprintln!(
         "GPU resources created: {:?} before, {:?} after {} drawn frames",
@@ -1018,6 +1066,72 @@ fn assert_fog_darkens(shot: &MarksShot, texture: &Texture) {
             shot.fogged
         );
     }
+}
+
+/// G-3′ (Amendment 1, A1.9): the enemy's start structure, in the fog, leaves no trace in the
+/// terrain. The pixel at its mapped centre is within [`FOG_TOLERANCE`] linear luminance of the
+/// nearest fogged walkable cell of the same level and ground kind outside its footprint, not the
+/// unwalkable colour darkened.
+fn assert_no_structure_in_terrain(shot: &MarksShot, texture: &Texture) {
+    let [w, h] = shot.map;
+    let index = |x: u32, y: u32| (y * w + x) as usize;
+    let [cx, cy] = shot.enemy_dome;
+    let (centre_x, centre_y) = (cx.floor() as u32, cy.floor() as u32);
+    let centre = index(centre_x, centre_y);
+    assert_eq!(
+        shot.states[centre], 1,
+        "the enemy's start structure is in the fog"
+    );
+    let [fw, fh] = shot.enemy_dome_size;
+    let inside = |x: u32, y: u32| {
+        (x as f32 + 0.5 - cx).abs() < fw * 0.5 + 1.0 && (y as f32 + 0.5 - cy).abs() < fh * 0.5 + 1.0
+    };
+    let clear_of_marks = |x: u32, y: u32| {
+        let px = shot.offset[0] + (x as f32 + 0.5) * shot.scale;
+        let py = shot.offset[1] + (y as f32 + 0.5) * shot.scale;
+        shot.marks.iter().all(|[mx, my, half]| {
+            (px - mx).abs() > half + 2.0 * shot.scale || (py - my).abs() > half + 2.0 * shot.scale
+        })
+    };
+    let level = shot.cells[centre * 4];
+    let kind = shot.kinds[centre];
+    let reference = (0..h)
+        .flat_map(|y| (0..w).map(move |x| (x, y)))
+        .filter(|&(x, y)| {
+            let i = index(x, y);
+            !inside(x, y)
+                && shot.states[i] == 1
+                && shot.cells[i * 4] == level
+                && shot.cells[i * 4 + 1] == u8::MAX
+                && shot.cells[i * 4 + 2] == 0
+                && shot.kinds[i] == kind
+                && clear_of_marks(x, y)
+        })
+        .min_by_key(|&(x, y)| {
+            let (dx, dy) = (
+                i64::from(x) - i64::from(centre_x),
+                i64::from(y) - i64::from(centre_y),
+            );
+            dx * dx + dy * dy
+        })
+        .expect("fogged walkable ground of the structure's level lies near it");
+    let pixel = |x: f32, y: f32| {
+        luminance(texture.at(
+            (shot.offset[0] + x * shot.scale) as u32,
+            (shot.offset[1] + y * shot.scale) as u32,
+        ))
+    };
+    let under = pixel(cx, cy);
+    let ground = pixel(reference.0 as f32 + 0.5, reference.1 as f32 + 0.5);
+    eprintln!(
+        "G-3′: the enemy's start structure's centre {under:.4}, fogged ground at {reference:?} \
+         {ground:.4}"
+    );
+    assert!(
+        (under - ground).abs() <= FOG_TOLERANCE,
+        "the enemy's start structure shows in the terrain: {under:.4} against fogged ground \
+         {ground:.4} ± {FOG_TOLERANCE}"
+    );
 }
 
 /// Name of the libtest entry of the marks child.
@@ -1181,6 +1295,14 @@ fn record_marks(
         .iter()
         .find(|bubble| bubble.owner == viewer && bubble.shape.footprint() == Some((5, 5)))
         .expect("the local player has a 5×5 structure");
+    let enemy_dome = session
+        .frames
+        .presented()
+        .bubbles
+        .iter()
+        .find(|bubble| bubble.owner == enemy && bubble.shape.footprint().is_some())
+        .expect("the enemy has a start structure");
+    let (enemy_w, enemy_h) = enemy_dome.shape.footprint().expect("a footprint");
     let srgb = |owner| palette.resolve(owner).expect("a palette owner").srgb;
     *shot = MarksShot {
         side: frame.side_px(),
@@ -1205,6 +1327,8 @@ fn record_marks(
         hidden: presented_at(session, staged[2]),
         dome: [dome.world_pos[0], dome.world_pos[1]],
         dome_side: 5.0,
+        enemy_dome: [enemy_dome.world_pos[0], enemy_dome.world_pos[1]],
+        enemy_dome_size: [f32::from(enemy_w), f32::from(enemy_h)],
         local_color: srgb(viewer),
         enemy_color: srgb(enemy),
         team_own: style.team.own.srgb,

@@ -261,6 +261,94 @@ fn m2_the_frame_rebuilds_cells_only_when_the_revision_moves() {
     assert_eq!(frame(&harness).cells_generation(), built + 1);
 }
 
+/// Whether a cell with `flags` and `kind` is walkable ground: the G channel's definition.
+fn walkable(flags: CellFlags, kind: TerrainKind) -> bool {
+    flags.contains(CellFlags::GROUND_PATHABLE) && kind != TerrainKind::Abyss
+}
+
+/// M-2′ (Amendment 1, A1.9): the terrain encodes no structure. Under every start structure of
+/// every player on the shipped skirmish, G is the cell's walkability before placement, which is
+/// walkable ground, so the enemy's start structure is not drawn into the terrain.
+#[test]
+fn m2_prime_the_terrain_shows_no_start_structure() {
+    let mut harness = skirmish();
+    harness.step(4);
+    let terrain = harness.app.world().resource::<TerrainState>();
+    let map = &terrain.map;
+    let texels = frame(&harness).cells();
+    let owners: std::collections::BTreeSet<PlayerId> = harness
+        .app
+        .world()
+        .resource::<BattleSession>()
+        .world()
+        .expect("a live world")
+        .entities
+        .values()
+        .filter(|entity| map.structures().contains_key(&entity.id))
+        .map(|entity| entity.owner)
+        .collect();
+    assert!(
+        owners.contains(&LOCAL_PLAYER) && owners.contains(&ENEMY),
+        "both players start with structures: {owners:?}"
+    );
+    let (mut checked, mut open) = (0, 0);
+    for placed in map.structures().values() {
+        let mut prior = placed.prior_flags.iter();
+        for dy in 0..u32::from(placed.height) {
+            for dx in 0..u32::from(placed.width) {
+                let (x, y) = (placed.top_left.0 + dx, placed.top_left.1 + dy);
+                let flags = *prior.next().expect("one prior flag per footprint cell");
+                let kind = map.cell(x, y).expect("in bounds").terrain_kind;
+                let green = texel(texels, map, x, y)[1];
+                assert_eq!(
+                    green == u8::MAX,
+                    walkable(flags, kind),
+                    "structure {:?} cell ({x}, {y}): G follows the prior flags",
+                    placed.id
+                );
+                checked += 1;
+                open += usize::from(green == u8::MAX);
+            }
+        }
+    }
+    assert!(
+        checked > 0 && open == checked,
+        "every start structure stands on walkable ground, drawn as such: {open} of {checked}"
+    );
+}
+
+/// M-2′: an authored unwalkable cell beside a structure stays unwalkable, and the structure's own
+/// cells read their prior flags.
+#[test]
+fn m2_prime_an_unwalkable_cell_beside_a_structure_stays_unwalkable() {
+    use sim_map::footprint::StructureFootprint;
+    use sim_map::grid::{CliffLevel, MapCell};
+    let mut map = GameMap::new(8, 8, MapCell::default_ground(CliffLevel(0))).expect("a map");
+    map.cell_mut(5, 3)
+        .expect("in bounds")
+        .flags
+        .remove(CellFlags::GROUND_PATHABLE);
+    map.place_structure(EntityId(7), (2, 2), StructureFootprint::square(3, 3))
+        .expect("the footprint is open");
+    let mut texels = Vec::new();
+    write_cell_texels(&map, &mut texels);
+    for y in 2..5 {
+        for x in 2..5 {
+            assert_eq!(
+                texel(&texels, &map, x, y)[1],
+                u8::MAX,
+                "({x}, {y}) under it"
+            );
+        }
+    }
+    assert_eq!(
+        texel(&texels, &map, 5, 3)[1],
+        0,
+        "the authored cell beside it"
+    );
+    assert_eq!(texel(&texels, &map, 6, 3)[1], u8::MAX, "open ground");
+}
+
 // --- M-3: the style ------------------------------------------------------------------------------
 
 #[test]
