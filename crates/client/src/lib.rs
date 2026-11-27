@@ -17,6 +17,7 @@
 //! - [`camera`]: `StarCraft` II style RTS camera with 58° pitch, WASD pan, scroll zoom, and hotkey bookmarks.
 //! - [`battle_input`]: Live battle selection, box drag, right-click orders and control groups.
 //! - [`battle_hud`]: The player's resource bar, command panel and message feed.
+//! - [`minimap`]: The player's minimap: terrain, fog and marks drawn by one render-graph node.
 //! - [`lab_stage`]: Flat stage and lights for the map-less Lab and Swarm scenes.
 //! - [`bubble_shader`]: Custom `BubbleDomeMaterial` and GPU uniform packing for unit spheres and domes.
 //! - [`flipbook_clock`]: The shared flipbook clock, its GPU buffer and the integer frame function.
@@ -48,6 +49,7 @@ pub mod input_policy;
 pub mod lab_stage;
 pub mod lab_ui;
 pub mod media;
+pub mod minimap;
 pub mod offscreen;
 pub mod player_presentation;
 pub mod presentation;
@@ -492,7 +494,8 @@ fn add_material_and_feature_plugins(app: &mut App) {
         .add_plugins(MaterialPlugin::<SmogVolumeMaterial>::default())
         .add_plugins(SmogPlugin)
         .add_plugins(battle_input::BattleInputPlugin)
-        .add_plugins(battle_hud::BattleHudPlugin);
+        .add_plugins(battle_hud::BattleHudPlugin)
+        .add_plugins(minimap::MinimapPlugin);
 }
 
 /// Chains the [`battle_pipeline::BattleSet`] stages and registers the systems that commit the

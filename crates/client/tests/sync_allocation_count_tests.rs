@@ -43,7 +43,9 @@
 //!   writer, the fog refill and the snapshot pool (plan `2026-11-24-attacker-snapshot` P-16).
 //!   They hold a spell caster's image beside it: an enemy caster on another cliff stormed a
 //!   local unit below it, and the storm ended before the session began, so the pool holds two
-//!   images, one of each cause (plan `2026-11-27-launch-and-spell-visibility` V-25).
+//!   images, one of each cause (plan `2026-11-27-launch-and-spell-visibility` V-25). The
+//!   running live child also runs the minimap's frame systems (layout, marks rebuilt on every
+//!   tick, fog bytes on every refill; plan `2026-12-01-minimap` M-S2).
 //! - `brood_cycle_live_frames` and `brood_cycle_baseline_frames` are the same pair on the default
 //!   battle with every mobile unit killed and a Brood Lord analogue attacking a durable unarmed
 //!   target, so Broodlings arrive and expire on their own clocks; one 40 ms tick a frame, a
@@ -486,6 +488,85 @@ fn add_snapshot_presentation(app: &mut App) {
         );
 }
 
+/// Side of the minimap image the running live child stands in for egui, in pixels and points.
+const MINIMAP_SIDE: u32 = 172;
+
+/// Adds the minimap's frame systems after the fog refill: the layout and cells, the marks
+/// rebuilt on every tick and the fog bytes rebuilt on every refill (plan `2026-12-01-minimap`
+/// M-S2). The map's billboards are stood in for with one record per node, as the battle scene
+/// makes them, so resource squares are listed too. No renderer and no egui run here.
+fn add_minimap(app: &mut App) -> TestResult {
+    let root = app.world().resource::<client::ResolvedAssetsRoot>().clone();
+    let style = client::minimap::style::MinimapStyle::load(root.as_path())?;
+    let map = app
+        .world()
+        .resource::<BattleSession>()
+        .world()
+        .ok_or("invariant: the running live child holds a world")?
+        .map
+        .clone();
+    let objects = map
+        .resources()
+        .iter()
+        .map(|node| client::runtime_battle::MapObjectSnapshot {
+            position: Vec3::new(node.pos.x.to_f32(), 0.0, node.pos.y.to_f32()),
+            visible: node.remaining > 0,
+            owner: None,
+            ownership_tint: false,
+            size: 1.0,
+        })
+        .collect();
+    #[expect(clippy::cast_precision_loss, reason = "a small constant")]
+    let side_points = MINIMAP_SIDE as f32;
+    app.insert_resource(style)
+        .insert_resource(client::minimap::MinimapFrame::with_image_side(
+            MINIMAP_SIDE,
+            side_points,
+        ))
+        .init_resource::<client::minimap::MinimapSettings>()
+        .insert_resource(client::terrain::TerrainState::new(map))
+        .insert_resource(client::runtime_battle::MapPresentation {
+            objects,
+            tick: None,
+            sprite_images: Vec::new(),
+        })
+        .add_systems(
+            Update,
+            (
+                client::minimap::prepare_minimap_frame,
+                client::minimap::build_minimap_marks,
+                client::minimap::refresh_minimap_fog,
+            )
+                .chain()
+                .after(refresh_snapshot_fog),
+        );
+    Ok(())
+}
+
+/// How many times the minimap's marks were built, 0 in a child without the minimap.
+fn marks_generation(app: &App) -> u64 {
+    app.world()
+        .get_resource::<client::minimap::MinimapFrame>()
+        .map_or(0, client::minimap::MinimapFrame::marks_generation)
+}
+
+/// The running live child's check of the minimap after its window: marks and fog are built, and
+/// the marks were rebuilt during the window, so the counted frames include rebuilds.
+fn check_minimap(app: &App, rebuilds_before: u64) -> TestResult {
+    let frame = app.world().resource::<client::minimap::MinimapFrame>();
+    if frame.marks().is_empty() || frame.fog().is_empty() {
+        return Err("the minimap built no marks or no fog in the window".into());
+    }
+    if frame.marks_generation() <= rebuilds_before + 2 {
+        return Err(format!(
+            "the minimap's marks were not rebuilt in the window: {rebuilds_before} then {}",
+            frame.marks_generation()
+        )
+        .into());
+    }
+    Ok(())
+}
+
 /// The positive control: one heap allocation, freed in the same frame.
 fn planted_allocation() {
     drop(std::hint::black_box(Vec::<u8>::with_capacity(64)));
@@ -697,6 +778,7 @@ fn steady_state_app(variant: Variant) -> Result<App, Box<dyn std::error::Error>>
     }
     if variant == Variant::RunningLive {
         add_snapshot_presentation(&mut app);
+        add_minimap(&mut app)?;
     }
     if variant == Variant::Planted {
         app.add_systems(Update, planted_allocation);
@@ -1284,6 +1366,7 @@ fn run_child(variant: Variant) -> TestResult {
     let crew_before = app.world().get_resource::<GasCrew>().copied();
     let brood_before = app.world().get_resource::<BroodWatch>().copied();
     let pool_before = app.world().resource::<client::RenderEntityMap>().stats();
+    let marks_before = marks_generation(&app);
     measured_steady_frames(&mut app, frames);
     if matches!(
         variant,
@@ -1317,6 +1400,7 @@ fn run_child(variant: Variant) -> TestResult {
     }
     if variant == Variant::RunningLive {
         check_held_snapshot(&mut app)?;
+        check_minimap(&app, marks_before)?;
     }
     let crew = app
         .world()
