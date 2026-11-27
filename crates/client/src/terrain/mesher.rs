@@ -44,7 +44,10 @@
 //!   shared corner, so the low cell keeps its whole quadrant; the centre's wall profile is mitred,
 //!   each row's offset applied along both edges' directions. Saddles resolve low-connected: two
 //!   convex cuts, each in its own high cell. Convex corners keep the 45° cut, which removes solid
-//!   from the high cell only (plan D-3, owner question Q0136, default (a)).
+//!   from the high cell only (plan D-3, owner question Q0136). A concave corner whose low cell is
+//!   void, in a dual cell without a ramp corner, keeps the 45° cut through its two edge midpoints
+//!   instead: no walkable cell lies beside it, so the abyss canyons stay straight (plan
+//!   `docs/plans/2026-12-01-straight-diagonal-cliffs.md` D-6).
 //! - **Setback:** on an edge whose low corner is ground, every wall profile is moved
 //!   [`FOOT_WIDTH`] into the high cell and its toe is the edge midpoint itself, so the foot ends
 //!   on the edge and the jitter ([`WALL_JITTER_AMPLITUDE`] at most [`FOOT_WIDTH`]) stays behind
@@ -411,7 +414,8 @@ pub struct MarchingCase {
 // keeps its whole quadrant: the contour bends at the centre, and the high region is the L of the
 // other three quadrants, listed from the corner diagonal to the nook, which sees the whole L (the
 // mitre moves the centre towards it), so the floor's triangle fan from that corner covers the L
-// with every vertex once and chunk seams meet vertex for vertex. Saddles 5 and 10 resolve low-connected: two
+// with every vertex once and chunk seams meet vertex for vertex; a void lone low corner draws
+// `VOID_NOOK_CASES` instead. Saddles 5 and 10 resolve low-connected: two
 // lone-high cuts, so the drawn plateaus meet only at the centre, as the simulation's cells do
 // (plan `2026-11-30-terrain-and-air-indicators` D-3).
 const MARCHING_CASES: [MarchingCase; 16] = {
@@ -555,6 +559,60 @@ const MARCHING_CASES: [MarchingCase; 16] = {
             regions: &[QUAD],
             low_regions: &[],
             segments: &[],
+        },
+    ]
+};
+
+// The lone-low cases whose lone low corner is void, in a dual cell with no ramp corner and no full
+// cut through its centre (plan `2026-12-01-straight-diagonal-cliffs` D-6): the 45° cut through the
+// two edge midpoints of the low corner, as plan 21b drew every concave corner. The nook it gives
+// to the high side lies in the void cell, which no unit walks (W1 constrains walkable cells only),
+// so the abyss canyons keep their straight look. Indexed by the lone low corner (bottom-left,
+// bottom-right, top-right, top-left): cases 14, 13, 11 and 7. The regions are convex, CCW seen
+// from +Y; each segment runs in the direction of the square nook it replaces.
+const VOID_NOOK_CASES: [MarchingCase; 4] = {
+    use DualCorner::{BottomLeft as BL, BottomRight as BR, TopLeft as TL, TopRight as TR};
+    use DualVertexRef::{Corner, Midpoint};
+    use EdgeMidpoint::{Bottom, Left, Right, Top};
+    const B: DualVertexRef = Midpoint(Bottom);
+    const R: DualVertexRef = Midpoint(Right);
+    const T: DualVertexRef = Midpoint(Top);
+    const L: DualVertexRef = Midpoint(Left);
+    const CBL: DualVertexRef = Corner(BL);
+    const CBR: DualVertexRef = Corner(BR);
+    const CTR: DualVertexRef = Corner(TR);
+    const CTL: DualVertexRef = Corner(TL);
+    const fn seg(start: EdgeMidpoint, end: EdgeMidpoint) -> ContourSegment {
+        ContourSegment {
+            start,
+            end,
+            through_centre: false,
+        }
+    }
+    [
+        // Case 14: BR, TR, TL high, BL void.
+        MarchingCase {
+            regions: &[&[L, B, CBR, CTR, CTL]],
+            low_regions: &[&[CBL, B, L]],
+            segments: &[seg(Left, Bottom)],
+        },
+        // Case 13: BL, TR, TL high, BR void.
+        MarchingCase {
+            regions: &[&[CBL, B, R, CTR, CTL]],
+            low_regions: &[&[CBR, R, B]],
+            segments: &[seg(Bottom, Right)],
+        },
+        // Case 11: BL, BR, TL high, TR void.
+        MarchingCase {
+            regions: &[&[CBL, CBR, R, T, CTL]],
+            low_regions: &[&[CTR, T, R]],
+            segments: &[seg(Right, Top)],
+        },
+        // Case 7: BL, BR, TR high, TL void.
+        MarchingCase {
+            regions: &[&[CBL, CBR, CTR, T, L]],
+            low_regions: &[&[CTL, L, T]],
+            segments: &[seg(Top, Left)],
         },
     ]
 };
@@ -1001,6 +1059,26 @@ fn dual_cell_corners(map: &GameMap, di: u32, dj: u32) -> DualCell {
 }
 
 impl DualCell {
+    /// The marching case this dual cell draws for case index `case`: the table entry, except a
+    /// lone-low case whose low corner is void in a dual cell without a ramp corner, which draws
+    /// the 45° cut through the midpoints of [`VOID_NOOK_CASES`] (plan
+    /// `2026-12-01-straight-diagonal-cliffs` D-6; a dual cell with a ramp corner keeps the square
+    /// nook rule R3 expects).
+    fn marching_case(&self, case: usize) -> &'static MarchingCase {
+        let lone_low = match case {
+            14 => Some(0),
+            13 => Some(1),
+            11 => Some(2),
+            7 => Some(3),
+            _ => None,
+        };
+        let levels = [self.l_bl, self.l_br, self.l_tr, self.l_tl];
+        match lone_low {
+            Some(k) if self.ramp_mask == 0 && levels[k] < 0 => &VOID_NOOK_CASES[k],
+            _ => &MARCHING_CASES[case],
+        }
+    }
+
     fn corner_coord(&self, c: DualCorner) -> Vec2 {
         match c {
             DualCorner::BottomLeft => self.p_bl,
@@ -1231,7 +1309,7 @@ fn emit_dual_cell(
             }
 
             if curr_case != 0 && curr_case != 15 {
-                let mcase = &MARCHING_CASES[curr_case];
+                let mcase = cell.marching_case(curr_case);
 
                 // Emit the region's parts as floor at H(tb), contour vertices inset by the
                 // wall's setback and, where the rim is, the rim (W1); a concave corner's centre
@@ -1267,7 +1345,7 @@ fn emit_dual_cell(
     // fragments and watertight chunk boundaries.
     if lo >= 0 {
         let case = if hi > lo { cell.case_for_t(lo + 1) } else { 0 };
-        for part in MARCHING_CASES[case].low_regions {
+        for part in cell.marching_case(case).low_regions {
             let polygon = region_polygon(&cell, part, |vref| match vref {
                 DualVertexRef::Corner(c) => cell.corner_coord(c),
                 DualVertexRef::Midpoint(m) => cell.midpoint_coord(m),
