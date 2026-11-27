@@ -369,6 +369,7 @@ fn package_gate(dir: &Path, work: &Path, extra: &[&str]) -> (bool, String) {
         .env(LOCK_PATH_VAR, dir.join("gate.lock"))
         .env_remove(HELD_VAR)
         .env_remove("SPACE_SCUFFLE_GATE_JOBS")
+        .env_remove("SPACE_SCUFFLE_GATE_SHARD")
         .env("CARGO_TARGET_DIR", dir.join("target"))
         .env("WOBBLE_DIR", dir)
         .output()

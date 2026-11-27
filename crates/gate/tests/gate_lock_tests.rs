@@ -88,6 +88,7 @@ impl GateChild {
             .args(args)
             .current_dir(dir)
             .process_group(0)
+            .env_remove("SPACE_SCUFFLE_GATE_SHARD")
             .env(LOCK_PATH_VAR, lock)
             .env_remove(HELD_VAR)
             .stdout(Stdio::null())
@@ -373,6 +374,7 @@ fn gate_output(args: &[&str], dir: &Path, lock: &Path) -> std::process::Output {
         .current_dir(dir)
         .env(LOCK_PATH_VAR, lock)
         .env_remove(HELD_VAR)
+        .env_remove("SPACE_SCUFFLE_GATE_SHARD")
         .output()
         .expect("invariant: the gate binary was built")
 }
@@ -521,6 +523,7 @@ fn stop_writes_a_request_naming_the_holder_and_the_holder_ends_red_without_a_sta
         .env("CARGO_TARGET_DIR", dir.path().join("target"))
         .env_remove(HELD_VAR)
         .env_remove("SPACE_SCUFFLE_GATE_JOBS")
+        .env_remove("SPACE_SCUFFLE_GATE_SHARD")
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()

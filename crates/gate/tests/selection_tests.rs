@@ -478,8 +478,8 @@ fn a_test_threads_change_selects_only_that_target_and_the_gate_crate() -> Result
     let repo = Repo::load()?;
     let before = edited(
         &real_text(CATALOG_PATH)?,
-        "\"client/editor_app_tests\": (class: Gpu, test_threads: Some(2)),",
-        "\"client/editor_app_tests\": (class: Gpu, test_threads: Some(3)),",
+        "\"client/editor_app_tests\": (class: Gpu, test_threads: Some(2), shard: Some(1)),",
+        "\"client/editor_app_tests\": (class: Gpu, test_threads: Some(3), shard: Some(1)),",
     );
     let selection = catalog_edit(&repo, Some(before))?;
     assert!(selection.complete.is_none());

@@ -7,7 +7,9 @@
 //! `client::effects::EffectsPlugin`, the shipped effect shaders and a test-only vocabulary over
 //! the fixture texture set written into a temporary directory (charter §1.2: never under
 //! `assets/`). It renders offscreen into a canvas of the capture size (`client::offscreen`; no
-//! window, no display) and captures it once per shot; the parent measures the captures:
+//! window, no display) and captures it once per shot, once the shot has settled and the render
+//! world has had no pipeline waiting to compile for as many frames (the lab's
+//! `track_render_idle`); the parent measures the captures:
 //! - **soft depth**: a camera-facing card crossing the ground fades into it: no step above
 //!   [`MAX_SOFT_STEP`] levels between vertically adjacent pixels along the intersection, where
 //!   the same card with no soft depth shows a hard step (the control);
@@ -56,9 +58,12 @@ use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::prelude::*;
 use bevy::render::camera::CameraProjection;
 use bevy::render::view::screenshot::ScreenshotCaptured;
+use bevy::render::RenderApp;
 use client::effects::binding::BoundValues;
 use client::effects::catalog::schema::Binding;
 use client::effects::catalog::EffectCatalog;
+use client::effects::lab::driver::track_render_idle;
+use client::effects::lab::LabRenderIdle;
 use client::effects::placement::WorldLine;
 use client::effects::runtime::{EffectRuntime, SpawnRequest};
 use client::effects::systems::EffectCatalogSource;
@@ -67,6 +72,7 @@ use client::offscreen::{windowless_plugins, CaptureTarget, OffscreenCanvas};
 use client::render_compatibility::{run_render_app, RenderCompatibilityPlugin};
 use client::ResolvedAssetsRoot;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -78,8 +84,14 @@ const CHILD_TEST: &str = "effect_gpu_child";
 const WIDTH: u32 = 640;
 /// Capture size.
 const HEIGHT: u32 = 360;
-/// Frames between setting a shot up and capturing it.
+/// Frames between setting a shot up and capturing it, and render frames in a row with no
+/// pipeline waiting to compile before the capture. Each shot may bring a block whose pipeline
+/// the render world has not compiled yet (decal, ring, ribbon, distortion, the blended sphere),
+/// and Bevy compiles pipelines asynchronously: on a loaded lavapipe runner a fixed frame count
+/// alone captured a shot before its block was drawn (CI run 45968604081).
 const SETTLE_FRAMES: u32 = 6;
+/// Frames one shot may wait for its pipelines before the child fails.
+const MAX_SETTLE_FRAMES: u32 = 3000;
 /// Captures of the first shot allowed while the pipelines compile.
 const MAX_FIRST_ATTEMPTS: u32 = 200;
 /// Largest step in the red channel between vertically adjacent pixels of a soft card.
@@ -421,7 +433,11 @@ fn run_shots(
     mut materials: ResMut<'_, Assets<StandardMaterial>>,
     shot_entities: Query<'_, '_, Entity, With<ShotEntity>>,
     mut cameras: Query<'_, '_, &mut Transform, With<Camera3d>>,
-    (mut exit, capture): (EventWriter<'_, AppExit>, Res<'_, CaptureTarget>),
+    (mut exit, capture, idle): (
+        EventWriter<'_, AppExit>,
+        Res<'_, CaptureTarget>,
+        Res<'_, LabRenderIdle>,
+    ),
 ) {
     let (Some(catalog), Some(mut runtime)) = (catalog, runtime) else {
         return;
@@ -458,7 +474,12 @@ fn run_shots(
         stage.set_up = true;
     }
     stage.settled += 1;
-    if stage.settled < SETTLE_FRAMES {
+    let compiled = idle.0.load(Ordering::Acquire) >= SETTLE_FRAMES;
+    if stage.settled < SETTLE_FRAMES || !compiled {
+        assert!(
+            stage.settled < MAX_SETTLE_FRAMES,
+            "shot {shot:?}: a pipeline was still compiling after {MAX_SETTLE_FRAMES} frames"
+        );
         return;
     }
     stage.capture_pending = true;
@@ -522,9 +543,15 @@ fn child_app(directory: PathBuf) -> TestResult<App> {
         }),
     ));
     OffscreenCanvas::install(&mut app, UVec2::new(WIDTH, HEIGHT))?;
+    let idle = LabRenderIdle::default();
+    app.get_sub_app_mut(RenderApp)
+        .ok_or("the child app has a render world")?
+        .insert_resource(idle.clone())
+        .add_systems(bevy::render::Render, track_render_idle);
     app.add_plugins((RenderCompatibilityPlugin, EffectsPlugin))
         .add_event::<client::CombatVisualEvent>()
         .insert_resource(root)
+        .insert_resource(idle)
         .insert_resource(EffectCatalogSource(vocabulary))
         .insert_resource(ClearColor(Color::BLACK))
         .insert_resource(Stage {

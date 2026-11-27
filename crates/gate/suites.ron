@@ -94,6 +94,10 @@ SuiteCatalog(
         // The minimap's CPU claims (plan 2026-12-01-minimap §6): several tests each boot the
         // production client on the shipped skirmish, so they are capped like the HUD's.
         "client/minimap_tests": (class: Slow, test_threads: Some(2)),
+        // The render-entity pool headless (plan 2026-11-29-render-entity-pool): twelve tests, each
+        // an app on the shipped battle. At four threads it took 59 s and one process reached
+        // 12.5 GB on CI, 2.4 GB short of the 16 GB runner (run 46074381310); capped like the HUD's.
+        "client/render_pool_tests": (class: Slow, test_threads: Some(2)),
         "client/battle_input_tests": (class: Slow, test_threads: Some(2)),
         "client/battle_result_tests": (class: Slow, test_threads: Some(2)),
         "client/sync_steady_state_tests": (class: Slow, test_threads: Some(2)),
@@ -117,8 +121,9 @@ SuiteCatalog(
         "client/combat_fx_slot_gpu_tests": (class: Gpu),
         "client/concealment_gpu_tests": (class: Gpu),
         // The attack snapshot on real shaders (plan 2026-11-24-attacker-snapshot WP3): two children,
-        // three shots and a sandbox watch.
-        "client/attack_snapshot_gpu_tests": (class: Gpu, triggers: [
+        // three shots and a sandbox watch. Each child is a whole skirmish client; on lavapipe (CI)
+        // the two ran at once and left 2.4 GB of the 16 GB runner (run 46074381310): one thread.
+        "client/attack_snapshot_gpu_tests": (class: Gpu, test_threads: Some(1), triggers: [
             "crates/client/src/{battle_hud/**,battle_pipeline/fog.rs,bubble_shader.rs,effects/catalog/**}",
             "assets/catalog/effects.ron",
         ]),
@@ -190,7 +195,7 @@ SuiteCatalog(
         "client/stance_gpu_tests": (class: Gpu, test_threads: Some(1), shard: Some(1)),
         // Status and death looks (plan 2026-11-09-effect-visualization WP9): two parents, each
         // a whole skirmish client in its child. One thread, as for the stance looks.
-        "client/status_gpu_tests": (class: Gpu, test_threads: Some(1), shard: Some(2)),
+        "client/status_gpu_tests": (class: Gpu, test_threads: Some(1), shard: Some(1)),
         "client/weapon_battle_gpu_tests": (class: Gpu, test_threads: Some(1), shard: Some(2)),
         // Area and tether looks (plan 2026-11-09-effect-visualization WP10): one parent, a whole
         // skirmish client in its child. One thread, as for the status looks.
@@ -205,7 +210,9 @@ SuiteCatalog(
         // smog and compares the frames byte for byte. Its effects take (plan
         // 2026-11-09-effect-visualization WP14) must show every effect its scenes ask for: the
         // effect engine, the vocabulary, the units' blocks, the loadouts and its scenario decide.
-        "client_diagnostics/showcase_tests": (class: Gpu, triggers: [
+        // Its two takes ran at once on lavapipe (CI) and left 921 MB of the 16 GB runner (run
+        // 46074381310): one thread.
+        "client_diagnostics/showcase_tests": (class: Gpu, test_threads: Some(1), triggers: [
             "crates/client/src/{bubble_shader.rs,bubble_optics.rs,render_compatibility.rs,flipbook_clock.rs,vfx.rs,vfx/**,smog/**,terrain/**,camera.rs,battle_hud/**,effects/**}",
             "assets/captures/showcase.ron",
             "assets/scenarios/{showcase.ron,showcase_effects.ron}",
