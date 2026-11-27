@@ -1538,24 +1538,27 @@ fn check_brood_window(app: &App, frames: u32, before: &BroodWatch, ticked: u32) 
     Ok(())
 }
 
-/// The running live child's check after its window: the fog lists the two held images (a strike's
-/// and a spell caster's) and the pool draws each on one visible entity.
+/// The running live child's check after its window: the fog lists the two held attack images (a
+/// strike's and a spell caster's) and the held remembered structure (plan `2026-12-01-minimap`
+/// M-S2′), and the pool draws each on one visible entity.
 fn check_held_snapshot(app: &mut App) -> TestResult {
-    let listed = app
+    let fog = app
         .world()
-        .resource::<client::battle_pipeline::fog::BattleFog>()
-        .attack_snapshots()
-        .len();
+        .resource::<client::battle_pipeline::fog::BattleFog>();
+    let listed = fog.attack_snapshots().len();
+    let remembered = fog.remembered_structures().len();
     let world = app.world_mut();
     let shown = world
         .query_filtered::<&Visibility, With<client::battle_hud::attack_snapshots::AttackSnapshotBubble>>()
         .iter(world)
         .filter(|visibility| **visibility != Visibility::Hidden)
         .count();
-    // A strike's image and a spell caster's (plan `2026-11-27-launch-and-spell-visibility` V-25).
-    if (listed, shown) != (2, 2) {
+    // A strike's image and a spell caster's (plan `2026-11-27-launch-and-spell-visibility` V-25),
+    // and the enemy's start structure remembered.
+    if (listed, remembered, shown) != (2, 1, 3) {
         return Err(format!(
-            "the window must hold two attack images, each drawn once: {listed} listed, {shown} shown"
+            "the window must hold two attack images and one remembered structure, each drawn \
+             once: {listed} and {remembered} listed, {shown} shown"
         )
         .into());
     }
