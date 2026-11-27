@@ -25,7 +25,8 @@
 //!   so no test time is spent on a change that does not compile or is not formatted.
 //! - A tier refuses to run in an agent worktree without `CARGO_TARGET_DIR` (charter §7).
 //! - Only a green `package`, `merge` or `full` run on a clean working tree writes a stamp; a
-//!   dirty tree is reported, not stamped.
+//!   dirty tree is reported, not stamped, and so is one shard of a sharded `full` run
+//!   (`shard.rs`).
 //! - A flaky target never makes a run green; only the one repeat of a `full` run can.
 //! - A reused run builds and runs nothing, and its stamp names the stamp it stands on; it is
 //!   only ever for the exact tree that stamp recorded, on a clean working tree.
@@ -50,6 +51,7 @@ use crate::schedule::{Job, MemoryLimits, Scheduler};
 use crate::select::{
     is_judged_by_content, select_change, Change, ClippyScope, Inputs, Reason, Selected, Selection,
 };
+use crate::shard::shard_selection;
 use crate::sources::SourceIndex;
 use crate::stamp::peak_estimates;
 use crate::stamp::{Reuse, Stamp, StampTarget, StampTree};
@@ -497,7 +499,20 @@ pub fn run_tier(command: &Command, cwd: &Path) -> Result<RunReport, GateError> {
             } else {
                 context.changes(options.base.as_deref(), &options.main_ref)?
             };
-            let selection = select_change(*tier, context.inputs(), &change)?;
+            let mut selection = select_change(*tier, context.inputs(), &change)?;
+            if let Some(shard) = options.shard {
+                let whole = selection.targets.len();
+                selection = shard_selection(selection, &context.catalog, shard)?;
+                println!(
+                    "shard {shard}: {} of the complete suite's {whole} test target(s){}",
+                    selection.targets.len(),
+                    if shard.is_last() {
+                        ", with clippy, the doc tests and the catalog commands"
+                    } else {
+                        ""
+                    }
+                );
+            }
             println!("{}", render_selection(&selection, &what));
             let recorder = Recorder::start(&context, &selection, options, options.resume)?;
             let mut report = execute(&context, &selection, options, recorder.as_ref(), (&[], &[]))?;
@@ -1160,7 +1175,10 @@ fn run_tests(
     } else {
         // A resumed run builds only the targets it runs; the whole workspace only when it runs
         // all of them.
-        let whole = selection.complete.is_some() && ids.len() == selection.targets.len();
+        // A shard builds only its own targets: the other shards' jobs build theirs.
+        let whole = selection.complete.is_some()
+            && ids.len() == selection.targets.len()
+            && options.shard.is_none();
         let Some(executables) = build_step(report, at, &ids, whole)? else {
             return Ok(());
         };
@@ -1220,7 +1238,7 @@ fn run_tests(
     report.gpu = Some(GpuChildren::read(&ledger)?);
     report.targets.iter().for_each(record);
     note_overlapping_flakes(report, options.jobs);
-    run_extras(at, selection, report)
+    run_extras(at, selection, options, report)
 }
 
 /// The admission limits of this run: the budget and ceiling options, else the defaults.
@@ -1283,16 +1301,21 @@ fn rerun_failures(
     Ok(())
 }
 
-/// Doc tests of the selected libraries, then the selected catalog commands.
+/// Doc tests of the selected libraries, then the selected catalog commands; in a sharded run,
+/// only the last shard runs the doc tests.
 fn run_extras(
     at: StepEnv<'_>,
     selection: &Selection,
+    options: &RunOptions,
     report: &mut RunReport,
 ) -> Result<(), GateError> {
     let cargo = cargo_program();
     let none = BTreeMap::new();
     let mut doc = strings(&["test", "--locked", "--doc"]);
-    if selection.complete.is_some() {
+    if options.shard.is_some_and(|shard| !shard.is_last()) {
+        // The last shard runs the workspace's doc tests.
+        doc.clear();
+    } else if selection.complete.is_some() {
         doc.push("--workspace".to_string());
     } else {
         let libraries: BTreeSet<&str> = selection
@@ -1358,6 +1381,11 @@ fn stamp_run(
     }
     if options.no_run {
         return Err("--no-run builds only".to_string());
+    }
+    if let Some(shard) = options.shard {
+        return Err(format!(
+            "shard {shard} writes no stamp: no single shard tested the whole tree"
+        ));
     }
     let tree = StampTree::of_clean_head(&context.git).map_err(|error| error.to_string())?;
     let start = start.ok_or_else(|| {

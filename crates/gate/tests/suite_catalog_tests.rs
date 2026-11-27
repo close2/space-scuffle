@@ -6,7 +6,8 @@
 //! `gpu` or `valgrind`, and every `gpu` target really uses the harness; every downstream contract
 //! points into a reverse dependency; the `sim_fixtures` contract is the computed `@callers`, and
 //! the computation equals an independent scan of the targets whose code calls `sim_fixtures::`; every glob matches a tracked file; every tracked path is covered
-//! by some entry; and `full` selects every test target `cargo metadata` lists.
+//! by some entry; `full` selects every test target `cargo metadata` lists; and the shards of CI's
+//! matrix (`.github/workflows/ci.yml`) together select each of them exactly once.
 //!
 //! # How it fits
 //! The selection trusts the catalog; this test is why it may. A new GPU test file, a renamed
@@ -18,11 +19,11 @@
 //! - The repository is the checkout this test was built from (`CARGO_MANIFEST_DIR`).
 
 use gate::{
-    build_invocations, invokes_valgrind, mentions_path_root, select, uses_gpu_harness,
-    CompleteCause, GateError, Git, Inputs, SourceIndex, SuiteCatalog, TargetId, TargetRef,
-    TestClass, Tier, Workspace, CALLERS, CATALOG_PATH,
+    build_invocations, invokes_valgrind, mentions_path_root, select, shard_selection,
+    uses_gpu_harness, CompleteCause, GateError, Git, Inputs, Shard, SourceIndex, SuiteCatalog,
+    TargetId, TargetRef, TestClass, Tier, Workspace, CALLERS, CATALOG_PATH,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// The repository root, two levels above this crate.
@@ -374,6 +375,65 @@ fn full_selects_every_test_target_cargo_lists() -> Result<(), GateError> {
     let builds = build_invocations(&selected, full.complete.is_some());
     assert_eq!(builds.len(), 1);
     assert!(builds[0].contains(&"--workspace".to_string()));
+    Ok(())
+}
+
+/// The shards of the `shard:` matrix line of the CI workflow `text`, such as
+/// `shard: ["1/3", "2/3", "3/3"]`.
+fn ci_matrix_shards(text: &str) -> Result<Vec<Shard>, GateError> {
+    let line = text
+        .lines()
+        .map(str::trim)
+        .find_map(|line| line.strip_prefix("shard: ["))
+        .ok_or_else(|| GateError::Catalog("ci.yml has no `shard: [...]` matrix".to_string()))?;
+    line.trim_end_matches(']')
+        .split(',')
+        .map(|item| Shard::parse(item.trim().trim_matches('"')))
+        .collect()
+}
+
+#[test]
+fn the_ci_shards_run_every_test_target_exactly_once() -> Result<(), GateError> {
+    let repo = Repo::load()?;
+    let workflow = repo.root.join(".github/workflows/ci.yml");
+    let text = std::fs::read_to_string(&workflow).map_err(|source| GateError::Io {
+        path: workflow.clone(),
+        source,
+    })?;
+    let shards = ci_matrix_shards(&text)?;
+    let count = u32::try_from(shards.len()).unwrap_or(u32::MAX);
+    let indices: Vec<u32> = shards.iter().map(|shard| shard.index()).collect();
+    assert_eq!(
+        indices,
+        (1..=count).collect::<Vec<_>>(),
+        "the matrix lists 1/n to n/n"
+    );
+    assert!(shards.iter().all(|shard| shard.count() == count));
+    let full = select(Tier::Full, repo.inputs(), &BTreeSet::new())?;
+    let mut runs: BTreeMap<TargetId, Vec<u32>> = BTreeMap::new();
+    for shard in &shards {
+        let part = shard_selection(full.clone(), &repo.catalog, *shard)?;
+        assert!(!part.targets.is_empty(), "shard {shard} runs nothing");
+        assert_eq!(
+            part.commands.is_empty(),
+            !shard.is_last(),
+            "only the last shard runs the catalog commands"
+        );
+        for id in part.targets.keys() {
+            runs.entry(id.clone()).or_default().push(shard.index());
+        }
+    }
+    let findings: Vec<String> = full
+        .targets
+        .keys()
+        .filter_map(|id| match runs.get(id).map(Vec::as_slice) {
+            Some([_]) => None,
+            Some(many) => Some(format!("{id} runs in shards {many:?}")),
+            None => Some(format!("{id} runs in no shard")),
+        })
+        .collect();
+    assert_clean("CI shards", &findings);
+    assert_eq!(runs.len(), full.targets.len());
     Ok(())
 }
 
