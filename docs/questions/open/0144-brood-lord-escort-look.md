@@ -27,3 +27,4 @@ Recommendation: (a) now; (b) later if the look in (a) reads wrong in a capture.
 
 ## Answer
 
+- **Option (b): Generate a new Veo clip of the escort creature in flight** through `asset_baker` under the usual review rules (about 4 generations, at most `$4.00` of the media budget; stay within that 4-generation cap and take the best available result rather than overspending).

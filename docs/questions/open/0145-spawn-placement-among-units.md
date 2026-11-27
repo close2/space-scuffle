@@ -26,3 +26,6 @@ Recommendation: (a), unless you can check in game, then (c).
 
 ## Answer
 
+- **Option (c): Skip spots occupied by other units during spawn placement** (for battlefield spawns with placement enabled, such as Brood Lord Broodlings), so spawned units appear *beside* existing units and never inside them.
+
+**Reasoning:** Matches StarCraft II (Broodlings land on the nearest free non-colliding spot beside targets, forming a surround rather than spawning inside Marines/Tanks) and preserves the new movement contact layer's zero-enemy-overlap / no-enemy-shove invariant on tick 0.
