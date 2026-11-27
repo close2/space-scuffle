@@ -78,6 +78,62 @@ struct StyleFile {
     level_brightness: Vec<f32>,
     unpathable_color: SrgbTriple,
     edge_mix: f32,
+    fog_darkening: FogFile,
+    min_dot_px: f32,
+    border_px: f32,
+    border_color: SrgbTriple,
+    resource_color: SrgbTriple,
+    watchtower_color: SrgbTriple,
+    watchtower_half: f32,
+    team_colors: TeamFile,
+}
+
+/// `fog_darkening` as authored.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FogFile {
+    visible: f32,
+    fogged: f32,
+    unexplored: f32,
+}
+
+/// `team_colors` as authored (`core` `GameUIData:561–590` `OverrideColors`).
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TeamFile {
+    #[serde(rename = "self")]
+    own: SrgbTriple,
+    ally: SrgbTriple,
+    hostile: SrgbTriple,
+    neutral: SrgbTriple,
+    selected: SrgbTriple,
+}
+
+/// How far each visibility state darkens the terrain toward the background, in `[0, 1]`
+/// (`StarCraft` II's `MinimapTerrain.fx` lerps to black by the fog's level).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FogDarkening {
+    /// A cell the viewer sees now.
+    pub visible: f32,
+    /// A cell the viewer saw before.
+    pub fogged: f32,
+    /// A cell the viewer never saw.
+    pub unexplored: f32,
+}
+
+/// `StarCraft` II's team colours (`OverrideColors`), used in team colour mode.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TeamColors {
+    /// The viewer's own units (`SelfMinimap`).
+    pub own: MinimapColor,
+    /// Allied players' units (unused while the game has no teams).
+    pub ally: MinimapColor,
+    /// Every other player's units.
+    pub hostile: MinimapColor,
+    /// Neutral units.
+    pub neutral: MinimapColor,
+    /// The viewer's selected units.
+    pub selected: MinimapColor,
 }
 
 /// One validated colour.
@@ -120,6 +176,22 @@ pub struct MinimapStyle {
     pub unpathable: MinimapColor,
     /// How far a cliff edge's texel is mixed toward the theme's cliff colour, in `[0, 1]`.
     pub edge_mix: f32,
+    /// How far fog darkens the terrain, per visibility state.
+    pub fog_darkening: FogDarkening,
+    /// Smallest side of a dot, in image pixels (`MinUnitDotSize`, `core` `GameUIData:696`).
+    pub min_dot_px: f32,
+    /// Border width of a dot, in image pixels (`BorderSize`, `:693`).
+    pub border_px: f32,
+    /// Border colour of a dot (`UnitBorderColor`, `:691`).
+    pub border: MinimapColor,
+    /// Colour of resources (`ResourceUnitColor`, `:688`).
+    pub resource: MinimapColor,
+    /// Colour of watchtowers.
+    pub watchtower: MinimapColor,
+    /// Half-width of a watchtower's square, in world units.
+    pub watchtower_half: f32,
+    /// The team colours.
+    pub team: TeamColors,
 }
 
 impl MinimapStyle {
@@ -176,17 +248,57 @@ impl MinimapStyle {
             return Err(("level_brightness", "entries must be finite and in [0, 1]"));
         }
         let unpathable = MinimapColor::prepare("unpathable_color", file.unpathable_color)?;
-        if !file.edge_mix.is_finite() || !(0.0..=1.0).contains(&file.edge_mix) {
+        if !unit_interval(file.edge_mix) {
             return Err(("edge_mix", "must be finite and in [0, 1]"));
         }
+        let fog = file.fog_darkening;
+        if ![fog.visible, fog.fogged, fog.unexplored]
+            .into_iter()
+            .all(unit_interval)
+        {
+            return Err(("fog_darkening", "levels must be finite and in [0, 1]"));
+        }
+        if !file.min_dot_px.is_finite() || file.min_dot_px <= 0.0 {
+            return Err(("min_dot_px", "must be positive and finite"));
+        }
+        if !file.border_px.is_finite() || file.border_px < 0.0 {
+            return Err(("border_px", "must be finite and not negative"));
+        }
+        if !file.watchtower_half.is_finite() || file.watchtower_half <= 0.0 {
+            return Err(("watchtower_half", "must be positive and finite"));
+        }
+        let team = file.team_colors;
         Ok(Self {
             side_points: file.side_points,
             background,
             level_brightness,
             unpathable,
             edge_mix: file.edge_mix,
+            fog_darkening: FogDarkening {
+                visible: fog.visible,
+                fogged: fog.fogged,
+                unexplored: fog.unexplored,
+            },
+            min_dot_px: file.min_dot_px,
+            border_px: file.border_px,
+            border: MinimapColor::prepare("border_color", file.border_color)?,
+            resource: MinimapColor::prepare("resource_color", file.resource_color)?,
+            watchtower: MinimapColor::prepare("watchtower_color", file.watchtower_color)?,
+            watchtower_half: file.watchtower_half,
+            team: TeamColors {
+                own: MinimapColor::prepare("team_colors", team.own)?,
+                ally: MinimapColor::prepare("team_colors", team.ally)?,
+                hostile: MinimapColor::prepare("team_colors", team.hostile)?,
+                neutral: MinimapColor::prepare("team_colors", team.neutral)?,
+                selected: MinimapColor::prepare("team_colors", team.selected)?,
+            },
         })
     }
+}
+
+/// Whether `value` is finite and in `[0, 1]`.
+fn unit_interval(value: f32) -> bool {
+    value.is_finite() && (0.0..=1.0).contains(&value)
 }
 
 /// The banner's text when the minimap's pipeline failed; the log holds the renderer's message.
@@ -241,6 +353,15 @@ mod tests {
         level_brightness: [0.55, 0.70, 0.85, 1.0],
         unpathable_color: (0.06, 0.06, 0.08),
         edge_mix: 0.6,
+        fog_darkening: (visible: 0.0, fogged: 0.45, unexplored: 0.85),
+        min_dot_px: 3.0,
+        border_px: 1.0,
+        border_color: (0.0, 0.0, 0.0),
+        resource_color: (0.494, 0.749, 0.945),
+        watchtower_color: (0.9, 0.9, 0.9),
+        watchtower_half: 1.0,
+        team_colors: (self: (0.0, 0.7333, 0.0), ally: (1.0, 1.0, 0.0), hostile: (1.0, 0.0, 0.0),
+                      neutral: (0.4941, 0.749, 0.945), selected: (0.0, 1.0, 0.0)),
     )";
 
     fn parse(text: &str) -> Result<MinimapStyle, MinimapStyleError> {
@@ -277,6 +398,18 @@ mod tests {
             "edge_mix"
         );
         assert_eq!(field_of(&GOOD.replace("172.0", "0.0")), "side_points");
+        assert_eq!(
+            field_of(&GOOD.replace("fogged: 0.45", "fogged: 1.45")),
+            "fog_darkening"
+        );
+        assert_eq!(
+            field_of(&GOOD.replace("min_dot_px: 3.0", "min_dot_px: 0.0")),
+            "min_dot_px"
+        );
+        assert_eq!(
+            field_of(&GOOD.replace("hostile: (1.0, 0.0, 0.0)", "hostile: (1.0, -0.1, 0.0)")),
+            "team_colors"
+        );
         assert_eq!(
             field_of(&GOOD.replace("format_version: 1", "format_version: 2")),
             "format_version"

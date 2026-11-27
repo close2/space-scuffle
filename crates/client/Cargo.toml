@@ -31,6 +31,12 @@ harness = false
 name = "smog_math"
 harness = false
 
+# The minimap's marks rebuild and per-frame work (plan 2026-12-01-minimap M-B1); run with
+# `cargo bench -p client --bench minimap_prepare`.
+[[bench]]
+name = "minimap_prepare"
+harness = false
+
 [lints]
 workspace = true
 

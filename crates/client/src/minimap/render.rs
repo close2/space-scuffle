@@ -6,7 +6,8 @@
 //!   [`MinimapFrame`](super::MinimapFrame) into [`ExtractedMinimap`] with `clone_from` into
 //!   retained vectors, and only for the parts whose generation moved.
 //! - **Uploads.** [`prepare_minimap_gpu`] writes the uniform every frame, the cell texture when
-//!   the cells' generation moved and the marks storage buffer when the marks' generation moved.
+//!   the cells' generation moved, the fog texture when the fog's generation moved and the marks
+//!   storage buffer when the marks' generation moved.
 //!   A buffer or texture is created only when it is first needed or outgrown, and the bind group
 //!   only when one of the resources it names was created. No Bevy asset is touched per frame.
 //! - **Drawing.** [`MinimapNode`] is a top-level node with an edge to the camera driver, and so
@@ -72,13 +73,17 @@ const CELL_FORMAT: TextureFormat = TextureFormat::Rgba8Unorm;
 const CELL_TEXEL_BYTES: u32 = 4;
 const _: () = assert!(CELL_TEXEL_BYTES as usize == super::terrain::CELL_TEXEL_BYTES);
 
-/// The shader's `MinimapUniform`, 96 bytes.
+/// Format of the fog texture: one byte per map cell, how far it darkens, sampled bilinearly.
+const FOG_FORMAT: TextureFormat = TextureFormat::R8Unorm;
+
+/// The shader's `MinimapUniform`, 112 bytes.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 struct MinimapUniform {
     background: [f32; 4],
     unpathable: [f32; 4],
     level_brightness: [f32; 4],
+    border: [f32; 4],
     offset: [f32; 2],
     map_size: [f32; 2],
     scale: f32,
@@ -103,6 +108,7 @@ struct RenderCounters {
     frames: AtomicU64,
     uniform_buffers: AtomicU64,
     cell_textures: AtomicU64,
+    fog_textures: AtomicU64,
     mark_buffers: AtomicU64,
     bind_groups: AtomicU64,
     drawn_marks: AtomicU64,
@@ -121,13 +127,14 @@ impl MinimapRenderEvidence {
         self.0.frames.load(Ordering::Relaxed)
     }
 
-    /// GPU resources created so far: `[uniform buffers, cell textures, mark buffers, bind
-    /// groups]`.
+    /// GPU resources created so far: `[uniform buffers, cell textures, fog textures, mark
+    /// buffers, bind groups]`.
     #[must_use]
-    pub fn created(&self) -> [u64; 4] {
+    pub fn created(&self) -> [u64; 5] {
         [
             self.0.uniform_buffers.load(Ordering::Relaxed),
             self.0.cell_textures.load(Ordering::Relaxed),
+            self.0.fog_textures.load(Ordering::Relaxed),
             self.0.mark_buffers.load(Ordering::Relaxed),
             self.0.bind_groups.load(Ordering::Relaxed),
         ]
@@ -182,6 +189,8 @@ pub struct ExtractedMinimap {
     map_size: UVec2,
     cells: Vec<u8>,
     cells_generation: u64,
+    fog: Vec<u8>,
+    fog_generation: u64,
     marks: Vec<MinimapMark>,
     marks_generation: u64,
     terrain_on: bool,
@@ -214,6 +223,10 @@ pub fn extract_minimap(
     if extracted.cells_generation != frame.cells_generation {
         extracted.cells.clone_from(&frame.cells);
         extracted.cells_generation = frame.cells_generation;
+    }
+    if extracted.fog_generation != frame.fog_generation {
+        extracted.fog.clone_from(&frame.fog);
+        extracted.fog_generation = frame.fog_generation;
     }
     if extracted.marks_generation != frame.marks_generation {
         extracted.marks.clone_from(&frame.marks);
@@ -253,6 +266,7 @@ impl FromWorld for MinimapPipeline {
                     texture_2d_array(TextureSampleType::Float { filterable: true }),
                     sampler(SamplerBindingType::Filtering),
                     storage_buffer_read_only_sized(false, None),
+                    texture_2d(TextureSampleType::Float { filterable: true }),
                 ),
             ),
         );
@@ -359,6 +373,8 @@ pub struct MinimapGpu {
     sampler: Option<Sampler>,
     cells: Option<(Texture, TextureView, UVec2)>,
     cells_uploaded: u64,
+    fog: Option<(Texture, TextureView, UVec2)>,
+    fog_uploaded: u64,
     marks: Option<Buffer>,
     mark_capacity: usize,
     marks_uploaded: u64,
@@ -375,6 +391,7 @@ struct BoundResources {
     albedo: bevy::render::render_resource::TextureViewId,
     splat: bevy::render::render_resource::TextureViewId,
     marks: bevy::render::render_resource::BufferId,
+    fog: bevy::render::render_resource::TextureViewId,
 }
 
 /// Writes the uniform, uploads what changed and keeps the bind group current.
@@ -409,8 +426,10 @@ pub fn prepare_minimap_gpu(
     let counters = &evidence.0;
     write_uniform(&device, &queue, gpu, counters, &extracted, layout, style);
     upload_cells(&device, &queue, gpu, counters, &extracted);
+    upload_fog(&device, &queue, gpu, counters, &extracted);
     upload_marks(&device, &queue, gpu, counters, &extracted);
-    let (Some(uniform), Some((_, cells, _)), Some(marks)) = (&gpu.uniform, &gpu.cells, &gpu.marks)
+    let (Some(uniform), Some((_, cells, _)), Some((_, fog, _)), Some(marks)) =
+        (&gpu.uniform, &gpu.cells, &gpu.fog, &gpu.marks)
     else {
         return;
     };
@@ -419,6 +438,7 @@ pub fn prepare_minimap_gpu(
         albedo: albedo.texture_view.id(),
         splat: splat.texture_view.id(),
         marks: marks.id(),
+        fog: fog.id(),
     };
     if gpu.bound != Some(bound) {
         let sampler = gpu.sampler.get_or_insert_with(|| {
@@ -443,6 +463,7 @@ pub fn prepare_minimap_gpu(
                 &albedo.texture_view,
                 &*sampler,
                 marks.as_entire_binding(),
+                fog,
             )),
         ));
         gpu.bound = Some(bound);
@@ -474,6 +495,7 @@ fn write_uniform(
         background: style.background.linear,
         unpathable: style.unpathable.linear,
         level_brightness: style.level_brightness,
+        border: style.border.linear,
         offset: layout.offset.to_array(),
         map_size: [layout.map_width, layout.map_height],
         scale: layout.scale,
@@ -500,31 +522,52 @@ fn upload_cells(
         return;
     }
     if gpu.cells.as_ref().is_none_or(|(_, _, held)| *held != size) {
-        let texture = device.create_texture(&TextureDescriptor {
-            label: Some("minimap_cells"),
-            size: Extent3d {
-                width: size.x,
-                height: size.y,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: TextureDimension::D2,
-            format: CELL_FORMAT,
-            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&TextureViewDescriptor::default());
-        gpu.cells = Some((texture, view, size));
+        gpu.cells = Some(cell_texture(device, "minimap_cells", CELL_FORMAT, size));
         gpu.cells_uploaded = 0;
         counters.cell_textures.fetch_add(1, Ordering::Relaxed);
     }
     if gpu.cells_uploaded == extracted.cells_generation {
         return;
     }
-    let Some((texture, _, _)) = &gpu.cells else {
-        return;
-    };
+    if let Some((texture, _, _)) = &gpu.cells {
+        write_cells(queue, texture, &extracted.cells, size, CELL_TEXEL_BYTES);
+        gpu.cells_uploaded = extracted.cells_generation;
+    }
+}
+
+/// A texture of one texel per map cell, `size` cells, in `format`, and its view.
+fn cell_texture(
+    device: &RenderDevice,
+    label: &'static str,
+    format: TextureFormat,
+    size: UVec2,
+) -> (Texture, TextureView, UVec2) {
+    let texture = device.create_texture(&TextureDescriptor {
+        label: Some(label),
+        size: Extent3d {
+            width: size.x,
+            height: size.y,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: TextureDimension::D2,
+        format,
+        usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&TextureViewDescriptor::default());
+    (texture, view, size)
+}
+
+/// Writes `bytes`, one texel of `texel_bytes` per cell row-major, into all of `texture`.
+fn write_cells(
+    queue: &RenderQueue,
+    texture: &Texture,
+    bytes: &[u8],
+    size: UVec2,
+    texel_bytes: u32,
+) {
     queue.write_texture(
         ImageCopyTexture {
             texture,
@@ -532,10 +575,10 @@ fn upload_cells(
             origin: Origin3d::ZERO,
             aspect: TextureAspect::All,
         },
-        &extracted.cells,
+        bytes,
         ImageDataLayout {
             offset: 0,
-            bytes_per_row: Some(size.x * CELL_TEXEL_BYTES),
+            bytes_per_row: Some(size.x * texel_bytes),
             rows_per_image: Some(size.y),
         },
         Extent3d {
@@ -544,7 +587,32 @@ fn upload_cells(
             depth_or_array_layers: 1,
         },
     );
-    gpu.cells_uploaded = extracted.cells_generation;
+}
+
+/// Uploads the fog bytes when their generation moved, creating the texture for a new map size.
+fn upload_fog(
+    device: &RenderDevice,
+    queue: &RenderQueue,
+    gpu: &mut MinimapGpu,
+    counters: &RenderCounters,
+    extracted: &ExtractedMinimap,
+) {
+    let size = extracted.map_size;
+    if size.x == 0 || size.y == 0 || extracted.fog.len() != size.x as usize * size.y as usize {
+        return;
+    }
+    if gpu.fog.as_ref().is_none_or(|(_, _, held)| *held != size) {
+        gpu.fog = Some(cell_texture(device, "minimap_fog", FOG_FORMAT, size));
+        gpu.fog_uploaded = 0;
+        counters.fog_textures.fetch_add(1, Ordering::Relaxed);
+    }
+    if gpu.fog_uploaded == extracted.fog_generation {
+        return;
+    }
+    if let Some((texture, _, _)) = &gpu.fog {
+        write_cells(queue, texture, &extracted.fog, size, 1);
+        gpu.fog_uploaded = extracted.fog_generation;
+    }
 }
 
 /// Uploads the marks when their generation moved, growing the buffer by doubling when outgrown.

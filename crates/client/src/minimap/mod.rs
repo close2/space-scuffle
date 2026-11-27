@@ -31,6 +31,7 @@
 //! - Every retained vector keeps its storage across rebuilds of the same size.
 
 pub mod layout;
+pub mod marks;
 pub mod panel;
 pub mod render;
 pub mod style;
@@ -44,18 +45,33 @@ use bevy_egui::{egui, EguiContexts};
 use crate::assets::ResolvedAssetsRoot;
 use crate::battle_hud::HudLayout;
 use crate::battle_pipeline::commands::SessionGeneration;
+use crate::battle_pipeline::fog::BattleFog;
 use crate::battle_pipeline::session::BattleSession;
 use crate::battle_pipeline::BattleSet;
 use crate::battle_presentation::BattleProfile;
-use crate::input_bindings::{any_pressed, ALT_MODIFIERS, MINIMAP_TERRAIN_KEY};
+use crate::battle_selection::BattleSelection;
+use crate::input_bindings::{any_pressed, ALT_MODIFIERS, MINIMAP_COLOR_KEY, MINIMAP_TERRAIN_KEY};
 use crate::input_policy::InputOwnership;
+use crate::player_presentation::PlayerPalette;
+use crate::runtime_battle::MapPresentation;
 use crate::terrain::{TerrainFieldImages, TerrainMaterial, TerrainMaterialHandle, TerrainState};
 use layout::MinimapLayout;
+use sim_types::{EntityId, VisibilityState};
 use style::{MinimapStyle, MinimapStyleStatus};
 
 /// Format of the minimap image: linear colours written, sRGB stored, so egui, which samples it
 /// as linear, shows exactly the colour the shader computed.
 pub const MINIMAP_FORMAT: TextureFormat = TextureFormat::Rgba8UnormSrgb;
+
+/// How the minimap colours units and structures (`StarCraft` II's `ColorButton`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ColorMode {
+    /// Each owner's player colour.
+    #[default]
+    Player,
+    /// `StarCraft` II's team colours: self, selected, hostile and neutral.
+    Team,
+}
 
 /// The player's minimap toggles.
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,11 +79,16 @@ pub struct MinimapSettings {
     /// Whether the terrain is drawn (`StarCraft` II's `TerrainButton`); off, the map rectangle is
     /// the background and only what is drawn over it remains.
     pub terrain: bool,
+    /// Player or team colours.
+    pub color_mode: ColorMode,
 }
 
 impl Default for MinimapSettings {
     fn default() -> Self {
-        Self { terrain: true }
+        Self {
+            terrain: true,
+            color_mode: ColorMode::Player,
+        }
     }
 }
 
@@ -118,8 +139,24 @@ pub struct MinimapFrame {
     splat: Option<Handle<Image>>,
     marks: Vec<MinimapMark>,
     marks_generation: u64,
+    marks_key: Option<MarksKey>,
+    selection_seen: Vec<EntityId>,
+    fog: Vec<u8>,
+    fog_generation: u64,
+    fog_key: Option<(u64, UVec2)>,
     terrain_on: bool,
     tick: u32,
+}
+
+/// What the marks were built from, besides the selection.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct MarksKey {
+    generation: Option<SessionGeneration>,
+    tick: u32,
+    refills: u64,
+    map_tick: Option<u32>,
+    mode: ColorMode,
+    layout: MinimapLayout,
 }
 
 /// What the cell texels were built from.
@@ -197,6 +234,30 @@ impl MinimapFrame {
         self.marks_generation
     }
 
+    /// The fog bytes, one per cell row-major: how far each cell darkens toward the background.
+    #[must_use]
+    pub fn fog(&self) -> &[u8] {
+        &self.fog
+    }
+
+    /// Bumped by every rebuild of [`Self::fog`].
+    #[must_use]
+    pub const fn fog_generation(&self) -> u64 {
+        self.fog_generation
+    }
+
+    /// A frame for an image of `side_px` pixels and `side_points` points that no egui sizes: for
+    /// apps without a window, such as the allocation tests, which run the frame's systems alone.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_image_side(side_px: u32, side_points: f32) -> Self {
+        Self {
+            side_points,
+            side_px,
+            ..Self::default()
+        }
+    }
+
     /// Whether the terrain is drawn this frame.
     #[must_use]
     pub const fn terrain_on(&self) -> bool {
@@ -220,6 +281,12 @@ impl MinimapFrame {
                 self.marks.as_ptr().addr(),
                 self.marks.capacity(),
             ),
+            (
+                "minimap.selection_seen",
+                self.selection_seen.as_ptr().addr(),
+                self.selection_seen.capacity(),
+            ),
+            ("minimap.fog", self.fog.as_ptr().addr(), self.fog.capacity()),
         ]
         .into_iter()
     }
@@ -245,7 +312,12 @@ impl Plugin for MinimapPlugin {
                         .before(crate::battle_hud::panels::battle_hud_system)
                         .in_set(BattleSet::CollectIntent),
                     collect_minimap_keys.in_set(BattleSet::CollectIntent),
-                    prepare_minimap_frame
+                    (
+                        prepare_minimap_frame,
+                        build_minimap_marks,
+                        refresh_minimap_fog,
+                    )
+                        .chain()
                         .after(crate::camera_control_system)
                         .in_set(BattleSet::Present),
                     render::report_minimap_render_failure,
@@ -354,7 +426,7 @@ fn minimap_image(side: u32) -> Image {
     image
 }
 
-/// Alt+T toggles the terrain, while the world owns the keyboard.
+/// Alt+T toggles the terrain and Alt+F the colour mode, while the world owns the keyboard.
 #[expect(
     clippy::needless_pass_by_value,
     reason = "Bevy passes system parameters by value"
@@ -369,6 +441,12 @@ pub fn collect_minimap_keys(
     }
     if keyboard.just_pressed(MINIMAP_TERRAIN_KEY) {
         settings.terrain = !settings.terrain;
+    }
+    if keyboard.just_pressed(MINIMAP_COLOR_KEY) {
+        settings.color_mode = match settings.color_mode {
+            ColorMode::Player => ColorMode::Team,
+            ColorMode::Team => ColorMode::Player,
+        };
     }
 }
 
@@ -419,4 +497,119 @@ pub fn prepare_minimap_frame(
     let side = frame.side_px as f32;
     let layout = MinimapLayout::new(size.x, size.y, side);
     frame.layout = layout;
+}
+
+/// What the marks builder reads besides the frame.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct MarkInputs<'w> {
+    settings: Res<'w, MinimapSettings>,
+    style: Option<Res<'w, MinimapStyle>>,
+    session: Res<'w, BattleSession>,
+    fog: Option<Res<'w, BattleFog>>,
+    palette: Option<Res<'w, PlayerPalette>>,
+    objects: Option<Res<'w, MapPresentation>>,
+    terrain: Option<Res<'w, TerrainState>>,
+    selection: Res<'w, BattleSelection>,
+}
+
+/// Rebuilds the marks when the presented tick, the fog, the map's billboards, the selection, the
+/// colour mode or the layout changed, and never otherwise (plan `2026-12-01-minimap` D-5).
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+pub fn build_minimap_marks(mut frame: ResMut<'_, MinimapFrame>, inputs: MarkInputs<'_>) {
+    let frame = frame.as_mut();
+    let (Some(layout), Some(style)) = (frame.layout, inputs.style.as_deref()) else {
+        return;
+    };
+    let fog = inputs.fog.as_deref();
+    let key = MarksKey {
+        generation: inputs.session.commands.generation(),
+        tick: inputs.session.frames.presented().tick.0,
+        refills: fog.map_or(0, BattleFog::refills),
+        map_tick: inputs.objects.as_deref().and_then(|objects| objects.tick),
+        mode: inputs.settings.color_mode,
+        layout,
+    };
+    let selection = inputs.selection.ids();
+    if frame.marks_key == Some(key) && frame.selection_seen.as_slice() == selection {
+        return;
+    }
+    frame.selection_seen.clear();
+    frame.selection_seen.extend_from_slice(selection);
+    let sources = marks::MarkSources {
+        layout,
+        style,
+        mode: key.mode,
+        viewer: fog.and_then(BattleFog::viewer),
+        fog,
+        bubbles: &inputs.session.frames.presented().bubbles,
+        catalog: inputs.session.world().map(|world| &world.catalog),
+        palette: inputs.palette.as_deref(),
+        objects: inputs
+            .objects
+            .as_deref()
+            .map_or(&[], |objects| objects.objects.as_slice()),
+        nodes: inputs
+            .terrain
+            .as_deref()
+            .map_or(&[], |terrain| terrain.map.resources()),
+        selected: selection,
+    };
+    marks::build_marks(&sources, &mut frame.marks);
+    frame.marks_key = Some(key);
+    frame.marks_generation += 1;
+}
+
+/// Rebuilds the fog bytes when the fog was refilled or the map changed size (plan
+/// `2026-12-01-minimap` D-4). A fog with no cells for this map reads as unexplored, so the
+/// minimap fails closed.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+pub fn refresh_minimap_fog(
+    mut frame: ResMut<'_, MinimapFrame>,
+    style: Option<Res<'_, MinimapStyle>>,
+    fog: Option<Res<'_, BattleFog>>,
+) {
+    let frame = frame.as_mut();
+    let (Some(style), Some(fog)) = (style.as_deref(), fog.as_deref()) else {
+        return;
+    };
+    let size = frame.map_size;
+    let key = (fog.refills(), size);
+    if frame.fog_key == Some(key) {
+        return;
+    }
+    let darkening = style.fog_darkening;
+    let byte = |state: VisibilityState| {
+        let level = match state {
+            VisibilityState::Visible => darkening.visible,
+            VisibilityState::Fogged => darkening.fogged,
+            VisibilityState::Unexplored => darkening.unexplored,
+        };
+        unit_byte(level)
+    };
+    let cells = size.x as usize * size.y as usize;
+    let states = fog.cell_states();
+    frame.fog.clear();
+    if states.len() == cells {
+        frame.fog.extend(states.iter().map(|state| byte(*state)));
+    } else {
+        frame.fog.resize(cells, byte(VisibilityState::Unexplored));
+    }
+    frame.fog_key = Some(key);
+    frame.fog_generation += 1;
+}
+
+/// `value` in `[0, 1]` as the nearest byte.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "the value is clamped to [0, 1] first, so the product is in [0, 255]"
+)]
+fn unit_byte(value: f32) -> u8 {
+    (value.clamp(0.0, 1.0) * f32::from(u8::MAX)).round() as u8
 }

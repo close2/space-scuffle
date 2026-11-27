@@ -6,9 +6,12 @@
 //   background. On the map, the ground is the splat-weighted sum of the theme's albedo layers,
 //   each read at its last mip (the 1x1 linear average of the real baked texture), times the
 //   brightness of the cell's cliff level; unwalkable cells are `unpathable`, and the high side of
-//   a cliff edge is mixed toward the cliff layer's colour.
+//   a cliff edge is mixed toward the cliff layer's colour. Fog, sampled bilinearly so its edges
+//   are soft, then lerps the colour toward the background, as 5.0.14's MinimapTerrain.fx lerps
+//   to black.
 // - `mark_vs` / `mark_fs`: one six-vertex quad per instance of the marks storage buffer, in
-//   minimap pixels.
+//   minimap pixels: a square filled with its colour inside a border `stroke` pixels wide. Fog never
+//   hides a mark: what is listed is what the viewer may see.
 //
 // Coordinates: `@builtin(position)` in the fragment stage is in target pixels from the top-left,
 // pixel centres at +0.5. Map points are simulation (x, y) in world units, one unit per cell; the
@@ -18,6 +21,8 @@ struct MinimapUniform {
     background: vec4<f32>,
     unpathable: vec4<f32>,
     level_brightness: vec4<f32>,
+    // Colour of a square's border.
+    border: vec4<f32>,
     // Pixel of the map's (0, 0) corner.
     offset: vec2<f32>,
     // Map width and height in cells.
@@ -55,6 +60,8 @@ struct MinimapMark {
 @group(0) @binding(4) var albedo: texture_2d_array<f32>;
 @group(0) @binding(5) var albedo_sampler: sampler;
 @group(0) @binding(6) var<storage, read> marks: array<MinimapMark>;
+// R8Unorm, one byte per cell: how far fog darkens the cell toward the background (D-4).
+@group(0) @binding(7) var fog: texture_2d<f32>;
 
 // Albedo array layers, in `TerrainTheme::ordered_layers` order (terrain.wgsl).
 const LAYER_GRASS: i32 = 0;
@@ -122,12 +129,18 @@ fn terrain_fs(in: FullScreen) -> @location(0) vec4<f32> {
         return vec4<f32>(minimap.background.rgb, 1.0);
     }
     let cell = vec2<i32>(floor(world));
-    return vec4<f32>(ground_color(cell), 1.0);
+    let darkening = textureSampleLevel(fog, splat_sampler, world / minimap.map_size, 0.0).r;
+    return vec4<f32>(mix(ground_color(cell), minimap.background.rgb, darkening), 1.0);
 }
 
 struct MarkOut {
     @builtin(position) position: vec4<f32>,
     @location(0) color: vec4<f32>,
+    // Pixel offset from the mark's centre.
+    @location(1) local: vec2<f32>,
+    // Half-size and border width, pixels.
+    @location(2) @interpolate(flat) half_size: vec2<f32>,
+    @location(3) @interpolate(flat) stroke: f32,
 }
 
 // Corner `vertex` of a mark's quad, two triangles, in units of the mark's half-size.
@@ -147,10 +160,18 @@ fn mark_vs(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance
     var out: MarkOut;
     out.position = vec4<f32>(clip, 0.0, 1.0);
     out.color = mark.color;
+    out.local = pixel - mark.a;
+    out.half_size = mark.b;
+    out.stroke = mark.stroke;
     return out;
 }
 
 @fragment
 fn mark_fs(in: MarkOut) -> @location(0) vec4<f32> {
+    // Distance of this pixel's centre inside the square's nearest edge.
+    let inside = in.half_size - abs(in.local);
+    if (min(inside.x, inside.y) < in.stroke) {
+        return vec4<f32>(minimap.border.rgb, 1.0);
+    }
     return vec4<f32>(in.color.rgb, 1.0);
 }

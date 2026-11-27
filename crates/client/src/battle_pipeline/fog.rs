@@ -107,10 +107,12 @@ pub fn presence_of(fog: Option<&BattleFog>, bubble: &BubbleRenderInstance) -> Pr
 #[derive(Resource, Debug, Default)]
 pub struct BattleFog {
     viewer: Option<PlayerId>,
-    /// Width of the map in cells, the stride of `visible`.
+    /// Width of the map in cells, the stride of `cells`.
     width: u32,
-    /// Row-major: whether the viewer sees each cell. Empty until a view is written.
-    visible: Vec<bool>,
+    /// Row-major: what the viewer knows of each cell, one byte each. Empty until a view is
+    /// written. The minimap needs all three states (plan `2026-12-01-minimap` D-4); every other
+    /// reader asks only whether a cell is `Visible`.
+    cells: Vec<VisibilityState>,
     /// Last seen presence of each node, in map order.
     node_present: Vec<bool>,
     /// Concealed units of other players the viewer detects, sorted, as the view listed them.
@@ -137,9 +139,9 @@ impl BattleFog {
     pub fn retained_buffers(&self) -> impl Iterator<Item = (&'static str, usize, usize)> + '_ {
         [
             (
-                "fog.visible",
-                self.visible.as_ptr().addr(),
-                self.visible.capacity(),
+                "fog.cells",
+                self.cells.as_ptr().addr(),
+                self.cells.capacity(),
             ),
             (
                 "fog.node_present",
@@ -192,8 +194,8 @@ impl BattleFog {
         let index = u64::from(row) * u64::from(self.width) + u64::from(column);
         usize::try_from(index)
             .ok()
-            .and_then(|index| self.visible.get(index))
-            .is_some_and(|visible| *visible)
+            .and_then(|index| self.cells.get(index))
+            .is_some_and(|state| *state == VisibilityState::Visible)
     }
 
     /// Whether a thing of `owner` at map position `(x, y)` may reach the screen.
@@ -270,6 +272,13 @@ impl BattleFog {
         &self.attack_snapshots
     }
 
+    /// What the viewer knows of each cell, row-major with the map's width as stride: the view's
+    /// three states. Empty before the first refresh and after [`Self::close`].
+    #[must_use]
+    pub fn cell_states(&self) -> &[VisibilityState] {
+        &self.cells
+    }
+
     /// Last seen presence of each node, in map order. Empty before the first refresh.
     #[must_use]
     pub fn node_present(&self) -> &[bool] {
@@ -292,7 +301,7 @@ impl BattleFog {
     #[must_use]
     pub fn buffers(&self) -> [(usize, usize); 5] {
         [
-            (self.visible.as_ptr() as usize, self.visible.capacity()),
+            (self.cells.as_ptr() as usize, self.cells.capacity()),
             (
                 self.node_present.as_ptr() as usize,
                 self.node_present.capacity(),
@@ -313,7 +322,7 @@ impl BattleFog {
     pub fn close(&mut self) {
         self.viewer = None;
         self.width = 0;
-        self.visible.clear();
+        self.cells.clear();
         self.revealed.clear();
         self.attack_revealed.clear();
         self.attack_snapshots.clear();
@@ -344,12 +353,8 @@ impl BattleFog {
         }
         self.viewer = Some(view.viewer);
         self.width = view.map_width;
-        self.visible.clear();
-        self.visible.extend(
-            view.visibility
-                .iter()
-                .map(|state| *state == VisibilityState::Visible),
-        );
+        self.cells.clear();
+        self.cells.extend_from_slice(&view.visibility);
         self.revealed.clear();
         self.revealed.extend_from_slice(&view.revealed);
         // The view promises a sorted list; sorting in place keeps the binary search sound if a
@@ -408,6 +413,21 @@ mod tests {
             source: sim_types::EffectSource::default(),
             ends: None,
         }
+    }
+
+    #[test]
+    fn the_fog_keeps_all_three_states_and_close_forgets_them() {
+        use VisibilityState::{Fogged, Unexplored, Visible};
+        let mut fog = fog_of(&view());
+        assert_eq!(
+            fog.cell_states(),
+            &[Fogged, Visible, Unexplored, Unexplored, Fogged, Visible]
+        );
+        assert!(!fog.sees(0.5, 0.5), "a fogged cell is not seen");
+        assert!(!fog.sees(2.5, 0.5), "an unexplored cell is not seen");
+        assert!(fog.sees(1.5, 0.5));
+        fog.close();
+        assert_eq!(fog.cell_states().len(), 0);
     }
 
     #[test]

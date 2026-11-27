@@ -107,9 +107,13 @@ pub const ALT_MODIFIERS: [KeyCode; 2] = [KeyCode::AltLeft, KeyCode::AltRight];
 /// hotkey; plan `2026-12-01-minimap` D-10).
 pub const MINIMAP_TERRAIN_KEY: KeyCode = KeyCode::KeyT;
 
+/// With [`ALT_MODIFIERS`] held, switches the minimap between player and team colours
+/// (`StarCraft` II's `MinimapColors` hotkey; plan `2026-12-01-minimap` D-10).
+pub const MINIMAP_COLOR_KEY: KeyCode = KeyCode::KeyF;
+
 /// Every key acted on only with [`ALT_MODIFIERS`] held, grouped by action. A chord is its own
 /// binding: `Alt+T` is not the card position `T`.
-pub const ALT_ACTION_KEYS: [&[KeyCode]; 1] = [&[MINIMAP_TERRAIN_KEY]];
+pub const ALT_ACTION_KEYS: [&[KeyCode]; 2] = [&[MINIMAP_TERRAIN_KEY], &[MINIMAP_COLOR_KEY]];
 
 /// Every action key, grouped by the action that owns it.
 pub const ACTION_KEYS: [&[KeyCode]; 9] = [
@@ -128,7 +132,7 @@ pub const ACTION_KEYS: [&[KeyCode]; 9] = [
 pub const BATTLE_CONTROLS_HELP: &str = "Left click selects, drag boxes, Shift adds. Right click \
 moves, attacks, gathers, builds or boards by its target, Shift queues; with a structure it sets \
 the rally, and Shift adds a rally waypoint. H holds, X stops. Escape cancels a command mode. \
-Ctrl+0-9 assigns a group, 0-9 recalls it. Alt+T toggles the minimap's terrain.";
+Ctrl+0-9 assigns a group, 0-9 recalls it. Alt+T toggles the minimap's terrain, Alt+F its colours.";
 
 /// Returns whether any key of `keys` is held.
 #[must_use]
