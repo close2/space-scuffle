@@ -21,3 +21,5 @@ stood.
 - (c) Something else.
 
 ## Answer
+
+- **Option (b): Register remembered enemy structures (`FogVisibility Snapshot` in fog and on the minimap) as a bug and plan it next.** Essential RTS scouting readability, and cleanly reuses the existing presentation-only attacker-snapshot and minimap marks infrastructure with no simulation checksum impact.

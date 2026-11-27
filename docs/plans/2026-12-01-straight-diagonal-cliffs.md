@@ -787,3 +787,66 @@ units floating on diagonal plateaus look wrong in the capture.
 ```
 
 ---
+
+## Amendment 1 (orchestrator, 2026-11-27): T-K's convex half-cut quadrants are reported, not limited; B-250
+
+**Finding.** Stop rule 6 fired on `main` itself. The plan said T-K passes on `main` with an uncut maximum of 0.077.
+Sampled as written, it does not. At every convex corner whose low side is ground, a high-ground body at clearance 0
+from both edges stands over the foot of `main`'s 45° half cut: 2.84 below its plateau for radius 0.3125, and 5.84 on
+a two-level corner. This plan does not touch that drawing; the 0.077 figure came from the terrain plan's D-4 check,
+which sampled only the straight brink.
+
+**Decision.**
+- T-K limits every uncut sample to 0.2 (largest 0.1987; 0.160 on `main`).
+- T-K reports the convex half-cut quadrants. Their figures are identical on `main` and on this plan's tree.
+- The pre-existing overhang at convex corners is registered as **B-250** in `DESIGN.md` §4. It is a presentation
+  bug: units at a convex cliff corner on high ground are drawn hanging over the cut. It sits with Q0139, whose answer
+  covers the same trade-off for cut cells. Its fix (for example, a rounded convex corner kept on the high side) is
+  planned after Q0139 is answered.
+- This is a correction of the plan's premise, not a change to any limit or constant.
+
+## As built
+
+Built on branch `diagonal-cliffs` (worktree `.claude/worktrees/diagonal-cliffs`, target
+`~/cargo-target/diagonal-cliffs`), on `main` at `b2ba4621`. All figures are in the evidence file
+[`2026-12-01-straight-diagonal-cliffs`](../evidence/2026-12-01-straight-diagonal-cliffs.md). The review capture is
+`~/scratch/straight-diagonals/review/` (`contact_sheet.png`, `contact_sheet_wp1.png`, `README.txt`). Q0139 is filed and
+open; its default (a) is what WP2 builds.
+
+| Package | Commits | What |
+|---|---|---|
+| WP0 | `1c3b1e96` | The diagonal fixture, the independent D-1 analysis (`diagonal_cuts`, `diagonal_runs`, `void_runs`), T-S1 to T-S4, T-A3, T-K, the fixture's T-B functions, the review child, the `suites.ron` entry; stubs `full_cut` and `chamfer_mitre` |
+| WP1 | `a786f902`, `ba9c159f` (golden re-record) | `VOID_NOOK_CASES` and `DualCell::marching_case` (D-6) |
+| WP2 | `1fe78950`, `058435c4` (cheaper cut reads), `8649ce2d` (golden re-record) | module `terrain/mesher/diagonal.rs`: `full_cut`, `Cut`, `DualCuts` (4×4 read), `RunKey` (effective case), the side runs, low floors with toes, the `O` clip with closed-form crossings, anchors and the apex, the column chain; `chamfer_mitre`; `emit_dual_cell` split into `emit_marching_run` |
+| WP3 | this commit | records |
+
+Green: T-S1 on three maps, T-S2, T-A3, T-S3, T-S4, T-K, T-B1 and T-B2 on five maps, T-A, T-A2, G-1 on radv. Green and
+unchanged: `terrain_tests` (the 4×4 counts, the seams, incremental rebuild), `ramp_geometry_tests`,
+`smog_golden_tests`, `round2_visual_tests`, `effect_slice_gpu_tests`. The mesher's pick hashes, hit counts,
+`default_arena`'s hashes and the texture-array hash never moved. No file under `crates/sim_*` or `assets/` changed.
+The terrain plan's scratch mesher check still counts 0 rows on the low side of their edge.
+
+Deviations, each recorded in its commit and in the evidence file:
+
+1. **T-K reports the convex half-cut quadrants** (§4.1). On `main` a body at any convex corner whose low side is
+   ground stands over the 45° half cut's foot (2.84 below its plateau for `r = 0.3125`), so T-K as written could not
+   pass on `main`. It holds every other uncut sample to 0.2 and reports those quadrants, which this plan does not
+   change. The sampling rule's "every cliff edge" is every cliff edge in the cell's 3×3 block (the simulation's walls
+   are cell edges), so a body keeps its radius from a concave corner `V` of a neighbour.
+2. **T-S1's corridor reaches half a cell beyond the line**, not one, so the opposite wall of a one-cell diagonal
+   channel (fixture row 8, `1/√2` beyond) stays out; and **a void run's gap bound is `1/√2 + √2·0.06`**, derived from
+   the void setback along each midpoint's own axis.
+3. **T-S2 is split**: the 3×3 table is the unit test; the fixture checks (one cut per cell, no foot end at a saddle,
+   agreement with the analysis) are `full_cut_holds_once_per_cell_and_never_through_a_saddle` in
+   `diagonal_cliff_tests.rs`, since the fixture lives in the integration tests' support. T-S3 also asserts that the
+   rim-top line carries a floor vertex, so it is red on `main` as §4.1 says.
+4. **The `O` dual cell emits the wall between the crossing columns** (D-4, D-5): the centre column once, so a cut
+   centre on a chunk seam has one vertex per dual cell round it, as the unchanged seam test's multiset comparison
+   needs. Crossing columns exist at every cut but the apex's, at the cut run's top.
+5. **Flat dual cells read the block behind a filter** (D-9): a flat dual cell can be a cut's `O`. Build cost 1.20× on
+   `showcase_canyon`.
+6. **The fixture's row 10 sits one cell east**, off the seam `x = 31.5`, where abyss beside two plateau levels makes
+   `main` fail the seam comparison for a reason unrelated to diagonals.
+7. **The `main` brink row** is rendered from this plan's WP1 tree (`a786f902`), whose ground diagonals are `main`'s,
+   instead of a scratch branch off `main`.
+8. **The module is a submodule** `terrain/mesher/diagonal.rs`, not part of `mesher.rs`, to keep both readable.

@@ -19,3 +19,4 @@ a slot that auto-build fills again at once: the cancel only helps after switchin
 
 ## Answer
 
+- **Option (a): Follow the data's reading.** Cancelling an interceptor build refunds it, and if auto-build is on it may queue again on the next tick, with the cancel tooltip noting *"Auto-build will queue again"* while auto-build is enabled (matches StarCraft II 5.0.14).

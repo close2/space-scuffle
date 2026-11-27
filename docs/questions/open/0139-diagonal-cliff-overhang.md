@@ -29,3 +29,5 @@ Recommendation: (a), since it is what you chose and the alternatives are the two
 units floating on diagonal plateaus look wrong in the capture.
 
 ## Answer
+
+- **Fourth option (align simulation diagonal cliffs with the straight 45° edge):** After inspecting `brink_0.3125.png`, small high-ground units floating completely out over the low-ground floor looks broken, while sawtooth cliffs (`Q0136 (a)`) and low-ground rock clipping (`Q0136 (b)`) are also undesirable. Keep the straight 45° diagonal look, and plan a simulation-side follow-up that clips the walkable high-ground half-cell along the same 45° diagonal line (matching how StarCraft II achieves straight diagonal cliffs with neither floating high-ground units nor low-ground rock clipping). Track the current overhang as an open bug until that simulation-side diagonal cliff plan lands.
