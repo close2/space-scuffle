@@ -58,3 +58,12 @@ Sanctioned by the owner's answer to [Q0121](0121-nudge-under-new-movement.md), o
 
 - **D-δ retired under `Gated`:** under the `Gated` pipeline no ally moves an attacking or holding unit, as in
   StarCraft II. D-δ stays in force under `Solver` until that pipeline is deleted (the plan's WP5).
+
+## Addendum (2026-12-01): rally card entries keep positional keys, from Q0115
+
+Sanctioned by the owner's answer to [Q0115](0115-rally-card-keys.md), option (a), for plan
+`docs/plans/2026-11-25-rallies.md` (recorded by plan `docs/plans/2026-12-01-rallies-and-smart-command.md` D-5, which
+removes B-214 from the bug register):
+
+- **S-rally-keys:** the rally card entries take the key of the card position they land on, like every other entry.
+  StarCraft II 5.0.14's standard keys are Y (rally) and G (worker rally).
