@@ -219,3 +219,23 @@ which is 5.5 to 5.7 G/s; that rate would project 61 to 63. A measured tick of th
 row's tick (90.0 M against 14.4 M). Its warm-up costs 136 M per tick (34.2 G over 250 ticks, with the twelve 5 × 5
 structures in the army's path). With every death spawn cut to one unit, the row ran no faster natively (46 and 48
 ticks/s, above). So the cost is the twelve structures in a 200-unit battle, not the created units.
+
+## WPA4 re-design: the `razed` row at 100 units (`3f82dd04`)
+
+The orchestrator directed the plan's fallback: keep the 12 Hatchery-analogue structures and halve the army to 100
+`pulse_bot`. The bar is load-independent. Instructions per measured tick (callgrind, 300 ticks minus 0) must be no
+higher than the 64x64/400-unit row's, measured in the same session: that row is the costliest one CI already passes at
+50 ticks/s or more. `~/scratch/death-spawns/scripts/cg2.sh` ran the whole session under one hold of the gate lock.
+
+| Row | Ir, 0 ticks | Ir, 300 ticks | Ir per measured tick | Native ticks/s r1 / r2 | Load (1-min) |
+|---|---:|---:|---:|---:|---|
+| 64x64, 400 units | 128,529,029 | 16,460,992,642 | 54.44 M | 101 / 91 | 11 to 24 |
+| razed, 12 structures, 100 units | 24,928,381,797 | 36,355,727,190 | **38.09 M** | 159 / 157 | 11 to 24 |
+
+**38.09 M ≤ 54.44 M: the re-designed row passes.** It runs 1.0 created units alive per measured tick, against 0.8 at
+200 units: a smaller army kills fewer structures in the window. At 200 units the same row cost 90.00 M per tick
+(Amendment 1's session). With the row at 100 units, WPA4 completes: B-234 fixed, `DESIGN.md` §5 row, Combat row,
+the broodlings §14 pointer, the plan's `## As built`.
+
+A note on commit `c82467b3`: its subject reads "docs: close B-234", but it added only the `razed` bench row at 200
+units. The closing records are in the commit that follows `3f82dd04`.
