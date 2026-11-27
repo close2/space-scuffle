@@ -948,7 +948,8 @@ and 5 hold; B-21, B-232, B-233 fixed. Commit `docs: close B-21, B-232 and B-233 
 ## 14. Out of scope and decisions recorded (Q0002)
 
 - **Structure-death Broodlings** (B-234): need a death response on structures; the spawn and timed-life mechanisms of
-  this plan are built to serve it (a different lifetime, 8 Normal s, a count of 6 or 9, no order).
+  this plan are built to serve it (a different lifetime, 8 Normal s, a count of 6 or 9, no order). *Taken up by plan
+  [`2026-12-01-death-spawns-and-hangar-commands`](2026-12-01-death-spawns-and-hangar-commands.md) (WPA0 to WPA4).*
 - **Escort orbit drawing** (B-235): presentation; the snapshot could later expose the armed count.
 - **Spawn placement among units** (B-236): kept terrain-only, as casts' placement is.
 - **A `CreateUnit` node in the spell graph** (D-4's rejected option): a later plan may move `impact_spawn` there when a

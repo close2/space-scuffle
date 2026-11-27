@@ -61,6 +61,12 @@
 //!   two ground soldiers board it and an armed air unit follows it, so boarders walk and the
 //!   follower flies through the window (plan `2026-12-01-rallies-and-smart-command` P-6). Their
 //!   parent is `smart_mixed_frames_allocate_nothing`.
+//! - `razing_cycle_live_frames` and `razing_cycle_baseline_frames` are the same pair with a
+//!   weaponless enemy structure carrying the shipped death spawn with the most units raised and
+//!   killed every 200 ticks by a system both children run, so its units arrive and expire on
+//!   their own clocks; a warm-up of 800 ticks and windows of 400 and 800 ticks (plan
+//!   `2026-12-01-death-spawns-and-hangar-commands` DS-18). Their parent is
+//!   `razing_cycle_frames_allocate_nothing`.
 //!
 //! **Invariants asserted.** Two runs of the live child at the same frame count report the same
 //! window count (the measurement is deterministic); the full app's difference equals the baseline's (the client's
@@ -159,6 +165,13 @@ enum Variant {
     SmartMixedLive,
     /// The battle driver alone after the same click.
     SmartMixedBaseline,
+    /// The live synchroniser and battle driver on the default battle with every mobile unit
+    /// killed and an enemy structure with a death spawn raised and killed every 200 ticks, so
+    /// its units arrive and expire on their own clocks (plan
+    /// `2026-12-01-death-spawns-and-hangar-commands` DS-18).
+    RazingCycleLive,
+    /// The battle driver and the razing driver alone on the same staged battle.
+    RazingCycleBaseline,
 }
 
 impl Variant {
@@ -178,6 +191,8 @@ impl Variant {
             Self::HangarCycleBaseline => "hangar_cycle_baseline_frames",
             Self::SmartMixedLive => "smart_mixed_live_frames",
             Self::SmartMixedBaseline => "smart_mixed_baseline_frames",
+            Self::RazingCycleLive => "razing_cycle_live_frames",
+            Self::RazingCycleBaseline => "razing_cycle_baseline_frames",
         }
     }
 
@@ -191,9 +206,14 @@ impl Variant {
         matches!(self, Self::HangarCycleLive | Self::HangarCycleBaseline)
     }
 
+    /// Whether the child stages the razing battle, one 40 ms tick per frame.
+    fn cycles_razing(self) -> bool {
+        matches!(self, Self::RazingCycleLive | Self::RazingCycleBaseline)
+    }
+
     /// Whether units arrive and leave on the child's own clocks, one 40 ms tick per frame.
     fn cycles_units(self) -> bool {
-        self.cycles_broods() || self.cycles_hangars()
+        self.cycles_broods() || self.cycles_hangars() || self.cycles_razing()
     }
 
     /// Whether the child plays the mixed right click of the variant `smart_mixed`.
@@ -220,6 +240,7 @@ impl Variant {
                 | Self::BroodCycleBaseline
                 | Self::HangarCycleBaseline
                 | Self::SmartMixedBaseline
+                | Self::RazingCycleBaseline
         )
     }
 }
@@ -679,9 +700,14 @@ fn check_mixed_window(app: &App, group: MixedGroup, ticked: u32, frames: u32) ->
     Ok(())
 }
 
-/// What [`stage_variant`] stages: the gas crew, the cycling kind's watcher and the Carriers'
-/// driver, each where the variant has one.
-type Staged = (Option<GasCrew>, Option<BroodWatch>, Option<HangarDriver>);
+/// What [`stage_variant`] stages: the gas crew, the cycling kind's watcher, the Carriers' driver
+/// and the razing driver, each where the variant has one.
+type Staged = (
+    Option<GasCrew>,
+    Option<BroodWatch>,
+    Option<HangarDriver>,
+    Option<RazingDriver>,
+);
 
 /// Stages what `variant` needs in `simulation` before its session begins: the gas crew and the
 /// held images of the running children, the Broodlings' battle of the brood children, or the
@@ -724,28 +750,36 @@ fn stage_variant(
             overflowed: false,
         })
     });
-    Ok((crew, brood, hangars))
+    let razing = variant.cycles_razing().then(|| {
+        RazingDriver(unit_cycling::stage_razing(
+            simulation,
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets"),
+        ))
+    });
+    // The razing children warm for four periods, as the Broodlings' children for four lives.
+    let brood = brood.or_else(|| {
+        razing.map(|driver| BroodWatch {
+            kind: driver.0.spawned,
+            lifetime: unit_cycling::RAZING_PERIOD_TICKS,
+            present: [None; BROOD_SLOTS],
+            arrived: 0,
+            departed: 0,
+            overflowed: false,
+        })
+    });
+    Ok((crew, brood, hangars, razing))
 }
 
-/// Adds what [`stage_variant`] and [`stage_mixed_group`] staged to `app`: the watchers and the
-/// Carriers' driver with their systems, and the mixed group after its right click is queued.
-fn add_staged(app: &mut App, staged: &Staged, mixed: Option<MixedGroup>) -> TestResult {
-    let (crew, brood, hangars) = *staged;
-    if let Some(crew) = crew {
-        app.insert_resource(crew).add_systems(Last, watch_gas_crew);
+/// The razing cycle of the razing children (plan `2026-12-01-death-spawns-and-hangar-commands`
+/// DS-18).
+#[derive(Resource, Clone, Copy, Debug)]
+struct RazingDriver(unit_cycling::RazingCycle);
+
+/// Raises and kills the razing host on its cadence, before the tick.
+fn drive_razing(mut session: ResMut<'_, BattleSession>, mut driver: ResMut<'_, RazingDriver>) {
+    if let Some(world) = session.world_mut() {
+        driver.0.advance(world);
     }
-    if let Some(watch) = brood {
-        app.insert_resource(watch).add_systems(Last, watch_broods);
-    }
-    if let Some(driver) = hangars {
-        app.insert_resource(driver)
-            .add_systems(Update, drive_hangars.before(advance_battle_ticks));
-    }
-    if let Some(group) = mixed {
-        click_smart_mixed(app, group)?;
-        app.insert_resource(group);
-    }
-    Ok(())
 }
 
 /// The Carriers' cycle of the hangar children (plan `2026-11-28-carrier-interceptors` H-20).
@@ -768,6 +802,37 @@ fn drive_hangars(mut session: ResMut<'_, BattleSession>, mut driver: ResMut<'_, 
     }
 }
 
+/// Adds what [`stage_variant`] staged to `app`: the gas crew's and the cycling kind's watchers,
+/// the Carriers' and the razing drivers (before the tick), and the battle driver of a baseline
+/// child that ticks (the `smart_mixed` baseline among them).
+fn add_staged(app: &mut App, variant: Variant, staged: &Staged) {
+    let &(crew, brood, hangars, razing) = staged;
+    if let Some(crew) = crew {
+        app.insert_resource(crew).add_systems(Last, watch_gas_crew);
+    }
+    if let Some(watch) = brood {
+        app.insert_resource(watch).add_systems(Last, watch_broods);
+    }
+    if let Some(driver) = hangars {
+        app.insert_resource(driver)
+            .add_systems(Update, drive_hangars.before(advance_battle_ticks));
+    }
+    if let Some(driver) = razing {
+        app.insert_resource(driver)
+            .add_systems(Update, drive_razing.before(advance_battle_ticks));
+    }
+    if matches!(
+        variant,
+        Variant::RunningBaseline
+            | Variant::BroodCycleBaseline
+            | Variant::HangarCycleBaseline
+            | Variant::RazingCycleBaseline
+            | Variant::SmartMixedBaseline
+    ) {
+        app.add_systems(Update, advance_battle_ticks);
+    }
+}
+
 /// Builds the app of `variant` with a fixed time step: on the real default battle, paused, or
 /// for a running variant on the shipped skirmish, resumed.
 fn steady_state_app(variant: Variant) -> Result<App, Box<dyn std::error::Error>> {
@@ -782,7 +847,7 @@ fn steady_state_app(variant: Variant) -> Result<App, Box<dyn std::error::Error>>
     let ticking = variant.is_running() || variant.cycles_units() || variant.clicks_smart_mixed();
     let definition = BattleDefinition::load(root.as_path(), scenario.as_ref())?;
     let mut simulation = definition.instantiate()?;
-    let (crew, brood, hangars) = stage_variant(variant, &mut simulation)?;
+    let (crew, brood, hangars, razing) = stage_variant(variant, &mut simulation)?;
     let mixed = if variant.clicks_smart_mixed() {
         Some(stage_mixed_group(&mut simulation, root.as_path())?)
     } else {
@@ -832,15 +897,10 @@ fn steady_state_app(variant: Variant) -> Result<App, Box<dyn std::error::Error>>
             client::setup_indicator_assets_system,
         ),
     );
-    add_staged(&mut app, &(crew, brood, hangars), mixed)?;
-    if matches!(
-        variant,
-        Variant::RunningBaseline
-            | Variant::BroodCycleBaseline
-            | Variant::HangarCycleBaseline
-            | Variant::SmartMixedBaseline
-    ) {
-        app.add_systems(Update, advance_battle_ticks);
+    add_staged(&mut app, variant, &(crew, brood, hangars, razing));
+    if let Some(group) = mixed {
+        click_smart_mixed(&mut app, group)?;
+        app.insert_resource(group);
     }
     if variant.presents() {
         app.add_systems(
@@ -1444,7 +1504,10 @@ fn run_child(variant: Variant) -> TestResult {
     let brood_before = app.world().get_resource::<BroodWatch>().copied();
     let pool_before = app.world().resource::<client::RenderEntityMap>().stats();
     measured_steady_frames(&mut app, frames);
-    if matches!(variant, Variant::BroodCycleLive | Variant::HangarCycleLive) {
+    if matches!(
+        variant,
+        Variant::BroodCycleLive | Variant::HangarCycleLive | Variant::RazingCycleLive
+    ) {
         // The warm-up reached the regime: no arrival of the window spawned a render entity.
         let pool_after = app.world().resource::<client::RenderEntityMap>().stats();
         if pool_after.spawned != pool_before.spawned {
@@ -1732,6 +1795,16 @@ fn smart_mixed_live_frames() -> TestResult {
 #[test]
 fn smart_mixed_baseline_frames() -> TestResult {
     run_child(Variant::SmartMixedBaseline)
+}
+
+#[test]
+fn razing_cycle_live_frames() -> TestResult {
+    run_child(Variant::RazingCycleLive)
+}
+
+#[test]
+fn razing_cycle_baseline_frames() -> TestResult {
+    run_child(Variant::RazingCycleBaseline)
 }
 
 /// The parts of a DHAT profile (`dhatFileVersion` 2, JSON) this test reads.
@@ -2151,6 +2224,58 @@ fn hangar_cycle_frames_allocate_nothing() -> TestResult {
         "the client's battle sync systems allocated {} times over two cycles of interceptors \
          launching, docking and relaunching, beyond the drivers' and Bevy's own work\n{report}",
         live - baseline
+    );
+    Ok(())
+}
+
+/// DS-18 under valgrind (plan `2026-12-01-death-spawns-and-hangar-commands` §6.3): on the staged
+/// razing battle (an enemy structure with the shipped death spawn with the most units raised and
+/// killed every 200 ticks), after a warm-up of 800 ticks, the live synchroniser's windows of 400
+/// and 800 ticks differ by exactly what the battle driver's and the razing driver's alone differ
+/// by: units arriving from a death and expiring cost the client no allocation.
+#[test]
+fn razing_cycle_frames_allocate_nothing() -> TestResult {
+    let period = unit_cycling::RAZING_PERIOD_TICKS;
+    let (short, long) = (2 * period, 4 * period);
+    let runs: Vec<Run> = [Variant::RazingCycleLive, Variant::RazingCycleBaseline]
+        .into_iter()
+        .flat_map(|variant| {
+            [short, long].map(|frames| Run {
+                variant,
+                frames,
+                repeat: 0,
+            })
+        })
+        .collect();
+    let directory = tempfile::tempdir()?;
+    let counts = count_all(&runs, directory.path())?;
+    let [live_short, live_long, base_short, base_long] = counts.as_slice() else {
+        return Err("invariant: count_all returns one count per run".into());
+    };
+    let report = format!(
+        "blocks allocated inside {WINDOW_FUNCTION} after {} warm ticks; windows of {short} and \
+         {long} ticks:\n  live {} (process {}), {} (process {})\n  baseline {} (process {}), \
+         {} (process {})",
+        4 * period,
+        live_short.window,
+        live_short.total,
+        live_long.window,
+        live_long.total,
+        base_short.window,
+        base_short.total,
+        base_long.window,
+        base_long.total
+    );
+    println!("{report}");
+    let live = i128::from(live_long.window) - i128::from(live_short.window);
+    let baseline = i128::from(base_long.window) - i128::from(base_short.window);
+    assert_eq!(
+        live - baseline,
+        0,
+        "the client's battle sync systems allocated {} times over {} ticks of death-spawned \
+         units arriving and expiring, beyond the drivers' and Bevy's own work\n{report}",
+        live - baseline,
+        long - short
     );
     Ok(())
 }

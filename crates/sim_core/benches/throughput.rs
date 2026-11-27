@@ -101,6 +101,14 @@ struct Scenario {
     /// expiries.
     #[serde(default)]
     spawner_units: u32,
+    /// Structures of the second player standing in the first army's path on a flat map (plan
+    /// `2026-12-01-death-spawns-and-hangar-commands` §5, the `razed` row): the archetype of the
+    /// catalog with the largest death spawn whose units have a timed life, found by property
+    /// (the lowest id among equals). The first army kills them on its way, so the measured ticks
+    /// include the deaths' pending spawns, the bursts of created units, their fights, clocks and
+    /// expiries.
+    #[serde(default)]
+    razed_structures: u32,
 }
 
 /// One kind of spellcaster in a spell scenario: `casters` units of `caster_slug` for the
@@ -137,6 +145,8 @@ impl Scenario {
             format!("{map}, {} hangar units", self.hangar_units)
         } else if self.spawner_units > 0 {
             format!("{map}, {} spawner units", self.spawner_units)
+        } else if self.razed_structures > 0 {
+            format!("{map}, {} razed structures", self.razed_structures)
         } else if self.spells.is_empty() {
             map
         } else {
@@ -206,6 +216,8 @@ fn build_world(
         .catalog
         .id_by_slug(&config.unit_slug)
         .ok_or("scenario unit_slug is not in the catalog")?;
+    // Before the armies, so no unit stands where a structure is placed.
+    spawn_razed_structures(&mut world, scenario)?;
     let far_edge = scenario.map_cells - 1 - FORMATION_MARGIN;
     let (mut blue, mut red) = (Vec::new(), Vec::new());
     for index in 0..scenario.units {
@@ -298,6 +310,56 @@ fn spawn_spawner_units(world: &mut SimWorld, count: u32) -> Result<Vec<EntityId>
             Ok(world.spawn_unit(kind, PlayerId(0), spawn)?)
         })
         .collect()
+}
+
+/// Columns of the razed structures' grid, centred on the map between the armies.
+const RAZED_COLUMNS: u32 = 4;
+
+/// Cells between the minimum cells of two neighbouring razed structures, beyond the footprint.
+const RAZED_GAP: u32 = 3;
+
+/// Places `scenario.razed_structures` structures of the archetype with the largest timed death
+/// spawn for the second player on a grid of [`RAZED_COLUMNS`] columns centred on the map, in the
+/// first army's diagonal path; none when the count is 0.
+fn spawn_razed_structures(world: &mut SimWorld, scenario: &Scenario) -> Result<(), Box<dyn Error>> {
+    let count = scenario.razed_structures;
+    if count == 0 {
+        return Ok(());
+    }
+    let (kind, (width, height)) = world
+        .catalog
+        .archetypes()
+        .filter_map(|arch| {
+            let spawn = arch
+                .capabilities
+                .death_spawn
+                .filter(|spawn| spawn.timed_life.is_some())?;
+            match arch.shape {
+                sim_types::ShapeKind::BuildingDome {
+                    footprint_w,
+                    footprint_h,
+                    ..
+                } => Some((
+                    spawn.count,
+                    std::cmp::Reverse(arch.unit_type_id),
+                    (u32::from(footprint_w), u32::from(footprint_h)),
+                )),
+                sim_types::ShapeKind::UnitSphere => None,
+            }
+        })
+        .max()
+        .map(|(_, std::cmp::Reverse(kind), size)| (kind, size))
+        .ok_or("a razed scenario needs a catalog with a structure that leaves timed units")?;
+    let rows = count.div_ceil(RAZED_COLUMNS);
+    let (step_x, step_y) = (width + RAZED_GAP, height + RAZED_GAP);
+    let left = (scenario.map_cells - RAZED_COLUMNS * step_x) / 2;
+    let top = (scenario.map_cells - rows * step_y) / 2;
+    for index in 0..count {
+        let x = left + (index % RAZED_COLUMNS) * step_x;
+        let y = top + (index / RAZED_COLUMNS) * step_y;
+        world.spawn_structure(kind, PlayerId(1), x, y)?;
+    }
+    Ok(())
 }
 
 /// The units alive in `world` that a clock will kill (spawned units with a timed life).
@@ -586,12 +648,14 @@ fn measure(
             if scenario.hangar_units > 0 {
                 members += launched_members(&world);
             }
-            if scenario.spawner_units > 0 {
+            if scenario.spawner_units > 0 || scenario.razed_structures > 0 {
                 members += timed_units(&world);
             }
         }
         let rate = f64::from(config.ticks) / started.elapsed().as_secs_f64();
-        let counted = scenario.hangar_units > 0 || scenario.spawner_units > 0;
+        let counted = scenario.hangar_units > 0
+            || scenario.spawner_units > 0
+            || scenario.razed_structures > 0;
         return Ok((rate, counted.then(|| (mean(members, config.ticks), 0.0))));
     }
     if scenario.map_file.is_some() {
@@ -651,7 +715,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let (rate, load) = measure(&config, &catalogs, scenario)?;
             samples.push(rate);
             if let Some((first, second)) = load {
-                loads.push(if scenario.spawner_units > 0 {
+                loads.push(if scenario.spawner_units > 0 || scenario.razed_structures > 0 {
                     format!(
                         "{}: {first:.1} spawned units alive per measured tick (the clock includes counting them)",
                         scenario.label()

@@ -27,24 +27,16 @@
 //!   [`SimulationDiagnostic::ProductionInvariant`]. Neither is silent.
 //! - Placement reads terrain and structures only, never other units (the effect engine's
 //!   placement rule, plan `2026-11-10` D-8; B-236): overlaps are separated by the next tick's
-//!   movement.
+//!   movement. The search and the clock draw are the world's shared spawn helpers
+//!   (`world::spawns`, plan `2026-12-01-death-spawns-and-hangar-commands` D-4).
 
-use crate::entity::{ActiveProjectile, Entity};
-use crate::movement::geometry::ground_footprint_connected;
-use crate::movement::{MotionPolicy, MovementInvariant, MovementLayer};
+use crate::entity::ActiveProjectile;
+use crate::movement::MovementInvariant;
 use crate::weapon_timing::SimulationDiagnostic;
 use crate::world::SimWorld;
-use rand::Rng;
 use sim_types::{
-    AttackOrigin, EntityId, ImpactSpawn, PlayerId, SimAngle, SimScalar, SimVec2, SpawnOrder, Tick,
-    UnitOrder,
+    AttackOrigin, EntityId, ImpactSpawn, PlayerId, SimAngle, SimVec2, SpawnOrder, Tick, UnitOrder,
 };
-
-/// Step between the rings of the placement search, world units (the effect engine's ring step).
-const RING_STEP: SimScalar = SimScalar::HALF;
-
-/// Directions searched on each ring, counter-clockwise from +x.
-const RING_DIRECTIONS: i32 = 8;
 
 /// One finished missile's spawn, waiting for the end of the projectile phase.
 #[derive(Debug, Clone, Copy)]
@@ -129,50 +121,9 @@ impl SimWorld {
         unit.pos_at_tick_start = place;
         unit.heading = pending.heading;
         unit.turret_angle = pending.heading;
-        unit.timed_life = pending.spawn.timed_life.map(|life| {
-            let extra = if life.random_extra_ticks == 0 {
-                0
-            } else {
-                self.rng.gen_range::<u16, _>(0..=life.random_extra_ticks)
-            };
-            life.ticks.saturating_add(extra)
-        });
+        prepared.entity.timed_life = self.draw_timed_life(pending.spawn.timed_life);
         let id = self.commit_spawn(prepared);
         self.give_spawn_order(id, pending);
-    }
-
-    /// The first point valid for the not yet committed `unit`'s movement layer among `centre`,
-    /// then the eight directions (counter-clockwise from +x) at 0.5, 1.0, … up to `range` world
-    /// units: the rings of the effect engine's placement search. Only terrain, structures and the
-    /// map edge count, as for a displacement's landing; other units never block the point.
-    fn spawn_place(&self, unit: &Entity, centre: SimVec2, range: SimScalar) -> Option<SimVec2> {
-        let policy = MotionPolicy::resolve(&self.catalog, &self.map, unit).ok()?;
-        let valid = |point: SimVec2| {
-            policy.contains(&self.map, point)
-                && (policy.layer != MovementLayer::Ground
-                    || ground_footprint_connected(
-                        &self.map,
-                        point,
-                        point,
-                        policy.terrain_radius(),
-                        None,
-                    ))
-        };
-        if valid(centre) {
-            return Some(centre);
-        }
-        let mut distance = RING_STEP;
-        while distance <= range {
-            for step in 0..RING_DIRECTIONS {
-                let angle = SimAngle::from_degrees(360 / RING_DIRECTIONS * step);
-                let point = centre + SimVec2::new(angle.cos(), angle.sin()) * distance;
-                if valid(point) {
-                    return Some(point);
-                }
-            }
-            distance = distance.saturating_add(RING_STEP);
-        }
-        None
     }
 
     /// Gives the created unit `id` its first order (D-4): attack the missile's target while it
@@ -230,8 +181,8 @@ impl SimWorld {
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {
-    //! Plan `2026-11-28-broodlings` D-4, D-7: the placement search, and the checksum's reading
-    //! of a magazine, a clock and an impact spawn.
+    //! Plan `2026-11-28-broodlings` D-7: the checksum's reading of a magazine, a clock and an
+    //! impact spawn (the placement search's test moved with it to `world::spawns`).
     use crate::test_support::world;
     use sim_map::{CliffLevel, GameMap, MapCell};
     use sim_types::{MoverType, PlayerId, SimScalar, SimVec2, UnitTypeId};
@@ -253,31 +204,6 @@ mod tests {
             .collect();
         domes.sort();
         (ground[0], domes[0])
-    }
-
-    /// An open point is its own place; a point inside a structure moves to the first ring point
-    /// clear of it, within the range; a range too short finds none.
-    #[test]
-    fn the_search_takes_the_centre_or_the_first_clear_ring_point() {
-        let map = GameMap::new(48, 48, MapCell::default_ground(CliffLevel(0))).expect("map");
-        let mut world = world(map, 1);
-        let (unit, dome) = ground_and_structure(&world);
-        let structure = world
-            .spawn_structure(dome, PlayerId(1), 20, 20)
-            .expect("a structure");
-        let centre = world.entities[&structure].position;
-        let probe = world
-            .prepare_spawn(unit, PlayerId(0), centre, 0)
-            .expect("a spawn")
-            .entity;
-        let open = SimVec2::from_i32(5, 5);
-        assert_eq!(world.spawn_place(&probe, open, SimScalar::ZERO), Some(open));
-        let place = world
-            .spawn_place(&probe, centre, SimScalar::from_i32(5))
-            .expect("a place within 5");
-        assert!(place.distance(centre) <= SimScalar::from_i32(5));
-        assert_ne!(place, centre);
-        assert_eq!(world.spawn_place(&probe, centre, SimScalar::ZERO), None);
     }
 
     /// B-10: two worlds differing only in a magazine count, a clock, or an impact spawn value

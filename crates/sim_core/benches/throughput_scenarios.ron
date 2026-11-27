@@ -49,5 +49,13 @@
         // property) attack-moving with the first army; 250 warm ticks bring the armies together,
         // and the measured ticks include releases, spawns, clocks and expiries.
         (map_cells: 64, units: 200, warm_ticks: 250, spawner_units: 12),
+        // Razed (plan 2026-12-01-death-spawns-and-hangar-commands §5, re-designed by its WPA4):
+        // the 64x64 battle of 100 units with 12 structures of the second player that leave the
+        // most timed units when they die (found by property: 9 Broodlings each) standing in the
+        // first army's path; 250 warm ticks bring the first army to them, and the measured ticks
+        // include their deaths, the bursts of created units, their fights, clocks and expiries.
+        // At 200 units the twelve 5x5 structures made a measured tick cost 90.0 M instructions,
+        // above the 400-unit row's 54.4 M; at 100 it costs 38.1 M.
+        (map_cells: 64, units: 100, warm_ticks: 250, razed_structures: 12),
     ],
 )

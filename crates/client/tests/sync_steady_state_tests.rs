@@ -1977,6 +1977,31 @@ fn hangar_members_cycling_create_and_remove_nothing() {
     );
 }
 
+/// DS-18 (plan `2026-12-01-death-spawns-and-hangar-commands` §6.3): a weaponless structure with
+/// media of the enemy, given the shipped death spawn with the most units, is raised and killed
+/// beside the enemy base every 200 ticks, so its units arrive and expire on their own clocks.
+/// After the render pool reaches its regime, a window of three cycles (1,200 ticks with the
+/// warm-up's) creates and removes no asset and spawns no entity, with R-1's rules, and nothing
+/// spawned beyond the pool's bound.
+#[test]
+fn razing_cycling_create_and_remove_nothing() {
+    let mut harness = Harness::battle();
+    settle(&mut harness, true);
+    let assets = battle_harness::assets();
+    let mut cycle = unit_cycling::stage_razing(harness.world_mut(), &assets);
+    harness.resume();
+    let spawned = cycle.spawned;
+    let mut drive = move |harness: &mut Harness| {
+        cycle.advance(harness.world_mut());
+    };
+    let period = unit_cycling::RAZING_PERIOD_TICKS;
+    warm_to_regime(&mut harness, period, &mut drive);
+    assert_cycling_window_is_steady(&mut harness, period, &mut drive, &|bubble| {
+        bubble.unit_type == spawned
+    });
+    assert_eq!(pool_stats(&harness).beyond_bound, 0, "within the bound");
+}
+
 // --- A mixed right click (plan 2026-12-01-rallies-and-smart-command P-6) ------------------------
 
 /// Frames of the window after a mixed right click.

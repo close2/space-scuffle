@@ -40,11 +40,17 @@ use sim_types::weapon::WeaponSpec;
 pub struct ParkedBattleBubble;
 
 /// The bound on the bubbles one session can present at once, with the terms that set it
-/// (plan D-3): `total = start + players × (army + transient)`.
+/// (plan D-3; plan `2026-12-01-death-spawns-and-hangar-commands` D-8):
+/// `total = start + death + players × (army + transient)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RenderPoolBound {
     /// Records in the session's first presented snapshot (`N₀`).
     pub start: u32,
+    /// Units the deaths of structures can keep presented at once on their own clocks: the
+    /// timed death spawns of every start record that leaves one, plus, per player, the largest
+    /// timed death spawn of the catalog (one host built later dying). Structures take no supply,
+    /// so no supply-based term bounds them.
+    pub death: u32,
     /// Players of the session (`|P|`).
     pub players: u32,
     /// Units one player's supply can add by training (`A`): the supply cap over the cheapest
@@ -63,13 +69,38 @@ impl RenderPoolBound {
     #[must_use]
     pub fn for_session(catalog: &UnitCatalog, players: usize, start: usize) -> Self {
         let (transient, host) = transient_term(catalog);
+        let players = u32::try_from(players).unwrap_or(u32::MAX);
+        let largest_death = catalog
+            .archetypes()
+            .map(timed_death_spawn)
+            .max()
+            .unwrap_or(0);
         Self {
             start: u32::try_from(start).unwrap_or(u32::MAX),
-            players: u32::try_from(players).unwrap_or(u32::MAX),
+            death: players.saturating_mul(largest_death),
+            players,
             army: army_term(catalog),
             transient,
             host,
         }
+    }
+
+    /// Adds to [`Self::death`] the timed death spawns of the start records whose archetypes are
+    /// `start_types` (the first presented snapshot's records), read from `catalog`: every
+    /// structure present at the start may die at once.
+    #[must_use]
+    pub fn with_start_records(
+        mut self,
+        catalog: &UnitCatalog,
+        start_types: impl IntoIterator<Item = UnitTypeId>,
+    ) -> Self {
+        let present: u32 = start_types
+            .into_iter()
+            .filter_map(|unit_type| catalog.get(unit_type).ok())
+            .map(timed_death_spawn)
+            .fold(0, u32::saturating_add);
+        self.death = self.death.saturating_add(present);
+        self
     }
 
     /// The bound of a session with no catalog to read (no world is presented): its start alone,
@@ -78,6 +109,7 @@ impl RenderPoolBound {
     pub fn without_catalog(players: usize, start: usize) -> Self {
         Self {
             start: u32::try_from(start).unwrap_or(u32::MAX),
+            death: 0,
             players: u32::try_from(players).unwrap_or(u32::MAX),
             army: 0,
             transient: 0,
@@ -91,9 +123,21 @@ impl RenderPoolBound {
         let per_player = self.army.saturating_add(self.transient);
         let total = self
             .start
+            .saturating_add(self.death)
             .saturating_add(self.players.saturating_mul(per_player));
         usize::try_from(total).unwrap_or(usize::MAX)
     }
+}
+
+/// Units `archetype` leaves on its own clock when it dies (plan
+/// `2026-12-01-death-spawns-and-hangar-commands` D-8): its death spawn's count when the created
+/// units have a timed life, else 0 (units without one live until killed, like trained units).
+fn timed_death_spawn(archetype: &UnitArchetype) -> u32 {
+    archetype
+        .capabilities
+        .death_spawn
+        .filter(|spawn| spawn.timed_life.is_some())
+        .map_or(0, |spawn| u32::from(spawn.count))
 }
 
 /// Supply cost of `archetype` as the bound counts it: a free unit counts as costing 1.
@@ -516,8 +560,8 @@ mod tests {
 
     // --- R-9: the bound ---------------------------------------------------------------------
 
-    /// The shipped catalog with every hangar, strike magazine and impact spawn removed: no
-    /// archetype is a host.
+    /// The shipped catalog with every hangar, strike magazine, impact spawn and death spawn
+    /// removed: no archetype is a host.
     fn without_hosts() -> UnitCatalog {
         let mut catalog = sim_fixtures::shipped_catalogs().units;
         let ids: Vec<UnitTypeId> = catalog.archetypes().map(|a| a.unit_type_id).collect();
@@ -525,6 +569,7 @@ mod tests {
             let archetype = catalog.get_mut(id).expect("invariant: listed id");
             archetype.capabilities.hangar = None;
             archetype.capabilities.strike_magazine = None;
+            archetype.capabilities.death_spawn = None;
             let own = [
                 archetype.weapon.as_mut(),
                 archetype.ground_weapon.as_mut(),
@@ -592,7 +637,77 @@ mod tests {
     fn a_catalog_without_hosts_has_no_transient_term() {
         let bound = RenderPoolBound::for_session(&without_hosts(), 2, 30);
         assert_eq!((bound.transient, bound.host), (0, None));
+        assert_eq!(bound.death, 0);
         assert_eq!(bound.total(), 30 + 2 * bound.army as usize);
+    }
+
+    // --- DS-17: the death term (plan 2026-12-01-death-spawns-and-hangar-commands D-8) --------
+
+    /// The shipped structures with a death spawn, by id, with their counts.
+    fn death_hosts() -> Vec<(UnitTypeId, u32)> {
+        let mut hosts: Vec<(UnitTypeId, u32)> = sim_fixtures::shipped_catalogs()
+            .units
+            .archetypes()
+            .filter_map(|a| {
+                a.capabilities
+                    .death_spawn
+                    .map(|spawn| (a.unit_type_id, u32::from(spawn.count)))
+            })
+            .collect();
+        hosts.sort_unstable();
+        hosts
+    }
+
+    /// DS-17: the death term is the start records' death spawns plus, per player, the largest
+    /// of the catalog; it adds to the total and leaves the other terms as they were.
+    #[test]
+    fn the_death_term_counts_the_start_records_and_one_largest_host_per_player() {
+        let catalog = sim_fixtures::shipped_catalogs().units;
+        let hosts = death_hosts();
+        let largest = hosts.iter().map(|(_, count)| *count).max().expect("hosts");
+        let (small, small_count) = *hosts
+            .iter()
+            .min_by_key(|(id, count)| (*count, *id))
+            .expect("hosts");
+        let plain = catalog
+            .archetypes()
+            .find(|a| a.capabilities.death_spawn.is_none())
+            .map(|a| a.unit_type_id)
+            .expect("an archetype that leaves nothing");
+        let without = RenderPoolBound::for_session(&without_hosts(), 2, 3);
+        let bound = RenderPoolBound::for_session(&catalog, 2, 3)
+            .with_start_records(&catalog, [small, small, plain]);
+        assert_eq!(bound.death, 2 * small_count + 2 * largest);
+        assert_eq!(
+            (bound.start, bound.army, bound.players),
+            (without.start, without.army, without.players)
+        );
+        assert_eq!(
+            bound.total(),
+            3 + bound.death as usize + 2 * (bound.army as usize + bound.transient as usize)
+        );
+    }
+
+    /// DS-17: a catalog without death spawns gives a death term of 0, start records or not; a
+    /// death spawn whose units live until killed adds nothing, like an untimed impact spawn.
+    #[test]
+    fn a_catalog_without_timed_death_spawns_has_no_death_term() {
+        let catalog = without_hosts();
+        let (host, _) = death_hosts()[0];
+        let bound =
+            RenderPoolBound::for_session(&catalog, 2, 2).with_start_records(&catalog, [host, host]);
+        assert_eq!(bound.death, 0);
+        let mut untimed = sim_fixtures::shipped_catalogs().units;
+        let ids: Vec<UnitTypeId> = untimed.archetypes().map(|a| a.unit_type_id).collect();
+        for id in ids {
+            let archetype = untimed.get_mut(id).expect("invariant: listed id");
+            if let Some(spawn) = archetype.capabilities.death_spawn.as_mut() {
+                spawn.timed_life = None;
+            }
+        }
+        let bound =
+            RenderPoolBound::for_session(&untimed, 2, 2).with_start_records(&untimed, [host]);
+        assert_eq!(bound.death, 0);
     }
 
     #[test]
@@ -741,7 +856,15 @@ mod tests {
             assert!(bound.transient >= CAP * members / hangar_host.supply_cost.max(1));
         }
         let per_player = bound.army as usize + bound.transient as usize;
-        assert_eq!(bound.total(), 40 + 2 * per_player);
+        // One largest death-spawn host per player (plan
+        // `2026-12-01-death-spawns-and-hangar-commands` D-8); no start record here.
+        let largest = death_hosts()
+            .iter()
+            .map(|(_, count)| *count as usize)
+            .max()
+            .expect("shipped hosts");
+        assert_eq!(bound.death as usize, 2 * largest);
+        assert_eq!(bound.total(), 40 + 2 * largest + 2 * per_player);
     }
 
     #[test]

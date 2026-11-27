@@ -1648,6 +1648,15 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
+            // 5.0.14 ZergBuildingDies9 (liberty BehaviorData:1278-1285, DisableWhileUnderConstruction) on Hatchery
+            // (liberty UnitData:8251): ZergBuildingSpawnBroodling9Delay ExpireDelay 0.5 = 9 ticks (liberty
+            // EffectData:1587-1592), ZergBuildingSpawnBroodling9 SpawnCount 9, Placement 0, TargetPoint, Caster
+            // (:2800-2808); BroodlingTimedLife -> BroodlingFate Duration 8 = 143 ticks (liberty EffectData:772-775,
+            // BehaviorData:650-655), TimedLife DurationRandomMax 0.3 = 5 ticks (core BehaviorData:105-117);
+            // plan 2026-12-01-death-spawns-and-hangar-commands D-1 (B-234).
+            death_spawn: Some((unit: "brood_mite", count: 9, delay_ticks: 9, search_range: 0.0,
+                timed_life: Some((ticks: 143, random_extra_ticks: 5)),
+                disabled_while_constructing: true)),
             veo_prompts: {},
         ),
         (
@@ -1703,6 +1712,15 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
+            // 5.0.14 ZergBuildingDies9 (liberty BehaviorData:1278-1285, DisableWhileUnderConstruction) on Lair
+            // (liberty UnitData:8333): ZergBuildingSpawnBroodling9Delay ExpireDelay 0.5 = 9 ticks (liberty
+            // EffectData:1587-1592), ZergBuildingSpawnBroodling9 SpawnCount 9, Placement 0, TargetPoint, Caster
+            // (:2800-2808); BroodlingTimedLife -> BroodlingFate Duration 8 = 143 ticks (liberty EffectData:772-775,
+            // BehaviorData:650-655), TimedLife DurationRandomMax 0.3 = 5 ticks (core BehaviorData:105-117);
+            // plan 2026-12-01-death-spawns-and-hangar-commands D-1 (B-234).
+            death_spawn: Some((unit: "brood_mite", count: 9, delay_ticks: 9, search_range: 0.0,
+                timed_life: Some((ticks: 143, random_extra_ticks: 5)),
+                disabled_while_constructing: true)),
             veo_prompts: {},
         ),
         (
@@ -1758,6 +1776,15 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
+            // 5.0.14 ZergBuildingDies9 (liberty BehaviorData:1278-1285, DisableWhileUnderConstruction) on Hive
+            // (liberty UnitData:8412): ZergBuildingSpawnBroodling9Delay ExpireDelay 0.5 = 9 ticks (liberty
+            // EffectData:1587-1592), ZergBuildingSpawnBroodling9 SpawnCount 9, Placement 0, TargetPoint, Caster
+            // (:2800-2808); BroodlingTimedLife -> BroodlingFate Duration 8 = 143 ticks (liberty EffectData:772-775,
+            // BehaviorData:650-655), TimedLife DurationRandomMax 0.3 = 5 ticks (core BehaviorData:105-117);
+            // plan 2026-12-01-death-spawns-and-hangar-commands D-1 (B-234).
+            death_spawn: Some((unit: "brood_mite", count: 9, delay_ticks: 9, search_range: 0.0,
+                timed_life: Some((ticks: 143, random_extra_ticks: 5)),
+                disabled_while_constructing: true)),
             veo_prompts: {},
         ),
         (
@@ -1846,6 +1873,15 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
+            // 5.0.14 ZergBuildingDies6 (liberty BehaviorData:1270-1277, DisableWhileUnderConstruction) on SpawningPool
+            // (liberty UnitData:8920): ZergBuildingSpawnBroodling6Delay ExpireDelay 0.5 = 9 ticks (liberty
+            // EffectData:1581-1586), ZergBuildingSpawnBroodling6 SpawnCount 6, Placement 0, TargetPoint, Caster
+            // (:2791-2799); BroodlingTimedLife -> BroodlingFate Duration 8 = 143 ticks (liberty EffectData:772-775,
+            // BehaviorData:650-655), TimedLife DurationRandomMax 0.3 = 5 ticks (core BehaviorData:105-117);
+            // plan 2026-12-01-death-spawns-and-hangar-commands D-1 (B-234).
+            death_spawn: Some((unit: "brood_mite", count: 6, delay_ticks: 9, search_range: 0.0,
+                timed_life: Some((ticks: 143, random_extra_ticks: 5)),
+                disabled_while_constructing: true)),
             veo_prompts: {},
         ),
         (
@@ -1891,6 +1927,15 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
+            // 5.0.14 ZergBuildingDies6 (liberty BehaviorData:1270-1277, DisableWhileUnderConstruction) on EvolutionChamber
+            // (liberty UnitData:8478): ZergBuildingSpawnBroodling6Delay ExpireDelay 0.5 = 9 ticks (liberty
+            // EffectData:1581-1586), ZergBuildingSpawnBroodling6 SpawnCount 6, Placement 0, TargetPoint, Caster
+            // (:2791-2799); BroodlingTimedLife -> BroodlingFate Duration 8 = 143 ticks (liberty EffectData:772-775,
+            // BehaviorData:650-655), TimedLife DurationRandomMax 0.3 = 5 ticks (core BehaviorData:105-117);
+            // plan 2026-12-01-death-spawns-and-hangar-commands D-1 (B-234).
+            death_spawn: Some((unit: "brood_mite", count: 6, delay_ticks: 9, search_range: 0.0,
+                timed_life: Some((ticks: 143, random_extra_ticks: 5)),
+                disabled_while_constructing: true)),
             veo_prompts: {},
         ),
         (
@@ -2094,6 +2139,15 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
+            // 5.0.14 ZergBuildingDies6 (liberty BehaviorData:1270-1277, DisableWhileUnderConstruction) on RoachWarren
+            // (liberty UnitData:11799): ZergBuildingSpawnBroodling6Delay ExpireDelay 0.5 = 9 ticks (liberty
+            // EffectData:1581-1586), ZergBuildingSpawnBroodling6 SpawnCount 6, Placement 0, TargetPoint, Caster
+            // (:2791-2799); BroodlingTimedLife -> BroodlingFate Duration 8 = 143 ticks (liberty EffectData:772-775,
+            // BehaviorData:650-655), TimedLife DurationRandomMax 0.3 = 5 ticks (core BehaviorData:105-117);
+            // plan 2026-12-01-death-spawns-and-hangar-commands D-1 (B-234).
+            death_spawn: Some((unit: "brood_mite", count: 6, delay_ticks: 9, search_range: 0.0,
+                timed_life: Some((ticks: 143, random_extra_ticks: 5)),
+                disabled_while_constructing: true)),
             veo_prompts: {},
         ),
         (
@@ -2138,6 +2192,15 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
+            // 5.0.14 ZergBuildingDies6 (liberty BehaviorData:1270-1277, DisableWhileUnderConstruction) on BanelingNest
+            // (liberty UnitData:10000): ZergBuildingSpawnBroodling6Delay ExpireDelay 0.5 = 9 ticks (liberty
+            // EffectData:1581-1586), ZergBuildingSpawnBroodling6 SpawnCount 6, Placement 0, TargetPoint, Caster
+            // (:2791-2799); BroodlingTimedLife -> BroodlingFate Duration 8 = 143 ticks (liberty EffectData:772-775,
+            // BehaviorData:650-655), TimedLife DurationRandomMax 0.3 = 5 ticks (core BehaviorData:105-117);
+            // plan 2026-12-01-death-spawns-and-hangar-commands D-1 (B-234).
+            death_spawn: Some((unit: "brood_mite", count: 6, delay_ticks: 9, search_range: 0.0,
+                timed_life: Some((ticks: 143, random_extra_ticks: 5)),
+                disabled_while_constructing: true)),
             veo_prompts: {},
         ),
         (
@@ -2182,6 +2245,15 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
+            // 5.0.14 ZergBuildingDies6 (liberty BehaviorData:1270-1277, DisableWhileUnderConstruction) on HydraliskDen
+            // (liberty UnitData:8983): ZergBuildingSpawnBroodling6Delay ExpireDelay 0.5 = 9 ticks (liberty
+            // EffectData:1581-1586), ZergBuildingSpawnBroodling6 SpawnCount 6, Placement 0, TargetPoint, Caster
+            // (:2791-2799); BroodlingTimedLife -> BroodlingFate Duration 8 = 143 ticks (liberty EffectData:772-775,
+            // BehaviorData:650-655), TimedLife DurationRandomMax 0.3 = 5 ticks (core BehaviorData:105-117);
+            // plan 2026-12-01-death-spawns-and-hangar-commands D-1 (B-234).
+            death_spawn: Some((unit: "brood_mite", count: 6, delay_ticks: 9, search_range: 0.0,
+                timed_life: Some((ticks: 143, random_extra_ticks: 5)),
+                disabled_while_constructing: true)),
             veo_prompts: {},
         ),
         (
@@ -2226,6 +2298,15 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
+            // 5.0.14 ZergBuildingDies6 (liberty BehaviorData:1270-1277, DisableWhileUnderConstruction) on LurkerDenMP
+            // (liberty UnitData:669): ZergBuildingSpawnBroodling6Delay ExpireDelay 0.5 = 9 ticks (liberty
+            // EffectData:1581-1586), ZergBuildingSpawnBroodling6 SpawnCount 6, Placement 0, TargetPoint, Caster
+            // (:2791-2799); BroodlingTimedLife -> BroodlingFate Duration 8 = 143 ticks (liberty EffectData:772-775,
+            // BehaviorData:650-655), TimedLife DurationRandomMax 0.3 = 5 ticks (core BehaviorData:105-117);
+            // plan 2026-12-01-death-spawns-and-hangar-commands D-1 (B-234).
+            death_spawn: Some((unit: "brood_mite", count: 6, delay_ticks: 9, search_range: 0.0,
+                timed_life: Some((ticks: 143, random_extra_ticks: 5)),
+                disabled_while_constructing: true)),
             veo_prompts: {},
         ),
         (
@@ -2274,6 +2355,15 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
+            // 5.0.14 ZergBuildingDies6 (liberty BehaviorData:1270-1277, DisableWhileUnderConstruction) on Spire
+            // (liberty UnitData:9046): ZergBuildingSpawnBroodling6Delay ExpireDelay 0.5 = 9 ticks (liberty
+            // EffectData:1581-1586), ZergBuildingSpawnBroodling6 SpawnCount 6, Placement 0, TargetPoint, Caster
+            // (:2791-2799); BroodlingTimedLife -> BroodlingFate Duration 8 = 143 ticks (liberty EffectData:772-775,
+            // BehaviorData:650-655), TimedLife DurationRandomMax 0.3 = 5 ticks (core BehaviorData:105-117);
+            // plan 2026-12-01-death-spawns-and-hangar-commands D-1 (B-234).
+            death_spawn: Some((unit: "brood_mite", count: 6, delay_ticks: 9, search_range: 0.0,
+                timed_life: Some((ticks: 143, random_extra_ticks: 5)),
+                disabled_while_constructing: true)),
             veo_prompts: {},
         ),
         (
@@ -2319,6 +2409,15 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
+            // 5.0.14 ZergBuildingDies6 (liberty BehaviorData:1270-1277, DisableWhileUnderConstruction) on GreaterSpire
+            // (liberty UnitData:9117): ZergBuildingSpawnBroodling6Delay ExpireDelay 0.5 = 9 ticks (liberty
+            // EffectData:1581-1586), ZergBuildingSpawnBroodling6 SpawnCount 6, Placement 0, TargetPoint, Caster
+            // (:2791-2799); BroodlingTimedLife -> BroodlingFate Duration 8 = 143 ticks (liberty EffectData:772-775,
+            // BehaviorData:650-655), TimedLife DurationRandomMax 0.3 = 5 ticks (core BehaviorData:105-117);
+            // plan 2026-12-01-death-spawns-and-hangar-commands D-1 (B-234).
+            death_spawn: Some((unit: "brood_mite", count: 6, delay_ticks: 9, search_range: 0.0,
+                timed_life: Some((ticks: 143, random_extra_ticks: 5)),
+                disabled_while_constructing: true)),
             veo_prompts: {},
         ),
         (
@@ -2363,6 +2462,15 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
+            // 5.0.14 ZergBuildingDies6 (liberty BehaviorData:1270-1277, DisableWhileUnderConstruction) on InfestationPit
+            // (liberty UnitData:2070): ZergBuildingSpawnBroodling6Delay ExpireDelay 0.5 = 9 ticks (liberty
+            // EffectData:1581-1586), ZergBuildingSpawnBroodling6 SpawnCount 6, Placement 0, TargetPoint, Caster
+            // (:2791-2799); BroodlingTimedLife -> BroodlingFate Duration 8 = 143 ticks (liberty EffectData:772-775,
+            // BehaviorData:650-655), TimedLife DurationRandomMax 0.3 = 5 ticks (core BehaviorData:105-117);
+            // plan 2026-12-01-death-spawns-and-hangar-commands D-1 (B-234).
+            death_spawn: Some((unit: "brood_mite", count: 6, delay_ticks: 9, search_range: 0.0,
+                timed_life: Some((ticks: 143, random_extra_ticks: 5)),
+                disabled_while_constructing: true)),
             veo_prompts: {},
         ),
         (
@@ -2404,6 +2512,15 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
+            // 5.0.14 ZergBuildingDies6 (liberty BehaviorData:1270-1277, DisableWhileUnderConstruction) on NydusNetwork
+            // (liberty UnitData:9936): ZergBuildingSpawnBroodling6Delay ExpireDelay 0.5 = 9 ticks (liberty
+            // EffectData:1581-1586), ZergBuildingSpawnBroodling6 SpawnCount 6, Placement 0, TargetPoint, Caster
+            // (:2791-2799); BroodlingTimedLife -> BroodlingFate Duration 8 = 143 ticks (liberty EffectData:772-775,
+            // BehaviorData:650-655), TimedLife DurationRandomMax 0.3 = 5 ticks (core BehaviorData:105-117);
+            // plan 2026-12-01-death-spawns-and-hangar-commands D-1 (B-234).
+            death_spawn: Some((unit: "brood_mite", count: 6, delay_ticks: 9, search_range: 0.0,
+                timed_life: Some((ticks: 143, random_extra_ticks: 5)),
+                disabled_while_constructing: true)),
             veo_prompts: {},
         ),
         (
@@ -2448,6 +2565,15 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
+            // 5.0.14 ZergBuildingDies6 (liberty BehaviorData:1270-1277, DisableWhileUnderConstruction) on UltraliskCavern
+            // (liberty UnitData:9249): ZergBuildingSpawnBroodling6Delay ExpireDelay 0.5 = 9 ticks (liberty
+            // EffectData:1581-1586), ZergBuildingSpawnBroodling6 SpawnCount 6, Placement 0, TargetPoint, Caster
+            // (:2791-2799); BroodlingTimedLife -> BroodlingFate Duration 8 = 143 ticks (liberty EffectData:772-775,
+            // BehaviorData:650-655), TimedLife DurationRandomMax 0.3 = 5 ticks (core BehaviorData:105-117);
+            // plan 2026-12-01-death-spawns-and-hangar-commands D-1 (B-234).
+            death_spawn: Some((unit: "brood_mite", count: 6, delay_ticks: 9, search_range: 0.0,
+                timed_life: Some((ticks: 143, random_extra_ticks: 5)),
+                disabled_while_constructing: true)),
             veo_prompts: {},
         ),
     ]

@@ -7,6 +7,12 @@
 //!   sixteen marching cases including saddles, stacked runs, abyss and ramps of eight directions;
 //! - the ramp-geometry fixture of plan `2026-11-09-ramp-geometry` T0 ([`fixture_map`]): ramp
 //!   stations in every direction, beside the abyss, recessed and half-recessed;
+//! - the diagonal fixture of plan `2026-12-01-straight-diagonal-cliffs` §4.0
+//!   ([`diagonal_fixture`]): one example of every kind of diagonal cliff, corner and fallback;
+//! - [`diagonal_cuts`], [`diagonal_runs`] and [`void_runs`]: that plan's full cuts (D-1) and the
+//!   straight lines they and the void diagonals (D-6) must draw, re-implemented from the plan and
+//!   reading the map's cells directly, never the mesher's predicate;
+//! - [`leaky_chunk_seams`], the seam comparison of `terrain_tests.rs` for any map;
 //! - [`MapMesh`], every chunk triangle of a map bucketed by the cells it may touch;
 //! - [`clip_to_column`], a Sutherland–Hodgman clip of a 3D triangle against an axis-aligned XZ box
 //!   (the open column above a cell), interpolating the altitude along clipped edges.
@@ -34,7 +40,9 @@ use std::path::PathBuf;
 
 use bevy::prelude::{Vec2, Vec3};
 use client::resolve_assets_dir;
-use client::terrain::mesher::{build_chunk_mesh, MesherScratch, CHUNK_DUAL_CELLS, RAIL_WIDTH};
+use client::terrain::mesher::{
+    build_chunk_mesh, cliff_level_height, MesherScratch, CHUNK_DUAL_CELLS, RAIL_WIDTH,
+};
 use sim_map::grid::{
     CellFlags, CliffLevel, GameMap, MapCell, RampDir, TerrainKind, MAX_RAMP_RUN_CELLS,
 };
@@ -591,4 +599,522 @@ pub fn clip_to_column(t: &[Vec3; 3], min: Vec2, max: Vec2) -> Clipped {
         .keep(|p| max.x - p.x)
         .keep(|p| p.z - min.y)
         .keep(|p| max.y - p.z)
+}
+
+// -----------------------------------------------------------------------------
+// The diagonal fixture (plan 2026-12-01-straight-diagonal-cliffs §4.0)
+// -----------------------------------------------------------------------------
+
+/// Width of the diagonal fixture in cells: four chunks, so its last seam is the map's edge.
+pub const DIAGONAL_FIXTURE_WIDTH: u32 = 64;
+
+/// Height of the diagonal fixture in cells.
+pub const DIAGONAL_FIXTURE_HEIGHT: u32 = 48;
+
+/// The cells of [`diagonal_fixture`], row 0 (`y = 0`) first and column `x` at character `x`:
+/// `0` to `2` a plateau of that level, `a` abyss, `s` a level-0 ramp cell ascending south.
+///
+/// The features, each in its own box on level-0 ground, at least one cell from the next
+/// (numbered by the rows of plan §4.0):
+/// - (1) `x 1..=8, y 1..=8`: a level-1 staircase `x + y <= 11`, both ends on straight walls; its
+///   three other corners are rectangle corners (6).
+/// - (14) `x 11..=21, y 1..=11`: a staircase `y <= x - 6`, whose cut cell `(15, 9)` has its centre on
+///   the chunk seam `x = 15.5`.
+/// - (2) `x 24..=37, y 1..=11`: a staircase that ends at the concave corner `(32, 6)` of a long wall.
+/// - (3) `x 40..=50, y 1..=8`: a one-step notch at `x = 45` between two long walls.
+/// - (12) `x 53..=62, y 1..=10`: a staircase whose top end `(56, 10)` lies beside the ramp `s` at
+///   `(55..=56, 11)`, so the last cut before it falls back.
+/// - (11) `x 4..=26, y 14..=30`: a stacked staircase 0/1/2 (`x + y <= 43` level 1, `<= 40` level 2),
+///   both runs crossing the seam `x = 15.5` with a cut centre on it.
+/// - (7) `x 29..=46, y 15..=21`: a one-cell diagonal ridge, a two-cell band and a three-cell band.
+/// - (8) `x 51..=62, y 14..=30`: two plateaus with a one-cell diagonal low channel between them.
+/// - (4) `x 29..=40, y 24..=31`: an isolated concave corner, ground (an L).
+/// - (5) `x 1..=12, y 34..=46`: an isolated concave corner, void (an L around abyss).
+/// - (9) `x 15..=28, y 34..=46`: a diagonal abyss canyon through level-1 ground.
+/// - (10) `x 32..=43, y 35..=46`: a staircase whose low side is abyss from `y = 40` up, ground below.
+/// - (13) `x 45..=62, y 35..=43`: a roof whose two staircases meet at the apex `(54, 44)`.
+pub const DIAGONAL_FIXTURE_ROWS: [&str; 48] = [
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    "0111111110011111111111001111111111111100111111111110011111111110",
+    "0111111110011111111111001111111111111100111111111110011111111110",
+    "0111111110011111111111001111111111111100111111111110011111111110",
+    "0111111100011111111111001111111111111100111111111110011111111110",
+    "0111111000011111111111001111111111111100111111111110011111111100",
+    "0111110000001111111111001111111100000000111111111110011111111000",
+    "0111100000000111111111001111111000000000111111111110011111110000",
+    "0111000000000011111111001111110000000000111110000000011111100000",
+    "0000000000000001111111001111100000000000000000000000011111000000",
+    "0000000000000000111111001111000000000000000000000000011110000000",
+    "0000000000000000011111001110000000000000000000000000000ss0000000",
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    "0000222222222222222222222220000000000000000000000001111111111010",
+    "0000222222222222222222222210010001100001110000000001111111110110",
+    "0000222222222222222222222110001000110000111000000001111111101110",
+    "0000222222222222222222221110000100011000011100000001111111011110",
+    "0000222222222222222222211100000010001100001110000001111110111110",
+    "0000222222222222222222111000000001000110000111000001111101111110",
+    "0000222222222222222221110000000000100011000011100001111011111110",
+    "0000222222222222222211100000000000010001100000000001110111111110",
+    "0000222222222222222111000000000000000000000000000001101111111110",
+    "0000222222222222221110000000000000000000000000000001011111111110",
+    "0000222222222222211100000000011111111111100000000000111111111110",
+    "0000222222222222111000000000011111111111100000000001111111111110",
+    "0000222222222221110000000000011111111111100000000001111111111110",
+    "0000222222222211100000000000011111111111100000000001111111111110",
+    "0000222222222111000000000000011110000000000000000001111111111110",
+    "0000222222221110000000000000011110000000000000000001111111111110",
+    "0000222222211100000000000000011110000000000000000001111111111110",
+    "0000000000000000000000000000011110000000000000000000000000000000",
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    "01111111111110011aaaa1111111100000000000000000000000000000000000",
+    "011111111111100111aaaa111111100011111111100001111111111111111110",
+    "0111111111111001111aaaa11111100011111111000000111111111111111100",
+    "01111111111110011111aaaa1111100011111110000000011111111111111000",
+    "01111aaaaaaaa00111111aaaa111100011111100000000001111111111110000",
+    "01111aaaaaaaa001111111aaaa11100011111000000000000111111111100000",
+    "01111aaaaaaaa0011111111aaaa110001111aaaaaaaa00000011111111000000",
+    "01111aaaaaaaa00111111111aaaa1000111aaaaaaaaa00000001111110000000",
+    "01111aaaaaaaa001111111111aaaa00011aaaaaaaaaa00000000111100000000",
+    "01111aaaaaaaa0011111111111aaa0001aaaaaaaaaaa00000000011000000000",
+    "01111aaaaaaaa00111111111111aa000aaaaaaaaaaaa00000000000000000000",
+    "01111aaaaaaaa001111111111111a000aaaaaaaaaaaa00000000000000000000",
+    "01111aaaaaaaa0011111111111111000aaaaaaaaaaaa00000000000000000000",
+    "0000000000000000000000000000000000000000000000000000000000000000",
+];
+
+/// The diagonal fixture of plan `2026-12-01-straight-diagonal-cliffs` §4.0, built from
+/// [`DIAGONAL_FIXTURE_ROWS`]: one example of each kind of diagonal, corner and fallback the plan's
+/// table D-2 names.
+pub fn diagonal_fixture() -> GameMap {
+    let mut map = GameMap::new(DIAGONAL_FIXTURE_WIDTH, DIAGONAL_FIXTURE_HEIGHT, ground(0))
+        .expect("the diagonal fixture's size is valid");
+    for (y, row) in DIAGONAL_FIXTURE_ROWS.iter().enumerate() {
+        assert_eq!(
+            row.len(),
+            DIAGONAL_FIXTURE_WIDTH as usize,
+            "row {y} has the map's width"
+        );
+        for (x, symbol) in row.chars().enumerate() {
+            let cell = match symbol {
+                'a' => abyss(),
+                's' => ramp_cell(0, RampDir::South),
+                digit => ground(digit.to_digit(10).expect("a plateau level digit") as u8),
+            };
+            *map.cell_mut(x as u32, y as u32)
+                .expect("the row lies on the map") = cell;
+        }
+    }
+    map
+}
+
+// -----------------------------------------------------------------------------
+// Diagonal runs, found independently of the mesher (plan §4.0)
+// -----------------------------------------------------------------------------
+
+/// What the diagonal analysis reads of a cell: its marching level (plateau level, -1 for the
+/// abyss or off the map), or `None` for a ramp cell. Read from the map's cells directly, not
+/// through the mesher.
+fn analysis_level(map: &GameMap, x: i32, y: i32) -> Option<i32> {
+    let (Ok(ux), Ok(uy)) = (u32::try_from(x), u32::try_from(y)) else {
+        return Some(-1);
+    };
+    let Ok(cell) = map.cell(ux, uy) else {
+        return Some(-1);
+    };
+    if cell.ramp.is_some() {
+        None
+    } else if cell.terrain_kind == TerrainKind::Abyss {
+        Some(-1)
+    } else {
+        Some(i32::from(cell.cliff_level.0))
+    }
+}
+
+/// One full cut of plan D-1: cell `cell`, cut at its corner in direction `dir`, over the
+/// thresholds `lb + 1 ..= t_hi`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DiagonalCut {
+    /// The cut cell `X`.
+    pub cell: (i32, i32),
+    /// The corner direction `(dx, dy)`, each `±1`: from `X` towards the low side.
+    pub dir: (i32, i32),
+    /// `X`'s level.
+    pub la: i32,
+    /// The higher of `X`'s two low neighbours' levels: the cut's foot stands at `H(lb)`.
+    pub lb: i32,
+    /// The highest threshold at which the cut holds.
+    pub t_hi: i32,
+}
+
+/// `1/√2` in `f64`.
+const INV_SQRT2: f64 = std::f64::consts::FRAC_1_SQRT_2;
+
+impl DiagonalCut {
+    /// The cut's corner `C`, a grid point.
+    pub fn corner(&self) -> (i32, i32) {
+        (
+            self.cell.0 + i32::from(self.dir.0 > 0),
+            self.cell.1 + i32::from(self.dir.1 > 0),
+        )
+    }
+
+    /// The ends of the cut's foot, `P₂` and `P₁` (plan notation), ordered along
+    /// [`Self::along_axis`].
+    pub fn foot_ends(&self) -> [(i32, i32); 2] {
+        let (cx, cy) = self.corner();
+        [(cx - self.dir.0, cy), (cx, cy - self.dir.1)]
+    }
+
+    /// The unit normal `n = dir/√2`, towards the low side.
+    pub fn normal(&self) -> (f64, f64) {
+        (
+            f64::from(self.dir.0) * INV_SQRT2,
+            f64::from(self.dir.1) * INV_SQRT2,
+        )
+    }
+
+    /// The unit vector along the foot, `(dx, -dy)/√2`.
+    pub fn along_axis(&self) -> (f64, f64) {
+        (
+            f64::from(self.dir.0) * INV_SQRT2,
+            -f64::from(self.dir.1) * INV_SQRT2,
+        )
+    }
+
+    /// The foot line's constant: `n·x = foot()` on the line through the low cells' corners.
+    pub fn foot(&self) -> f64 {
+        let (px, py) = self.foot_ends()[1];
+        let (nx, ny) = self.normal();
+        nx * f64::from(px) + ny * f64::from(py)
+    }
+
+    /// Whether the cut's wall has a rim: its run reaches `X`'s own level.
+    pub fn rim(&self) -> bool {
+        self.la == self.t_hi
+    }
+}
+
+/// The full cut of cell `(x, y)`, if D-1 holds for it at some threshold: a cell has at most one.
+///
+/// D-1: `X` is high and its two neighbours towards the corner low (convex); the three cells
+/// behind the corner's opposite are high (backed); at least one of the corner's two neighbouring
+/// corners is a concave corner with ground below; and no cell of the 3×3 block is a ramp.
+pub fn diagonal_cut_of(map: &GameMap, x: i32, y: i32) -> Option<DiagonalCut> {
+    let level = |a: i32, b: i32| analysis_level(map, x + a, y + b);
+    let mut block = [[0_i32; 3]; 3];
+    for (j, row) in block.iter_mut().enumerate() {
+        for (i, slot) in row.iter_mut().enumerate() {
+            *slot = level(i as i32 - 1, j as i32 - 1)?;
+        }
+    }
+    let at = |a: i32, b: i32| block[(b + 1) as usize][(a + 1) as usize];
+    let la = at(0, 0);
+    if la < 0 {
+        return None;
+    }
+    for (dx, dy) in [(1, 1), (1, -1), (-1, 1), (-1, -1)] {
+        let (l1, l2) = (at(dx, 0), at(0, dy));
+        let low_bound = l1.max(l2) + 1;
+        let mut high_bound = la.min(at(-dx, 0)).min(at(0, -dy)).min(at(-dx, -dy));
+        let concave = [
+            (l1 >= 0).then(|| at(dx, -dy)),
+            (l2 >= 0).then(|| at(-dx, dy)),
+        ];
+        let Some(reach) = concave.into_iter().flatten().max() else {
+            continue;
+        };
+        high_bound = high_bound.min(reach);
+        if low_bound <= high_bound {
+            return Some(DiagonalCut {
+                cell: (x, y),
+                dir: (dx, dy),
+                la,
+                lb: low_bound - 1,
+                t_hi: high_bound,
+            });
+        }
+    }
+    None
+}
+
+/// Every full cut of `map`, row by row.
+pub fn diagonal_cuts(map: &GameMap) -> Vec<DiagonalCut> {
+    let mut cuts = Vec::new();
+    for y in 0..map.height() as i32 {
+        for x in 0..map.width() as i32 {
+            cuts.extend(diagonal_cut_of(map, x, y));
+        }
+    }
+    cuts
+}
+
+/// One straight diagonal: a maximal chain of full cuts with one direction and the same levels,
+/// each sharing a ground concave corner with the next.
+#[derive(Debug, Clone)]
+pub struct DiagonalRun {
+    /// The cuts in order along the run.
+    pub cuts: Vec<DiagonalCut>,
+    /// How many of the four cells at each end of the foot are high at the run's thresholds: 3 at
+    /// a concave corner, 2 at a straight wall.
+    pub end_high_cells: [usize; 2],
+}
+
+impl DiagonalRun {
+    /// The run's first cut, which carries its direction and levels.
+    pub fn first(&self) -> DiagonalCut {
+        self.cuts[0]
+    }
+
+    /// The interval of positions along the run (`along_axis·x`) its foot covers.
+    pub fn along(&self) -> (f64, f64) {
+        let (ux, uy) = self.first().along_axis();
+        let at = |(px, py): (i32, i32)| ux * f64::from(px) + uy * f64::from(py);
+        let last = self.cuts[self.cuts.len() - 1];
+        (at(self.first().foot_ends()[0]), at(last.foot_ends()[1]))
+    }
+}
+
+/// How many of the four cells around grid point `g` have a level of at least `t`.
+fn high_cells_around(map: &GameMap, g: (i32, i32), t: i32) -> usize {
+    [(-1, -1), (0, -1), (0, 0), (-1, 0)]
+        .into_iter()
+        .filter(|&(a, b)| analysis_level(map, g.0 + a, g.1 + b).is_some_and(|l| l >= t))
+        .count()
+}
+
+/// The straight diagonals of `map` (plan §4.0): chains of [`diagonal_cuts`] linked through
+/// shared ground concave corners.
+pub fn diagonal_runs(map: &GameMap) -> Vec<DiagonalRun> {
+    let cuts = diagonal_cuts(map);
+    let find = |cell: (i32, i32)| cuts.iter().find(|c| c.cell == cell).copied();
+    let same = |a: &DiagonalCut, b: &DiagonalCut| {
+        a.dir == b.dir && a.la == b.la && a.lb == b.lb && a.t_hi == b.t_hi
+    };
+    // `next` follows the run along (dx, -dy) through P₁, `prev` back through P₂.
+    let next = |c: &DiagonalCut| {
+        let ground = analysis_level(map, c.cell.0 + c.dir.0, c.cell.1).is_some_and(|l| l >= 0);
+        find((c.cell.0 + c.dir.0, c.cell.1 - c.dir.1)).filter(|n| ground && same(c, n))
+    };
+    let mut runs = Vec::new();
+    for cut in &cuts {
+        let starts_run = cuts.iter().all(|p| next(p) != Some(*cut));
+        if !starts_run {
+            continue;
+        }
+        let mut chain = vec![*cut];
+        while let Some(n) = next(&chain[chain.len() - 1]) {
+            chain.push(n);
+        }
+        let t = cut.lb + 1;
+        let ends = [
+            high_cells_around(map, chain[0].foot_ends()[0], t),
+            high_cells_around(map, chain[chain.len() - 1].foot_ends()[1], t),
+        ];
+        runs.push(DiagonalRun {
+            cuts: chain,
+            end_high_cells: ends,
+        });
+    }
+    runs
+}
+
+/// A void diagonal: a chain of concave corners whose low cell is void, along a 45° staircase, with
+/// no full cut through them (plan D-6).
+#[derive(Debug, Clone)]
+pub struct VoidRun {
+    /// The concave corners (grid points), in order along the run.
+    pub corners: Vec<(i32, i32)>,
+    /// The direction `(qx, qy)` from each corner to the centre of its void cell, each `±1`.
+    pub towards_void: (i32, i32),
+    /// The level of the three high cells around each corner.
+    pub level: i32,
+}
+
+impl VoidRun {
+    /// The unit normal towards the void.
+    pub fn normal(&self) -> (f64, f64) {
+        let (qx, qy) = self.towards_void;
+        (f64::from(qx) * INV_SQRT2, f64::from(qy) * INV_SQRT2)
+    }
+
+    /// The unit vector along the run.
+    pub fn along_axis(&self) -> (f64, f64) {
+        let (qx, qy) = self.towards_void;
+        (f64::from(qx) * INV_SQRT2, -f64::from(qy) * INV_SQRT2)
+    }
+
+    /// The midpoint line's constant: `n·x = midpoint_line()` through the edge midpoints of every
+    /// void cell's two edges with the plateau.
+    pub fn midpoint_line(&self) -> f64 {
+        let (gx, gy) = self.corners[0];
+        let (qx, qy) = self.towards_void;
+        f64::from(qx * gx + qy * gy) * INV_SQRT2 + 0.5 * INV_SQRT2
+    }
+
+    /// The interval of positions along the run from its first to its last corner.
+    pub fn along(&self) -> (f64, f64) {
+        let (ux, uy) = self.along_axis();
+        let at = |(gx, gy): (i32, i32)| ux * f64::from(gx) + uy * f64::from(gy);
+        (
+            at(self.corners[0]),
+            at(self.corners[self.corners.len() - 1]),
+        )
+    }
+}
+
+/// The void concave corner at grid point `g`, if it is one: exactly one of its four cells is
+/// void, the other three are plateaus of one level, and none is a ramp. Returns the direction to
+/// the void cell and the level.
+fn void_corner(map: &GameMap, g: (i32, i32)) -> Option<((i32, i32), i32)> {
+    let quadrants = [(-1, -1), (1, -1), (1, 1), (-1, 1)];
+    let mut void = None;
+    let mut levels = Vec::with_capacity(3);
+    for (qx, qy) in quadrants {
+        let cell = (g.0 + (qx - 1) / 2, g.1 + (qy - 1) / 2);
+        let level = analysis_level(map, cell.0, cell.1)?;
+        if level < 0 {
+            if void.is_some() {
+                return None;
+            }
+            void = Some((qx, qy));
+        } else {
+            levels.push(level);
+        }
+    }
+    let q = void?;
+    (levels.iter().all(|&l| l == levels[0])).then_some((q, levels[0]))
+}
+
+/// The void diagonals of `map` (plan §4.0 and D-6): chains of at least two void concave corners,
+/// each one step `(qx, -qy)` from the next, that no full cut passes through.
+pub fn void_runs(map: &GameMap) -> Vec<VoidRun> {
+    let cut_corners: std::collections::BTreeSet<(i32, i32)> = diagonal_cuts(map)
+        .iter()
+        .flat_map(DiagonalCut::foot_ends)
+        .collect();
+    let corner = |g: (i32, i32)| void_corner(map, g).filter(|_| !cut_corners.contains(&g));
+    let mut runs = Vec::new();
+    for gy in 0..=map.height() as i32 {
+        for gx in 0..=map.width() as i32 {
+            let Some((q, level)) = corner((gx, gy)) else {
+                continue;
+            };
+            let step = (q.0, -q.1);
+            let before = (gx - step.0, gy - step.1);
+            if corner(before) == Some((q, level)) {
+                continue;
+            }
+            let mut corners = vec![(gx, gy)];
+            loop {
+                let (lx, ly) = corners[corners.len() - 1];
+                let n = (lx + step.0, ly + step.1);
+                if corner(n) != Some((q, level)) {
+                    break;
+                }
+                corners.push(n);
+            }
+            if corners.len() >= 2 {
+                runs.push(VoidRun {
+                    corners,
+                    towards_void: q,
+                    level,
+                });
+            }
+        }
+    }
+    runs
+}
+
+// -----------------------------------------------------------------------------
+// Chunk seams
+// -----------------------------------------------------------------------------
+
+/// The vertices of `mesh` on the seam plane `axis == seam` (`axis` 0 for constant X, 2 for
+/// constant Z), as sorted `[y, along]` bit pairs.
+fn seam_vertices(mesh: &MesherScratch, axis: usize, seam: f32) -> Vec<[u32; 2]> {
+    let along = 2 - axis;
+    let mut verts: Vec<[u32; 2]> = mesh
+        .positions
+        .iter()
+        .filter(|p| (p[axis] - seam).abs() < 1e-4)
+        .map(|p| [p[1].to_bits(), p[along].to_bits()])
+        .collect();
+    verts.sort_unstable();
+    verts
+}
+
+/// Whether `y_bits` is a floor altitude: a cliff level's, or the abyss wall bottom.
+fn is_floor_height(y_bits: u32) -> bool {
+    (-1..=4).any(|level| cliff_level_height(level).to_bits() == y_bits)
+}
+
+/// The seam between the chunk with the map's last interior dual column (or row) and the chunk
+/// holding only the edge dual column beyond it: every cliff-wall vertex matches bit for bit and
+/// both sides carry the same floor altitudes (the edge dual cells' lower floor runs extend under
+/// the higher plateau, so floor vertices need not match one for one).
+fn edge_seam_meets(a: &[[u32; 2]], b: &[[u32; 2]]) -> bool {
+    let walls = |v: &[[u32; 2]]| -> Vec<[u32; 2]> {
+        v.iter()
+            .copied()
+            .filter(|p| !is_floor_height(p[0]))
+            .collect()
+    };
+    let floors = |v: &[[u32; 2]]| -> Vec<u32> {
+        let mut ys: Vec<u32> = v
+            .iter()
+            .map(|p| p[0])
+            .filter(|&y| is_floor_height(y))
+            .collect();
+        ys.dedup();
+        ys
+    };
+    !a.is_empty() && !b.is_empty() && walls(a) == walls(b) && floors(a) == floors(b)
+}
+
+/// Every chunk seam of `map` at which the two chunks' vertices differ: the comparison of
+/// `terrain_tests::test_chunk_borders_are_watertight`, for any map. Each entry names the seam.
+pub fn leaky_chunk_seams(map: &GameMap) -> Vec<String> {
+    let cols = (map.width() + 1).div_ceil(CHUNK_DUAL_CELLS);
+    let rows = (map.height() + 1).div_ceil(CHUNK_DUAL_CELLS);
+    let mut chunks = Vec::new();
+    let mut scratch = MesherScratch::default();
+    for cy in 0..rows {
+        for cx in 0..cols {
+            build_chunk_mesh(map, cx, cy, &mut scratch);
+            chunks.push(scratch.clone());
+        }
+    }
+    let chunk = |cx: u32, cy: u32| &chunks[(cy * cols + cx) as usize];
+    let mut leaks = Vec::new();
+    for cy in 0..rows {
+        for cx in 0..cols {
+            for (axis, next) in [(0, (cx + 1, cy)), (2, (cx, cy + 1))] {
+                if next.0 >= cols || next.1 >= rows {
+                    continue;
+                }
+                let index = if axis == 0 { cx } else { cy };
+                let seam = ((index + 1) * CHUNK_DUAL_CELLS) as f32 - 0.5;
+                let a = seam_vertices(chunk(cx, cy), axis, seam);
+                let b = seam_vertices(chunk(next.0, next.1), axis, seam);
+                let extent = if axis == 0 { map.width() } else { map.height() };
+                let meets = if (index + 1) * CHUNK_DUAL_CELLS == extent {
+                    edge_seam_meets(&a, &b)
+                } else {
+                    a == b
+                };
+                if !meets {
+                    let name = if axis == 0 { "X" } else { "Z" };
+                    leaks.push(format!(
+                        "seam {name} = {seam} between chunks ({cx}, {cy}) and {next:?}: \
+                         {} and {} vertices",
+                        a.len(),
+                        b.len()
+                    ));
+                }
+            }
+        }
+    }
+    leaks
 }

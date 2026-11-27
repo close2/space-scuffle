@@ -4,7 +4,7 @@ use crate::ids::{EntityId, PlayerId, ResourceNodeId, Tick, UnitTypeId};
 use crate::math::{SimScalar, SimVec2};
 use crate::rally::RallyTarget;
 use crate::resource_kind_set::ResourceKindSet;
-use crate::weapon::WeaponSpec;
+use crate::weapon::{TimedLifeSpec, WeaponSpec};
 use serde::{Deserialize, Serialize};
 
 const fn default_true() -> bool {
@@ -538,6 +538,37 @@ pub struct ArchetypeCapabilities {
     /// plan `2026-11-28-broodlings` D-3). `None` for every unit whose strikes need nothing.
     #[serde(default)]
     pub strike_magazine: Option<StrikeMagazineSpec>,
+    /// Units created where this unit dies, after a delay (`StarCraft` II's `DeathResponse` that
+    /// runs a delayed `CEffectCreateUnit`: the Zerg structures' Broodlings; plan
+    /// `2026-12-01-death-spawns-and-hangar-commands` D-1). `None` for every unit that leaves
+    /// nothing.
+    #[serde(default)]
+    pub death_spawn: Option<DeathSpawnSpec>,
+}
+
+/// What a dying unit leaves behind (plan `2026-12-01-death-spawns-and-hangar-commands` D-1):
+/// `StarCraft` II's death response whose persistent waits `ExpireDelay` and then runs a
+/// `CEffectCreateUnit` at the death point for the dead unit's owner. The catalog resolves the
+/// authored unit slug to its id once at load; validation keeps `count` in 1 to 16 and the created
+/// unit a mobile, supply-free unit that creates nothing in turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeathSpawnSpec {
+    /// The archetype created (RON: its slug).
+    pub unit: UnitTypeId,
+    /// Units created (`SpawnCount`), 1 to 16.
+    pub count: u8,
+    /// Ticks from the death to the creation (`ExpireDelay` of the persistent). The reap is the
+    /// tick's last phase and creation runs in the next ticks' upkeep, so a unit dying on tick D
+    /// with a delay of `n ≥ 1` leaves its units on tick D + n, and a delay of 0 on tick D + 1.
+    pub delay_ticks: u16,
+    /// World units around the death point searched for a place valid for the created unit's
+    /// movement layer; 0 tries the death point alone (`CreateFlags Placement 0`).
+    pub search_range: SimScalar,
+    /// The timed life each created unit gets; `None` for a unit that lives until killed.
+    pub timed_life: Option<TimedLifeSpec>,
+    /// Whether a unit that dies under construction leaves nothing (`BuffFlags
+    /// DisableWhileUnderConstruction`).
+    pub disabled_while_constructing: bool,
 }
 
 /// A strike magazine's authored rules (plan `2026-11-28-broodlings` D-3): `StarCraft` II's
@@ -704,6 +735,35 @@ mod tests {
                 arming_ticks: 9,
             })
         );
+        Ok(())
+    }
+
+    /// Plan `2026-12-01-death-spawns-and-hangar-commands` D-1: capabilities that leave the death
+    /// spawn out have none; an authored one reads its unit, count, delay, range, timed life and
+    /// construction rule.
+    #[test]
+    fn death_spawn_defaults_to_none_and_reads_its_fields() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let text = ron::to_string(&ArchetypeCapabilities::default())?;
+        let field = "death_spawn:None";
+        assert!(text.contains(field), "premise: the field is written");
+        let omitted: ArchetypeCapabilities =
+            ron::from_str(&text.replace(&format!(",{field}"), ""))?;
+        assert_eq!(omitted.death_spawn, None);
+        let spawn = DeathSpawnSpec {
+            unit: UnitTypeId(48),
+            count: 9,
+            delay_ticks: 9,
+            search_range: SimScalar::ZERO,
+            timed_life: Some(TimedLifeSpec {
+                ticks: 143,
+                random_extra_ticks: 5,
+            }),
+            disabled_while_constructing: true,
+        };
+        let authored = format!("death_spawn:Some({})", ron::to_string(&spawn)?);
+        let read: ArchetypeCapabilities = ron::from_str(&text.replace(field, &authored))?;
+        assert_eq!(read.death_spawn, Some(spawn));
         Ok(())
     }
 }
