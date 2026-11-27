@@ -21,6 +21,10 @@
 //! `2026-11-04-combat-sc2-alignment` WP0) plays every battle without a trace and tabulates the
 //! outcomes, so each step of that plan can be compared with the previous one.
 //!
+//! The route-clearance meter ([`route_clearance`]) and its crowd scenes ([`crowd`], plan
+//! `2026-11-29-wall-clearance`) measure how close walking bodies come to walls, in the route trace
+//! and in groups walking through chokepoints and round corners.
+//!
 //! # Invariants
 //! - The trace only reads the world; recording a battle does not change its outcome.
 //! - Units are judged with the weapon their archetype uses against the other unit's layer, and
@@ -40,10 +44,12 @@ pub mod blocking;
 pub mod clash;
 pub mod cli;
 pub mod contact_checks;
+pub mod crowd;
 pub mod focus;
 pub mod matrix;
 pub mod report;
 pub mod route;
+pub mod route_clearance;
 pub mod route_groups;
 pub mod route_overlap;
 pub mod summary;

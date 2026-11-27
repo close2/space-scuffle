@@ -540,6 +540,16 @@
 // death spawns encoded; with the schema at 61 and the section unhashed every checkpoint reproduced.
 // Behaviour: none in these worlds (no Swarm structure). Proved on native debug and release and
 // wasm32-wasip1 release and debug, each in a fresh target directory.
+// Re-recorded for plan 2026-11-29-wall-clearance WP1 (B-240): a corner is handed off only along a
+// leg the step rule (`probe_permits`) lets the body walk, and the wedged escape is gone. The first
+// changed checkpoint is index 3 (ticks 151 to 200): on tick 151 rhino beetle 15 at (30.24, 29.71),
+// at the foot of the ramp, keeps its corner (30.42, 29.96), which the base handed off on the wedged
+// escape. Proof: a scratch build of WP1 with the rule off reproduces the previous checksums at every
+// checkpoint.
+// Re-recorded on merging main 2a90a9b4 (schema 62) into wall-clearance WP1: the WP1 change above on the
+// schema-62 world. First changed checkpoint against main's list: index 3 (ticks 151 to 200), WP1's tick-151
+// hand-off. Proof: the merged tree with main's locomotion (the rule off) reproduces main's list at every
+// checkpoint.
 (
     checksum_schema: 62,
     seed: 0x5EED_0F_5CAFF1E,
@@ -570,22 +580,22 @@
         0xac8332ef211f920e,
         0xf500eedaa1c51556,
         0x44ee41262f611503,
-        0x5494f8452fdeb992,
-        0x8a89d0f20d9925cf,
-        0xd4fe2830a4351a90,
-        0xdf88dcdadcd28b31,
-        0x2011f835a742f3b2,
-        0x758c0f602ef3019c,
-        0x04cceee9c6d7f5cc,
-        0xb44ef1f3be5f19c8,
-        0xdc21ed1eaf3423d1,
-        0x5101e7f894f56e56,
-        0xcba89e3a907dbab0,
-        0x1c82baabe318144a,
-        0x14f56b13d3c29f34,
-        0xdb2fdf84ab85b17b,
-        0x086266f75ab811bb,
-        0xcf04508182f8bbdb,
-        0xd5366174d3c447fb,
+        0xd9d885c9a2b61a88,
+        0xba83dec1e9084ac2,
+        0xc96812e4714fe1e3,
+        0x596b0eecdfee3c96,
+        0xe48941198c9e17f2,
+        0xbbd7bd819ac834ca,
+        0x0e44e93ed57686d5,
+        0xc54cc4d923831e8e,
+        0xe09d5db99233b8f3,
+        0x1f82419e12c3ae88,
+        0x84e52f0b0baa80d2,
+        0x43ed5c4a199e57b1,
+        0xa6ba4de8040f3b06,
+        0x497d188881f5e21e,
+        0x4c81d0f4dc67658b,
+        0x321f5619535ad9f4,
+        0x3510e44c629058cd,
     ],
 )

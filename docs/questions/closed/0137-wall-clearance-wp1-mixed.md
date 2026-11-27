@@ -32,3 +32,11 @@ Recommendation: (a).
 ## Answer
 
 - **Option (a): Keep the corner hand-off fix (`B-240`) merged.** Cutting corner-cutting hand-offs from `1,586 → 0` in the large-crowd chokepoint/corner/hairpin scenes and to `0` on every showcase run is a clear root-cause fix; minor mixed secondary shifts are acceptable while `B-241` and the ramp wait for the movement redesign and WP3.
+
+## Resolution
+
+Carried out as answered (a): WP1 (B-240) stays and merges with branch `wall-clearance-wp1`; the mixed secondary
+figures (the ramp W rise on `showcase_effects.ron`, the crowd cells above the noise band) are recorded in evidence
+[`2026-11-29-wall-clearance`](../../evidence/2026-11-29-wall-clearance.md) (WP1 and window W sections), and the
+held-out set HA confirmed every development direction. B-241 and the ramp stay open for WP2 (parked) and WP3.
+Recorded in the merge commit of `main` 2a90a9b4 into `wall-clearance-wp1`.
