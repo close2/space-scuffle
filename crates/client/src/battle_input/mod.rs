@@ -4,9 +4,9 @@
 //! Owns the player's hands on a live battle: left click and box drag change
 //! [`BattleSelection`], right click and the order keys go through
 //! [`BattleCommandQueue`](crate::battle_pipeline::commands::BattleCommandQueue), and control group
-//! keys store and recall selections. What a right click means is decided by [`context_order()`],
-//! and while a [`CommandMode`] is armed, the left button belongs to it. Keys come from
-//! [`crate::input_bindings`].
+//! keys store and recall selections. What a right click means is decided member by member by
+//! [`smart_plan()`], and while a [`CommandMode`] is armed, the left button belongs to it. Keys
+//! come from [`crate::input_bindings`].
 //!
 //! # How it fits
 //! These systems run in [`BattleSet::CollectIntent`], after UI ownership is sampled and before the
@@ -60,7 +60,7 @@ use crate::selection::ray_sphere_intersect;
 use crate::terrain::{pick_terrain, TerrainState};
 
 use command_mode::{orders_open, CommandMode};
-use context_order::{context_order, rally_target, resolve_target, PointerTarget};
+use context_order::{rally_target, resolve_target, smart_plan, PointerTarget};
 use gesture::{GestureOutcome, SelectionGesture};
 use order_marker::{OrderMarkerKind, OrderMarkers};
 
@@ -646,24 +646,28 @@ fn issue_pointer_order(
         queue.reject(&SubmissionError::NoDestination);
         return;
     };
-    let (order, kind, position) = context_order(world, owner, selection.ids(), target);
+    let plan = smart_plan(world, owner, selection.ids(), target);
     // The selection's production structures take the click as their rally (plan
-    // `2026-11-23-production-queue` D-10); the units take the context order. A selection of
-    // structures alone submits only the rally, and the click is accepted when either submission
-    // is, so a mixed selection reports no refusal its other half was spared.
+    // `2026-11-23-production-queue` D-10); each unit takes the first row of the click's table it
+    // can carry out (plan `2026-12-01-rallies-and-smart-command` D-1), one command per distinct
+    // order. A selection of structures alone submits only the rally, and the click is accepted
+    // when either submission is, so a mixed selection reports no refusal its other half was
+    // spared.
     let rally = UnitOrder::SetRally {
         target: rally_target(world, owner, target),
         slot: None,
     };
     let rallies = any_recipient(world, owner, selection.ids(), &rally);
-    let orders = !rallies || any_recipient(world, owner, selection.ids(), &order);
-    let ordered =
-        orders.then(|| queue.submit_selection(world, owner, selection.ids(), order, shift));
+    let orders = !rallies || !plan.orders.is_empty();
+    let ordered = orders.then(|| queue.submit_smart(world, owner, &plan, shift));
     let rallied =
         rallies.then(|| queue.submit_selection(world, owner, selection.ids(), rally, shift));
     match (ordered, rallied) {
-        (Some(Ok(_)), _) => markers.show(kind, position),
-        (_, Some(Ok(_))) => markers.show(OrderMarkerKind::Rally, position),
+        (Some(Ok(_)), _) => {
+            let (kind, position) = plan.marker();
+            markers.show(kind, position);
+        }
+        (_, Some(Ok(_))) => markers.show(OrderMarkerKind::Rally, plan.marker_at),
         (Some(Err(error)), _) | (None, Some(Err(error))) => queue.reject(&error),
         (None, None) => {}
     }

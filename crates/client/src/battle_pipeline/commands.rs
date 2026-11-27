@@ -14,6 +14,8 @@ use sim_types::{
     UnitTypeId,
 };
 
+use crate::battle_input::context_order::SmartPlan;
+
 /// Successful session-commit identity, independent of ticks and recycled entity IDs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SessionGeneration(u64);
@@ -644,6 +646,49 @@ impl BattleCommandQueue {
         last.ok_or(SubmissionError::EmptySelection)
     }
 
+    /// Sends a right click's [`SmartPlan`] (plan `2026-12-01-rallies-and-smart-command` D-3): one
+    /// command per entry, each to the entry's recipients, all in the same tick, in plan order and
+    /// with disjoint recipients. `queued` (Shift) applies to every entry.
+    ///
+    /// The shape of [`Self::submit_attack_on_unit`]: the match must still take orders, every
+    /// command is validated before any is captured, so a refusal (a member that died after the
+    /// plan was built, say) leaves the queue as it was, and the sequence of the last command is
+    /// returned. Allocation belongs to the user action.
+    /// # Errors
+    /// [`SubmissionError::EmptySelection`] for a plan without entries, or the other typed errors
+    /// of [`Self::submit`] for the first entry that is refused.
+    pub fn submit_smart(
+        &mut self,
+        world: &SimWorld,
+        player: PlayerId,
+        plan: &SmartPlan,
+        queued: bool,
+    ) -> Result<SubmissionSequence, SubmissionError> {
+        let generation = self.generation.ok_or(SubmissionError::NotReady)?;
+        accepts_orders(world, player)?;
+        if plan.orders.is_empty() {
+            return Err(SubmissionError::EmptySelection);
+        }
+        let commands: Vec<PlayerCommand> = plan
+            .orders
+            .iter()
+            .map(|entry| PlayerCommand {
+                player_id: player,
+                entities: entry.recipients.clone(),
+                order: entry.order.clone(),
+                queue: queued,
+            })
+            .collect();
+        for command in &commands {
+            validate(world, command)?;
+        }
+        let mut last = None;
+        for command in commands {
+            last = Some(self.capture(generation, command, None)?);
+        }
+        last.ok_or(SubmissionError::EmptySelection)
+    }
+
     /// Prepares one exact pre-step bundle, retaining scratch allocation for later ticks.
     /// `sequences[index]` correlates each authoritative command outcome with submission.
     /// Rejections are appended to caller-owned evidence before another tick can clear it.
@@ -725,18 +770,35 @@ pub fn any_recipient(
     let Ok(subject) = order_subject(world, player, order) else {
         return false;
     };
-    selection.iter().any(|id| {
-        world
-            .entities
-            .get(id)
-            .filter(|entity| entity.owner == player && can_receive_order(entity, order))
-            .is_some_and(|entity| {
-                world
-                    .catalog
-                    .get(entity.unit_type_id)
-                    .is_ok_and(|archetype| can_execute(world, entity, archetype, order, subject))
-            })
-    })
+    selection
+        .iter()
+        .any(|id| takes(world, player, *id, order, subject))
+}
+
+/// Whether `member` could carry out `order` for `player` right now: it is `player`'s, in play to
+/// hear the order ([`can_receive_order`]) and able to execute it ([`can_execute`]). `subject`
+/// comes from [`order_subject`] for the same order.
+///
+/// The one member rule of [`any_recipient`], [`BattleCommandQueue::submit_selection`] and the
+/// right click's per-member plan (plan `2026-12-01-rallies-and-smart-command` D-1), so a plan
+/// never names a member the queue would refuse.
+pub(crate) fn takes(
+    world: &SimWorld,
+    player: PlayerId,
+    member: EntityId,
+    order: &UnitOrder,
+    subject: Option<&UnitArchetype>,
+) -> bool {
+    world
+        .entities
+        .get(&member)
+        .filter(|entity| entity.owner == player && can_receive_order(entity, order))
+        .is_some_and(|entity| {
+            world
+                .catalog
+                .get(entity.unit_type_id)
+                .is_ok_and(|archetype| can_execute(world, entity, archetype, order, subject))
+        })
 }
 
 /// Whether any member of `selection` could take an attack on some unit: a completed unit of
@@ -934,7 +996,11 @@ fn can_execute(
 
 /// The archetype an order is aimed at: an attack's target, or the structure of `Build` or
 /// `Construct`. Every other order has no subject.
-fn order_subject<'w>(
+/// # Errors
+/// [`SubmissionError::InvalidTarget`] when the aimed-at entity is gone, not available for combat
+/// or (for `Construct`) not a live foundation of `player`'s; [`SubmissionError::InvalidStructure`]
+/// or [`SubmissionError::MissingArchetype`] when its archetype is not in the catalog.
+pub(crate) fn order_subject<'w>(
     world: &'w SimWorld,
     player: PlayerId,
     order: &UnitOrder,
@@ -942,7 +1008,7 @@ fn order_subject<'w>(
     let (aimed_at, entity) = match *order {
         // Any unit available for combat, one's own included: 5.0.14's attack command has no
         // alliance filter (`core` AbilData:117-119; plan `2026-11-24-attack-orders` D-4, B-175).
-        // The right click never builds an attack on an own unit (`friendly_order`).
+        // The right click never builds an attack on an own unit (`friendly_rows`).
         UnitOrder::AttackTarget { target, .. } => (
             target,
             world
