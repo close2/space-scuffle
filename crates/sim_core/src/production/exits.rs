@@ -1,8 +1,12 @@
 //! Local producer egress geometry and refreshed collision admission.
 //!
 //! Ring 0 is the footprint expanded by the product's terrain radius. Its cells are tried
-//! clockwise from the minimum corner, or nearest the producer's rally point first (plan
-//! `2026-11-23-production-queue` D-9). Every ring-0 ground exit connects to the actual producer
+//! nearest the producer's rally point first (plan `2026-11-23-production-queue` D-9) or, with no
+//! rally, clockwise from the cell nearest the map's centre: the owner's sanctioned symmetric
+//! deviation S-exit-order (Q0140, Q0052), so point-symmetric bases exit point-symmetrically and
+//! new units face the battlefield. The centre is the map's dimensions halved, in fixed point; a
+//! tie between equally near cells goes to the one earlier in the clockwise walk from the
+//! ring's minimum corner. Every ring-0 ground exit connects to the actual producer
 //! boundary at the product's terrain radius; only that producer's footprint is waived, on the
 //! leg from the footprint to the exit, never terrain or another structure's footprint.
 //!
@@ -58,9 +62,10 @@ impl SimWorld {
     /// before (on the map, connected to the producer on the ground, clear of bodies). Only when
     /// ring 0 has no free cell are the outer rings searched, one cell wider each, until a ring
     /// lies wholly off the map; an outer cell needs no connection, only legal ground on the
-    /// producer's level and no body. Within a ring, cells are tried clockwise from the minimum
-    /// corner, or nearest the producer's rally point first when it has one: the first resolving
-    /// waypoint of the rally slot the product uses (plan `2026-11-25-rallies` D-4).
+    /// producer's level and no body. Within a ring, cells are tried nearest the producer's rally
+    /// point first when it has one: the first resolving waypoint of the rally slot the product
+    /// uses (plan `2026-11-25-rallies` D-4); with none, clockwise from the cell nearest the map's
+    /// centre (S-exit-order, Q0140).
     pub(crate) fn production_exit(
         &mut self,
         producer: EntityId,
@@ -98,9 +103,10 @@ impl SimWorld {
         Ok(None)
     }
 
-    /// The first free cell of the ring `bounds`, in the order D-9 states: clockwise from the
-    /// minimum corner, or by squared distance from the cell centre to `rally` and then clockwise
-    /// index, each cell under the test `test` names.
+    /// The first free cell of the ring `bounds`, each cell under the test `test` names, in the
+    /// order D-9 and S-exit-order state: by squared distance from the cell centre to `rally` and
+    /// then clockwise index; or, with no rally, clockwise from the cell whose centre is nearest
+    /// the map's centre (squared raw distance; on a tie, the lower clockwise index).
     fn search_exit_ring(
         &mut self,
         ring: &ExitRing,
@@ -111,7 +117,8 @@ impl SimWorld {
         // PERFORMANCE RATIONALE:
         // Why: A ready producer whose exit is blocked retries every tick, and a rally orders
         // every ring it searches.
-        // What: Stream the clockwise perimeter; with a rally, sort it in a retained buffer.
+        // What: Collect the clockwise perimeter in a retained buffer; with a rally, sort it; with
+        // none, rotate it to start at the cell nearest the map's centre.
         // Trade-off: The buffer keeps the largest perimeter's capacity for the match.
         let mut order = std::mem::take(&mut self.production.exit_order);
         order.clear();
@@ -127,11 +134,24 @@ impl SimWorld {
             );
             order.sort_unstable_by_key(|&(distance, index, _, _)| (distance, index));
         } else {
+            // S-exit-order (Q0140): the map's centre in raw Q32.32 world units, one per cell.
+            let centre = (
+                i128::from(self.map.width()) << 31,
+                i128::from(self.map.height()) << 31,
+            );
             order.extend(
                 (0_u32..)
                     .zip(exit_ring_candidates(bounds))
-                    .map(|(index, (x, y))| (0, index, x, y)),
+                    .map(|(index, (x, y))| {
+                        let dx = cell_centre_raw(x) - centre.0;
+                        let dy = cell_centre_raw(y) - centre.1;
+                        (dx * dx + dy * dy, index, x, y)
+                    }),
             );
+            let start = (0..order.len())
+                .min_by_key(|&position| (order[position].0, order[position].1))
+                .unwrap_or(0);
+            order.rotate_left(start);
         }
         let mut found = Ok(None);
         for &(_, _, x, y) in &order {
@@ -491,8 +511,10 @@ mod tests {
         assert_eq!(wide.last(), Some(&(-1, 4)));
     }
 
+    /// S-exit-order (Q0140): with no rally, a producer below and left of the map's centre on open
+    /// ground puts its unit on the ring cell nearest the centre, the ring's maximum corner.
     #[test]
-    fn open_ground_exit_is_the_first_ring_cell_at_the_minimum_corner(
+    fn open_ground_exit_is_the_ring_cell_nearest_the_map_centre(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let map = sim_map::GameMap::new(
             32,
@@ -514,18 +536,23 @@ mod tests {
             // The ring keeps the product's terrain radius off the footprint (D-8).
             .map(|a| (a.unit_type_id, a.terrain_radius))
             .ok_or("catalog has no mobile unit")?;
-        let producer = world.spawn_structure(producer_type, sim_types::PlayerId(0), 10, 10)?;
-        let (left, bottom) = world.map.structures()[&producer].top_left;
+        let producer = world.spawn_structure(producer_type, sim_types::PlayerId(0), 6, 6)?;
+        let placed = &world.map.structures()[&producer];
+        let right = i64::from(placed.top_left.0) + i64::from(placed.width) - 1;
+        let top = i64::from(placed.top_left.1) + i64::from(placed.height) - 1;
         world.rebuild_production_occupancy()?;
         let margin = (radius.raw() + (1_i64 << 31) + (1_i64 << 32) - 1) >> 32;
+        // The ring's maximum corner lies below and left of the centre (16, 16), so it is the
+        // ring's cell nearest it.
+        assert!(
+            right + margin < 16 && top + margin < 16,
+            "the producer is off-centre"
+        );
         let corner =
-            |cell: i64| sim_types::SimScalar::from_raw(((cell - margin) << 32) + (1_i64 << 31));
+            |cell: i64| sim_types::SimScalar::from_raw(((cell + margin) << 32) + (1_i64 << 31));
         assert_eq!(
             world.production_exit(producer, product)?,
-            Some(sim_types::SimVec2::new(
-                corner(i64::from(left)),
-                corner(i64::from(bottom))
-            ))
+            Some(sim_types::SimVec2::new(corner(right), corner(top)))
         );
         Ok(())
     }
@@ -571,7 +598,9 @@ mod tests {
             arch.collision_radius = SimScalar::from_num(collision);
             arch.terrain_radius = SimScalar::from_num(terrain);
         }
-        let producer = world.spawn_structure(producer_type, PlayerId(0), 10, 10)?;
+        // Above and right of the map's centre, so the ring's minimum corner is its cell nearest
+        // the centre and the first tried (S-exit-order, Q0140).
+        let producer = world.spawn_structure(producer_type, PlayerId(0), 18, 18)?;
         let (left, bottom) = world.map.structures()[&producer].top_left;
         let (left, bottom) = (f64::from(left), f64::from(bottom));
         let point = |x: f64, y: f64| SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(y));
@@ -675,7 +704,9 @@ mod tests {
         let burrower = register(&ground_base, None, true)?;
         let tall = register(&ground_base, Some(x), false)?;
         let air = register(&air_base, None, false)?;
-        let producer = world.spawn_structure(producer_type, PlayerId(0), 10, 10)?;
+        // Above and right of the map's centre, so the ring's minimum corner is its cell nearest
+        // the centre and the first tried (S-exit-order, Q0140).
+        let producer = world.spawn_structure(producer_type, PlayerId(0), 18, 18)?;
         let (left, bottom) = world.map.structures()[&producer].top_left;
         let first = SimVec2::new(
             SimScalar::from_num(f64::from(left) - 0.5),
@@ -758,8 +789,15 @@ mod tests {
         arch.collision_radius = SimScalar::from_num(0.625);
         arch.terrain_radius = SimScalar::from_num(0.5);
         let producer = world.spawn_structure(producer_type, PlayerId(0), 1, 1)?;
-        world.rebuild_production_occupancy()?;
+        // A rally at the map's corner makes the corner cell the first tried (D-9); with no rally
+        // the cell nearest the map's centre would be (S-exit-order).
         let half = SimScalar::HALF;
+        world.entities.get_mut(&producer).ok_or("producer")?.rallies =
+            vec![sim_types::RallyRoute::single(
+                0,
+                sim_types::RallyTarget::Point(SimVec2::new(SimScalar::ZERO, SimScalar::ZERO)),
+            )];
+        world.rebuild_production_occupancy()?;
         assert_eq!(
             world.production_exit(producer, product)?,
             Some(SimVec2::new(half, half))

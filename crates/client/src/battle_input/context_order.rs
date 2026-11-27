@@ -2,20 +2,27 @@
 //!
 //! # Responsibility
 //! Owns the precedence of the right click, and nothing else: [`resolve_target`] chooses among what
-//! lies under the pointer, and [`context_order`] answers a resolved [`PointerTarget`] with an order.
-//! Picking belongs to [`BattleView`](super::BattleView), and submission to the battle queue.
+//! lies under the pointer, and [`smart_plan`] answers a resolved [`PointerTarget`] member by
+//! member with a [`SmartPlan`]. Picking belongs to [`BattleView`](super::BattleView), and
+//! submission to the battle queue ([`BattleCommandQueue::submit_smart`]).
 //!
 //! # How it fits
-//! Every row asks [`any_recipient`], the rule the queue itself admits members by, so a target
-//! never offers an order the queue would then refuse for the whole selection. Mechanics are read
-//! as capabilities of the target's archetype, never by its identity, and this module uses no
-//! Bevy system, so it is tested without an app.
+//! `StarCraft` II 5.0.14 resolves the smart command per unit (plan
+//! `2026-12-01-rallies-and-smart-command` D-1, B-222): each unit uses the first of its own
+//! abilities that takes the target, and falls back to its move ability. Every row asks
+//! `takes`, the member rule the queue itself admits members by, so a plan never names a member
+//! the queue would then refuse. Mechanics are read as capabilities of the target's archetype,
+//! never by its identity, and this module uses no Bevy system, so it is tested without an app.
 //!
 //! # Invariants
-//! - Pure: the world is read and never written, and the same inputs give the same order.
-//! - The first row that some selected unit can carry out wins, and the last row, a `Move`, always
-//!   applies. An order the simulation then refuses reaches the player through its typed outcome.
-//! - Runs on a right click, so its allocation-free O(nodes) scan is never a per-frame cost.
+//! - Pure: the world is read and never written, and the same inputs give the same plan.
+//! - Each member takes the first row it can carry out; a click gives one command per distinct
+//!   order. The entries' recipients are disjoint, in selection order, and the entries come in
+//!   the table's row order. A member that takes no row (a structure, or the clicked unit itself)
+//!   is in no entry. An order the simulation then refuses reaches the player through its typed
+//!   outcome.
+//! - Runs on a right click, so its allocation and its O(selection + nodes) scan are never a
+//!   per-frame cost.
 
 use bevy::math::Vec3;
 use sim_core::SimWorld;
@@ -25,7 +32,9 @@ use sim_types::{
 };
 
 use super::order_marker::OrderMarkerKind;
-use crate::battle_pipeline::commands::any_recipient;
+#[cfg(doc)]
+use crate::battle_pipeline::commands::BattleCommandQueue;
+use crate::battle_pipeline::commands::{any_recipient, order_subject, takes};
 
 /// What a right click landed on. Every point is in Bevy world space.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -76,49 +85,131 @@ fn is_mobile(world: &SimWorld, id: EntityId) -> bool {
         .is_some_and(|archetype| !archetype.is_immobile_by_default())
 }
 
-/// The order a right click on `target` means for `selection`, first match wins.
+/// What one right click means for a selection, member by member (B-222; `StarCraft` II 5.0.14
+/// resolves the smart command per unit, plan `2026-12-01-rallies-and-smart-command` D-1).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SmartPlan {
+    /// One entry per distinct order, in the D-1 table's row order; recipients in selection order,
+    /// disjoint across entries, never empty.
+    pub orders: Vec<SmartOrder>,
+    /// Where the click's marker shows, in Bevy world space: the ground under the target.
+    pub marker_at: Vec3,
+}
+
+/// One order of a [`SmartPlan`] and the members that take it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SmartOrder {
+    /// The order, as the simulation admits it.
+    pub order: UnitOrder,
+    /// The members of the selection that carry it out.
+    pub recipients: Vec<EntityId>,
+}
+
+impl SmartPlan {
+    /// How the click is marked and where, in Bevy world space: an attack marker when the first
+    /// entry is an `AttackTarget`, a move marker otherwise, at [`Self::marker_at`].
+    #[must_use]
+    pub fn marker(&self) -> (OrderMarkerKind, Vec3) {
+        let kind = match self.orders.first() {
+            Some(SmartOrder {
+                order: UnitOrder::AttackTarget { .. },
+                ..
+            }) => OrderMarkerKind::Attack,
+            _ => OrderMarkerKind::Move,
+        };
+        (kind, self.marker_at)
+    }
+}
+
+/// The plan of a right click on `target` for `selection`: each member takes the first row of the
+/// target's table that it can carry out (the queue's member rule), and members that take the same row share
+/// one entry.
 ///
-/// Returns the order, how to mark it, and the Bevy world point the marker belongs at.
+/// `ground` is the point of the pointer target, in Bevy world space: the ground below an enemy,
+/// or under the pointer otherwise.
 ///
-/// | Target | Condition on the selection | Order |
-/// |---|---|---|
-/// | Enemy | any | `AttackTarget`, `Explicit` |
-/// | Friendly foundation | any can raise it | `Construct` |
-/// | Friendly carrier | any can board it, which the carrier itself cannot | `Load` |
-/// | Friendly completed dropoff | any holds cargo | `ReturnCargo` |
-/// | Friendly completed extractor | any harvester | `Harvest` of the node under it |
-/// | Friendly mobile unit | any can follow it, which the unit itself cannot | `Follow`, `Move` |
-/// | Node | any harvester | `Harvest` |
-/// | Anything else (a friendly structure included) | | `Move` to the ground under the pointer |
+/// | Target | Rows, in order (the first the member takes wins) |
+/// |---|---|
+/// | Enemy unit `e` | `AttackTarget { e, Explicit }`; else `Follow { e, Move }` when `e` is mobile; else `Move` to the ground below it |
+/// | Friendly foundation `f` | `Construct { f }`; else `Move` to the ground |
+/// | Friendly completed carrier `c` | `Load { c }`; else `Follow { c, Move }`; nothing for `c` itself |
+/// | Friendly completed dropoff | `ReturnCargo` (a member holding cargo); else `Move` to the ground |
+/// | Friendly completed extractor on node `n` | `Harvest { n }`; else `Move` to the ground |
+/// | Friendly mobile unit `u` | `Follow { u, Move }`; nothing for `u` itself |
+/// | Any other friendly structure | `Move` to the ground |
+/// | Node `n` | `Harvest { n }`; else `Move` to the ground |
+/// | Ground | `Move` to the ground |
+///
+/// A friend that is several of these (a carrier that is also a dropoff) offers its rows in the
+/// order `Construct`, `Load`, `ReturnCargo`, `Harvest`, `Follow`, and a structure then the ground
+/// `Move`. A right click never attacks one's own unit (5.0.14's attack ability has
+/// `SmartFilters "-;Player,Ally"`, `core` AbilData:115-119). The move ability takes the smart
+/// command on anything (`core` AbilData:533-561): on a unit it follows, on the ground it moves.
 #[must_use]
-pub fn context_order(
+pub fn smart_plan(
     world: &SimWorld,
     owner: PlayerId,
     selection: &[EntityId],
     target: PointerTarget,
-) -> (UnitOrder, OrderMarkerKind, Vec3) {
-    let (special, ground) = match target {
-        PointerTarget::Enemy(target, ground) => {
-            let order = UnitOrder::AttackTarget {
-                target,
+) -> SmartPlan {
+    let rows = smart_rows(world, target);
+    // A row whose subject the queue cannot resolve (an attack on a unit no longer available for
+    // combat) is taken by no member, as `any_recipient` answers for it.
+    let subjects: Vec<_> = rows
+        .iter()
+        .map(|row| order_subject(world, owner, row).ok())
+        .collect();
+    let mut recipients: Vec<Vec<EntityId>> = vec![Vec::new(); rows.len()];
+    for &member in selection {
+        let first = rows.iter().zip(&subjects).position(|(row, subject)| {
+            subject.is_some_and(|subject| takes(world, owner, member, row, subject))
+        });
+        if let Some(index) = first {
+            recipients[index].push(member);
+        }
+    }
+    let orders = rows
+        .into_iter()
+        .zip(recipients)
+        .filter(|(_, recipients)| !recipients.is_empty())
+        .map(|(order, recipients)| SmartOrder { order, recipients })
+        .collect();
+    SmartPlan {
+        orders,
+        marker_at: target.ground(),
+    }
+}
+
+/// The rows of [`smart_plan`]'s table for `target`, in order.
+fn smart_rows(world: &SimWorld, target: PointerTarget) -> Vec<UnitOrder> {
+    match target {
+        PointerTarget::Enemy(enemy, ground) => {
+            let mut rows = vec![UnitOrder::AttackTarget {
+                target: enemy,
                 origin: AttackOrigin::Explicit,
-            };
-            return (order, OrderMarkerKind::Attack, ground);
+            }];
+            if is_mobile(world, enemy) {
+                rows.push(UnitOrder::Follow {
+                    target: enemy,
+                    kind: FollowKind::Move,
+                });
+            }
+            rows.push(move_to(ground));
+            rows
         }
-        PointerTarget::Friendly(id, ground) => {
-            (friendly_order(world, owner, selection, id), ground)
+        PointerTarget::Friendly(friend, ground) => friendly_rows(world, friend, ground),
+        PointerTarget::Node(node, ground) => {
+            vec![UnitOrder::Harvest { target: node }, move_to(ground)]
         }
-        PointerTarget::Node(target, ground) => {
-            let harvest = UnitOrder::Harvest { target };
-            let order = any_recipient(world, owner, selection, &harvest).then_some(harvest);
-            (order, ground)
-        }
-        PointerTarget::Ground(ground) => (None, ground),
-    };
-    let order = special.unwrap_or_else(|| UnitOrder::Move {
+        PointerTarget::Ground(ground) => vec![move_to(ground)],
+    }
+}
+
+/// A `Move` to `ground`, a Bevy world point.
+fn move_to(ground: Vec3) -> UnitOrder {
+    UnitOrder::Move {
         target: sim_point(ground),
-    });
-    (order, OrderMarkerKind::Move, ground)
+    }
 }
 
 impl PointerTarget {
@@ -139,7 +230,7 @@ impl PointerTarget {
 /// `2026-11-23-production-queue` D-10 and `2026-11-25-rallies` D-8): the ground at a point, a
 /// node, an enemy unit (B-166: the new unit attacks it), and one of the player's units (the
 /// structure itself clears its rally). A completed gas extractor of `owner`'s standing on a node
-/// rallies to that node, the rule `friendly_order` gives a harvester (B-216: 5.0.14 counts a
+/// rallies to that node, the rule `friendly_rows` gives a harvester (B-216: 5.0.14 counts a
 /// refinery as a harvestable resource), so new workers harvest there.
 #[must_use]
 pub fn rally_target(world: &SimWorld, owner: PlayerId, target: PointerTarget) -> RallyTarget {
@@ -170,18 +261,23 @@ pub fn sim_point(point: Vec3) -> SimVec2 {
     SimVec2::new(SimScalar::from_num(point.x), SimScalar::from_num(point.z))
 }
 
-/// The order `friend`, one of the player's own units, offers `selection`, if any. The last row is
-/// the follow of a mobile friend (plan `2026-11-26-follow-order` D-10; 5.0.14's smart command on
-/// one's own unit is a `move` on it): a carrier still loads and an extractor still harvests.
-fn friendly_order(
-    world: &SimWorld,
-    owner: PlayerId,
-    selection: &[EntityId],
-    friend: EntityId,
-) -> Option<UnitOrder> {
-    let entity = world.entities.get(&friend)?;
-    let archetype = world.catalog.get(entity.unit_type_id).ok()?;
+/// The rows `friend`, one of the player's own units, offers, in order. The follow of a mobile
+/// friend is its last row (plan `2026-11-26-follow-order` D-10; 5.0.14's smart command on one's
+/// own unit is a `move` on it), and a structure ends with the move to `ground`, a Bevy world
+/// point: a carrier still loads and an extractor still harvests first. A friend that is gone or
+/// has no archetype offers only the move.
+fn friendly_rows(world: &SimWorld, friend: EntityId, ground: Vec3) -> Vec<UnitOrder> {
+    let Some((entity, archetype)) = world.entities.get(&friend).and_then(|entity| {
+        world
+            .catalog
+            .get(entity.unit_type_id)
+            .ok()
+            .map(|archetype| (entity, archetype))
+    }) else {
+        return vec![move_to(ground)];
+    };
     let completed = entity.is_completed;
+    let mobile = !archetype.is_immobile_by_default();
     [
         entity
             .construction
@@ -194,14 +290,15 @@ fn friendly_order(
             .then(|| node_under(world, friend))
             .flatten()
             .map(|target| UnitOrder::Harvest { target }),
-        (!archetype.is_immobile_by_default()).then_some(UnitOrder::Follow {
+        mobile.then_some(UnitOrder::Follow {
             target: friend,
             kind: FollowKind::Move,
         }),
+        (!mobile).then(|| move_to(ground)),
     ]
     .into_iter()
     .flatten()
-    .find(|order| any_recipient(world, owner, selection, order))
+    .collect()
 }
 
 /// The resource node beneath `structure`, if any.
@@ -223,11 +320,14 @@ fn node_under(world: &SimWorld, structure: EntityId) -> Option<ResourceNodeId> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::battle_pipeline::commands::{
+        is_armed, BattleCommandQueue, SessionGeneration, SubmissionError,
+    };
     use sim_core::entity::Cargo;
     use sim_core::production::construction::Construction;
     use sim_core::UnitArchetype;
     use sim_map::{CliffLevel, GameMap, MapCell, ResourceKind, ResourceNode};
-    use sim_types::{MoverType, ShapeKind, UnitTypeId};
+    use sim_types::{AttackCommand, MoverType, ShapeKind, UnitTypeId};
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -363,40 +463,166 @@ mod tests {
         Ok(carrier)
     }
 
-    fn order_on(
+    /// The plan of a right click on `target`, as `(order, recipients)` pairs, after checking
+    /// the plan's invariants ([`assert_well_formed`]) and that the marker stays at the point.
+    fn plan_on(
         world: &SimWorld,
         selection: &[EntityId],
         target: PointerTarget,
-    ) -> (UnitOrder, OrderMarkerKind) {
-        let (order, kind, at) = context_order(world, ME, selection, target);
-        assert_eq!(at, POINT, "the marker stays at the resolved point");
-        (order, kind)
-    }
-
-    fn moved() -> (UnitOrder, OrderMarkerKind) {
-        let order = UnitOrder::Move {
-            target: sim_point(POINT),
-        };
-        (order, OrderMarkerKind::Move)
-    }
-
-    fn follows(order: UnitOrder) -> (UnitOrder, OrderMarkerKind) {
-        (order, OrderMarkerKind::Move)
-    }
-
-    #[test]
-    fn an_enemy_is_attacked_by_any_selection() -> TestResult {
-        let mut world = flat_world()?;
-        let unit = worker(&mut world, 0)?;
-        let enemy_type = type_where(&world, |a| !is_dome(a))?;
-        let enemy = world.spawn_unit(
-            enemy_type,
-            THEM,
-            SimVec2::new(SimScalar::from_i32(30), SimScalar::from_i32(30)),
-        )?;
+    ) -> Vec<(UnitOrder, Vec<EntityId>)> {
+        let plan = smart_plan(world, ME, selection, target);
         assert_eq!(
-            order_on(&world, &[unit], PointerTarget::Enemy(enemy, POINT)),
-            (UnitOrder::attack(enemy), OrderMarkerKind::Attack)
+            plan.marker_at, POINT,
+            "the marker stays at the resolved point"
+        );
+        assert_well_formed(world, selection, target, &plan);
+        plan.orders
+            .into_iter()
+            .map(|entry| (entry.order, entry.recipients))
+            .collect()
+    }
+
+    /// D-2's exclusivity: every recipient's entry is the first row of the target's table it
+    /// takes, so the recipient sets are disjoint and their union is exactly the members some row
+    /// accepts; recipients keep selection order; entries come in row order and are never empty.
+    fn assert_well_formed(
+        world: &SimWorld,
+        selection: &[EntityId],
+        target: PointerTarget,
+        plan: &SmartPlan,
+    ) {
+        let rows = smart_rows(world, target);
+        let first_row = |member: EntityId| {
+            rows.iter().position(|row| {
+                order_subject(world, ME, row)
+                    .is_ok_and(|subject| takes(world, ME, member, row, subject))
+            })
+        };
+        let mut expected: Vec<(usize, Vec<EntityId>)> = Vec::new();
+        for &member in selection {
+            if let Some(index) = first_row(member) {
+                match expected.iter_mut().find(|(row, _)| *row == index) {
+                    Some((_, members)) => members.push(member),
+                    None => expected.push((index, vec![member])),
+                }
+            }
+        }
+        expected.sort_by_key(|(row, _)| *row);
+        let expected: Vec<(UnitOrder, Vec<EntityId>)> = expected
+            .into_iter()
+            .map(|(row, members)| (rows[row].clone(), members))
+            .collect();
+        let actual: Vec<(UnitOrder, Vec<EntityId>)> = plan
+            .orders
+            .iter()
+            .map(|entry| (entry.order.clone(), entry.recipients.clone()))
+            .collect();
+        assert_eq!(
+            actual, expected,
+            "each member takes its first row, in row order"
+        );
+        assert!(plan.orders.iter().all(|entry| !entry.recipients.is_empty()));
+    }
+
+    fn ground_move() -> UnitOrder {
+        UnitOrder::Move {
+            target: sim_point(POINT),
+        }
+    }
+
+    fn follow(target: EntityId) -> UnitOrder {
+        UnitOrder::Follow {
+            target,
+            kind: FollowKind::Move,
+        }
+    }
+
+    /// Whether `attacker`'s default stance has Attack and a weapon that reaches `target` (the
+    /// rule of `Entity::can_attack` for a unit in its default stance).
+    fn hits(attacker: &UnitArchetype, target: &UnitArchetype) -> bool {
+        attacker.stance_orders(None).attack == AttackCommand::Attack
+            && attacker
+                .stance_weapon_against(None, target.mover_type)
+                .is_some_and(|weapon| weapon.target_flags.intersects(target.attributes))
+    }
+
+    /// Spawns a unit of `THEM` of the first type `wanted` accepts.
+    fn enemy_where(
+        world: &mut SimWorld,
+        wanted: impl Fn(&UnitArchetype) -> bool,
+    ) -> Result<EntityId, Box<dyn std::error::Error>> {
+        let enemy_type = type_where(world, wanted)?;
+        let at = SimVec2::new(SimScalar::from_i32(30), SimScalar::from_i32(30));
+        Ok(world.spawn_unit(enemy_type, THEM, at)?)
+    }
+
+    /// P-1: an air enemy is attacked by the member whose weapon reaches it, and followed by an
+    /// unarmed air unit and by a ground-only unit, which cannot attack it (5.0.14's move ability
+    /// takes the smart command on a unit as a follow, D-1).
+    #[test]
+    fn an_enemy_is_attacked_by_those_that_can_and_followed_by_the_rest() -> TestResult {
+        let mut world = flat_world()?;
+        let enemy = enemy_where(&mut world, |a| {
+            !is_dome(a) && a.mover_type == MoverType::Air && !a.is_immobile_by_default()
+        })?;
+        let air = world
+            .catalog
+            .get(world.entities[&enemy].unit_type_id)?
+            .clone();
+        let ground = |a: &UnitArchetype| a.mover_type == MoverType::Ground;
+        let armed = unit_where(&mut world, 0, |a| ground(a) && hits(a, &air))?;
+        let unarmed = unit_where(&mut world, 1, |a| {
+            a.mover_type == MoverType::Air && !is_armed(a) && a.max_speed > SimScalar::ZERO
+        })?;
+        let ground_only = unit_where(&mut world, 2, |a| {
+            ground(a) && is_armed(a) && !hits(a, &air)
+        })?;
+        let target = PointerTarget::Enemy(enemy, POINT);
+
+        assert_eq!(
+            plan_on(&world, &[armed, unarmed, ground_only], target),
+            [
+                (UnitOrder::attack(enemy), vec![armed]),
+                (follow(enemy), vec![unarmed, ground_only]),
+            ]
+        );
+        assert_eq!(
+            smart_plan(&world, ME, &[armed, unarmed], target).marker(),
+            (OrderMarkerKind::Attack, POINT),
+            "a click with an attack shows the attack marker"
+        );
+        assert_eq!(
+            smart_plan(&world, ME, &[unarmed], target).marker(),
+            (OrderMarkerKind::Move, POINT),
+            "a click that only follows shows the move marker"
+        );
+        Ok(())
+    }
+
+    /// P-1: an enemy structure, which cannot be followed, is attacked by an armed member and
+    /// walked to by an unarmed one, to the ground below it.
+    #[test]
+    fn an_enemy_structure_is_walked_to_by_a_member_that_cannot_attack_it() -> TestResult {
+        let mut world = flat_world()?;
+        let structure = type_where(&world, |a| is_dome(a) && !a.capabilities.is_gas_extractor)?;
+        let enemy = world.spawn_structure(structure, THEM, 30, 30)?;
+        let dome = world.catalog.get(structure)?.clone();
+        let armed = unit_where(&mut world, 1, |a| hits(a, &dome))?;
+        let unarmed = unit_where(&mut world, 2, |a| {
+            !is_armed(a) && a.max_speed > SimScalar::ZERO
+        })?;
+        let target = PointerTarget::Enemy(enemy, POINT);
+
+        assert_eq!(
+            plan_on(&world, &[unarmed], target),
+            [(ground_move(), vec![unarmed])]
+        );
+        assert_eq!(
+            plan_on(&world, &[unarmed, armed], target),
+            [
+                (UnitOrder::attack(enemy), vec![armed]),
+                (ground_move(), vec![unarmed]),
+            ]
         );
         Ok(())
     }
@@ -411,10 +637,17 @@ mod tests {
         let target = PointerTarget::Friendly(foundation, POINT);
 
         assert_eq!(
-            order_on(&world, &[other, builder], target),
-            follows(UnitOrder::Construct { foundation })
+            plan_on(&world, &[other, builder], target),
+            [
+                (UnitOrder::Construct { foundation }, vec![builder]),
+                (ground_move(), vec![other]),
+            ],
+            "the builder resumes it and the soldier walks there"
         );
-        assert_eq!(order_on(&world, &[other], target), moved());
+        assert_eq!(
+            plan_on(&world, &[other], target),
+            [(ground_move(), vec![other])]
+        );
         Ok(())
     }
 
@@ -429,9 +662,33 @@ mod tests {
         assert!(archetype.is_resource_dropoff);
 
         assert_eq!(
-            order_on(&world, &[builder], PointerTarget::Friendly(depot, POINT)),
-            follows(UnitOrder::Construct { foundation: depot }),
+            plan_on(&world, &[builder], PointerTarget::Friendly(depot, POINT)),
+            [(UnitOrder::Construct { foundation: depot }, vec![builder])],
             "a load cannot go to an unfinished depot"
+        );
+        Ok(())
+    }
+
+    /// P-1: the own carrier (the catalog's, an air unit) is boarded by a ground unit and
+    /// followed by an air unit, which cannot board; the carrier itself takes nothing (S5, S6).
+    #[test]
+    fn an_own_carrier_is_boarded_by_ground_units_and_followed_by_air_units() -> TestResult {
+        let mut world = flat_world()?;
+        let carrier = unit_where(&mut world, 0, |a| a.capabilities.transport_capacity > 0)?;
+        let passenger = soldier(&mut world, 1)?;
+        let flyer = unit_where(&mut world, 2, |a| {
+            a.mover_type == MoverType::Air
+                && a.capabilities.transport_capacity == 0
+                && a.max_speed > SimScalar::ZERO
+        })?;
+        let target = PointerTarget::Friendly(carrier, POINT);
+
+        assert_eq!(
+            plan_on(&world, &[passenger, flyer, carrier], target),
+            [
+                (UnitOrder::Load { carrier }, vec![passenger]),
+                (follow(carrier), vec![flyer]),
+            ]
         );
         Ok(())
     }
@@ -444,32 +701,35 @@ mod tests {
         let target = PointerTarget::Friendly(carrier, POINT);
 
         assert_eq!(
-            order_on(&world, &[passenger], target),
-            follows(UnitOrder::Load { carrier })
+            plan_on(&world, &[passenger], target),
+            [(UnitOrder::Load { carrier }, vec![passenger])]
         );
         assert_eq!(
-            order_on(&world, &[carrier, passenger], target),
-            follows(UnitOrder::Load { carrier }),
-            "the carrier in the selection does not stop the others"
+            plan_on(&world, &[carrier, passenger], target),
+            [(UnitOrder::Load { carrier }, vec![passenger])],
+            "the carrier in the selection does not stop the others, and takes nothing"
         );
         Ok(())
     }
 
-    /// Plan `2026-11-26-follow-order` D-10 (P-11): a mobile friend that offers nothing else is
-    /// followed; alone it cannot follow itself, and the order is a move to the ground.
+    /// Plan `2026-11-26-follow-order` D-10 (P-11) and this plan's D-1: a mobile friend that
+    /// offers nothing else is followed by the rest of the selection; the friend itself takes no
+    /// row, so alone it is given nothing (its smart command on itself has no target to take).
     #[test]
     fn a_mobile_friend_is_followed_by_the_rest_of_the_selection() -> TestResult {
         let mut world = flat_world()?;
         let unit = soldier(&mut world, 0)?;
         let friend = soldier(&mut world, 1)?;
         let target = PointerTarget::Friendly(friend, POINT);
-        let follow = UnitOrder::Follow {
-            target: friend,
-            kind: FollowKind::Move,
-        };
-        assert_eq!(order_on(&world, &[unit], target), follows(follow.clone()));
-        assert_eq!(order_on(&world, &[unit, friend], target), follows(follow));
-        assert_eq!(order_on(&world, &[friend], target), moved());
+        assert_eq!(
+            plan_on(&world, &[unit], target),
+            [(follow(friend), vec![unit])]
+        );
+        assert_eq!(
+            plan_on(&world, &[unit, friend], target),
+            [(follow(friend), vec![unit])]
+        );
+        assert_eq!(plan_on(&world, &[friend], target), []);
         Ok(())
     }
 
@@ -478,24 +738,34 @@ mod tests {
         let mut world = flat_world()?;
         let carrier = ground_carrier(&mut world, 0)?;
         assert_eq!(
-            order_on(&world, &[carrier], PointerTarget::Friendly(carrier, POINT)),
-            moved()
+            plan_on(&world, &[carrier], PointerTarget::Friendly(carrier, POINT)),
+            []
         );
         Ok(())
     }
 
+    /// P-1: at a dropoff the worker holding cargo returns it, and the worker without cargo and
+    /// the soldier share one move to the ground.
     #[test]
     fn a_dropoff_takes_cargo_and_is_otherwise_ground() -> TestResult {
         let mut world = flat_world()?;
         let unit = worker(&mut world, 0)?;
+        let empty = worker(&mut world, 1)?;
+        let other = soldier(&mut world, 2)?;
         let depot = structure_where(&mut world, unit, 20, |a| a.is_resource_dropoff)?;
         let target = PointerTarget::Friendly(depot, POINT);
 
-        assert_eq!(order_on(&world, &[unit], target), moved());
+        assert_eq!(
+            plan_on(&world, &[unit], target),
+            [(ground_move(), vec![unit])]
+        );
         load(&mut world, unit)?;
         assert_eq!(
-            order_on(&world, &[unit], target),
-            follows(UnitOrder::ReturnCargo)
+            plan_on(&world, &[unit, empty, other], target),
+            [
+                (UnitOrder::ReturnCargo, vec![unit]),
+                (ground_move(), vec![empty, other]),
+            ]
         );
         Ok(())
     }
@@ -512,16 +782,25 @@ mod tests {
         let gas = ResourceNodeId(0);
 
         assert_eq!(
-            order_on(&world, &[unit], target),
-            follows(UnitOrder::Harvest { target: gas })
+            plan_on(&world, &[unit, other], target),
+            [
+                (UnitOrder::Harvest { target: gas }, vec![unit]),
+                (ground_move(), vec![other]),
+            ]
         );
-        assert_eq!(order_on(&world, &[other], target), moved());
+        assert_eq!(
+            plan_on(&world, &[other], target),
+            [(ground_move(), vec![other])]
+        );
         unfinish(&mut world, extractor)?;
         assert_eq!(
-            order_on(&world, &[unit], target),
-            follows(UnitOrder::Construct {
-                foundation: extractor
-            }),
+            plan_on(&world, &[unit], target),
+            [(
+                UnitOrder::Construct {
+                    foundation: extractor
+                },
+                vec![unit]
+            )],
             "an unfinished extractor gives no gas"
         );
         Ok(())
@@ -590,6 +869,8 @@ mod tests {
         Ok(())
     }
 
+    /// P-1: the harvester harvests the node and the soldier walks to the ground there, which
+    /// it was not given before (B-222).
     #[test]
     fn a_node_is_harvested_by_a_harvester_and_walked_to_by_the_rest() -> TestResult {
         let mut world = flat_world()?;
@@ -599,30 +880,35 @@ mod tests {
         let target = PointerTarget::Node(mineral, POINT);
 
         assert_eq!(
-            order_on(&world, &[other, unit], target),
-            follows(UnitOrder::Harvest { target: mineral })
+            plan_on(&world, &[other, unit], target),
+            [
+                (UnitOrder::Harvest { target: mineral }, vec![unit]),
+                (ground_move(), vec![other]),
+            ]
         );
-        assert_eq!(order_on(&world, &[other], target), moved());
+        assert_eq!(
+            plan_on(&world, &[other], target),
+            [(ground_move(), vec![other])]
+        );
         Ok(())
     }
 
-    /// Open ground means a move; an idle mobile friend, which offers nothing else, is followed
-    /// (plan `2026-11-26-follow-order` D-10; it meant a move to the ground before).
+    /// Open ground means one move for every mobile member, and a structure in the selection
+    /// takes none (it takes the rally, `issue_pointer_order`); an idle mobile friend, which
+    /// offers nothing else, is followed (plan `2026-11-26-follow-order` D-10).
     #[test]
     fn open_ground_means_move_and_an_idle_friend_is_followed() -> TestResult {
         let mut world = flat_world()?;
         let unit = worker(&mut world, 0)?;
         let other = soldier(&mut world, 1)?;
+        let base = structure_where(&mut world, unit, 20, |a| a.is_resource_dropoff)?;
         assert_eq!(
-            order_on(&world, &[unit], PointerTarget::Ground(POINT)),
-            moved()
+            plan_on(&world, &[unit, base, other], PointerTarget::Ground(POINT)),
+            [(ground_move(), vec![unit, other])]
         );
         assert_eq!(
-            order_on(&world, &[unit], PointerTarget::Friendly(other, POINT)),
-            follows(UnitOrder::Follow {
-                target: other,
-                kind: FollowKind::Move
-            })
+            plan_on(&world, &[unit], PointerTarget::Friendly(other, POINT)),
+            [(follow(other), vec![unit])]
         );
         Ok(())
     }
@@ -633,12 +919,13 @@ mod tests {
         let unit = worker(&mut world, 0)?;
         world.entities.get_mut(&unit).ok_or("absent")?.owner = THEM;
         assert_eq!(
-            order_on(
+            plan_on(
                 &world,
                 &[unit],
                 PointerTarget::Node(ResourceNodeId(1), POINT)
             ),
-            moved()
+            [],
+            "a foreign member takes no row, not even the move"
         );
         Ok(())
     }
@@ -653,8 +940,97 @@ mod tests {
         load(&mut world, unit)?;
 
         assert_eq!(
-            order_on(&world, &[unit], PointerTarget::Friendly(carrier, POINT)),
-            follows(UnitOrder::Load { carrier })
+            plan_on(&world, &[unit], PointerTarget::Friendly(carrier, POINT)),
+            [(UnitOrder::Load { carrier }, vec![unit])]
+        );
+        Ok(())
+    }
+
+    /// P-1, agreement with today: a selection whose members all take the same row gives a
+    /// one-entry plan with every member, the order the single-order rule gave.
+    #[test]
+    fn a_selection_that_agrees_gets_one_entry() -> TestResult {
+        let mut world = flat_world()?;
+        let first = worker(&mut world, 0)?;
+        let second = worker(&mut world, 1)?;
+        let mineral = ResourceNodeId(1);
+        let both = [first, second];
+        assert_eq!(
+            plan_on(&world, &both, PointerTarget::Node(mineral, POINT)),
+            [(UnitOrder::Harvest { target: mineral }, both.to_vec())]
+        );
+        assert_eq!(
+            plan_on(&world, &both, PointerTarget::Ground(POINT)),
+            [(ground_move(), both.to_vec())]
+        );
+        let enemy = enemy_where(&mut world, |a| {
+            !is_dome(a) && a.mover_type == MoverType::Ground
+        })?;
+        let target = world
+            .catalog
+            .get(world.entities[&enemy].unit_type_id)?
+            .clone();
+        let one = unit_where(&mut world, 2, |a| hits(a, &target))?;
+        let two = unit_where(&mut world, 3, |a| hits(a, &target))?;
+        assert_eq!(
+            plan_on(&world, &[one, two], PointerTarget::Enemy(enemy, POINT)),
+            [(UnitOrder::attack(enemy), vec![one, two])]
+        );
+        Ok(())
+    }
+
+    /// D-3's no partial queue: a plan with an entry the queue refuses (a recipient that died
+    /// after the plan was built) queues nothing, and a valid plan queues one command per entry
+    /// in plan order, every one with the click's `queue`.
+    #[test]
+    fn a_plan_is_queued_whole_or_not_at_all() -> TestResult {
+        let mut world = flat_world()?;
+        let unit = worker(&mut world, 0)?;
+        let other = soldier(&mut world, 1)?;
+        let mineral = ResourceNodeId(1);
+        let plan = smart_plan(
+            &world,
+            ME,
+            &[unit, other],
+            PointerTarget::Node(mineral, POINT),
+        );
+        let mut queue = BattleCommandQueue::default();
+        queue.activate(SessionGeneration::FIRST)?;
+
+        queue.submit_smart(&world, ME, &plan, true)?;
+        let queued: Vec<_> = queue
+            .pending_commands()
+            .map(|(_, command)| {
+                (
+                    command.order.clone(),
+                    command.entities.clone(),
+                    command.queue,
+                )
+            })
+            .collect();
+        assert_eq!(
+            queued,
+            [
+                (UnitOrder::Harvest { target: mineral }, vec![unit], true),
+                (ground_move(), vec![other], true),
+            ]
+        );
+
+        let mut fresh = BattleCommandQueue::default();
+        fresh.activate(SessionGeneration::FIRST)?;
+        world.entities.get_mut(&other).ok_or("absent")?.hp = SimScalar::ZERO;
+        assert_eq!(
+            fresh.submit_smart(&world, ME, &plan, false),
+            Err(SubmissionError::UnavailableRecipient(other))
+        );
+        assert_eq!(fresh.pending_len(), 0, "nothing of the plan is queued");
+        let empty = SmartPlan {
+            orders: Vec::new(),
+            marker_at: POINT,
+        };
+        assert_eq!(
+            fresh.submit_smart(&world, ME, &empty, false),
+            Err(SubmissionError::EmptySelection)
         );
         Ok(())
     }

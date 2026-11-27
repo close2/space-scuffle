@@ -25,3 +25,12 @@ Recommendation: (a), unless you can check in game, then (c).
 - **Sanctioned symmetric deviation (record in `Q0052` and close `B-167`):** When no rally is set, start the exit placement search at the building perimeter spot **nearest to the centre of the map** (instead of the lowest-coordinate corner) and proceed clockwise from there (then wider rings if blocked).
 
 **Reasoning:** Deliberate fairness departure from StarCraft II (where fixed-side spawning gives asymmetric advantages depending on spawn position/base placement). Orienting unrallied spawns relative to the map centre makes symmetric spawn positions behave identically and spawns units facing toward the battlefield rather than trapped against a back edge.
+
+## Resolution
+
+2026-11-27. A sanctioned symmetric deviation, recorded in [Q0052](0052-sanctioned-sc2-deviations.md) as
+S-exit-order. Plan `docs/plans/2026-12-01-rallies-and-smart-command.md` Amendment 1 builds it on branch `rallies-wp3`:
+with no rally, `production/exits.rs` tries a ring's cells clockwise from the cell whose centre is nearest the map's
+centre (the map's width and height halved, in fixed point; a tie goes to the cell earlier in the ring's clockwise
+walk from its minimum corner), then wider rings; with a rally, nearest the rally as before. B-167 is removed from the
+bug register. Closed.

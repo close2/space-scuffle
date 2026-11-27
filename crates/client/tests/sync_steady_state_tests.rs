@@ -2005,6 +2005,199 @@ fn razing_cycling_create_and_remove_nothing() {
     assert_eq!(pool_stats(&harness).beyond_bound, 0, "within the bound");
 }
 
+// --- A mixed right click (plan 2026-12-01-rallies-and-smart-command P-6) ------------------------
+
+/// Frames of the window after a mixed right click.
+const SMART_MIXED_FRAMES: usize = 60;
+
+/// Least distance, in world units, from each soldier to the transport they board: their walk
+/// outlasts the warm-up and the window.
+const MIXED_CARRIER_GAP: f32 = 15.0;
+
+/// A presentable mobile unit type that `wanted` accepts, chosen by capability and shipped media.
+fn presentable_type(
+    harness: &Harness,
+    wanted: impl Fn(&sim_core::UnitArchetype) -> bool,
+) -> sim_types::UnitTypeId {
+    let assets = battle_harness::assets();
+    harness
+        .world()
+        .catalog
+        .archetypes()
+        .find(|archetype| {
+            !archetype.is_immobile_by_default()
+                && battle_harness::presentable(&assets, &archetype.slug)
+                && wanted(archetype)
+        })
+        .map(|archetype| archetype.unit_type_id)
+        .expect("the catalog ships a presentable unit of this role")
+}
+
+/// The group of the mixed click: two ground soldiers and an armed air unit beside the local
+/// workers, and the transport well away from them, so the walk to board lasts past the window.
+struct MixedGroup {
+    soldiers: [EntityId; 2],
+    flyer: EntityId,
+    carrier: EntityId,
+}
+
+/// Spawns the [`MixedGroup`] for the local player, before the scene settles.
+fn stage_mixed_group(harness: &mut Harness) -> MixedGroup {
+    let origin = harness.simulated_position(local_workers(harness)[0]);
+    let soldier_type = presentable_type(harness, |a| {
+        a.mover_type == sim_types::MoverType::Ground
+            && a.capabilities.harvester.is_none()
+            && !a.capabilities.can_construct
+            && a.capabilities.transport_capacity == 0
+    });
+    let carrier_type = presentable_type(harness, |a| a.capabilities.transport_capacity > 0);
+    let flyer_type = presentable_type(harness, |a| {
+        a.mover_type == sim_types::MoverType::Air
+            && a.capabilities.transport_capacity == 0
+            && client::battle_pipeline::commands::is_armed(a)
+    });
+    // Each body on its own open ground, clear of structures and cliffs, and the transport at
+    // least `MIXED_CARRIER_GAP` from both soldiers.
+    let mut spots = [5.0, 6.5, 8.0]
+        .map(|distance| harness.open_ground(origin, distance))
+        .to_vec();
+    let far = [16.0, 20.0, 24.0, 28.0, 32.0]
+        .into_iter()
+        .map(|distance| harness.open_ground(spots[0], distance))
+        .find(|at| {
+            spots[..2]
+                .iter()
+                .all(|soldier| soldier.distance(*at) >= MIXED_CARRIER_GAP)
+        })
+        .expect("open ground far from the soldiers");
+    spots.push(far);
+    let mut spawn = |unit_type, at: Vec2| {
+        harness
+            .world_mut()
+            .spawn_unit(unit_type, LOCAL_PLAYER, battle_harness::sim_position(at))
+            .expect("open ground for the group")
+    };
+    let group = MixedGroup {
+        soldiers: [spawn(soldier_type, spots[0]), spawn(soldier_type, spots[1])],
+        flyer: spawn(flyer_type, spots[2]),
+        carrier: spawn(carrier_type, spots[3]),
+    };
+    // The skirmish opens paused: a few running frames publish the new bubbles.
+    harness.resume();
+    harness.step(3);
+    harness.pause();
+    group
+}
+
+/// The marker pool's entity count.
+fn marker_pool(harness: &mut Harness) -> usize {
+    let world = harness.app.world_mut();
+    world
+        .query::<&client::battle_input::order_marker::OrderMarker>()
+        .iter(world)
+        .count()
+}
+
+/// P-6: a selection of two soldiers, an armed air unit and the base right-clicks the transport:
+/// the soldiers board it, the air unit follows it and the base rallies to it, three commands in
+/// one tick (D-1 gives at most two unit entries on any shipped target, so the third is the
+/// rally). After the marker has shown, [`SMART_MIXED_FRAMES`] running frames, in which the
+/// boarders walk and the follower flies, add, modify (beyond the bubble materials of redrawn
+/// units) and remove no asset, spawn and despawn no entity, keep every retained buffer, and keep
+/// the order marker pool at its size.
+#[test]
+fn frames_after_a_mixed_right_click_create_modify_and_remove_nothing() {
+    let mut harness = skirmish();
+    let group = stage_mixed_group(&mut harness);
+    settle(&mut harness, true);
+    let base = harness.local_structure();
+    let members = [group.soldiers[0], group.soldiers[1], group.flyer, base];
+    harness.look_at(harness.simulated_position(group.soldiers[0]));
+    harness.select(members[0]);
+    for member in &members[1..] {
+        harness.look_at(harness.simulated_position(*member));
+        let at = harness.unit_on_screen(*member);
+        harness.with_key_held(KeyCode::ShiftLeft, |harness| {
+            harness.click(MouseButton::Left, at);
+        });
+    }
+    assert_eq!(
+        harness.selection().ids().len(),
+        members.len(),
+        "the group is selected"
+    );
+    harness.look_at(harness.simulated_position(group.carrier));
+    let at = harness.unit_on_screen(group.carrier);
+    harness.click(MouseButton::Right, at);
+    assert_eq!(
+        harness.pending_orders(),
+        3,
+        "board, follow and rally: {}",
+        harness.status()
+    );
+    harness.look_at(harness.simulated_position(group.soldiers[0]));
+    harness.resume();
+    run_ticks(&mut harness, WARM_TICKS);
+
+    let pool = marker_pool(&mut harness);
+    let entities = census(&harness);
+    let buffers = retained_buffers(harness.app.world());
+    let before: Vec<_> = members[..3]
+        .iter()
+        .map(|unit| harness.world().entities[unit].position)
+        .collect();
+    reset(&mut harness);
+    let mut motion = Motion::default();
+    for _ in 0..SMART_MIXED_FRAMES {
+        step_counting(&mut harness, &mut motion);
+    }
+
+    let world = harness.world();
+    for (unit, start) in members[..3].iter().zip(&before) {
+        let entity = &world.entities[unit];
+        assert_ne!(entity.position, *start, "{unit:?} moved in the window");
+        assert!(
+            !entity.is_loaded_in_transport(),
+            "{unit:?} still on its way"
+        );
+    }
+    for soldier in group.soldiers {
+        assert_eq!(
+            world.entities[&soldier].order_queue.front(),
+            Some(&sim_types::UnitOrder::Load {
+                carrier: group.carrier
+            })
+        );
+    }
+    assert!(matches!(
+        world.entities[&group.flyer].order_queue.front(),
+        Some(sim_types::UnitOrder::Follow { target, .. }) if *target == group.carrier
+    ));
+    let tally = tallies(&harness);
+    let bubbles = type_name::<Assets<BubbleDomeMaterial>>();
+    assert_eq!(
+        tally.others(&[(bubbles, EventKind::Modified)]),
+        Vec::new(),
+        "asset events other than bubble materials of redrawn units"
+    );
+    let modified = tally.count(bubbles, EventKind::Modified);
+    assert!(
+        modified <= motion.redrawn,
+        "{modified} bubble materials modified; (unit, frame) pairs: {motion:?}"
+    );
+    assert_eq!(census(&harness), entities, "entities spawned or despawned");
+    assert_eq!(
+        moved(&buffers, &retained_buffers(harness.app.world())),
+        Vec::new(),
+        "retained buffers that moved or grew"
+    );
+    assert_eq!(
+        marker_pool(&mut harness),
+        pool,
+        "the marker pool keeps its size"
+    );
+}
+
 /// Left-clicks open ground near the local workers, which clears the selection.
 fn click_open_ground(harness: &mut Harness) {
     let worker = local_workers(harness)[0];
