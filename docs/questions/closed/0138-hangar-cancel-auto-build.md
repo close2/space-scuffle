@@ -20,3 +20,11 @@ a slot that auto-build fills again at once: the cancel only helps after switchin
 ## Answer
 
 - **Option (a): Follow the data's reading.** Cancelling an interceptor build refunds it, and if auto-build is on it may queue again on the next tick, with the cancel tooltip noting *"Auto-build will queue again"* while auto-build is enabled (matches StarCraft II 5.0.14).
+
+## Resolution
+
+Built as answered on branch `hangar-commands`, plan
+[`2026-12-01-death-spawns-and-hangar-commands`](../../plans/2026-12-01-death-spawns-and-hangar-commands.md) part B:
+`eaf4b968` (WPB1) refunds a cancelled build in full and leaves auto-build on, so the same tick's hangar phase queues
+(and charges) a new build if the owner can pay (HC-6); `1fd8f638` (WPB2) gives the card's Cancel entry the tooltip
+"Auto-build will queue again" while the hangar it goes to builds by itself (`card::REQUEUE_TEXT`, HC-11).
