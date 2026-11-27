@@ -1304,6 +1304,22 @@ fn b86_the_lurker_carries_its_whole_cost_supply_and_time() -> TestResult {
     )
 }
 
+/// B-86, owner answer Q0135 (a): the Baneling morphs from the Zergling in the game; its analogue
+/// is trained whole. 5.0.14 values: `CostResource` 50 minerals and 25 gas (`liberty`
+/// UnitData:9365, :9366) and `Food` -0.5 (:9315), rounded up to 1 supply as our Zergling's. Its
+/// time is the Zergling's `LarvaTrain` `Train2` 24 Normal s (`liberty` AbilData:2485) plus the
+/// `MorphToBaneling` Stats delay 20 Normal s (`voidmulti` AbilData:1720; `liberty`'s
+/// `MorphZerglingToBaneling` also 20 at :546): 44 x 25 / 1.4 = 785.7 ticks, rounded half up to
+/// 786. No later layer overrides any of these.
+#[test]
+fn b86_the_baneling_carries_its_whole_cost_supply_and_time() -> TestResult {
+    check_whole_morph(
+        "Baneling",
+        [50, 25, 1, 786],
+        "liberty UnitData:9315, :9365-9366; liberty AbilData:2485; voidmulti AbilData:1720; Q0135 (a)",
+    )
+}
+
 #[test]
 fn b47_research_costs_follow_starcraft() -> TestResult {
     let catalogs = sim_fixtures::shipped_catalogs();

@@ -24,3 +24,12 @@ Recommendation: (a). No measured battle trains a Baneling, so no outcome moves e
 ## Answer
 
 - **Option (a): 50 minerals, 25 gas, and 1 supply.** Matches StarCraft II's total resource cost with supply rounded up to a whole unit (matching Zergling and preventing 0-supply Baneling spam until a morph model lands in WP17).
+
+## Resolution
+
+Built as (a) on branch `baneling-cost` (short note in its commit message): `volatile_tick` in
+`assets/catalog/units.ron` now costs 50 minerals and 25 gas (`liberty` UnitData:9365–9366) and 1 supply (`Food` -0.5
+at :9315, rounded up as our Zergling's), and trains in 786 ticks: the Zergling's `LarvaTrain` Train2 24 Normal s
+(`liberty` AbilData:2485) plus `MorphToBaneling`'s 20 (`voidmulti` AbilData:1720), 44 x 25 / 1.4 = 785.7. Tested by
+`b86_the_baneling_carries_its_whole_cost_supply_and_time` (`catalog_reference_values_tests.rs`); B-86 in `DESIGN.md`
+lists it among the analogues that carry their totals. No measured world trains a Baneling, so no outcome moves.
