@@ -3148,8 +3148,11 @@ fn hiding_harvesters_is_required_and_refused_without_an_extractor() -> TestResul
     use sim_core::catalog::CatalogError;
     let structures = std::fs::read_to_string(catalog_directory().join(FILES[1]))?;
     let factions = sim_fixtures::shipped_factions();
+    let units = std::fs::read_to_string(catalog_directory().join(FILES[0]))?;
+    // The units load first: a structure's death spawn names its unit (plan
+    // `2026-12-01-death-spawns-and-hangar-commands` D-1).
     let load = |text: &str| {
-        let mut catalog = UnitCatalog::from_ron_str(&factions, "(units: [])")?;
+        let mut catalog = UnitCatalog::from_ron_str(&factions, &units)?;
         catalog.load_structures_from_ron_str(text)?;
         Ok::<_, SimCoreError>(catalog)
     };
@@ -4582,6 +4585,69 @@ fn an_edited_spawn_clock_and_magazine_change_the_volley() -> TestResult {
     assert_eq!(count, 4, "two per escort");
     assert!(50 <= low && high <= 55, "50 + 0..=5: {low}..{high}");
     assert!((42..=45).contains(&gap), "a 30-tick rebuild: {gap}");
+    bundle.finish()?;
+    Ok(())
+}
+
+/// What the death of the shipped structure with the most death-spawned units does under a
+/// catalog: the units created and the ticks from the death to their creation.
+fn razed(catalogs: RuntimeCatalogs) -> Result<(usize, u32), Box<dyn std::error::Error>> {
+    let mut world = SimWorld::with_catalogs(
+        GameMap::new(48, 48, MapCell::default_ground(CliffLevel(0)))?,
+        5,
+        catalogs.units,
+        catalogs.upgrades,
+    )?;
+    let (host, spawned) = world
+        .catalog
+        .archetypes()
+        .filter_map(|a| {
+            a.capabilities
+                .death_spawn
+                .map(|spec| (a.unit_type_id, spec))
+        })
+        .max_by_key(|(id, spec)| (spec.count, std::cmp::Reverse(*id)))
+        .map(|(id, spec)| (id, spec.unit))
+        .ok_or("a structure with a death spawn")?;
+    let structure = world.spawn_structure(host, PlayerId(1), 20, 20)?;
+    world.entities.get_mut(&structure).ok_or("host")?.hp = SimScalar::ZERO;
+    let mut death = None;
+    for tick in 1..=60 {
+        world.step(&sim_types::TickBundle {
+            tick: sim_types::Tick(tick),
+            commands: Vec::new(),
+            state_checksum: None,
+        });
+        if death.is_none() && !world.entities.contains_key(&structure) {
+            death = Some(world.current_tick);
+        }
+        let created = world
+            .entities
+            .values()
+            .filter(|e| e.unit_type_id == spawned)
+            .count();
+        if created > 0 {
+            return Ok((created, world.current_tick - death.ok_or("died first")?));
+        }
+    }
+    Err("units were created within 60 ticks".into())
+}
+
+/// DS-14 (plan `2026-12-01-death-spawns-and-hangar-commands` §6.2): in a catalog directory copy,
+/// a death spawn count of 2 and a delay of 20 ticks change the units the largest host leaves and
+/// when, in the same binary.
+#[test]
+fn an_edited_death_spawn_changes_the_units_and_their_tick() -> TestResult {
+    let bundle = Bundle::new("death-spawns")?;
+    assert_eq!(razed(bundle.load()?)?, (9, 9), "shipped: 9 units, 9 ticks");
+    let path = bundle.directory.join(FILES[1]);
+    let text = std::fs::read_to_string(&path)?;
+    let edited = text
+        .replace("count: 9, delay_ticks: 9,", "count: 2, delay_ticks: 20,")
+        .replace("count: 6, delay_ticks: 9,", "count: 2, delay_ticks: 20,");
+    assert_ne!(edited, text, "premise: the shipped rows carry the fields");
+    std::fs::write(&path, edited)?;
+    assert_eq!(razed(bundle.load()?)?, (2, 20), "edited: 2 units, 20 ticks");
     bundle.finish()?;
     Ok(())
 }

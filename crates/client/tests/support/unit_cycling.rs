@@ -14,6 +14,11 @@
 //!   found by its hangar) of the local player attack a durable, unarmed enemy air unit beside the
 //!   local base; [`HangarCycle::advance`] drives their members through launch, attack, dock and
 //!   relaunch from the presented snapshot (plan `2026-11-28-carrier-interceptors` H-20).
+//! - [`stage_razing`]: every mobile unit is killed and a weaponless structure with media of the
+//!   enemy is given the shipped death spawn with the most units; [`RazingCycle::advance`] raises
+//!   it beside the enemy base and kills it every [`RAZING_PERIOD_TICKS`] ticks, so its units
+//!   arrive and expire on their own clocks (plan `2026-12-01-death-spawns-and-hangar-commands`
+//!   DS-18).
 //!
 //! # How tests use it
 //! Include it with `#[path = "support/unit_cycling.rs"]` and call a stage on the session's
@@ -464,5 +469,129 @@ pub fn stage_hangars(world: &mut SimWorld, assets: &Path) -> HangarCycle {
         cycles: 0,
         cycle_end: world.current_tick,
         last_cycle_ticks: 0,
+    }
+}
+
+/// Ticks between two deaths of a [`RazingCycle`] (plan
+/// `2026-12-01-death-spawns-and-hangar-commands` DS-18: one death every 200 ticks), longer than
+/// the shipped death-spawned units' longest life, so each death's units have expired before the
+/// next.
+pub const RAZING_PERIOD_TICKS: u32 = 200;
+
+/// The DS-18 stage after [`stage_razing`]: one host type raised and killed at one site.
+#[derive(Debug, Clone, Copy)]
+pub struct RazingCycle {
+    /// The structure type, carrying the shipped death spawn with the most units.
+    pub host: UnitTypeId,
+    /// The archetype its death creates.
+    pub spawned: UnitTypeId,
+    /// The longest life of a created unit, in ticks.
+    pub lifetime: u32,
+    /// The minimum cell of the site, where the host is raised every cycle.
+    pub cell: (u32, u32),
+    /// The tick of the last cycle.
+    pub last_tick: u32,
+    /// Deaths so far.
+    pub deaths: u32,
+}
+
+impl RazingCycle {
+    /// Runs a cycle if `world`'s tick is a multiple of [`RAZING_PERIOD_TICKS`] and none ran on
+    /// it: the host is raised for the enemy at the site and killed, so the next tick's reap takes
+    /// it and its units arrive after the spawn's delay. Returns whether a cycle ran.
+    pub fn advance(&mut self, world: &mut SimWorld) -> bool {
+        let tick = world.current_tick;
+        if tick == self.last_tick || !tick.is_multiple_of(RAZING_PERIOD_TICKS) {
+            return false;
+        }
+        self.last_tick = tick;
+        raze(world, self.host, self.cell);
+        self.deaths += 1;
+        true
+    }
+}
+
+/// Raises `host` for the enemy at `cell` and sets its life to 0.
+fn raze(world: &mut SimWorld, host: UnitTypeId, cell: (u32, u32)) {
+    let id = world
+        .spawn_structure(host, PlayerId(1), cell.0, cell.1)
+        .expect("the site is free");
+    world.entities.get_mut(&id).expect("the host").hp = SimScalar::ZERO;
+}
+
+/// Stages DS-18 on `world` (see the module docs) and returns the cycle, its first death already
+/// staged. `assets` is the shipped asset root.
+pub fn stage_razing(world: &mut SimWorld, assets: &Path) -> RazingCycle {
+    let presentable = |slug: &str| {
+        assets
+            .join("textures")
+            .join(format!("{slug}.flipbook.ron"))
+            .is_file()
+    };
+    let spec = world
+        .catalog
+        .archetypes()
+        .filter_map(|a| {
+            a.capabilities
+                .death_spawn
+                .map(|spec| (a.unit_type_id, spec))
+        })
+        .max_by_key(|(id, spec)| (spec.count, std::cmp::Reverse(*id)))
+        .map(|(_, spec)| spec)
+        .expect("a shipped structure with a death spawn");
+    let mut hosts: Vec<(u32, UnitTypeId, (u8, u8))> = world
+        .catalog
+        .archetypes()
+        .filter(|a| presentable(&a.slug))
+        .filter(|a| a.ground_weapon.is_none() && a.air_weapon.is_none())
+        .filter(|a| !a.capabilities.is_gas_extractor && a.trains_units.is_empty())
+        .filter_map(|a| match a.shape {
+            sim_types::ShapeKind::BuildingDome {
+                footprint_w,
+                footprint_h,
+                ..
+            } => Some((
+                u32::from(footprint_w) * u32::from(footprint_h),
+                a.unit_type_id,
+                (footprint_w, footprint_h),
+            )),
+            sim_types::ShapeKind::UnitSphere => None,
+        })
+        .collect();
+    hosts.sort();
+    let (_, host, (w, h)) = *hosts.first().expect("a weaponless structure with media");
+    world
+        .catalog
+        .get_mut(host)
+        .expect("the host kind")
+        .capabilities
+        .death_spawn = Some(spec);
+    let life = spec
+        .timed_life
+        .expect("the shipped death spawn has a timed life");
+    kill_mobile_units(world);
+    let enemy = PlayerId(1);
+    let base = world
+        .entities
+        .values()
+        .filter(|e| e.owner == enemy && e.is_immobile)
+        .map(|e| (e.id, e.position))
+        .min_by_key(|(id, _)| *id)
+        .map(|(_, position)| position)
+        .expect("the enemy has a base");
+    let toward = (map_centre(world) - base).normalize_or_zero();
+    let cell = (8..30)
+        .map(|step| base + toward * SimScalar::from_i32(step))
+        .filter_map(|at| world.map.world_to_cell(at).ok())
+        .find(|&(x, y)| world.map.can_place_building(x, y, w, h).is_ok())
+        .expect("a free site between the enemy base and the centre");
+    raze(world, host, cell);
+    RazingCycle {
+        host,
+        spawned: spec.unit,
+        lifetime: u32::from(life.ticks) + u32::from(life.random_extra_ticks),
+        cell,
+        last_tick: world.current_tick,
+        deaths: 1,
     }
 }

@@ -761,6 +761,9 @@ impl UnitArchetypeDef {
         self.validate_overclock()?;
         self.validate_hangar()?;
         self.validate_strike_magazine()?;
+        if let Some(spawn) = &self.capabilities.death_spawn {
+            spawn.validate(&self.slug)?;
+        }
         ability_rates(&self.slug, "abilities", &self.abilities)?;
         ability_rates(
             &self.slug,
@@ -1656,6 +1659,9 @@ impl StructureArchetypeDef {
         self.validate_auto_rally()?;
         self.validate_rally()?;
         self.validate_hidden_harvesters()?;
+        if let Some(spawn) = &self.death_spawn {
+            spawn.validate(&self.slug)?;
+        }
         nonnegative(&self.slug, "hp_regen_per_tick", self.hp_regen_per_tick)?;
         hp_regen_delay(
             &self.slug,

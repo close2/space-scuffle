@@ -159,7 +159,11 @@ use std::collections::BTreeMap;
 /// `WeaponSpec::impact_spawn` (an option tag, then its unit, count per strike, search range,
 /// timed life and order), after `magazine_launch` (plan `2026-11-28-broodlings` D-3 to D-5). The
 /// number is the next free at merge.
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 61;
+/// Schema 62 adds the world's pending death spawns, `SimWorld::pending_death_spawns` (a section
+/// `death-spawns`: its length, then each entry's countdown, host type, owner, point and heading),
+/// after the turret tracking (plan `2026-12-01-death-spawns-and-hangar-commands` D-2). The number
+/// is the next free at merge.
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 62;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.
@@ -227,6 +231,8 @@ pub fn compute_simulation_checksum(world: &SimWorld) -> u64 {
         unit.encode(&mut encoder);
         enemy.encode(&mut encoder);
     }
+    "death-spawns".encode(&mut encoder);
+    world.pending_death_spawns.encode(&mut encoder);
 
     "map".encode(&mut encoder);
     world.map.width().encode(&mut encoder);

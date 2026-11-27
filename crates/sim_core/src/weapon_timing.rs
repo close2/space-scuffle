@@ -128,6 +128,18 @@ pub enum SimulationDiagnostic {
         /// The finish point the search started from, world units.
         point: sim_types::SimVec2,
     },
+    /// A dead unit's death spawn found no place valid for the created unit within its search
+    /// range (plan `2026-12-01-death-spawns-and-hangar-commands` D-3); that unit was not
+    /// created.
+    #[error("simulation tick {tick:?}: no place for death spawn {unit:?} near {point:?}")]
+    DeathSpawnBlocked {
+        /// Tick of the creation.
+        tick: Tick,
+        /// The archetype that was not created.
+        unit: sim_types::UnitTypeId,
+        /// The death point the search started from, world units.
+        point: sim_types::SimVec2,
+    },
     /// An invalid buff prevented this entity's weapon update during the tick.
     #[error("simulation tick {tick:?}, entity {entity:?}: {source}")]
     InvalidBuffAttackRate {

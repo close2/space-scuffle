@@ -764,12 +764,15 @@ fn the_structure_attribute_marks_exactly_the_structures() -> TestResult {
         );
         structures += usize::from(building);
     }
+    // The units load first: a structure's death spawn names its unit (plan
+    // `2026-12-01-death-spawns-and-hangar-commands` D-1).
     let mut rows = sim_core::catalog::UnitCatalog::from_ron_str(
         &sim_fixtures::shipped_factions(),
-        "(units: [])",
+        sim_fixtures::UNITS_RON,
     )?;
+    let units = rows.archetypes().count();
     rows.load_structures_from_ron_str(sim_fixtures::STRUCTURES_RON)?;
-    let rows = rows.archetypes().count();
+    let rows = rows.archetypes().count() - units;
     assert!(rows > 0, "the shipped structures.ron has rows");
     assert_eq!(
         structures, rows,
@@ -5974,4 +5977,105 @@ fn the_carrier_separation_radius_follows_starcraft() {
             f(carrier.separation_radius)
         );
     }
+}
+
+/// 5.0.14's death responses of the Zerg structures (plan
+/// `2026-12-01-death-spawns-and-hangar-commands` §2.1 S8): the analogue, its `SpawnCount` and the
+/// `liberty UnitData` line of its `BehaviorArray` link.
+const DEATH_SPAWNS: [(&str, u8, &str); 14] = [
+    ("Hatchery", 9, "ZergBuildingDies9, liberty UnitData:8251"),
+    ("Lair", 9, "ZergBuildingDies9, liberty UnitData:8333"),
+    ("Hive", 9, "ZergBuildingDies9, liberty UnitData:8412"),
+    (
+        "Spawning Pool",
+        6,
+        "ZergBuildingDies6, liberty UnitData:8920",
+    ),
+    (
+        "Evolution Chamber",
+        6,
+        "ZergBuildingDies6, liberty UnitData:8478",
+    ),
+    (
+        "Roach Warren",
+        6,
+        "ZergBuildingDies6, liberty UnitData:11799",
+    ),
+    (
+        "Baneling Nest",
+        6,
+        "ZergBuildingDies6, liberty UnitData:10000",
+    ),
+    (
+        "Hydralisk Den",
+        6,
+        "ZergBuildingDies6, liberty UnitData:8983",
+    ),
+    ("Lurker Den", 6, "ZergBuildingDies6, liberty UnitData:669"),
+    ("Spire", 6, "ZergBuildingDies6, liberty UnitData:9046"),
+    (
+        "Greater Spire",
+        6,
+        "ZergBuildingDies6, liberty UnitData:9117",
+    ),
+    (
+        "Infestation Pit",
+        6,
+        "ZergBuildingDies6, liberty UnitData:2070",
+    ),
+    (
+        "Nydus Network",
+        6,
+        "ZergBuildingDies6, liberty UnitData:9936",
+    ),
+    (
+        "Ultralisk Cavern",
+        6,
+        "ZergBuildingDies6, liberty UnitData:9249",
+    ),
+];
+
+/// DS-13 (plan `2026-12-01-death-spawns-and-hangar-commands` §6.2): every shipped structure
+/// whose analogue carries `ZergBuildingDies6` or `9` leaves that many Broodlings, and no other
+/// archetype leaves anything (none for the Extractor, Spine Crawler and Spore Crawler, whose
+/// `BehaviorArray` has no death response). Each spawn is the S1, S3, S5, S7 chain:
+/// `DisableWhileUnderConstruction` (`liberty BehaviorData:1270–1285`), `ExpireDelay 0.5` = 9 ticks
+/// (`liberty EffectData:1581–1592`), `Placement 0` (`:2791–2808`), `BroodlingFate Duration 8` =
+/// 143 ticks plus `TimedLife DurationRandomMax 0.3` = 5 (`liberty EffectData:772–775`,
+/// `BehaviorData:650–655`, `core BehaviorData:105–117`), creating the archetype whose analogue is
+/// the Broodling.
+#[test]
+fn zerg_structures_leave_broodlings_as_5_0_14() -> TestResult {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let mut seen = std::collections::BTreeSet::new();
+    for archetype in catalogs.units.archetypes() {
+        let Some(spec) = archetype.capabilities.death_spawn else {
+            continue;
+        };
+        let name = analogue(archetype);
+        let (_, count, source) = DEATH_SPAWNS
+            .iter()
+            .find(|(structure, ..)| *structure == name)
+            .ok_or_else(|| format!("{} ({name}): a death spawn with no row", archetype.slug))?;
+        assert!(is_structure(archetype), "{name}: a structure");
+        let spawned = catalogs.units.get(spec.unit)?;
+        assert_eq!(analogue(spawned), "Broodling", "{name} ({source})");
+        assert_eq!(spec.count, *count, "{name} ({source})");
+        assert_eq!(spec.delay_ticks, 9, "{name}: ExpireDelay 0.5");
+        assert_eq!(spec.search_range, SimScalar::ZERO, "{name}: Placement 0");
+        assert_eq!(
+            spec.timed_life,
+            Some(sim_types::TimedLifeSpec {
+                ticks: 143,
+                random_extra_ticks: 5,
+            }),
+            "{name}: BroodlingFate"
+        );
+        assert!(spec.disabled_while_constructing, "{name}");
+        seen.insert(name.to_owned());
+    }
+    for (structure, ..) in DEATH_SPAWNS {
+        assert!(seen.contains(structure), "{structure}: no death spawn");
+    }
+    Ok(())
 }

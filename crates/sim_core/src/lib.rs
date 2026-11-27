@@ -66,6 +66,7 @@ pub use upgrades::{UpgradeCatalog, UpgradeDef, UpgradeId, WeaponHitUnlock};
 pub use weapon_timing::{
     AttackRate, InvalidAttackRate, InvalidBuffAttackRate, SimulationDiagnostic,
 };
+pub use world::death_spawns::PendingDeathSpawn;
 pub use world::{PlayerResources, SimWorld};
 
 /// The shipped catalogs, embedded for this crate's own unit tests only.
