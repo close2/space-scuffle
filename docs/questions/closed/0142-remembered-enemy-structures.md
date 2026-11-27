@@ -23,3 +23,14 @@ stood.
 ## Answer
 
 - **Option (b): Register remembered enemy structures (`FogVisibility Snapshot` in fog and on the minimap) as a bug and plan it next.** Essential RTS scouting readability, and cleanly reuses the existing presentation-only attacker-snapshot and minimap marks infrastructure with no simulation checksum impact.
+
+## Resolution
+
+Planned as Amendment 1 of [`docs/plans/2026-12-01-minimap.md`](../../plans/2026-12-01-minimap.md) (the commit that
+closes this question, on branch `minimap-amend`), and registered as **B-252** in `DESIGN.md` §4 (number provisional,
+next free at merge). A new package, WP6, after WP4, adds a per-viewer memory of structures of other players that the
+viewer was shown. It lives in the simulation's unhashed presentation workspace, like the attack snapshots, so no
+checksum moves, and it is published in `PlayerView::remembered_structures`. The client draws each one as a still,
+dimmed image in the fog through the attack-snapshot pool, and as a square on the minimap. An image stays until the
+viewer sees its spot again, or sees the structure elsewhere as a unit. It is never a target. Until WP6 is built,
+enemy structures out of sight are not drawn.
