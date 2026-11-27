@@ -83,3 +83,98 @@ and holds every other uncut sample to `0.2`. On `main` (WP0 tree), per terrain r
 
 The catalog's ground unit spheres: 28 archetypes in 7 terrain radii (3 at 0.3125, 13 at 0.375, 8 at 0.5, one each at
 0.5625, 0.75 and 0.875, one at 1.0), as plan D-8 lists.
+
+## 2. WP1: void diagonals through the midpoints again (D-6)
+
+Commits `a786f902` (code), `ba9c159f` (golden re-record). Logs `~/scratch/straight-diagonals/logs/wp1/`.
+
+- T-S1's void runs are straight: largest deviation `9.7e-7` (τ `1.22e-4`) on the 4 void runs of `showcase_canyon`
+  and the 3 of the fixture. The void runs' continuity bound is `1/√2 + √2·0.06 = 0.792`, not `1/√2`: the two profiles
+  of one 45° cut stand at its midpoints, each moved by the void setback along its own axis, so consecutive bottom
+  rows are `0.622` and `0.792` apart along the line (derived, recorded as a deviation of T-S1).
+- T-B1 and T-B2 green on five maps; `terrain_tests` (14, including the 4×4 counts, the seams and the preview on radv)
+  and `ramp_geometry_tests` green.
+- Mesher goldens: `showcase_canyon` mesh `0x2fab86d971733ced` → `0x97118e48b41d7893`, ramp-free chunks
+  `0x9ade734dd7dd651c` → `0x051496086fec6fa6`; synthetic mesh `0x45d30dce9779890c` → `0x029596f22649d218`, ramp-free
+  chunk `0x7155c56ab6ce594b` → `0x4d48d3b0e0ad5713`. `default_arena` (`0x8b6b69ceed8bcf97`,
+  `0xed16db8a30059794`) and every pick hash and hit count unchanged.
+- Review capture `~/scratch/straight-diagonals/review/contact_sheet_wp1.png`, column `diagonals_wp1/`: the abyss
+  canyons are straight again; the ground diagonals and the player-0 close-ups are identical to `main`'s, pixel for
+  pixel.
+
+## 3. WP2: straight chamfers on the high side (D-1 to D-5, D-7, D-9)
+
+Commits `1fe78950` (code), `058435c4` (cheaper cut reads, same bits), `8649ce2d` (golden re-record). Logs
+`~/scratch/straight-diagonals/logs/{wp2,wp2b}/`.
+
+### 3.1 Tests
+
+| Test | Result |
+|---|---|
+| T-S1 (three maps) | green; largest chamfer deviation `2.7e-6` on 16 ground runs, `9.7e-7` on 7 void runs, τ `1.22e-4` |
+| T-S2 (unit table, fixture half) | green; the production predicate agrees with the independent analysis on every fixture cell, one direction per cell, no foot end at a saddle; the scratch check finds no disagreement on any map |
+| T-A3 | green; every junction mitre meets both normals at 1 within `8·ulp(2)`; the square nook's mitre is `d₁ + d₂` bit for bit |
+| T-S3 | green; 552 (`showcase_canyon`) and 2,418 (fixture) floor vertices on a cut's rim-top or foot line, each a wall vertex bit for bit; no floor triangle of a touched dual cell turned over |
+| T-S4 | green |
+| T-K | green, figures in §4 |
+| T-B1, T-B2 (five maps), T-A, T-A2 | green |
+| `terrain_tests` (4×4 counts, seams with four cut centres on `showcase_canyon`'s seams, incremental rebuild, winding, normals, preview on radv) | green |
+| `ramp_geometry_tests`, G-1 `cliff_contact_gpu_tests` (radv: band 3184/3184 changed), `smog_golden_tests`, `round2_visual_tests`, `effect_slice_gpu_tests` (effect stills) | green, unchanged |
+
+### 3.2 What the implementation needed beyond the plan's text
+
+- **The wall between the two crossing columns is the `O` dual cell's.** With the centre column in both `P` dual
+  cells' strips, a cut centre on a chunk seam put three vertices on one side of the seam at the centre (the `C` dual
+  cell's floor corner, a `P` dual cell's floor corner and its strip's toe) and two on the other, and the unchanged
+  `test_chunk_borders_are_watertight` compares vertex multisets. The `O` dual cell now emits the strip crossing
+  column → centre column → crossing column once, with shared middle vertices, and each `P` dual cell's strip starts at
+  its crossing column. Every dual cell round the centre then holds one vertex there. Crossing columns exist at every
+  cut (at the rim-top line of the cut run's top), except where two cuts meet at the 90° apex.
+- **The low region is fanned from the low cell's corner.** A low region with a chamfer's triangle added is
+  star-shaped from `L`'s corner, not always from the table's first vertex (T-S3 caught turned-over fan triangles at
+  every run end on a straight wall).
+- **Flat dual cells read 4×4 too, behind a filter** (D-9 said they would not pay). A flat dual cell can be a cut's
+  `O`, whose floor must stop at the rim top. It first reads its corners' 8 outward edge neighbours and skips the 4×4
+  read unless some corner has two lower, non-ramp ones.
+
+### 3.3 Cost (D-9)
+
+Full mesh build, scratch check at opt-level 2, best of 300, WP1 tree → final tree: `showcase_canyon` 4.93 → 5.90 ms
+(1.20×), `default_arena` 4.39 → 4.90 ms, synthetic 3.86 → 4.54 ms, fixture 4.67 → 5.85 ms. Before the filter of
+`058435c4` the figures were 1.66× and 1.74×. Nothing new allocates: `DualCuts`, `Refs` and `FloorPolygon` are on the
+stack; the profile `Vec`s are the rebuild path's, as before.
+
+### 3.4 Goldens
+
+`showcase_canyon` mesh `0x97118e48b41d7893` → `0x7d2d666737296669`, ramp-free chunks `0x051496086fec6fa6` →
+`0x70700bdb731bc5d3`; synthetic mesh `0x029596f22649d218` → `0xc7cf28f9598ea15e`, ramp-free chunk
+`0x4d48d3b0e0ad5713` → `0xebb43f3f7c63f8e8`. `default_arena` and every pick hash and hit count unchanged.
+
+## 4. Review capture and the trade-off (D-8, Q0139)
+
+`~/scratch/straight-diagonals/review/` (`README.txt` names every file and commit): `contact_sheet.png` has the
+columns `main_before`, `wp1` (the terrain plan's), `main` and `diagonals` (WP2), the rows of the terrain plan's wp3
+sheet, the brink rows `brink_0.3125.png` and `brink_0.5.png`, and `straightness_overlay.png`.
+
+**High ground drawn below its surface** (walkable plateau more than 0.01 below its level, 1/32 lattice): within a
+cell of a cut on `showcase_canyon`, 19.36 cells under (a) and 25.65 under (c), +0.262 per step (plan: 18.7 → 24.6,
++0.243).
+
+**T-K, the drop under a body's centre** (final tree; `main` in brackets):
+
+| `r` | Archetypes | Cut cells | Uncut cells (limit 0.2) |
+|---:|---:|---:|---:|
+| 0.3125 | 3 | 3.0000 [2.84] | 0.1987 [0.160] |
+| 0.375 | 13 | 3.0000 [0.160] | 0.1398 [0.077] |
+| 0.5 | 8 | 3.0000 [0] | 0.0219 [0] |
+| 0.5625 | 1 | 2.8875 [0] | 0 |
+| 0.75 | 1 | 0.0219 [0] | 0 |
+| 0.875, 1.0 | 2 | 0 | 0 |
+
+The cut-cell figures are plan D-8's table. The largest uncut drop, 0.1987, is a backing cell's corner at a concave
+corner `V`, where the rim band dips into it, at the radius' distance from `V`. The convex half-cut quadrants, reported
+not limited (§1.5), are unchanged.
+
+**Acceptance 5:** the terrain plan's scratch mesher check, re-pointed at the final tree
+(`~/scratch/straight-diagonals/terrain_mesher_check/result_final.txt`), counts 0 rows on the low side of their edge
+on both shipped maps.

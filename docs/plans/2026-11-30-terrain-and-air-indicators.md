@@ -760,3 +760,20 @@ Records: `DESIGN.md` §4 (B-238 fixed; B-243 added as fixed, citing `1c146c83`, 
 not merged; B-244 and B-245 added, fixed), plan 21b §5.3 (the saddle note marked superseded), this section, the
 README row, and the evidence file. Q0136 stays open, and its default (a) is built. WP3 is the last package, so an
 answer of (b) or (c) reverts `6c47fc4d` and `aca9dc86`.
+
+## Amendment 1 (plan 2026-12-01-straight-diagonal-cliffs WP3, 2026-12-01): D-3 (a) replaced on diagonals and void nooks
+
+The owner answered Q0136 with option (c). Plan
+[`2026-12-01-straight-diagonal-cliffs`](2026-12-01-straight-diagonal-cliffs.md) builds it on top of this plan's WP3,
+which stays on `main`: D-3's square, mitred concave corners remain for isolated concave corners, and the
+low-connected saddles remain. Two parts of D-3 (a) are replaced:
+
+- **45° staircases whose low side is ground** draw one straight chamfer through the low cells' corners, wholly on the
+  high side (that plan's D-1 to D-5). W1 still holds (T-B1 and T-B2 green on five maps); the cost falls on the high
+  side, where a body at a step's outer corner or centre is drawn over the low floor (that plan's D-8, owner question
+  Q0139). This plan's D-4 brink limit (0.2) still holds in every cell that is not cut.
+- **Concave corners whose low cell is void** draw the 45° cut through their edge midpoints again, as before WP3 (that
+  plan's D-6), since no walkable cell lies beside them.
+
+The general mitre `(n₁ + n₂)/(1 + n₁·n₂)` replaces `mitre()`'s sum `d₁ + d₂`, which it equals bit for bit on a square
+nook. The mesher goldens were re-recorded twice more (that plan's §5.1); the pick hashes did not change.
