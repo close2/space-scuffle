@@ -1,5 +1,5 @@
 //! The minimap through public client APIs and the production plugin, without a GPU (plan
-//! `2026-12-01-minimap` §6, M-1 to M-7 and M-11).
+//! `2026-12-01-minimap` §6, M-1 to M-11).
 //!
 //! # Responsibility
 //! - M-1: [`MinimapLayout`] maps the map onto the image and back, letterboxes a map that is not
@@ -18,6 +18,10 @@
 //! - M-7: a right press on the minimap is the world's right click at the aim picked there (ground,
 //!   mineral, enemy in sight, enemy in fog, a structure's rally, Shift); a mode aims or is
 //!   cancelled; nothing orders without a selection or after the match.
+//! - M-8: strikes on the viewer's units raise alerts by 5.0.14's overlap rule, with a ping, a feed
+//!   line and the struck flash; Space cycles them; Alt + click and the ping key ping.
+//! - M-9: B-183's attacker snapshot is a square of its owner while the view lists it, never picked.
+//! - M-10: the selected structures' rallies are lines from the structure through its waypoints.
 //! - M-11: the sandbox has no minimap at all; the default layout puts it inside the command panel
 //!   with the world rectangle unchanged; a layout without the panel draws it alone, reserving
 //!   nothing.
@@ -47,6 +51,13 @@
 )]
 #[path = "support/battle_harness.rs"]
 mod battle_harness;
+
+#[allow(
+    dead_code,
+    reason = "shared by several test binaries that each use a subset"
+)]
+#[path = "support/attack_snapshot_stage.rs"]
+mod attack_snapshot_stage;
 
 use std::path::{Path, PathBuf};
 
@@ -636,6 +647,20 @@ fn build_twice(
         objects: &world.resource::<MapPresentation>().objects,
         nodes: world.resource::<TerrainState>().map.resources(),
         selected: world.resource::<BattleSelection>().ids(),
+        snapshots: fog.attack_snapshots(),
+        rallies: &world
+            .resource::<client::battle_hud::model::HudModel>()
+            .view
+            .rallies,
+        alerts: world.get_resource::<client::minimap::alerts::AlertLog>(),
+        tick: harness
+            .app
+            .world()
+            .resource::<BattleSession>()
+            .frames
+            .presented()
+            .tick
+            .0,
     };
     let (mut first, mut second) = (Vec::new(), Vec::new());
     let (mut first_subjects, mut second_subjects) = (Vec::new(), Vec::new());
@@ -1338,6 +1363,383 @@ fn m7_a_structure_rallies_and_nothing_orders_without_a_selection_or_a_match() {
     let at = on_minimap(&harness, Vec2::new(20.0, 20.0));
     harness.click(MouseButton::Left, at);
     assert!(camera_target(&mut harness).distance(Vec2::new(20.0, 20.0)) < 0.2);
+}
+
+// --- M-8: alerts, pings and the struck flash -----------------------------------------------------
+
+/// Sends a strike on `target` by `attacker`, as the pipeline publishes one, and runs a frame.
+fn strike(harness: &mut Harness, attacker: EntityId, target: EntityId) {
+    let to = presented(harness, target)
+        .expect("the target is presented")
+        .world_pos;
+    harness
+        .app
+        .world_mut()
+        .send_event(client::CombatVisualEvent(
+            sim_types::CombatEventVisual::HitscanTracer {
+                from: to,
+                to,
+                owner: ENEMY,
+                source: sim_types::EffectSource::default(),
+                ends: Some(sim_types::StrikeEnds { attacker, target }),
+            },
+        ));
+    harness.step(1);
+}
+
+fn alert_log(harness: &Harness) -> &client::minimap::alerts::AlertLog {
+    harness
+        .app
+        .world()
+        .resource::<client::minimap::alerts::AlertLog>()
+}
+
+fn feed_lines(harness: &Harness) -> Vec<String> {
+    harness
+        .app
+        .world()
+        .resource::<client::battle_hud::feed::BattleFeed>()
+        .lines()
+        .map(|line| line.text.clone())
+        .collect()
+}
+
+fn tick_now(harness: &Harness) -> u32 {
+    harness
+        .app
+        .world()
+        .resource::<BattleSession>()
+        .frames
+        .presented()
+        .tick
+        .0
+}
+
+#[test]
+fn m8_strikes_raise_alerts_by_5014s_overlap_rule() {
+    use client::minimap::alerts::AlertKind;
+    let mut harness = skirmish();
+    let style = harness.app.world().resource::<MinimapStyle>().clone();
+    let attack = style.alerts.attack;
+    let structure = harness.local_structure();
+    let home = harness.simulated_position(structure);
+    let worker = mobile(&harness, LOCAL_PLAYER)[0];
+    let enemy_unit = mobile(&harness, ENEMY)[0];
+    // A local unit far from the base, and one near the worker.
+    let kind = harness.world().entities[&worker].unit_type_id;
+    let far_at = harness.open_ground(home, attack.overlap_radius * 2.0);
+    let far = harness
+        .world_mut()
+        .spawn_unit(kind, LOCAL_PLAYER, battle_harness::sim_position(far_at))
+        .expect("open ground");
+    let away_at = harness.open_ground(far_at, attack.overlap_radius * 2.0);
+    let away = harness
+        .world_mut()
+        .spawn_unit(kind, LOCAL_PLAYER, battle_harness::sim_position(away_at))
+        .expect("open ground");
+    run_ticks(&mut harness, 2);
+    let lines = feed_lines(&harness).len();
+    // 1. A strike on a unit: one Unit alert, one ping, one feed line.
+    strike(&mut harness, enemy_unit, worker);
+    let start = tick_now(&harness);
+    assert_eq!(alert_log(&harness).alerts().len(), 1);
+    assert_eq!(alert_log(&harness).alerts()[0].kind, AlertKind::Unit);
+    assert_eq!(alert_log(&harness).pings().len(), 1);
+    assert_eq!(feed_lines(&harness).len(), lines + 1);
+    assert_eq!(feed_lines(&harness).last(), Some(&style.alerts.text_unit));
+    // The struck dot flashes attacked_color.
+    assert!(
+        mark_of(&harness, worker, style.attacked.linear).is_some(),
+        "the dot flashes"
+    );
+    // 2. Near the first, within the window: nothing.
+    strike(&mut harness, enemy_unit, structure);
+    assert_eq!(alert_log(&harness).alerts().len(), 1, "local overlap");
+    // 3. Far away within the window: a second alert.
+    strike(&mut harness, enemy_unit, far);
+    assert_eq!(alert_log(&harness).alerts().len(), 2, "far away");
+    // 4. Anywhere else within the window: nothing (overlap_global).
+    strike(&mut harness, enemy_unit, away);
+    assert_eq!(alert_log(&harness).alerts().len(), 2, "global overlap");
+    // 5. Another player's unit struck: nothing.
+    strike(&mut harness, worker, enemy_unit);
+    assert_eq!(alert_log(&harness).alerts().len(), 2, "not the viewer's");
+    assert_eq!(feed_lines(&harness).len(), lines + 2, "one line per alert");
+    // Space: newest, then older, then wraps.
+    let camera_at = |harness: &mut Harness| camera(harness).2.target;
+    harness.tap_key(KeyCode::Space);
+    assert!(camera_at(&mut harness).distance(far_at) < 1.0);
+    harness.tap_key(KeyCode::Space);
+    assert!(camera_at(&mut harness).distance(harness.simulated_position(worker)) < 1.0);
+    harness.tap_key(KeyCode::Space);
+    assert!(camera_at(&mut harness).distance(far_at) < 1.0, "wraps");
+    // Pings end after ping_ticks, the flash after flash_ticks.
+    let until = |harness: &Harness, ticks: u32| tick_now(harness) >= start + ticks;
+    run_until(&mut harness, "the flash ends", |h| {
+        until(h, style.flash_ticks)
+    });
+    harness.step(1);
+    assert!(
+        mark_of(&harness, worker, style.attacked.linear).is_none(),
+        "the flash ended"
+    );
+    run_until(&mut harness, "the pings end", |h| {
+        until(h, attack.ping_ticks + 2)
+    });
+    harness.step(1);
+    assert_eq!(alert_log(&harness).pings().len(), 0, "pings ended");
+    // After the window, a new strike anywhere raises one again.
+    run_until(&mut harness, "the window ends", |h| {
+        until(h, attack.overlap_ticks + 2)
+    });
+    strike(&mut harness, enemy_unit, away);
+    assert_eq!(
+        alert_log(&harness).alerts().last().map(|a| a.kind),
+        Some(AlertKind::Unit)
+    );
+    assert_eq!(alert_log(&harness).pings().len(), 1, "a new alert pings");
+}
+
+#[test]
+fn m8_alt_click_pings_and_the_town_alert_is_its_own_kind() {
+    use client::minimap::alerts::AlertKind;
+    let mut harness = skirmish();
+    let style = harness.app.world().resource::<MinimapStyle>().clone();
+    let structure = harness.local_structure();
+    let enemy_unit = mobile(&harness, ENEMY)[0];
+    strike(&mut harness, enemy_unit, structure);
+    assert_eq!(alert_log(&harness).alerts()[0].kind, AlertKind::Town);
+    assert_eq!(feed_lines(&harness).last(), Some(&style.alerts.text_town));
+    // Alt + left click on the minimap pings and moves no camera.
+    let before = camera(&mut harness).2.target;
+    let pings = alert_log(&harness).pings().len();
+    let point = Vec2::new(30.0, 30.0);
+    let at = on_minimap(&harness, point);
+    harness.with_key_held(KeyCode::AltLeft, |harness| {
+        harness.click(MouseButton::Left, at);
+    });
+    assert_eq!(camera(&mut harness).2.target, before, "no camera move");
+    let log = alert_log(&harness);
+    assert_eq!(log.pings().len(), pings + 1);
+    let ping = log.pings().last().expect("a ping");
+    assert!(ping.at.distance(point) < 1.0);
+    assert_eq!(ping.color, style.alerts.ping.color.linear);
+    // The ping key arms one ping for the next left press.
+    let other = Vec2::new(40.0, 30.0);
+    harness.with_key_held(KeyCode::AltLeft, |harness| harness.tap_key(KeyCode::KeyG));
+    let at = on_minimap(&harness, other);
+    harness.click(MouseButton::Left, at);
+    assert_eq!(alert_log(&harness).pings().len(), pings + 2);
+    assert_eq!(camera(&mut harness).2.target, before, "no camera move");
+    harness.click(MouseButton::Left, at);
+    assert!(
+        camera(&mut harness).2.target.distance(other) < 0.2,
+        "then the camera again"
+    );
+    // A ring mark is listed per ping.
+    let rings = frame(&harness)
+        .marks()
+        .iter()
+        .filter(|mark| mark.kind == client::minimap::marks::MARK_RING)
+        .count();
+    assert_eq!(rings, alert_log(&harness).pings().len());
+}
+
+// --- M-9: B-183's attacker snapshot on the minimap (B-204) ---------------------------------------
+
+/// The HUD's copy of the viewer's view.
+fn view(harness: &Harness) -> &sim_types::PlayerView {
+    &harness
+        .app
+        .world()
+        .resource::<client::battle_hud::model::HudModel>()
+        .view
+}
+
+/// Runs frames until `done`, the clock running, then pauses.
+fn run_until(harness: &mut Harness, what: &str, done: impl Fn(&Harness) -> bool) {
+    harness.resume();
+    for _ in 0..4_000 {
+        if done(harness) {
+            harness.pause();
+            return;
+        }
+        harness.step(1);
+    }
+    panic!("gave up waiting until {what}");
+}
+
+/// The marks at the snapped centre of map point `world`, in `color`.
+fn marks_at(harness: &Harness, world: Vec2, color: [f32; 4]) -> Vec<MinimapMark> {
+    let frame = frame(harness);
+    let centre = centre_of(&frame.layout().expect("a layout"), world);
+    frame
+        .marks()
+        .iter()
+        .filter(|mark| mark.a == centre && mark.color == color)
+        .copied()
+        .collect()
+}
+
+#[test]
+fn m9_the_attacker_snapshot_is_listed_while_the_view_lists_it_and_never_picked() {
+    let mut harness = skirmish();
+    let staged = attack_snapshot_stage::stage(harness.world_mut());
+    run_until(&mut harness, "the attacker leaves a snapshot", |harness| {
+        view(harness)
+            .attack_snapshots
+            .iter()
+            .any(|entry| entry.entity == staged.attacker)
+    });
+    harness.step(1);
+    let entry = view(&harness).attack_snapshots[0].clone();
+    let at = Vec2::new(entry.bubble.world_pos[0], entry.bubble.world_pos[1]);
+    let enemy = palette_color(&harness, entry.bubble.owner);
+    let squares = marks_at(&harness, at, enemy);
+    let [square] = squares.as_slice() else {
+        panic!("one square of the attacker's colour at its image: {squares:?}");
+    };
+    let layout = frame(&harness).layout().expect("a layout");
+    let style = harness.app.world().resource::<MinimapStyle>();
+    let half = (entry.bubble.radius * layout.scale).max(style.min_dot_px * 0.5);
+    assert_eq!(square.b, [half, half], "sized as the unit");
+    assert_eq!(images(&harness), 1, "listed as an image");
+    // A minimap right click on it with the struck soldier selected is a ground order.
+    harness.look_at((staged.high + staged.low) * 0.5);
+    harness.select(staged.victim);
+    assert_eq!(harness.selection().ids(), [staged.victim]);
+    right_click_minimap(&mut harness, at);
+    let orders = pending(&harness);
+    assert_eq!(orders.len(), 1, "status: {}", harness.status());
+    assert!(
+        matches!(orders[0].order, UnitOrder::Move { .. }),
+        "a press on a snapshot is a press on the ground: {:?}",
+        orders[0].order
+    );
+    // The view drops the image (the 25-tick cap, or sight): the square goes on that tick.
+    // A local air unit with media above the attacker shows it, which drops its image.
+    let flyer = {
+        let registry = harness
+            .app
+            .world()
+            .resource::<client::bubble_shader::FlipbookRegistry>();
+        harness
+            .world()
+            .catalog
+            .archetypes()
+            .filter(|arch| registry.get_meta(arch.unit_type_id).is_some())
+            .find(|arch| {
+                arch.mover_type == sim_types::MoverType::Air
+                    && arch.max_speed > sim_types::SimScalar::ZERO
+            })
+            .map(|arch| arch.unit_type_id)
+            .expect("the catalog ships an air unit with media")
+    };
+    harness
+        .world_mut()
+        .spawn_unit(
+            flyer,
+            LOCAL_PLAYER,
+            battle_harness::sim_position(staged.high + Vec2::new(0.0, 1.0)),
+        )
+        .expect("the air is open");
+    run_until(&mut harness, "the view drops the snapshot", |harness| {
+        view(harness).attack_snapshots.is_empty()
+    });
+    assert_eq!(
+        images(&harness),
+        0,
+        "no image is listed once the view drops it"
+    );
+}
+
+/// How many marks the frame lists for an image.
+fn images(harness: &Harness) -> usize {
+    frame(harness)
+        .subjects()
+        .iter()
+        .filter(|subject| **subject == client::minimap::marks::MarkSubject::Image)
+        .count()
+}
+
+// --- M-10: rally lines ---------------------------------------------------------------------------
+
+/// The segment marks of the frame, as `(from, to)` pixels.
+fn segments(harness: &Harness) -> Vec<([f32; 2], [f32; 2])> {
+    frame(harness)
+        .marks()
+        .iter()
+        .filter(|mark| mark.kind == client::minimap::marks::MARK_SEGMENT)
+        .map(|mark| (mark.a, mark.b))
+        .collect()
+}
+
+/// The lines M-10 expects for `structure`: from its presented centre to each slot's first
+/// waypoint, then waypoint to waypoint, in the view's `(slot, index)` order; written again here
+/// so that the test does not read the code it checks.
+fn expected_rally_lines(harness: &Harness, structure: EntityId) -> Vec<([f32; 2], [f32; 2])> {
+    let layout = frame(harness).layout().expect("a layout");
+    let pixel = |world: [f32; 2]| layout.to_minimap(Vec2::from_array(world)).to_array();
+    let origin = presented(harness, structure).expect("the structure is presented");
+    let origin = [origin.world_pos[0], origin.world_pos[1]];
+    let mut rallies: Vec<_> = view(harness)
+        .rallies
+        .iter()
+        .filter(|rally| rally.entity == structure)
+        .collect();
+    rallies.sort_by_key(|rally| (rally.slot, rally.index));
+    let mut lines = Vec::new();
+    let mut previous: Option<(u8, [f32; 2])> = None;
+    for rally in rallies {
+        let from = match previous {
+            Some((slot, point)) if slot == rally.slot => point,
+            _ => origin,
+        };
+        lines.push((pixel(from), pixel(rally.point)));
+        previous = Some((rally.slot, rally.point));
+    }
+    lines
+}
+
+#[test]
+fn m10_the_selected_structures_rallies_are_lines_from_the_structure() {
+    let mut harness = skirmish();
+    let structure = harness.local_structure();
+    harness.look_at_unit(structure);
+    // A worker has no rally: no line.
+    let worker = mobile(&harness, LOCAL_PLAYER)[0];
+    harness.select(worker);
+    assert_eq!(segments(&harness), [], "a unit draws no rally line");
+    harness.select(structure);
+    assert_eq!(
+        segments(&harness),
+        expected_rally_lines(&harness, structure)
+    );
+    let before = segments(&harness).len();
+    let home = harness.simulated_position(structure);
+    let first = harness.open_ground(home, 8.0);
+    let second = harness.open_ground(home, 14.0);
+    let at = harness.ground_on_screen(first);
+    harness.click(MouseButton::Right, at);
+    let at = harness.ground_on_screen(second);
+    harness.with_key_held(KeyCode::ShiftLeft, |harness| {
+        harness.click(MouseButton::Right, at);
+    });
+    run_ticks(&mut harness, 3);
+    harness.step(1);
+    let lines = segments(&harness);
+    assert_eq!(lines, expected_rally_lines(&harness, structure));
+    assert!(
+        lines.len() >= 2 && lines.len() >= before,
+        "the rally and its queued waypoint: {lines:?}"
+    );
+    harness
+        .app
+        .world_mut()
+        .resource_mut::<BattleSelection>()
+        .clear();
+    harness.step(1);
+    assert_eq!(segments(&harness), [], "deselected, no line");
 }
 
 // --- The shader ----------------------------------------------------------------------------------

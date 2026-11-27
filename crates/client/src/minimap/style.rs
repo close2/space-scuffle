@@ -89,6 +89,90 @@ struct StyleFile {
     frustum_px: f32,
     frustum_max_distance: f32,
     team_colors: TeamFile,
+    attacked_color: SrgbTriple,
+    flash_ticks: u32,
+    snapshot_alpha: f32,
+    rally_color: SrgbTriple,
+    rally_px: f32,
+    alerts: AlertsFile,
+}
+
+/// `alerts` as authored (`core` `AlertData:3–35`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AlertsFile {
+    attack: AttackFile,
+    ping: PingFile,
+    ring_radius_px: (f32, f32),
+    ring_px: f32,
+    text_town: String,
+    text_unit: String,
+}
+
+/// `alerts.attack` as authored (`core` `AlertData:22–35`, the `Attack` alert).
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AttackFile {
+    ping_ticks: u32,
+    life_ticks: u32,
+    overlap_ticks: u32,
+    overlap_global: u32,
+    overlap_local: u32,
+    overlap_radius: f32,
+    color: SrgbTriple,
+}
+
+/// `alerts.ping` as authored (`core` `AlertData:3–21`, the default alert).
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PingFile {
+    ping_ticks: u32,
+    color: SrgbTriple,
+}
+
+/// The attack alert's timing and overlap rule (plan D-13), in presented ticks and world units.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AttackAlertStyle {
+    /// How long its ping plays (`PingTime`).
+    pub ping_ticks: u32,
+    /// How long it stays in the alert list (`Life`).
+    pub life_ticks: u32,
+    /// The window of the overlap rule (`OverlapDuration`).
+    pub overlap_ticks: u32,
+    /// Alerts in the window anywhere that hold a new one back (`OverlapGlobalCount`).
+    pub overlap_global: u32,
+    /// Alerts in the window nearby that hold a new one back (`OverlapLocalCount`).
+    pub overlap_local: u32,
+    /// What counts as nearby, world units (`OverlapLocalRadius`).
+    pub overlap_radius: f32,
+    /// Its ping's colour (`PingColor`).
+    pub color: MinimapColor,
+}
+
+/// The player's own ping (plan D-13).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PingStyle {
+    /// How long it plays, ticks.
+    pub ping_ticks: u32,
+    /// Its colour.
+    pub color: MinimapColor,
+}
+
+/// Alerts and pings (plan D-13).
+#[derive(Debug, Clone, PartialEq)]
+pub struct AlertStyle {
+    /// The "under attack" alert.
+    pub attack: AttackAlertStyle,
+    /// The player's ping.
+    pub ping: PingStyle,
+    /// A ring's radius at its start and its end, image pixels.
+    pub ring_radius_px: (f32, f32),
+    /// A ring's width, image pixels.
+    pub ring_px: f32,
+    /// The feed line of a structure struck.
+    pub text_town: String,
+    /// The feed line of a unit struck.
+    pub text_unit: String,
 }
 
 /// `fog_darkening` as authored.
@@ -202,6 +286,18 @@ pub struct MinimapStyle {
     pub frustum_max_distance: f32,
     /// The team colours.
     pub team: TeamColors,
+    /// Colour of a struck unit's square while it flashes (`OverrideColors` `Attacked`).
+    pub attacked: MinimapColor,
+    /// How long a struck unit's square flashes, ticks (`UnitDamageFlashDuration`).
+    pub flash_ticks: u32,
+    /// Opacity of an attacker snapshot's square, in `[0, 1]` (D-6).
+    pub snapshot_alpha: f32,
+    /// Colour of rally lines (`DefaultPathColor index="Minimap"`).
+    pub rally: MinimapColor,
+    /// Width of rally lines, image pixels.
+    pub rally_px: f32,
+    /// Alerts and pings.
+    pub alerts: AlertStyle,
 }
 
 impl MinimapStyle {
@@ -279,6 +375,14 @@ impl MinimapStyle {
         }
         positive("frustum_px", file.frustum_px)?;
         positive("frustum_max_distance", file.frustum_max_distance)?;
+        if file.flash_ticks == 0 {
+            return Err(("flash_ticks", "must be at least one tick"));
+        }
+        if !unit_interval(file.snapshot_alpha) {
+            return Err(("snapshot_alpha", "must be finite and in [0, 1]"));
+        }
+        positive("rally_px", file.rally_px)?;
+        let alerts = alert_style(&file.alerts)?;
         let team = file.team_colors;
         Ok(Self {
             side_points: file.side_points,
@@ -307,8 +411,53 @@ impl MinimapStyle {
                 neutral: MinimapColor::prepare("team_colors", team.neutral)?,
                 selected: MinimapColor::prepare("team_colors", team.selected)?,
             },
+            attacked: MinimapColor::prepare("attacked_color", file.attacked_color)?,
+            flash_ticks: file.flash_ticks,
+            snapshot_alpha: file.snapshot_alpha,
+            rally: MinimapColor::prepare("rally_color", file.rally_color)?,
+            rally_px: file.rally_px,
+            alerts,
         })
     }
+}
+
+/// Validates `alerts`.
+fn alert_style(file: &AlertsFile) -> Result<AlertStyle, (&'static str, &'static str)> {
+    let attack = file.attack;
+    if [attack.ping_ticks, attack.life_ticks, attack.overlap_ticks].contains(&0)
+        || file.ping.ping_ticks == 0
+    {
+        return Err(("alerts", "ticks must be at least one"));
+    }
+    if attack.overlap_global == 0 || attack.overlap_local == 0 {
+        return Err(("alerts", "overlap counts must be at least one"));
+    }
+    positive("alerts", attack.overlap_radius)?;
+    let (start, end) = file.ring_radius_px;
+    positive("alerts", start)?;
+    if !end.is_finite() || start > end {
+        return Err(("alerts", "ring_radius_px must grow: start <= end"));
+    }
+    positive("alerts", file.ring_px)?;
+    Ok(AlertStyle {
+        attack: AttackAlertStyle {
+            ping_ticks: attack.ping_ticks,
+            life_ticks: attack.life_ticks,
+            overlap_ticks: attack.overlap_ticks,
+            overlap_global: attack.overlap_global,
+            overlap_local: attack.overlap_local,
+            overlap_radius: attack.overlap_radius,
+            color: MinimapColor::prepare("alerts", attack.color)?,
+        },
+        ping: PingStyle {
+            ping_ticks: file.ping.ping_ticks,
+            color: MinimapColor::prepare("alerts", file.ping.color)?,
+        },
+        ring_radius_px: file.ring_radius_px,
+        ring_px: file.ring_px,
+        text_town: file.text_town.clone(),
+        text_unit: file.text_unit.clone(),
+    })
 }
 
 /// `Ok` when `value` of `field` is positive and finite.
@@ -370,7 +519,7 @@ impl MinimapStyleStatus {
 mod tests {
     use super::*;
 
-    const GOOD: &str = r"(
+    const GOOD: &str = r#"(
         format_version: 1,
         side_points: 172.0,
         background: (0.0, 0.0, 0.0),
@@ -389,7 +538,20 @@ mod tests {
         frustum_max_distance: 200.0,
         team_colors: (self: (0.0, 0.7333, 0.0), ally: (1.0, 1.0, 0.0), hostile: (1.0, 0.0, 0.0),
                       neutral: (0.4941, 0.749, 0.945), selected: (0.0, 1.0, 0.0)),
-    )";
+        attacked_color: (1.0, 0.0, 0.0),
+        flash_ticks: 75,
+        snapshot_alpha: 1.0,
+        rally_color: (1.0, 1.0, 1.0),
+        rally_px: 1.0,
+        alerts: (
+            attack: (ping_ticks: 107, life_ticks: 268, overlap_ticks: 268, overlap_global: 2,
+                     overlap_local: 1, overlap_radius: 15.0, color: (1.0, 0.0, 0.0)),
+            ping: (ping_ticks: 107, color: (1.0, 1.0, 0.0)),
+            ring_radius_px: (4.0, 14.0), ring_px: 2.0,
+            text_town: "Your base is under attack.",
+            text_unit: "Your forces are under attack.",
+        ),
+    )"#;
 
     fn parse(text: &str) -> Result<MinimapStyle, MinimapStyleError> {
         MinimapStyle::from_text(Path::new("catalog/minimap.ron"), text)
@@ -436,6 +598,26 @@ mod tests {
         assert_eq!(
             field_of(&GOOD.replace("hostile: (1.0, 0.0, 0.0)", "hostile: (1.0, -0.1, 0.0)")),
             "team_colors"
+        );
+        assert_eq!(
+            field_of(&GOOD.replace("flash_ticks: 75", "flash_ticks: 0")),
+            "flash_ticks"
+        );
+        assert_eq!(
+            field_of(&GOOD.replace("snapshot_alpha: 1.0", "snapshot_alpha: 1.5")),
+            "snapshot_alpha"
+        );
+        assert_eq!(
+            field_of(&GOOD.replace("(4.0, 14.0)", "(14.0, 4.0)")),
+            "alerts"
+        );
+        assert_eq!(
+            field_of(&GOOD.replace("overlap_global: 2", "overlap_global: 0")),
+            "alerts"
+        );
+        assert_eq!(
+            field_of(&GOOD.replace("life_ticks: 268", "life_ticks: 0")),
+            "alerts"
         );
         assert_eq!(
             field_of(&GOOD.replace("frustum_px: 1.0", "frustum_px: 0.0")),

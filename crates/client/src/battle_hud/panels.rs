@@ -131,9 +131,19 @@ pub fn battle_hud_system(
         status: minimap_status,
         intent: mut minimap_intent,
         keyboard,
+        alerts: minimap_alerts,
     } = minimap;
-    let shift =
-        crate::input_bindings::any_pressed(&keyboard, &crate::input_bindings::SHIFT_MODIFIERS);
+    let press = minimap_panel::PressModifiers {
+        mode_armed: *mode != CommandMode::Normal,
+        shift: crate::input_bindings::any_pressed(
+            &keyboard,
+            &crate::input_bindings::SHIFT_MODIFIERS,
+        ),
+        ping: crate::input_bindings::any_pressed(&keyboard, &crate::input_bindings::ALT_MODIFIERS)
+            || minimap_alerts
+                .as_deref()
+                .is_some_and(crate::minimap::alerts::AlertLog::ping_armed),
+    };
     if let Some(intent) = minimap_intent.as_deref_mut() {
         *intent = MinimapIntent::default();
     }
@@ -191,8 +201,7 @@ pub fn battle_hud_system(
             surfaces.minimap,
             minimap_intent.as_deref_mut(),
         ) {
-            *target =
-                minimap_panel::read_intent(response, frame, *mode != CommandMode::Normal, shift);
+            *target = minimap_panel::read_intent(response, frame, press);
         }
         draw_feed(ctx, &feed, &mut geometry);
         if let Some(reason) = preview.refusal() {

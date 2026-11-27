@@ -1,5 +1,5 @@
 //! The minimap on a real GPU: the real shader, the theme's real albedo arrays and the production
-//! client (plan `2026-12-01-minimap` §6, G-1 to G-4, G-3′ and G-6).
+//! client (plan `2026-12-01-minimap` §6, G-1 to G-6 and G-3′).
 //!
 //! # Responsibility
 //! Each child plays a skirmish on a real window under the GPU test harness, stops the clock once
@@ -19,6 +19,9 @@
 //!   fogged walkable ground around it (Amendment 1, A1.9).
 //! - G-4, frustum: the pixels along the camera's predicted trapezoid show `frustum_color`, those
 //!   3 px inside do not, and a pan of [`FRUSTUM_PAN`] units moves it by that many units' pixels.
+//! - G-5, snapshot and alert: with the staged unseen attacker, its snapshot's square shows its
+//!   owner's colour where the image stands, the strike's alert draws a red ring round the struck
+//!   unit on its first frames, and no ring is left once its ping ticks are over.
 //! - M-S3: over [`STEADY_FRAMES`] frames with the clock running, the renderer creates no buffer,
 //!   texture or bind group.
 //! - G-6, in the HUD: a window screenshot taken after the readback shows, inside
@@ -53,6 +56,13 @@
 )]
 #[path = "support/gpu_run.rs"]
 mod gpu_run;
+
+#[allow(
+    dead_code,
+    reason = "shared by several test binaries that each use a subset"
+)]
+#[path = "support/attack_snapshot_stage.rs"]
+mod attack_snapshot_stage;
 
 use std::path::{Path, PathBuf};
 
@@ -1609,5 +1619,327 @@ fn minimap_marks_child() {
         ..MarksStaging::default()
     })
     .add_systems(Update, stage_marks.in_set(BattleSet::Present));
+    assert!(client::render_compatibility::run_render_app(&mut app).is_success());
+}
+
+// ---------------------------------------------------------------------------------------------
+// G-5: the attacker snapshot's square and the alert's ring on the real shader.
+// ---------------------------------------------------------------------------------------------
+
+/// Name of the libtest entry of the alert child.
+const ALERT_CHILD_TEST: &str = "minimap_alert_child";
+
+/// Angles sampled round a ring.
+const RING_SAMPLES: u32 = 24;
+
+/// What the alert child saw.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct AlertShot {
+    offset: [f32; 2],
+    scale: f32,
+    /// The snapshot image's map position and its owner's sRGB colour.
+    snapshot: [f32; 2],
+    snapshot_color: [f32; 3],
+    /// The alert ping's centre in pixels, its start tick and the presented tick of each shot.
+    ping_px: [f32; 2],
+    ping_tick: u32,
+    ping_ticks: u32,
+    shot_ticks: [u32; 2],
+    /// Ring radius at start and end, ring width, in pixels; the ping's sRGB colour.
+    ring_radius: [f32; 2],
+    ring_px: f32,
+    ping_color: [f32; 3],
+}
+
+/// The ring's radius in pixels at `tick`, as the shader grows it.
+fn ring_radius_at(shot: &AlertShot, tick: u32) -> f32 {
+    let t = (tick.saturating_sub(shot.ping_tick) as f32 / shot.ping_ticks as f32).clamp(0.0, 1.0);
+    shot.ring_radius[0] + (shot.ring_radius[1] - shot.ring_radius[0]) * t
+}
+
+/// How many of the [`RING_SAMPLES`] points on the circle of `radius` round the ping show its
+/// colour.
+fn ring_hits(shot: &AlertShot, texture: &Texture, radius: f32) -> u32 {
+    (0..RING_SAMPLES)
+        .filter(|step| {
+            let angle = *step as f32 / RING_SAMPLES as f32 * std::f32::consts::TAU;
+            let x = shot.ping_px[0] + radius * angle.cos();
+            let y = shot.ping_px[1] + radius * angle.sin();
+            let side = texture.side as f32;
+            (0.0..side).contains(&x)
+                && (0.0..side).contains(&y)
+                && is_color(texture.at(x as u32, y as u32), shot.ping_color)
+        })
+        .count() as u32
+}
+
+/// G-5: with the staged unseen attacker, its snapshot's square shows its owner's colour where the
+/// image stands; the strike's alert draws a red ring round the struck unit on its first frames,
+/// and no ring once its ping ticks are over.
+#[test]
+fn g5_the_snapshot_and_the_alert_ring_on_the_real_shader() -> TestResult {
+    if gpu_run::gpu_tests_opted_out() {
+        return Ok(());
+    }
+    let directory = tempfile::tempdir()?;
+    let mut command = gpu_run::virtual_gpu_command(&std::env::current_exe()?);
+    command.args(["--ignored", "--exact", "--nocapture", ALERT_CHILD_TEST]);
+    command.env(CHILD_OUT_VAR, directory.path());
+    command.allow_for_hex_tiling_driver_defect();
+    command.assert_passes_validation("minimap alert");
+    let shot: AlertShot = ron::from_str(&std::fs::read_to_string(
+        directory.path().join(REPORT_FILE),
+    )?)?;
+    let read = |name: &str| -> TestResult<Texture> {
+        let image = image::open(directory.path().join(name))?.to_rgba8();
+        Ok(Texture {
+            side: image.width(),
+            pixels: image.into_raw(),
+        })
+    };
+    let (first, late) = (read("ring.png")?, read("faded.png")?);
+    if let Some(keep) = std::env::var_os(KEEP_VAR) {
+        let keep = Path::new(&keep).join("minimap_alert");
+        std::fs::create_dir_all(&keep)?;
+        for file in ["ring.png", "faded.png", REPORT_FILE] {
+            std::fs::copy(directory.path().join(file), keep.join(file))?;
+        }
+    }
+    let x = (shot.offset[0] + shot.snapshot[0] * shot.scale).floor() as u32;
+    let y = (shot.offset[1] + shot.snapshot[1] * shot.scale).floor() as u32;
+    let seen = first.at(x, y);
+    assert!(
+        is_color(seen, shot.snapshot_color),
+        "the snapshot's square at ({x}, {y}) is {seen:?}, not {:?}",
+        shot.snapshot_color
+    );
+    let radius = ring_radius_at(&shot, shot.shot_ticks[0]);
+    let hits = ring_hits(&shot, &first, radius);
+    eprintln!("G-5: {hits} of {RING_SAMPLES} ring points at radius {radius:.2} px");
+    assert!(
+        hits >= RING_SAMPLES * 3 / 4,
+        "the ring shows on its first frames: {hits} of {RING_SAMPLES}"
+    );
+    assert!(
+        shot.shot_ticks[1] >= shot.ping_tick + shot.ping_ticks,
+        "the late shot is after the ping"
+    );
+    let mut late_hits = 0;
+    for step in 0..=20 {
+        let radius =
+            shot.ring_radius[0] + (shot.ring_radius[1] - shot.ring_radius[0]) * step as f32 / 20.0;
+        late_hits += ring_hits(&shot, &late, radius);
+    }
+    assert_eq!(late_hits, 0, "no ring after {} ticks", shot.ping_ticks);
+    Ok(())
+}
+
+/// What the alert child is waiting for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum AlertPhase {
+    #[default]
+    Boot,
+    /// The staged fight runs until the snapshot and the alert's ping exist.
+    Fighting,
+    /// The clock is stopped; shot `shot` waits for the node to draw.
+    Drawing {
+        shot: usize,
+        since: u64,
+    },
+    /// Shot `shot` was requested.
+    Reading {
+        shot: usize,
+    },
+    /// The clock runs until tick `until`, past the ping.
+    Fading {
+        until: u32,
+    },
+    Done,
+}
+
+/// The alert child's staging.
+#[derive(Resource, Default)]
+struct AlertStaging {
+    directory: PathBuf,
+    phase: AlertPhase,
+    shot: AlertShot,
+}
+
+/// What the alert child reads.
+type AlertChildSources<'w> = (
+    Option<Res<'w, MinimapFrame>>,
+    Option<Res<'w, MinimapStyle>>,
+    Option<Res<'w, BattleFog>>,
+    Option<Res<'w, client::minimap::alerts::AlertLog>>,
+    Option<Res<'w, client::player_presentation::PlayerPalette>>,
+);
+
+/// Fills the alert report's first part once the snapshot and the ping exist.
+fn record_alert(
+    shot: &mut AlertShot,
+    frame: &MinimapFrame,
+    style: &MinimapStyle,
+    fog: &BattleFog,
+    log: &client::minimap::alerts::AlertLog,
+    palette: &client::player_presentation::PlayerPalette,
+    tick: u32,
+) {
+    let layout = frame.layout().expect("a layout");
+    let image = &fog.attack_snapshots()[0].bubble;
+    let ping = log.pings()[0];
+    *shot = AlertShot {
+        offset: layout.offset.to_array(),
+        scale: layout.scale,
+        snapshot: [image.world_pos[0], image.world_pos[1]],
+        snapshot_color: palette.resolve(image.owner).expect("a palette owner").srgb,
+        ping_px: layout.to_minimap(ping.at).to_array(),
+        ping_tick: ping.tick,
+        ping_ticks: ping.ticks,
+        shot_ticks: [tick, 0],
+        ring_radius: [style.alerts.ring_radius_px.0, style.alerts.ring_radius_px.1],
+        ring_px: style.alerts.ring_px,
+        ping_color: style.alerts.attack.color.srgb,
+    };
+}
+
+/// Advances the alert child by one frame.
+#[allow(
+    clippy::needless_pass_by_value,
+    clippy::too_many_arguments,
+    reason = "a Bevy system with one declared parameter per dependency"
+)]
+fn stage_alert(
+    mut commands: Commands<'_, '_>,
+    mut staging: ResMut<'_, AlertStaging>,
+    mut session: ResMut<'_, BattleSession>,
+    mut lab: ResMut<'_, LabState>,
+    mut exit: EventWriter<'_, AppExit>,
+    sources: AlertChildSources<'_>,
+    evidence: Res<'_, MinimapRenderEvidence>,
+) {
+    let (frame, style, fog, log, palette) = sources;
+    let tick = session.published().map_or(0, |published| published.tick);
+    let staging = staging.as_mut();
+    staging.phase = match staging.phase {
+        AlertPhase::Boot => {
+            let ready = session.is_ready()
+                && tick >= 2
+                && frame.as_ref().is_some_and(|frame| frame.layout().is_some());
+            if ready {
+                let world = session.world_mut().expect("a live world");
+                attack_snapshot_stage::stage(world);
+                lab.battle_paused = false;
+                AlertPhase::Fighting
+            } else {
+                AlertPhase::Boot
+            }
+        }
+        AlertPhase::Fighting => {
+            let (Some(frame), Some(style), Some(fog), Some(log), Some(palette)) =
+                (frame, style, fog, log, palette)
+            else {
+                return;
+            };
+            if fog.attack_snapshots().is_empty() || log.pings().is_empty() {
+                AlertPhase::Fighting
+            } else {
+                lab.battle_paused = true;
+                let presented = session.frames.presented().tick.0;
+                record_alert(
+                    &mut staging.shot,
+                    &frame,
+                    &style,
+                    &fog,
+                    &log,
+                    &palette,
+                    presented,
+                );
+                AlertPhase::Drawing {
+                    shot: 0,
+                    since: evidence.frames(),
+                }
+            }
+        }
+        AlertPhase::Drawing { shot, since } if evidence.frames() < since + DRAWN_FRAMES => {
+            AlertPhase::Drawing { shot, since }
+        }
+        AlertPhase::Drawing { shot, .. } => {
+            let frame = frame.expect("the minimap exists");
+            if shot == 1 {
+                staging.shot.shot_ticks[1] = session.frames.presented().tick.0;
+            }
+            read_alert_shot(&mut commands, &staging.directory, &frame, shot);
+            AlertPhase::Reading { shot }
+        }
+        AlertPhase::Reading { shot } => AlertPhase::Reading { shot },
+        AlertPhase::Fading { until } if session.frames.presented().tick.0 < until => {
+            AlertPhase::Fading { until }
+        }
+        AlertPhase::Fading { .. } => {
+            lab.battle_paused = true;
+            AlertPhase::Drawing {
+                shot: 1,
+                since: evidence.frames(),
+            }
+        }
+        AlertPhase::Done => {
+            exit.send(AppExit::Success);
+            AlertPhase::Done
+        }
+    };
+}
+
+/// Requests shot `shot` of the minimap texture; the observer writes it and moves on: after the
+/// ring shot to the fading clock, after the faded shot to the report.
+fn read_alert_shot(
+    commands: &mut Commands<'_, '_>,
+    directory: &Path,
+    frame: &MinimapFrame,
+    shot: usize,
+) {
+    let side = frame.side_px();
+    let image = frame.image().expect("the minimap image").clone();
+    let directory = directory.to_path_buf();
+    let path = directory.join(if shot == 0 { "ring.png" } else { "faded.png" });
+    commands.spawn(Readback::texture(image)).observe(
+        move |trigger: Trigger<'_, ReadbackComplete>,
+              mut commands: Commands<'_, '_>,
+              mut staging: ResMut<'_, AlertStaging>,
+              mut lab: ResMut<'_, LabState>| {
+            if staging.phase != (AlertPhase::Reading { shot }) {
+                return;
+            }
+            save_unpadded(&trigger.event().0, side, &path);
+            commands.entity(trigger.entity()).despawn();
+            staging.phase = if shot == 0 {
+                lab.battle_paused = false;
+                AlertPhase::Fading {
+                    until: staging.shot.ping_tick + staging.shot.ping_ticks + 2,
+                }
+            } else {
+                let text = ron::to_string(&staging.shot).expect("plain data");
+                std::fs::write(directory.join(REPORT_FILE), text).expect("the report is written");
+                AlertPhase::Done
+            };
+        },
+    );
+}
+
+/// The child of [`g5_the_snapshot_and_the_alert_ring_on_the_real_shader`].
+#[test]
+#[ignore = "launched by the test above on a virtual display"]
+fn minimap_alert_child() {
+    let directory = std::env::var_os(CHILD_OUT_VAR).expect("the parent names a directory");
+    let mut app = client::build_graphical_app_off_main_thread(
+        ClientMode::Skirmish,
+        Some(CHILD_FRAME_LIMIT),
+        SKIRMISH_SCENARIO.as_ref(),
+    )
+    .expect("the shipped assets must start the client");
+    app.insert_resource(AlertStaging {
+        directory: Path::new(&directory).to_path_buf(),
+        ..AlertStaging::default()
+    })
+    .add_systems(Update, stage_alert.in_set(BattleSet::Present));
     assert!(client::render_compatibility::run_render_app(&mut app).is_success());
 }

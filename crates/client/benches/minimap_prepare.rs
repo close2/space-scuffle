@@ -147,6 +147,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         objects: &objects,
         nodes: world.map.resources(),
         selected: &[],
+        snapshots: fog.attack_snapshots(),
+        rallies: &[],
+        alerts: None,
+        tick: 0,
     };
     let (mut marks, mut subjects) = (Vec::new(), Vec::new());
     let (marks, subjects) = (black_box(&mut marks), black_box(&mut subjects));

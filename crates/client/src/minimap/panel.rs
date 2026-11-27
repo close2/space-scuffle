@@ -16,6 +16,8 @@
 //!   camera on the point (`look_at`); it never selects;
 //! - a left press with a mode armed aims the mode there (`aim_left`);
 //! - a right press orders there, or cancels an armed mode (`aim_right`);
+//! - Alt + a left press, or a left press after the ping key, pings there (`ping`) and moves no
+//!   camera;
 //! - Shift at the press queues.
 //!
 //! Presses act on the press, as in the world. egui owns the pointer over the image, so the world
@@ -44,8 +46,10 @@ pub struct MinimapHud<'w> {
     pub status: Option<Res<'w, MinimapStyleStatus>>,
     /// This frame's pointer intent, written by the HUD.
     pub intent: Option<ResMut<'w, MinimapIntent>>,
-    /// The keyboard, for Shift: the world reads it from here too.
+    /// The keyboard, for Shift and Alt: the world reads them from here too.
     pub keyboard: Res<'w, ButtonInput<KeyCode>>,
+    /// The alert log, whose armed ping turns the next left press into a ping.
+    pub alerts: Option<Res<'w, super::alerts::AlertLog>>,
 }
 
 /// Gap between the minimap's part of the command panel and the columns, in egui points.
@@ -113,15 +117,25 @@ fn image(texture: egui::TextureId, size: egui::Vec2) -> egui::Image<'static> {
         .sense(egui::Sense::click_and_drag())
 }
 
-/// The intent of this frame's pointer on the minimap image `response`, with `armed` true while a
-/// command mode is armed and `shift` while Shift is held (read as the world reads it). Points are
-/// map points in world units, clamped to the camera's bound.
+/// What the keyboard and the modes say about this frame's presses on the minimap.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PressModifiers {
+    /// A command mode is armed: a left press aims it.
+    pub mode_armed: bool,
+    /// Shift is held: an order queues.
+    pub shift: bool,
+    /// Alt is held, or the ping key armed a ping: a left press pings.
+    pub ping: bool,
+}
+
+/// The intent of this frame's pointer on the minimap image `response`, under `modifiers` (read
+/// from the keyboard as the world reads it). Points are map points in world units, clamped to
+/// the camera's bound.
 #[must_use]
 pub fn read_intent(
     response: &egui::Response,
     frame: &MinimapFrame,
-    armed: bool,
-    shift: bool,
+    modifiers: PressModifiers,
 ) -> MinimapIntent {
     let mut intent = MinimapIntent::default();
     let Some(layout) = frame.layout() else {
@@ -147,11 +161,15 @@ pub fn read_intent(
     let point = layout.to_world_clamped(pixel);
     let hovered = response.hovered() || response.contains_pointer();
     let left_held_here = response.dragged_by(egui::PointerButton::Primary);
-    intent.shift = shift;
+    intent.shift = modifiers.shift;
     if hovered && pressed_right {
         intent.aim_right = Some(point);
     }
-    if armed {
+    if modifiers.ping {
+        if hovered && pressed_left {
+            intent.ping = Some(point);
+        }
+    } else if modifiers.mode_armed {
         if hovered && pressed_left {
             intent.aim_left = Some(point);
         }

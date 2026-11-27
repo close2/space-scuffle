@@ -128,7 +128,7 @@ mod tests {
             kind: super::super::marks::MARK_SQUARE,
             start_tick: 0,
             stroke: 1.0,
-            pad: 0.0,
+            extra: 0.0,
         }
     }
 

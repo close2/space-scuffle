@@ -59,7 +59,8 @@ struct MinimapMark {
     kind: u32,
     start_tick: u32,
     stroke: f32,
-    pad: f32,
+    // A ring's duration in ticks; 0 otherwise.
+    extra: f32,
 }
 
 @group(0) @binding(0) var<uniform> minimap: MinimapUniform;
@@ -76,6 +77,7 @@ struct MinimapMark {
 // Mark kinds (Rust `minimap::marks::MARK_*`).
 const MARK_SQUARE: u32 = 0u;
 const MARK_SEGMENT: u32 = 1u;
+const MARK_RING: u32 = 2u;
 
 // Albedo array layers, in `TerrainTheme::ordered_layers` order (terrain.wgsl).
 const LAYER_GRASS: i32 = 0;
@@ -156,6 +158,8 @@ struct MarkOut {
     @location(2) @interpolate(flat) half_size: vec2<f32>,
     @location(3) @interpolate(flat) stroke: f32,
     @location(4) @interpolate(flat) kind: u32,
+    // A ring's current radius (x) and opacity (y).
+    @location(5) @interpolate(flat) ring: vec2<f32>,
 }
 
 // Corner `index` (0..4) of the frustum trapezoid, pixels.
@@ -176,7 +180,7 @@ fn frustum_edge(edge: u32) -> MinimapMark {
     mark.kind = MARK_SEGMENT;
     mark.start_tick = 0u;
     mark.stroke = minimap.frustum_px;
-    mark.pad = 0.0;
+    mark.extra = 0.0;
     return mark;
 }
 
@@ -211,8 +215,15 @@ fn mark_vs(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance
         mark = frustum_edge(instance - minimap.mark_count);
     }
     var pixel = mark.a + quad_corner(vertex) * mark.b;
+    var ring = vec2<f32>(0.0, 1.0);
     if (mark.kind == MARK_SEGMENT) {
         pixel = segment_corner(vertex, mark.a, mark.b, mark.stroke);
+    } else if (mark.kind == MARK_RING) {
+        // The ring grows from b.x to b.y pixels and fades over `extra` presented ticks.
+        let age = f32(max(minimap.tick, mark.start_tick) - mark.start_tick);
+        let t = clamp(age / max(mark.extra, 1.0), 0.0, 1.0);
+        ring = vec2<f32>(mix(mark.b.x, mark.b.y, t), 1.0 - t);
+        pixel = mark.a + quad_corner(vertex) * (ring.x + mark.stroke);
     }
     let clip = vec2<f32>(pixel.x / minimap.side * 2.0 - 1.0, 1.0 - pixel.y / minimap.side * 2.0);
     var out: MarkOut;
@@ -222,6 +233,7 @@ fn mark_vs(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance
     out.half_size = mark.b;
     out.stroke = mark.stroke;
     out.kind = mark.kind;
+    out.ring = ring;
     return out;
 }
 
@@ -233,12 +245,18 @@ fn mark_fs(in: MarkOut) -> @location(0) vec4<f32> {
         if (any(world < vec2<f32>(0.0)) || any(world >= minimap.map_size)) {
             discard;
         }
-        return vec4<f32>(in.color.rgb, 1.0);
+        return vec4<f32>(in.color.rgb, in.color.a);
+    }
+    if (in.kind == MARK_RING) {
+        if (abs(length(in.local) - in.ring.x) > in.stroke * 0.5 || in.ring.y <= 0.0) {
+            discard;
+        }
+        return vec4<f32>(in.color.rgb, in.color.a * in.ring.y);
     }
     // Distance of this pixel's centre inside the square's nearest edge.
     let inside = in.half_size - abs(in.local);
     if (min(inside.x, inside.y) < in.stroke) {
         return vec4<f32>(minimap.border.rgb, 1.0);
     }
-    return vec4<f32>(in.color.rgb, 1.0);
+    return vec4<f32>(in.color.rgb, in.color.a);
 }

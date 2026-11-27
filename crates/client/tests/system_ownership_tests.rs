@@ -227,6 +227,8 @@ const CONCERNS: &[Concern] = &[
             "Update: client::camera::camera_control_system",
             // A minimap press centres the camera (plan 2026-12-01-minimap D-7).
             "Update: client::minimap::apply_minimap_intent",
+            // Space jumps to the latest alert (plan 2026-12-01-minimap D-13).
+            "Update: client::minimap::collect_minimap_keys",
             // Frames a newly committed battle.
             "Update: client::runtime_battle::scene::manage_battle_scene",
             "Update: client::runtime_battle::scene::sync_scene_camera",
