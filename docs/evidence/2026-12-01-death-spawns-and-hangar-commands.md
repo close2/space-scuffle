@@ -193,3 +193,29 @@ the next free**. Re-taken on the merged tree `27b9fe03`: its worlds equal `main`
 490 files, 0 differing); the re-recorded goldens and sandbox value reproduce on the four builds (**8 of 8**,
 `proof-merged/status`); and with the schema at 61, the section unhashed and `main`'s goldens and sandbox value
 restored, every checkpoint reproduces `main`'s (**8 of 8**, `proof-merged-latent/status`).
+
+## Amendment 1: the `razed` row judged on instructions (stopped: projection below 50)
+
+`~/scratch/death-spawns/scripts/cg.sh`, the whole of it under one hold of `~/scratch/gate.lock`, on the head's code
+(`08f73156`; a scratch bench copy reads its scenario table from a file, never committed). For each row,
+`valgrind --tool=callgrind` counted instructions (Ir) at 0 and at 300 measured ticks (one repeat, the same build and
+warm-up), so the difference is the 300 measured ticks alone. Then each row ran natively, median of three repeats, two
+rounds in the same session. Load average was 49 to 100 throughout.
+
+| Row | Ir, 0 ticks | Ir, 300 ticks | Ir per measured tick | Ticks/s r1 | Ticks/s r2 | Ir/s r1 | Ir/s r2 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 64x64, 400 units | 128,530,017 | 16,460,993,451 | 54.44 M | 76 | 30 | 4.14 G | 1.63 G |
+| 12 hangar units | 4,749,878,113 | 9,248,912,337 | 15.00 M | 327 | 135 | 4.90 G | 2.02 G |
+| 12 spawner units | 4,757,754,215 | 9,087,213,709 | 14.43 M | 231 | 218 | 3.33 G | 3.15 G |
+| **12 razed structures** | 34,150,726,011 | 61,151,642,312 | **90.00 M** | 56 | 34 | 5.04 G | 3.06 G |
+
+The conversion uses the existing rows' instructions per second, averaged over the session: 3.20 G per second.
+3.20 G / 90.00 M = **35.5 ticks per second**. By round, the projection is 45.8 (round 1, 4.13 G/s) and 25.2 (round 2,
+2.27 G/s). The single fastest reference run (4.90 G/s) would give 54.5, the slowest 18.1. **The projection is below
+50, so WPA4 stops** (Amendment 1); B-234 stays unfixed in `DESIGN.md`.
+
+For scale: at WPA0's quieter session (load 22 to 35), the 400-unit row ran 101 and the spawner row 168 to 398 ticks/s,
+which is 5.5 to 5.7 G/s; that rate would project 61 to 63. A measured tick of the row costs 6.2 times a spawner
+row's tick (90.0 M against 14.4 M). Its warm-up costs 136 M per tick (34.2 G over 250 ticks, with the twelve 5 × 5
+structures in the army's path). With every death spawn cut to one unit, the row ran no faster natively (46 and 48
+ticks/s, above). So the cost is the twelve structures in a 200-unit battle, not the created units.
