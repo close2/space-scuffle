@@ -1077,3 +1077,303 @@ fn m1_of_the_meter_matches_the_harness_definition() -> TestResult {
     );
     Ok(())
 }
+
+// The route-clearance meter (plan `2026-11-29-wall-clearance` §6.1, WP0). Its scratch world is a
+// 32 × 32 map whose south-west quadrant, cells x 0–15 and y 0–15, is solid: a straight wall face
+// along y = 16 for x below 16, and one convex corner at (16, 16). Bodies are placed tick by tick
+// (`pos_at_tick_start` and `position`), so the meter is read against positions known exactly.
+
+/// The meter's scratch world and the shipped mobile ground archetype it places, with its terrain
+/// radius and top speed in world units (per tick).
+fn clearance_world() -> Result<(sim_core::SimWorld, sim_types::UnitTypeId, f64, f64), Box<dyn Error>>
+{
+    use sim_map::{CellFlags, CliffLevel, GameMap, MapCell};
+    use sim_types::{MoverType, SimScalar};
+    let mut map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?;
+    for y in 0..16 {
+        for x in 0..16 {
+            map.cell_mut(x, y)?.flags = CellFlags::empty();
+        }
+    }
+    let world = sim_fixtures::world(map, 0x00C1_EA2A);
+    let arch = world
+        .catalog
+        .archetypes()
+        .find(|a| a.mover_type == MoverType::Ground && a.max_speed > SimScalar::ZERO)
+        .ok_or("the shipped catalog has a mobile ground unit")?;
+    let (kind, radius, speed) = (
+        arch.unit_type_id,
+        f64::from(arch.terrain_radius.to_f32()),
+        f64::from(arch.max_speed.to_f32()),
+    );
+    Ok((world, kind, radius, speed))
+}
+
+fn fixed(x: f64, y: f64) -> sim_types::SimVec2 {
+    use sim_types::{SimScalar, SimVec2};
+    SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(y))
+}
+
+/// Moves `unit` as if it had stepped from `from` to `to` in the tick just played.
+fn place(
+    world: &mut sim_core::SimWorld,
+    unit: EntityId,
+    from: (f64, f64),
+    to: (f64, f64),
+) -> TestResult {
+    let entity = world.entities.get_mut(&unit).ok_or("unit")?;
+    entity.pos_at_tick_start = fixed(from.0, from.1);
+    entity.position = fixed(to.0, to.1);
+    Ok(())
+}
+
+/// Walks each of `units` along its own track: `track(unit index, tick)` is its position after
+/// `tick`. Observes every tick from 1 to `ticks`, and returns the report.
+fn walk_tracks(
+    world: &mut sim_core::SimWorld,
+    units: &[EntityId],
+    ticks: u32,
+    track: impl Fn(usize, u32) -> (f64, f64),
+) -> Result<sim_fixtures::trace::route_clearance::ClearanceReport, Box<dyn Error>> {
+    use sim_fixtures::trace::route_clearance::ClearanceMeter;
+    let mut meter = ClearanceMeter::new(Vec::new());
+    for tick in 1..=ticks {
+        for (index, unit) in units.iter().enumerate() {
+            place(world, *unit, track(index, tick - 1), track(index, tick))?;
+        }
+        meter.observe(world, tick);
+    }
+    Ok(meter.finish())
+}
+
+/// §6.1: a unit walking along a wall at a known clearance gives M-1 or M-2 exactly. Three units
+/// walk east along the face y = 16 at clearances 0 (tangent), 0.03 (inside the 0.05 margin) and
+/// 0.3: every walking tick of the first is M-1 and M-2, of the second M-2 only, of the third
+/// neither.
+#[test]
+fn the_clearance_meter_counts_a_walk_along_a_wall_at_a_known_clearance() -> TestResult {
+    use sim_types::PlayerId;
+    let (mut world, kind, radius, _) = clearance_world()?;
+    let clearances = [0.0, 0.03, 0.3];
+    let mut units = Vec::new();
+    for (owner, clearance) in (0_u8..).zip(clearances) {
+        let at = fixed(3.0, 16.0 + radius + clearance);
+        units.push(world.spawn_unit(kind, PlayerId(owner), at)?);
+    }
+    let report = walk_tracks(&mut world, &units, 20, |index, tick| {
+        (
+            3.0 + 0.1 * f64::from(tick),
+            16.0 + radius + clearances[index],
+        )
+    })?;
+    let figures: Vec<(u32, u32, u32)> = report
+        .owners
+        .iter()
+        .map(|(_, f)| (f.walking, f.touching, f.within_margin))
+        .collect();
+    assert_eq!(figures, [(20, 20, 20), (20, 0, 20), (20, 0, 0)]);
+    assert_eq!(report.whole.episodes, 2);
+    assert!(report.deepest.is_none(), "{:?}", report.deepest);
+    Ok(())
+}
+
+/// §6.1: a body pushed onto a wall and riding it gives one episode of known length and its M-4.
+/// It walks east 0.5 clear of the face for five ticks, is pushed onto it (clearance 0) on the
+/// sixth, rides it for nine more ticks at 0.04 a tick, and is pushed back off. The episode is ten
+/// ticks long; its net displacement runs from where the push started to where the ride ended,
+/// and the ticks lost are its length less that distance over the top speed.
+#[test]
+fn the_clearance_meter_finds_one_episode_and_its_ticks_lost_for_a_body_riding_a_wall() -> TestResult
+{
+    use sim_fixtures::trace::route_clearance::EpisodeKind;
+    use sim_types::PlayerId;
+    let (mut world, kind, radius, speed) = clearance_world()?;
+    let (open, wall) = (16.0 + radius + 0.5, 16.0 + radius);
+    let unit = world.spawn_unit(kind, PlayerId(0), fixed(3.0, open))?;
+    let track = |tick: u32| match tick {
+        0..=5 => (3.0 + 0.1 * f64::from(tick), open),
+        6..=15 => (3.5 + 0.04 * f64::from(tick - 5), wall),
+        _ => (3.9 + 0.1 * f64::from(tick - 15), open),
+    };
+    let report = walk_tracks(&mut world, &[unit], 20, |_, tick| track(tick))?;
+    let episodes: Vec<_> = report
+        .episodes
+        .iter()
+        .filter(|e| e.kind == EpisodeKind::Margin)
+        .collect();
+    assert_eq!(episodes.len(), 1, "{episodes:?}");
+    let episode = episodes[0];
+    assert_eq!(
+        (episode.start_tick, episode.end_tick, episode.length),
+        (6, 15, 10)
+    );
+    let net = (3.9_f64 - 3.5).hypot(open - wall);
+    let lost = 10.0 - net / speed;
+    assert!(
+        (episode.ticks_lost - lost).abs() < 1e-4,
+        "{} against {lost}",
+        episode.ticks_lost
+    );
+    assert!((report.whole.ticks_lost - lost).abs() < 1e-4);
+    // Nothing proposed a step: collision put the body there on every tick (the probe's class).
+    assert_eq!(episode.classes, [0, 10, 0]);
+    assert_eq!(report.whole.longest, Some((10, unit.0, 15)));
+    Ok(())
+}
+
+/// §6.1: a reversal at the wall is counted, and one in open ground is not. Both units step east
+/// and then west; one does so 0.01 from the face, the other 2 units from it.
+#[test]
+fn the_clearance_meter_counts_a_reversal_at_a_wall_and_not_one_in_open_ground() -> TestResult {
+    use sim_types::PlayerId;
+    let (mut world, kind, radius, _) = clearance_world()?;
+    let lanes = [16.0 + radius + 0.01, 16.0 + radius + 2.0];
+    let mut units = Vec::new();
+    for (owner, y) in (0_u8..).zip(lanes) {
+        units.push(world.spawn_unit(kind, PlayerId(owner), fixed(5.0, y))?);
+    }
+    let report = walk_tracks(&mut world, &units, 3, |index, tick| {
+        let x = match tick {
+            0 => 5.0,
+            1 => 5.1,
+            _ => 5.1 - 0.1 * f64::from(tick - 1),
+        };
+        (x, lanes[index])
+    })?;
+    let reversals: Vec<(u32, u32)> = report
+        .owners
+        .iter()
+        .map(|(_, f)| (f.reversals, f.proposal_reversals))
+        .collect();
+    assert_eq!(reversals, [(1, 0), (0, 0)]);
+    Ok(())
+}
+
+/// §6.1: a route whose first leg cuts a corner is M-5a and M-5b, and one that grazes it at
+/// exactly the terrain radius is not. Both units walk from the north-west of the corner (16, 16)
+/// along the line `x + y = c` towards a waypoint south-east of it; that line passes the corner at
+/// `(c − 32) / √2`. The first unit's line passes 0.21 from it, inside its radius; the second's
+/// at exactly its radius.
+#[test]
+fn the_clearance_meter_finds_a_route_that_cuts_a_corner_and_not_one_that_grazes_it() -> TestResult {
+    use sim_fixtures::trace::route_clearance::TaskKind;
+    use sim_types::PlayerId;
+    let (mut world, kind, radius, _) = clearance_world()?;
+    let lines = [32.3, 32.0 + radius * std::f64::consts::SQRT_2];
+    let mut units = Vec::new();
+    for (owner, c) in (0_u8..).zip(lines) {
+        let unit = world.spawn_unit(kind, PlayerId(owner), fixed(14.0, c - 14.0))?;
+        world
+            .entities
+            .get_mut(&unit)
+            .ok_or("unit")?
+            .current_funnel_waypoints = vec![fixed(c - 14.0, 14.0), fixed(30.0, 14.0)];
+        units.push(unit);
+    }
+    let step = 0.1 / std::f64::consts::SQRT_2;
+    let report = walk_tracks(&mut world, &units, 2, |index, tick| {
+        let x = 14.0 + step * f64::from(tick);
+        (x, lines[index] - x)
+    })?;
+    assert_eq!(report.routes.updates, 2, "one new route per unit");
+    assert_eq!(report.routes.cutting_updates, 1);
+    let (sample, update) = report
+        .updates
+        .iter()
+        .find(|(_, update)| update.cutting)
+        .ok_or("a cutting update")?;
+    assert_eq!(sample.entity, units[0].0);
+    let (depth, _) = update.sampled.ok_or("a sampled depth")?;
+    let expected = 0.3 / std::f64::consts::SQRT_2 - radius;
+    assert!(
+        (depth - expected).abs() < 0.02,
+        "sampled {depth}, exact {expected}"
+    );
+    let walk = TaskKind::Walk.index();
+    assert_eq!(report.routes.held_cut_ticks[walk], 2);
+    assert_eq!(report.routes.held_cut_episodes[walk], 1);
+    assert_eq!(
+        report.routes.held_cut_longest[walk],
+        Some((2, units[0].0, 2))
+    );
+    Ok(())
+}
+
+/// §6.1: the meter leaves the trace's other outputs byte-identical. The showcase is traced for 40
+/// ticks with the meter on and off; `units.csv`, `passes.csv`, `overlap.csv`, `summary.md`,
+/// `reversals.csv` and `groups.md` are equal, and only the run with the meter writes its four
+/// files.
+#[test]
+fn the_clearance_meter_leaves_the_route_traces_other_outputs_byte_identical() -> TestResult {
+    use sim_fixtures::trace::route::{run_route_trace, RouteTraceArgs};
+    let root = fresh_dir("route_clearance_identity_test")?;
+    let mut outputs = Vec::new();
+    for setting in ["on", "off"] {
+        let out = root.join(setting);
+        let args = RouteTraceArgs::parse(
+            [
+                "--scenario",
+                "scenarios/showcase.ron",
+                "--ticks",
+                "40",
+                "--out",
+                out.to_str().ok_or("a UTF-8 path")?,
+                "--clearance",
+                setting,
+            ]
+            .map(str::to_owned),
+        )?;
+        let output = run_route_trace(&args)?;
+        assert_eq!(output.clearance.is_some(), setting == "on");
+        outputs.push(out);
+    }
+    for name in [
+        "units.csv",
+        "passes.csv",
+        "overlap.csv",
+        "summary.md",
+        "reversals.csv",
+        "groups.md",
+    ] {
+        let on = std::fs::read(outputs[0].join(name))?;
+        let off = std::fs::read(outputs[1].join(name))?;
+        assert!(on == off, "{name} differs with the clearance meter on");
+    }
+    for name in [
+        "clearance.csv",
+        "clearance_episodes.csv",
+        "clearance_routes.csv",
+        "clearance_summary.md",
+    ] {
+        assert!(outputs[0].join(name).is_file(), "{name} is written");
+        assert!(
+            !outputs[1].join(name).exists(),
+            "{name} is not written with the meter off"
+        );
+    }
+    Ok(())
+}
+
+/// Plan `2026-11-29-wall-clearance` Amendment 1 (Q0134's answer): a crowd scene plays to its
+/// known answers under the shipped rules. Twelve units of three radii walk through the five-cell
+/// chokepoint: every move ends by the bound with none given up, no body lies deeper in a wall
+/// than the depth bound, and the clearance meter saw every unit walk.
+#[test]
+fn a_crowd_scene_plays_to_its_known_answers() -> TestResult {
+    use sim_fixtures::harness::RunOptions;
+    use sim_fixtures::trace::crowd::{play_crowd_scene, CrowdRow, CrowdScene, Geometry};
+    let scene = CrowdScene {
+        geometry: Geometry::Choke(5),
+        size: 12,
+        seed: 1,
+    };
+    let row = play_crowd_scene(&scene, &RunOptions::default())?;
+    assert!(row.all_end(), "{}", row.csv());
+    assert!(row.depth_ok(), "{}", row.csv());
+    assert!(row.figures.walking >= 12 * 100, "{}", row.csv());
+    assert_eq!(
+        row.csv().split(',').count(),
+        CrowdRow::HEADER.split(',').count()
+    );
+    Ok(())
+}

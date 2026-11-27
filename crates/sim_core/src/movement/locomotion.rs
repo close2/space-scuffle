@@ -2012,14 +2012,8 @@ impl MotionDraft<'_> {
         pathfinder: &mut Pathfinder,
     ) -> Result<ControlFlow<(), bool>, MovementInvariant> {
         let (id, actor, goal, ground) = (self.entry.id, self.actor, self.goal, self.ground);
-        drop_passed_waypoints(
-            context,
-            pathfinder,
-            &self.request,
-            actor,
-            &mut self.proposal,
-        )
-        .map_err(self.fault())?;
+        drop_passed_waypoints(context, pathfinder, actor, &mut self.proposal)
+            .map_err(self.fault())?;
         let on_last_leg = self.proposal.route(actor).len() <= 1;
         let priority = self.entry.push_priority;
         let witness = |witness: &SteeringObstacle| {
@@ -2207,14 +2201,8 @@ impl MotionDraft<'_> {
                 .then_some(Some(pursuit.target)),
             ..self.step_context(scene.map, neighbours, intent)
         };
-        drop_passed_waypoints(
-            &context,
-            scene.pathfinder,
-            &self.request,
-            self.actor,
-            &mut self.proposal,
-        )
-        .map_err(self.fault())?;
+        drop_passed_waypoints(&context, scene.pathfinder, self.actor, &mut self.proposal)
+            .map_err(self.fault())?;
         let (next, gap) = self.next_waypoint(&context, scene.pathfinder)?;
         // A chase queued behind a friend that holds its ground is not stalled (D-4). Under the
         // solver the stall rule reads no class of another body (plan Amendment 7, item 1).
@@ -2472,10 +2460,18 @@ fn aim_past_parked_body(
 /// corner, as [`aim_past_parked_body`] keeps aiming past it: the two must agree, or a held
 /// rounding would hand its corner off by distance while still aiming past the body (plan
 /// `2026-11-19-parked-body-aim` D-1).
+///
+/// The view is the step's own: the leg to the next point must pass [`probe_permits`], the
+/// centre rule and then the sweep of the disc at the terrain radius, or, for a body that does not
+/// fit where it stands, of its clearance there less `WALL_PROBE_SLACK` (2⁻¹⁴ world units; plan
+/// `2026-11-11-contact-and-missiles` D-3, R-3). So the hand-off never promises a leg the step
+/// would refuse (plan `2026-11-29-wall-clearance` D-1, B-240). A body tangent to a wall at the
+/// fixed-point rounding depth, which lies below that slack (that plan's §4.6), keeps a corner
+/// whose next leg cuts it; a body really wedged by a spawn, a placement or a push hands off along
+/// a leg that does not take it deeper; a body clear of walls is tested at its terrain radius.
 fn drop_passed_waypoints(
     context: &StepContext<'_>,
     pathfinder: &mut Pathfinder,
-    request: &PathRequestWithVision<'_>,
     actor: &Entity,
     proposal: &mut MotionProposal,
 ) -> Result<(), MovementMathError> {
@@ -2495,14 +2491,7 @@ fn drop_passed_waypoints(
         if !near && !past {
             break;
         }
-        // A body wedged where it stands (its disc overlaps a wall) sees by terrain only, as its
-        // route's first leg is held (plan D-3); otherwise the disc must fit along the leg. The
-        // leg is asked first: when the disc fits along it, whether it fits where it stands is moot.
-        let in_view = policy.permits_segment(map, actor.position, subsequent)
-            && (policy.layer == MovementLayer::Air
-                || pathfinder.segment_is_passable(map, request, actor.position, subsequent)
-                || !pathfinder.segment_is_passable(map, request, actor.position, actor.position));
-        if !in_view {
+        if !probe_permits(map, pathfinder, policy, actor.position, subsequent) {
             break;
         }
         proposal.pass_waypoint(

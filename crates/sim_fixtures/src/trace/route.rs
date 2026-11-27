@@ -16,7 +16,9 @@
 //! blocking counters ([`super::blocking`], plan `2026-11-09-friendly-blocking` WP1); and, at
 //! [`IN_RANGE_TICK`], how many of each owner's attackers have a target inside their weapon's
 //! band (that plan's §7 acceptance); and each owner's wall overlap ([`super::route_overlap`],
-//! plan `2026-11-11-contact-and-missiles` WP2), listed per unit-tick in `overlap.csv`.
+//! plan `2026-11-11-contact-and-missiles` WP2), listed per unit-tick in `overlap.csv`; and,
+//! unless `--clearance off` is given, the route-clearance meter's figures
+//! ([`super::route_clearance`], plan `2026-11-29-wall-clearance` WP0) in four files of their own.
 //!
 //! # How it fits
 //! The instrument of plan `2026-11-09-sc2-pathfinding` (§3.1, WP1). The example
@@ -32,6 +34,10 @@
 
 use super::blocking::{attackers_in_range, BlockingMeter, BlockingMetrics, ReversalEvent};
 use super::cli::RunError;
+use super::route_clearance::{
+    clearance_boxes, clearance_csv, clearance_markdown, episodes_csv, routes_csv, ClearanceMeter,
+    ClearanceReport,
+};
 use super::route_groups::{groups_markdown, lanes_csv, GroupMeter};
 use super::route_overlap::{
     overlap_csv, overlap_markdown, OverlapMeter, OverlapMetrics, OverlapSample,
@@ -58,7 +64,8 @@ const STILL_SEGMENT: f64 = 1e-6;
 /// The usage text printed on an argument error.
 pub const USAGE: &str = "usage: route_trace --scenario <file> --out <dir> [--assets <dir>] \
 [--ticks <n>] [--box <name>=<x0>,<y0>,<x1>,<y1>]... [--lane-line <y>] [--order <ron>]... \
-[--lane-tolerance <permille>] [--seed <n>]
+[--lane-tolerance <permille>] [--seed <n>] [--clearance-box <name>=<x0>,<y0>,<x1>,<y1>]... \
+[--clearance on|off]
   --scenario <file>  scenario path relative to the assets directory, e.g. scenarios/showcase.ron
   --out <dir>        output directory for units.csv, passes.csv and summary.md
   --assets <dir>     assets directory (default: the repository's assets/)
@@ -70,9 +77,17 @@ pub const USAGE: &str = "usage: route_trace --scenario <file> --out <dir> [--ass
                      \"AttackMoveToStart(player_slot: 1, target_player_slot: 0)\"; built in memory
   --lane-tolerance   group-routing tolerance in permille replacing the catalog's
   --seed <n>         the world's random seed replacing the scenario's
+  --clearance-box .. a reporting region of the clearance meter, world units, bounds inclusive
+                     (repeatable; default: the ramp W and E channels and the central block of
+                     the showcase map, evidence 2026-11-29-wall-grazing)
+  --clearance on|off whether the route-clearance meter runs (default on)
   Always writes groups.md (route groups, their lanes and GroupLane events), overlap.csv
   (every unit-tick on which a ground body's disc overlaps a wall) and reversals.csv (every
-  counted reversal: tick, unit, position, both steps and its cause).";
+  counted reversal: tick, unit, position, both steps and its cause). With the clearance meter on,
+  also writes clearance.csv (walking unit-ticks within the corner margin of a wall, holding a
+  route whose first leg cuts a wall, or reversing there), clearance_episodes.csv (runs of such
+  unit-ticks), clearance_routes.csv (every route change and whether its first leg cuts a wall)
+  and clearance_summary.md (plan 2026-11-29-wall-clearance §6.1).";
 
 /// A named axis-aligned box of the map in world units, bounds inclusive.
 #[derive(Debug, Clone, PartialEq)]
@@ -264,6 +279,10 @@ pub struct RouteTraceArgs {
     /// The world's random seed replacing the scenario's (plan `2026-11-11-contact-and-missiles`
     /// WP2: the showcase draws its weapons' random delays from it).
     pub seed: Option<u64>,
+    /// Reporting regions of the clearance meter (plan `2026-11-29-wall-clearance` §6.1).
+    pub clearance_boxes: Vec<RouteBox>,
+    /// Whether the clearance meter runs and writes its files.
+    pub clearance: bool,
 }
 
 /// Ticks played when `--ticks` is not given (plan §D-11).
@@ -280,7 +299,7 @@ impl RouteTraceArgs {
         let mut args = args.into_iter();
         let (mut scenario, mut out, mut boxes) = (None, None, Vec::new());
         let (mut lane_line, mut orders, mut lane_tolerance) = (None, Vec::new(), None);
-        let mut seed = None;
+        let (mut seed, mut regions, mut clearance) = (None, Vec::new(), true);
         let mut assets = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets");
         let mut ticks = DEFAULT_TICKS;
         while let Some(flag) = args.next() {
@@ -321,6 +340,20 @@ impl RouteTraceArgs {
                         usage(format!("--seed needs an unsigned integer, got {value}"))
                     })?);
                 }
+                "--clearance-box" => regions.push(parse_box(&value).ok_or_else(|| {
+                    usage(format!(
+                        "--clearance-box needs <name>=<x0>,<y0>,<x1>,<y1>, got {value}"
+                    ))
+                })?),
+                "--clearance" => {
+                    clearance = match value.as_str() {
+                        "on" => true,
+                        "off" => false,
+                        _ => {
+                            return Err(usage(format!("--clearance needs on or off, got {value}")))
+                        }
+                    };
+                }
                 _ => return Err(usage(format!("unknown argument {flag}"))),
             }
         }
@@ -338,6 +371,12 @@ impl RouteTraceArgs {
             orders,
             lane_tolerance,
             seed,
+            clearance_boxes: if regions.is_empty() {
+                clearance_boxes()
+            } else {
+                regions
+            },
+            clearance,
         })
     }
 }
@@ -424,6 +463,8 @@ pub struct RouteTraceOutput {
     /// Every counted reversal, in tick then entity order (plan `2026-11-18-structure-contact`
     /// Amendment 1).
     pub reversals: Vec<ReversalEvent>,
+    /// The clearance meter's figures (plan `2026-11-29-wall-clearance` §6.1), when it ran.
+    pub clearance: Option<ClearanceReport>,
 }
 
 /// Starts the scenario as [`sim_core::scenario::load_scenario_battle`] does, with the initial
@@ -476,6 +517,9 @@ pub fn run_route_trace(args: &RouteTraceArgs) -> Result<RouteTraceOutput, RouteT
     let mut ticks_played = 0;
     let mut meter = BlockingMeter::new();
     let mut overlap = OverlapMeter::new();
+    let mut clearance = args
+        .clearance
+        .then(|| ClearanceMeter::new(args.clearance_boxes.clone()));
     let mut in_range = Vec::new();
     let owners = scenario_owners(&world);
     while ticks_played < args.ticks && !world.match_state.result.is_over() {
@@ -500,6 +544,9 @@ pub fn run_route_trace(args: &RouteTraceArgs) -> Result<RouteTraceOutput, RouteT
         meter.observe(&world);
         groups.observe(&world, ticks_played);
         overlap.observe(&mut world, ticks_played);
+        if let Some(meter) = clearance.as_mut() {
+            meter.observe(&mut world, ticks_played);
+        }
         ticks_played += 1;
         if ticks_played == IN_RANGE_TICK {
             in_range = owners
@@ -526,6 +573,7 @@ pub fn run_route_trace(args: &RouteTraceArgs) -> Result<RouteTraceOutput, RouteT
             .collect(),
         overlap_samples: overlap.samples().to_vec(),
         reversals: meter.reversal_events().to_vec(),
+        clearance: clearance.map(ClearanceMeter::finish),
     };
     write_outputs(&args.out, &output)?;
     Ok(output)
@@ -630,6 +678,17 @@ fn write_outputs(out: &Path, output: &RouteTraceOutput) -> Result<(), RunError> 
         let lanes_path = out.join("lanes.csv");
         std::fs::write(&lanes_path, lanes_csv(&output.groups.crossings()))
             .map_err(io(&lanes_path))?;
+    }
+    if let Some(report) = &output.clearance {
+        for (name, text) in [
+            ("clearance.csv", clearance_csv(report)),
+            ("clearance_episodes.csv", episodes_csv(report)),
+            ("clearance_routes.csv", routes_csv(report)),
+            ("clearance_summary.md", clearance_markdown(report)),
+        ] {
+            let path = out.join(name);
+            std::fs::write(&path, text).map_err(io(&path))?;
+        }
     }
     Ok(())
 }
