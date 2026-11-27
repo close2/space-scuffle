@@ -48,3 +48,6 @@ Recommendation: (c) if your pushing rules matter more than the schedule; otherwi
 movement defect for rule compliance, which AGENTS.md §8 ranks below natural movement.
 
 ## Answer
+
+- **Option (d), with a hard fallback to Option (a):** Evaluate **WP1 + WP2 (`gated-wp2`)** together through the remaining acceptance checks (hard pushing rules, crowd overlap, cost `≥ 50` TPS on every benchmark, and acceptance/held-out seeds), allowing a small practical zig-zag tolerance on the five tiny near-misses from Q0143 (e.g. Battle 26 `0.88` vs `0.64` and Battle 29 `0.34` vs `0.26` / `1.43` vs `1.36` reversals per 1,000 moving ticks — ~10× cleaner than WP1 alone and visually negligible).
+- **Stop rule:** If WP1 + WP2 does **not** work out cleanly on those remaining checks, **stop here and keep today's movement (Option (a))** — the current algorithm is good enough — and immediately re-plan the waiting movement work (wall clearance WP2/WP3, Colossus walk-under `B-209`, Interceptor strafing `B-229`, `B-247`) against today's movement with no further solver redesign rounds.
