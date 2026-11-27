@@ -141,3 +141,59 @@ The follow-order plan's §14 (B-222) and the rallies plan's D-9 (B-167) point to
 `## As built`, and its README row reads `Partly done`, naming WP3 under an answer and WP-D1 (B-247). Before hand-back,
 `cargo gate quick` ran on the head (§2.4 lists the targeted tests).
 
+
+## 6. WP3 under the owner's answers (Amendment 1, `b1ec5f0d`)
+
+Built on branch `rallies-wp3` from `3d729617` (the `rallies` head with `main` `2516a068` merged), after the owner
+answered Q0140 (a sanctioned symmetric deviation, S-exit-order) and Q0141 (c).
+
+### 6.1 Red runs (`wp3-red.log`)
+
+On `3d729617` with the three new `production_transactions_tests` overlaid, all three fail on their position
+assertions (the unit appears on the ring's minimum corner, (9.5, 9.5), and the mirrored producer's at (16.5, 16.5)
+instead of the reflection (22.5, 22.5)); on `b1ec5f0d` they pass. Nine existing tests pinned the old start and moved
+to the new rule (the commit message lists them); the whole of `sim_core`, `sim_types` and `sim_fixtures` passes
+(`wp3-simcore2.log`), the golden replays included.
+
+### 6.2 Worlds (`world-base3/`, `world-wp3/`)
+
+No golden, matrix battle, route-trace scenario, bench scenario or harness world trains a unit (no `Produce` in any
+fixture, scenario or example), so S-exit-order cannot reach them. `scripts/wp_wp3.sh` measures `3d729617` and
+`b1ec5f0d` with the usual `measure.sh`: 483 files, **0 differing**. The goldens are not re-recorded, and the
+checksum format is unchanged (no hashed state is added). The exit order runs only when a ready job places its unit,
+never on a tick without one, so no per-tick hot path changed and the throughput bench (which trains nothing) was not
+re-run.
+
+### 6.3 The skirmish match (`client-base3/`, `client-wp3/`, `client-tbase3/`, `client-twp3/`)
+
+The skirmish trains seven units at its Barracks analogue with no rally, so it moves, as the owner dictated
+(restated here under AGENTS.md §8):
+
+| Tree | Won at tick | Frames | Stages |
+|---|---:|---:|---|
+| `3d729617` | 6,342 | 1,645 | 0, 0, 0, 22, 550, 586, 642, 4,502, 4,526, 4,822, 4,834, 5,086, 5,098, 5,350, 5,362, 6,334 |
+| `b1ec5f0d` | **6,338** | 1,644 | identical up to 5,362, then 6,330 |
+
+First-difference trace (`scripts/patch_spawn_trace.py`, a scratch print of each trained unit's spawn, never
+committed; the patched trees give the same stage logs as the unpatched ones): the first difference is at **tick 2,264,
+entity 16** (the first unit the Barracks analogue, entity 15, trains), which appears at **(14.5, 6.5)**, the ring
+corner nearest the map's centre, instead of (12.5, 2.5), the ring's minimum corner. Every one of the seven trained
+units appears on the centre-facing side (WP3: (14.5, 6.5), (13.5, 6.5), (12.5, 6.5), (11.5, 6.5), (10.5, 5.5),
+(10.5, 4.5), (14.5, 6.5); before: (12.5, 2.5), (13.5, 2.5), (14.5, 2.5), (14.5, 3.5), (14.5, 4.5), (14.5, 5.5),
+(12.5, 2.5)), so the army gathers on the side facing the enemy and the match ends 4 ticks sooner. No unit sticks at its
+exit, and the match is won within `TICK_LIMIT`, stage for stage. The skirmish is not a matchup claim of
+`DESIGN.md` §5, so no claim is restated.
+
+### 6.4 Q0141 (c)
+
+`max_waypoints: 32` on all 22 producers of `structures.ron`. A Shift-click past the cap keeps today's refusal
+path, `RallyWaypointsFull`: the route is unchanged (the click is ignored, as answered); the client still shows the rally
+marker for the click, since it submitted a valid order, and the next tick's status line reports "the rally holds its
+most waypoints". `catalog_reference_values_tests::the_shipped_rallies_are_5_0_14s` pins 32, and
+`rally_tests::shift_appends_waypoints_up_to_the_cap` fills 32 distinct points and is refused the 33rd.
+
+### 6.5 Checks
+
+Client targets reading the harness change: `battle_input_tests` 41, `battle_card_tests` 35,
+`battle_context_order_tests` 34, `rally_gpu_tests` 1 (one ignored by design), `runtime_battle_tests` 18, all passing.
+The client's source is unchanged, so the valgrind and steady-state suites are not re-run. Workspace clippy exits 0.

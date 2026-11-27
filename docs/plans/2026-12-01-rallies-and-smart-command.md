@@ -817,6 +817,7 @@ minimap plan's proposals), and Q0140 and Q0141 were filed on `main` before WP0, 
 | WP2 | `e32c744a` | `give_rally_order`'s doc table; P-3 and P-4 with their mutations. Worlds 483/483 identical |
 | WP3 | `202dddb5` | Defaults (b) of Q0140 and Q0141: B-167 and B-215 reworded, open |
 | WP4 | this commit | Records, pointers, evidence, this section |
+| WP3 (Amendment 1) | `b1ec5f0d` and its records commit | S-exit-order (Q0140): with no rally, exits are tried clockwise from the ring cell nearest the map's centre; `max_waypoints: 32` (Q0141 (c)). B-167 removed, B-215 fixed, Q0140 and Q0141 closed. Worlds 483/483 identical; the skirmish won 4 ticks sooner (6,338), first difference at tick 2,264, entity 16 |
 
 Recorded differences from the text above (scoping, Q0002):
 - **P-6's third command** is the selected base's rally on the transport. D-1 gives at most two unit entries on any
