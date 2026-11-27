@@ -92,6 +92,7 @@ struct StyleFile {
     attacked_color: SrgbTriple,
     flash_ticks: u32,
     snapshot_alpha: f32,
+    remembered_alpha: f32,
     rally_color: SrgbTriple,
     rally_px: f32,
     alerts: AlertsFile,
@@ -292,6 +293,8 @@ pub struct MinimapStyle {
     pub flash_ticks: u32,
     /// Opacity of an attacker snapshot's square, in `[0, 1]` (D-6).
     pub snapshot_alpha: f32,
+    /// Opacity of a remembered structure's square, in `[0, 1]` (Amendment 1, D-17).
+    pub remembered_alpha: f32,
     /// Colour of rally lines (`DefaultPathColor index="Minimap"`).
     pub rally: MinimapColor,
     /// Width of rally lines, image pixels.
@@ -381,6 +384,9 @@ impl MinimapStyle {
         if !unit_interval(file.snapshot_alpha) {
             return Err(("snapshot_alpha", "must be finite and in [0, 1]"));
         }
+        if !unit_interval(file.remembered_alpha) {
+            return Err(("remembered_alpha", "must be finite and in [0, 1]"));
+        }
         positive("rally_px", file.rally_px)?;
         let alerts = alert_style(&file.alerts)?;
         let team = file.team_colors;
@@ -414,6 +420,7 @@ impl MinimapStyle {
             attacked: MinimapColor::prepare("attacked_color", file.attacked_color)?,
             flash_ticks: file.flash_ticks,
             snapshot_alpha: file.snapshot_alpha,
+            remembered_alpha: file.remembered_alpha,
             rally: MinimapColor::prepare("rally_color", file.rally_color)?,
             rally_px: file.rally_px,
             alerts,
@@ -541,6 +548,7 @@ mod tests {
         attacked_color: (1.0, 0.0, 0.0),
         flash_ticks: 75,
         snapshot_alpha: 1.0,
+        remembered_alpha: 1.0,
         rally_color: (1.0, 1.0, 1.0),
         rally_px: 1.0,
         alerts: (
@@ -606,6 +614,10 @@ mod tests {
         assert_eq!(
             field_of(&GOOD.replace("snapshot_alpha: 1.0", "snapshot_alpha: 1.5")),
             "snapshot_alpha"
+        );
+        assert_eq!(
+            field_of(&GOOD.replace("remembered_alpha: 1.0", "remembered_alpha: -0.5")),
+            "remembered_alpha"
         );
         assert_eq!(
             field_of(&GOOD.replace("(4.0, 14.0)", "(14.0, 4.0)")),

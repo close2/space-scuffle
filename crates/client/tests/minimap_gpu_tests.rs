@@ -1943,3 +1943,365 @@ fn minimap_alert_child() {
     .add_systems(Update, stage_alert.in_set(BattleSet::Present));
     assert!(client::render_compatibility::run_render_app(&mut app).is_success());
 }
+
+// ---------------------------------------------------------------------------------------------
+// G-7 (Amendment 1): a remembered enemy structure on the minimap, on the real shader.
+// ---------------------------------------------------------------------------------------------
+
+/// Name of the libtest entry of the remembered-structure child.
+const REMEMBERED_CHILD_TEST: &str = "minimap_remembered_child";
+
+/// The remembered-structure child's three texture shots, in order.
+const REMEMBERED_SHOTS: [&str; 3] = ["remembered.png", "dead.png", "seen.png"];
+
+/// What the remembered-structure child saw.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct RememberedShot {
+    offset: [f32; 2],
+    scale: f32,
+    /// The structure's map centre and footprint `(w, h)` in cells.
+    centre: [f32; 2],
+    footprint: [f32; 2],
+    /// sRGB colours: the owner's and the border's.
+    owner_color: [f32; 3],
+    border: [f32; 3],
+    /// Whether the structure's centre cell was fogged at the first shot.
+    fogged: bool,
+}
+
+/// G-7: after the scout leaves, the enemy's start structure's mapped footprint shows its owner's
+/// colour with a black border on fogged terrain; after the structure dies in the fog the square
+/// is still there; after the spot is seen it is gone.
+#[test]
+fn g7_a_remembered_structure_is_a_square_on_the_real_shader() -> TestResult {
+    if gpu_run::gpu_tests_opted_out() {
+        return Ok(());
+    }
+    let directory = tempfile::tempdir()?;
+    let mut command = gpu_run::virtual_gpu_command(&std::env::current_exe()?);
+    command.args(["--ignored", "--exact", "--nocapture", REMEMBERED_CHILD_TEST]);
+    command.env(CHILD_OUT_VAR, directory.path());
+    command.allow_for_hex_tiling_driver_defect();
+    command.assert_passes_validation("minimap remembered structure");
+    let shot: RememberedShot = ron::from_str(&std::fs::read_to_string(
+        directory.path().join(REPORT_FILE),
+    )?)?;
+    let read = |name: &str| -> TestResult<Texture> {
+        let image = image::open(directory.path().join(name))?.to_rgba8();
+        Ok(Texture {
+            side: image.width(),
+            pixels: image.into_raw(),
+        })
+    };
+    let [remembered, dead, seen] = [
+        read(REMEMBERED_SHOTS[0])?,
+        read(REMEMBERED_SHOTS[1])?,
+        read(REMEMBERED_SHOTS[2])?,
+    ];
+    if let Some(keep) = std::env::var_os(KEEP_VAR) {
+        let keep = Path::new(&keep).join("minimap_remembered");
+        std::fs::create_dir_all(&keep)?;
+        for file in REMEMBERED_SHOTS.iter().chain(&[REPORT_FILE]) {
+            std::fs::copy(directory.path().join(file), keep.join(file))?;
+        }
+    }
+    assert!(shot.fogged, "premise: the structure's spot is fogged");
+    let x = (shot.offset[0] + shot.centre[0] * shot.scale).floor() as u32;
+    let y = (shot.offset[1] + shot.centre[1] * shot.scale).floor() as u32;
+    let half = shot.footprint[0].max(shot.footprint[1]) * 0.5 * shot.scale;
+    let edge = (half - 0.5).floor() as u32;
+    for (texture, what) in [(&remembered, "remembered"), (&dead, "dead in the fog")] {
+        let centre = texture.at(x, y);
+        assert!(
+            is_color(centre, shot.owner_color),
+            "{what}: the square's centre ({x}, {y}) is {centre:?}, not {:?}",
+            shot.owner_color
+        );
+        let border = texture.at(x + edge, y);
+        assert!(
+            is_color(border, shot.border),
+            "{what}: the square's edge ({}, {y}) is {border:?}",
+            x + edge
+        );
+    }
+    let gone = seen.at(x, y);
+    assert!(
+        !is_color(gone, shot.owner_color),
+        "the seen spot still shows the square: {gone:?}"
+    );
+    Ok(())
+}
+
+/// What the remembered child is waiting for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum RememberedPhase {
+    #[default]
+    Boot,
+    /// The scout shows the structure until tick `until`.
+    Scouting {
+        until: u32,
+    },
+    /// The scout is dead; the clock runs until the view remembers the structure.
+    Forgetting,
+    /// The clock is stopped; shot `shot` waits for the node to draw.
+    Drawing {
+        shot: usize,
+        since: u64,
+    },
+    /// Shot `shot` was requested.
+    Reading {
+        shot: usize,
+    },
+    /// The structure is dead; the clock runs until tick `until`.
+    Dying {
+        until: u32,
+    },
+    /// A second scout sees the spot; the clock runs until the view drops the image.
+    Seeing,
+    Done,
+}
+
+/// The remembered child's staging.
+#[derive(Resource, Default)]
+struct RememberedStaging {
+    directory: PathBuf,
+    phase: RememberedPhase,
+    structure: Option<(sim_types::EntityId, Vec2)>,
+    scout: Option<sim_types::EntityId>,
+    shot: RememberedShot,
+}
+
+/// Spawns a local scout of the local workers' type on open ground about five units from `at`.
+fn scout_near(world: &mut sim_core::SimWorld, at: Vec2) -> sim_types::EntityId {
+    let viewer = sim_types::PlayerId(0);
+    let kind = world
+        .entities
+        .values()
+        .find(|unit| unit.owner == viewer && !unit.is_immobile)
+        .expect("a local unit")
+        .unit_type_id;
+    let sim = |point: Vec2| {
+        sim_types::SimVec2::new(
+            sim_types::SimScalar::from_num(point.x),
+            sim_types::SimScalar::from_num(point.y),
+        )
+    };
+    let spot = (0..16)
+        .map(|step| at + Vec2::from_angle(step as f32 * std::f32::consts::TAU / 16.0) * 5.0)
+        .find(|point| {
+            world
+                .map
+                .world_to_cell(sim(*point))
+                .ok()
+                .and_then(|(x, y)| world.map.cell(x, y).ok())
+                .is_some_and(|cell| {
+                    cell.flags.contains(sim_map::CellFlags::GROUND_PATHABLE)
+                        && !cell
+                            .flags
+                            .contains(sim_map::CellFlags::OCCUPIED_BY_STRUCTURE)
+                })
+        })
+        .expect("open ground beside the structure");
+    world
+        .spawn_unit(kind, viewer, sim(spot))
+        .expect("open ground")
+}
+
+/// Whether the fog remembers `structure`.
+fn fog_remembers(fog: &BattleFog, structure: sim_types::EntityId) -> bool {
+    fog.remembered_structures()
+        .iter()
+        .any(|entry| entry.entity == structure)
+}
+
+/// Advances the remembered child by one frame.
+#[allow(
+    clippy::needless_pass_by_value,
+    clippy::too_many_arguments,
+    reason = "a Bevy system with one declared parameter per dependency"
+)]
+fn stage_remembered(
+    mut commands: Commands<'_, '_>,
+    mut staging: ResMut<'_, RememberedStaging>,
+    mut session: ResMut<'_, BattleSession>,
+    mut lab: ResMut<'_, LabState>,
+    sources: MarksChildSources<'_>,
+    evidence: Res<'_, MinimapRenderEvidence>,
+) {
+    let (frame, style, _, fog, palette) = sources;
+    let tick = session.published().map_or(0, |published| published.tick);
+    let staging = staging.as_mut();
+    staging.phase = match staging.phase {
+        RememberedPhase::Boot => {
+            let ready = session.is_ready()
+                && tick >= 2
+                && frame.as_ref().is_some_and(|frame| frame.layout().is_some());
+            if !ready {
+                return;
+            }
+            let world = session.world_mut().expect("a live world");
+            let (id, at) = world
+                .map
+                .structures()
+                .keys()
+                .find_map(|id| {
+                    let unit = world.entities.get(id)?;
+                    (unit.owner == sim_types::PlayerId(1)).then(|| {
+                        (
+                            *id,
+                            Vec2::new(unit.position.x.to_f32(), unit.position.y.to_f32()),
+                        )
+                    })
+                })
+                .expect("the enemy starts with a structure");
+            staging.scout = Some(scout_near(world, at));
+            staging.structure = Some((id, at));
+            lab.battle_paused = false;
+            RememberedPhase::Scouting { until: tick + 3 }
+        }
+        RememberedPhase::Scouting { until } if tick < until => RememberedPhase::Scouting { until },
+        RememberedPhase::Scouting { .. } => {
+            let world = session.world_mut().expect("a live world");
+            if let Some(unit) = world.entities.get_mut(&staging.scout.expect("staged")) {
+                unit.hp = sim_types::SimScalar::ZERO;
+            }
+            RememberedPhase::Forgetting
+        }
+        RememberedPhase::Forgetting => {
+            let (structure, at) = staging.structure.expect("staged");
+            let (Some(frame), Some(style), Some(fog), Some(palette)) = (frame, style, fog, palette)
+            else {
+                return;
+            };
+            if !fog_remembers(&fog, structure) {
+                return;
+            }
+            lab.battle_paused = true;
+            let layout = frame.layout().expect("a layout");
+            let image = fog
+                .remembered_structures()
+                .iter()
+                .find(|entry| entry.entity == structure)
+                .expect("remembered");
+            let (w, h) = image.bubble.shape.footprint().expect("a structure");
+            staging.shot = RememberedShot {
+                offset: layout.offset.to_array(),
+                scale: layout.scale,
+                centre: [image.bubble.world_pos[0], image.bubble.world_pos[1]],
+                footprint: [f32::from(w), f32::from(h)],
+                owner_color: palette.resolve(image.bubble.owner).expect("an owner").srgb,
+                border: style.border.srgb,
+                fogged: !fog.sees(at.x, at.y),
+            };
+            RememberedPhase::Drawing {
+                shot: 0,
+                since: evidence.frames(),
+            }
+        }
+        RememberedPhase::Drawing { shot, since } if evidence.frames() < since + DRAWN_FRAMES => {
+            RememberedPhase::Drawing { shot, since }
+        }
+        RememberedPhase::Drawing { shot, .. } => {
+            read_remembered(
+                &mut commands,
+                &staging.directory,
+                &frame.expect("a frame"),
+                shot,
+            );
+            RememberedPhase::Reading { shot }
+        }
+        RememberedPhase::Reading { shot } => RememberedPhase::Reading { shot },
+        RememberedPhase::Dying { until } if tick < until => RememberedPhase::Dying { until },
+        RememberedPhase::Dying { .. } => {
+            lab.battle_paused = true;
+            RememberedPhase::Drawing {
+                shot: 1,
+                since: evidence.frames(),
+            }
+        }
+        RememberedPhase::Seeing => {
+            let (structure, _) = staging.structure.expect("staged");
+            if fog.is_some_and(|fog| fog_remembers(&fog, structure)) {
+                RememberedPhase::Seeing
+            } else {
+                lab.battle_paused = true;
+                RememberedPhase::Drawing {
+                    shot: 2,
+                    since: evidence.frames(),
+                }
+            }
+        }
+        RememberedPhase::Done => RememberedPhase::Done,
+    };
+}
+
+/// Requests remembered shot `shot`; the observer writes it and stages what follows: the
+/// structure's death in the fog, then a second scout, then the report.
+fn read_remembered(
+    commands: &mut Commands<'_, '_>,
+    directory: &Path,
+    frame: &MinimapFrame,
+    shot: usize,
+) {
+    let side = frame.side_px();
+    let image = frame.image().expect("the minimap image").clone();
+    let directory = directory.to_path_buf();
+    let path = directory.join(REMEMBERED_SHOTS[shot]);
+    commands.spawn(Readback::texture(image)).observe(
+        move |trigger: Trigger<'_, ReadbackComplete>,
+              mut commands: Commands<'_, '_>,
+              mut staging: ResMut<'_, RememberedStaging>,
+              mut session: ResMut<'_, BattleSession>,
+              mut lab: ResMut<'_, LabState>,
+              mut exit: EventWriter<'_, AppExit>| {
+            if staging.phase != (RememberedPhase::Reading { shot }) {
+                return;
+            }
+            save_unpadded(&trigger.event().0, side, &path);
+            commands.entity(trigger.entity()).despawn();
+            let tick = session.published().map_or(0, |published| published.tick);
+            let (structure, at) = staging.structure.expect("staged");
+            staging.phase = match shot {
+                0 => {
+                    let world = session.world_mut().expect("a live world");
+                    if let Some(unit) = world.entities.get_mut(&structure) {
+                        unit.hp = sim_types::SimScalar::ZERO;
+                    }
+                    lab.battle_paused = false;
+                    RememberedPhase::Dying { until: tick + 3 }
+                }
+                1 => {
+                    scout_near(session.world_mut().expect("a live world"), at);
+                    lab.battle_paused = false;
+                    RememberedPhase::Seeing
+                }
+                _ => {
+                    let text = ron::to_string(&staging.shot).expect("plain data");
+                    std::fs::write(directory.join(REPORT_FILE), text)
+                        .expect("the report is written");
+                    exit.send(AppExit::Success);
+                    RememberedPhase::Done
+                }
+            };
+        },
+    );
+}
+
+/// The child of [`g7_a_remembered_structure_is_a_square_on_the_real_shader`].
+#[test]
+#[ignore = "launched by the test above on a virtual display"]
+fn minimap_remembered_child() {
+    let directory = std::env::var_os(CHILD_OUT_VAR).expect("the parent names a directory");
+    let mut app = client::build_graphical_app_off_main_thread(
+        ClientMode::Skirmish,
+        Some(CHILD_FRAME_LIMIT),
+        SKIRMISH_SCENARIO.as_ref(),
+    )
+    .expect("the shipped assets must start the client");
+    app.insert_resource(RememberedStaging {
+        directory: Path::new(&directory).to_path_buf(),
+        ..RememberedStaging::default()
+    })
+    .add_systems(Update, stage_remembered.in_set(BattleSet::Present));
+    assert!(client::render_compatibility::run_render_app(&mut app).is_success());
+}

@@ -6,14 +6,17 @@
 //! the ordered list of [`MinimapMark`]s the marks pass draws, in draw order:
 //! 1. **resources** the viewer last saw present, in `ResourceUnitColor` (`core`
 //!    `GameUIData:688`), then watchtowers;
-//! 2. **structures**, then
-//! 3. **units**, so that a unit stays visible on top of a base;
-//! 4. **attack snapshots**: B-183's still image of an attacker the viewer cannot see, one square
+//! 2. **remembered structures**: structures of other players the viewer was shown and does not
+//!    see now, as it last saw them, sized and coloured as a live structure, times
+//!    `remembered_alpha` (`FogVisibility Snapshot`; plan Amendment 1, D-17, B-252);
+//! 3. **structures**, then
+//! 4. **units**, so that a unit stays visible on top of a base;
+//! 5. **attack snapshots**: B-183's still image of an attacker the viewer cannot see, one square
 //!    sized and coloured from the image's record exactly as a live unit is, times
 //!    `snapshot_alpha`, for exactly as long as the view lists it (D-6, closes B-204);
-//! 5. **rally lines** of the selected own structures: from the structure through each slot's
+//! 6. **rally lines** of the selected own structures: from the structure through each slot's
 //!    waypoints in `(slot, index)` order, in `rally_color` (D-12);
-//! 6. **rings**: alert and player pings, which the shader animates from the presented tick (D-13).
+//! 7. **rings**: alert and player pings, which the shader animates from the presented tick (D-13).
 //!
 //! One rule decides which units are listed, the world's own: [`presence_of`] must say
 //! [`Presence::Shown`] and the archetype must be selectable and order-targetable, the capability
@@ -132,6 +135,7 @@ pub fn build_marks(
     out.clear();
     subjects.clear();
     push_map_objects(sources, out, subjects);
+    push_remembered(sources, out, subjects);
     push_bubbles(sources, out, subjects, true);
     push_bubbles(sources, out, subjects, false);
     push_snapshots(sources, out, subjects);
@@ -217,6 +221,26 @@ fn bubble_square(
         });
     let [x, y, _] = bubble.world_pos;
     square(sources, [x, y], half, color)
+}
+
+/// Pushes one square per remembered structure the view lists, as a live structure of its owner
+/// is drawn, at `remembered_alpha`. An image, never picked.
+fn push_remembered(
+    sources: &MarkSources<'_>,
+    out: &mut Vec<MinimapMark>,
+    subjects: &mut Vec<MarkSubject>,
+) {
+    let Some(fog) = sources.fog else {
+        return;
+    };
+    for image in fog.remembered_structures() {
+        let Some(mut color) = color_of(sources, &image.bubble) else {
+            continue;
+        };
+        color[3] = sources.style.remembered_alpha;
+        out.push(bubble_square(sources, &image.bubble, color));
+        subjects.push(MarkSubject::Image);
+    }
 }
 
 /// Pushes one square per attack snapshot the view lists, as its unit would be drawn, at

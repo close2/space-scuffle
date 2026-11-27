@@ -402,6 +402,18 @@ fn m3_each_bad_value_names_the_file_and_the_field() {
             "unpathable_color",
         ),
         ("edge_mix: 0.6", "edge_mix: 1.6", "edge_mix"),
+        // M-3′ (Amendment 1): a remembered structure's opacity is a share.
+        (
+            "remembered_alpha: 1.0",
+            "remembered_alpha: 1.5",
+            "remembered_alpha",
+        ),
+        ("flash_ticks: 75", "flash_ticks: 0", "flash_ticks"),
+        (
+            "ring_radius_px: (4.0, 14.0)",
+            "ring_radius_px: (14.0, 4.0)",
+            "alerts",
+        ),
     ];
     for (good, bad, field) in cases {
         assert!(shipped.contains(good), "the shipped file holds `{good}`");
@@ -1740,6 +1752,133 @@ fn m10_the_selected_structures_rallies_are_lines_from_the_structure() {
         .clear();
     harness.step(1);
     assert_eq!(segments(&harness), [], "deselected, no line");
+}
+
+// --- M-14: remembered structures (Amendment 1, B-252) -------------------------------------------
+
+/// The enemy's start structure: its entity and map centre.
+fn enemy_start_structure(harness: &Harness) -> (EntityId, Vec2) {
+    let world = harness.world();
+    let id = world
+        .map
+        .structures()
+        .keys()
+        .copied()
+        .find(|id| world.entities.get(id).is_some_and(|e| e.owner == ENEMY))
+        .expect("the enemy starts with a structure");
+    (id, harness.simulated_position(id))
+}
+
+/// Spawns a scout of the local player beside `at`, of the local workers' type.
+fn scout_at(harness: &mut Harness, at: Vec2) -> EntityId {
+    let kind = harness.world().entities[&mobile(harness, LOCAL_PLAYER)[0]].unit_type_id;
+    let spot = harness.open_ground(at, 5.0);
+    harness
+        .world_mut()
+        .spawn_unit(kind, LOCAL_PLAYER, battle_harness::sim_position(spot))
+        .expect("open ground")
+}
+
+#[test]
+fn m14_a_remembered_structure_is_a_square_of_its_owner_until_the_spot_is_seen() {
+    let mut harness = skirmish();
+    let (structure, at) = enemy_start_structure(&harness);
+    let scout = scout_at(&mut harness, at);
+    run_ticks(&mut harness, 3);
+    harness.step(1);
+    assert_eq!(images(&harness), 0, "never while shown");
+    harness
+        .world_mut()
+        .entities
+        .get_mut(&scout)
+        .expect("the scout")
+        .hp = sim_types::SimScalar::ZERO;
+    run_ticks(&mut harness, 3);
+    harness.step(1);
+    let entry = view(&harness)
+        .remembered_structures
+        .iter()
+        .find(|entry| entry.entity == structure)
+        .cloned()
+        .expect("the view remembers the structure");
+    let style = harness.app.world().resource::<MinimapStyle>().clone();
+    let mut colour = palette_color(&harness, ENEMY);
+    colour[3] = style.remembered_alpha;
+    let image_at = Vec2::new(entry.bubble.world_pos[0], entry.bubble.world_pos[1]);
+    let squares = marks_at(&harness, image_at, colour);
+    let [square] = squares.as_slice() else {
+        panic!("one square of the owner's colour at the image: {squares:?}");
+    };
+    let layout = frame(&harness).layout().expect("a layout");
+    let (w, h) = entry.bubble.shape.footprint().expect("a structure");
+    let half = layout
+        .pixels(f32::from(w.max(h)) * 0.5)
+        .max(style.min_dot_px * 0.5);
+    assert_eq!(square.b, [half, half], "the footprint's half-width");
+    // Drawn after the resources and before the live structures.
+    let frame_now = frame(&harness);
+    let index = frame_now
+        .marks()
+        .iter()
+        .position(|mark| mark == square)
+        .expect("listed");
+    let subjects = frame_now.subjects();
+    assert!(
+        subjects[..index]
+            .iter()
+            .all(|subject| !matches!(subject, client::minimap::marks::MarkSubject::Bubble(_))),
+        "before every live structure and unit"
+    );
+    assert!(
+        subjects[index + 1..]
+            .iter()
+            .all(|subject| !matches!(subject, client::minimap::marks::MarkSubject::Node(_))),
+        "after every resource"
+    );
+    // Team mode: hostile.
+    harness
+        .app
+        .world_mut()
+        .resource_mut::<MinimapSettings>()
+        .color_mode = ColorMode::Team;
+    harness.step(1);
+    let mut hostile = style.team.hostile.linear;
+    hostile[3] = style.remembered_alpha;
+    assert_eq!(
+        marks_at(&harness, image_at, hostile).len(),
+        1,
+        "team mode: hostile"
+    );
+    harness
+        .app
+        .world_mut()
+        .resource_mut::<MinimapSettings>()
+        .color_mode = ColorMode::Player;
+    // A minimap right click on it is a ground order.
+    let worker = mobile(&harness, LOCAL_PLAYER)[0];
+    harness.look_at_unit(worker);
+    harness.select(worker);
+    right_click_minimap(&mut harness, image_at);
+    let orders = pending(&harness);
+    assert!(
+        matches!(
+            orders.last().map(|o| &o.order),
+            Some(UnitOrder::Move { .. })
+        ),
+        "a press on a remembered structure is a press on the ground: {orders:?}"
+    );
+    // The spot is seen again: the image is gone, the live structure is listed instead.
+    scout_at(&mut harness, at);
+    run_ticks(&mut harness, 3);
+    harness.step(1);
+    assert!(
+        view(&harness)
+            .remembered_structures
+            .iter()
+            .all(|entry| entry.entity != structure),
+        "the view drops it"
+    );
+    assert_eq!(images(&harness), 0, "no image square once it is shown");
 }
 
 // --- The shader ----------------------------------------------------------------------------------

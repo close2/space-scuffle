@@ -43,7 +43,7 @@ use client::battle_pipeline::commands::ModeDirection;
 use client::battle_pipeline::fog::BattleFog;
 use client::battle_pipeline::session::BattleSession;
 use client::battle_presentation::{BattlePresentation, PlayerPresentation};
-use client::bubble_shader::BubbleDomeMaterial;
+use client::bubble_shader::{BubbleDomeMaterial, BubbleInstance};
 use client::effects::catalog::EffectCatalog;
 use client::effects::stance::{casts_own_shadow, StanceTrack};
 use client::runtime_battle::{MapObject, MapPresentation, SKIRMISH_SCENARIO};
@@ -2111,4 +2111,151 @@ fn a_launch_image_is_never_picked_or_targeted() {
         "a click on an image is a click on the ground: {:?}",
         orders[0].order
     );
+}
+
+// --- Remembered structures (plan 2026-12-01-minimap Amendment 1, M-13) --------------------------
+
+/// The enemy's start structure and its map centre.
+fn enemy_start_structure(harness: &Harness) -> (EntityId, Vec2) {
+    let world = harness.world();
+    let id = world
+        .map
+        .structures()
+        .keys()
+        .copied()
+        .find(|id| {
+            world
+                .entities
+                .get(id)
+                .is_some_and(|unit| unit.owner == ENEMY)
+        })
+        .expect("the enemy starts with a structure");
+    (id, harness.simulated_position(id))
+}
+
+/// Shows the enemy's start structure to a local scout, which then dies: the view remembers it.
+fn remember_enemy_base(harness: &mut Harness) -> (EntityId, Vec2) {
+    let (structure, at) = enemy_start_structure(harness);
+    let spot = harness.open_ground(at, 5.0);
+    let scout = spawn_soldier(harness, LOCAL_PLAYER, spot);
+    run_ticks(harness, 2);
+    harness
+        .world_mut()
+        .entities
+        .get_mut(&scout)
+        .expect("the scout lives")
+        .hp = SimScalar::ZERO;
+    run_until(harness, "the view remembers the structure", |harness| {
+        model(harness)
+            .view
+            .remembered_structures
+            .iter()
+            .any(|entry| entry.entity == structure)
+    });
+    harness.step(1);
+    (structure, at)
+}
+
+/// M-13: a remembered structure draws one pooled image, never a unit; a left click on it selects
+/// nothing, a right click with a local unit selected issues the ground order, and it is hidden on
+/// the frame the view stops listing it.
+#[test]
+fn a_remembered_structure_is_drawn_as_one_pooled_image_and_never_picked() {
+    let mut harness = skirmish();
+    let (structure, at) = remember_enemy_base(&mut harness);
+    assert_nothing_of_it_is_drawn(&harness, structure);
+    let drawn = drawn_snapshots(&mut harness);
+    let [(entity, where_drawn)] = drawn.as_slice() else {
+        panic!("one image drawn: {drawn:?}");
+    };
+    assert!(Vec2::new(where_drawn.x, where_drawn.z).distance(at) < 1e-3);
+    let world = harness.app.world();
+    assert!(world.get::<AttackSnapshotBubble>(*entity).is_some());
+    assert!(
+        world.get::<LiveBattleBubble>(*entity).is_none(),
+        "never a unit"
+    );
+    let entity = *entity;
+    // A left click on it selects nothing.
+    harness.look_at(at);
+    let on_screen = harness.screen_position(Vec3::new(at.x, where_drawn.y, at.y));
+    harness.click(MouseButton::Left, on_screen);
+    assert_eq!(harness.selection().ids(), [], "nothing selected");
+    assert_eq!(harness.selection().inspected(), None, "nothing inspected");
+    // A right click on it with a local unit selected is a ground order.
+    let worker = harness
+        .world()
+        .entities
+        .values()
+        .find(|unit| unit.owner == LOCAL_PLAYER && !unit.is_immobile)
+        .map(|unit| unit.id)
+        .expect("a local unit");
+    harness
+        .app
+        .world_mut()
+        .resource_mut::<client::battle_selection::BattleSelection>()
+        .select_only(worker);
+    harness.step(1);
+    harness.click(MouseButton::Right, on_screen);
+    let orders = pending(&harness);
+    assert!(
+        matches!(
+            orders.last().map(|order| &order.order),
+            Some(UnitOrder::Move { .. })
+        ),
+        "a click on the image is a click on the ground: {orders:?}"
+    );
+    // The spot seen again: hidden on the frame the view drops it.
+    let spot = harness.open_ground(at, 5.0);
+    spawn_soldier(&mut harness, LOCAL_PLAYER, spot);
+    run_until(&mut harness, "the view drops the image", |harness| {
+        model(harness).view.remembered_structures.is_empty()
+    });
+    assert_eq!(
+        harness.app.world().get::<Visibility>(entity),
+        Some(&Visibility::Hidden),
+        "hidden on the frame the list lost it"
+    );
+}
+
+/// M-13: with an attack snapshot and a remembered structure listed together, each pooled entity
+/// shows its own image, and a frame on which neither changed changes neither.
+#[test]
+fn an_attack_snapshot_and_a_remembered_structure_share_the_pool() {
+    let mut harness = skirmish();
+    let (structure, _) = remember_enemy_base(&mut harness);
+    let staged = struck_unseen(&mut harness);
+    let view = &model(&harness).view;
+    assert!(view
+        .attack_snapshots
+        .iter()
+        .any(|e| e.entity == staged.attacker));
+    assert!(view
+        .remembered_structures
+        .iter()
+        .any(|e| e.entity == structure));
+    let shown = |harness: &mut Harness| {
+        let world = harness.app.world_mut();
+        let mut images: Vec<(EntityId, [f32; 3])> = world
+            .query_filtered::<(&BubbleInstance, &Visibility), With<AttackSnapshotBubble>>()
+            .iter(world)
+            .filter(|(_, visibility)| **visibility != Visibility::Hidden)
+            .map(|(bubble, _)| (bubble.0.entity_id, bubble.0.world_pos))
+            .collect();
+        images.sort_by_key(|(id, _)| *id);
+        images
+    };
+    let before = shown(&mut harness);
+    let ids: Vec<EntityId> = before.iter().map(|(id, _)| *id).collect();
+    assert!(
+        ids.contains(&staged.attacker) && ids.contains(&structure),
+        "each image on its own entity: {ids:?}"
+    );
+    assert_eq!(
+        pooled_snapshots(&harness),
+        before.len(),
+        "one entity per image"
+    );
+    harness.step(3);
+    assert_eq!(shown(&mut harness), before, "a held frame changes nothing");
 }

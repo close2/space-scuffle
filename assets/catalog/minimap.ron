@@ -23,6 +23,7 @@
     attacked_color: (1.0, 0.0, 0.0),  // :561-590 Attacked
     flash_ticks: 75,                  // :654 UnitDamageFlashDuration 3000 ms
     snapshot_alpha: 1.0,              // B-183's attacker snapshot; S12 says only "on minimap" (art, Q0020)
+    remembered_alpha: 1.0,            // B-252's remembered structure; S15 says only "on minimap" (art, Q0020)
     rally_color: (1.0, 1.0, 1.0),     // :538 DefaultPathColor index="Minimap"
     rally_px: 1.0,
     alerts: (

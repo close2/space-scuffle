@@ -409,6 +409,63 @@ fn hold_attack_snapshot(simulation: &mut sim_core::SimWorld) -> TestResult {
     Err("the enemy on the cliff never struck unseen".into())
 }
 
+/// Holds a remembered structure (plan `2026-12-01-minimap` M-S2′): a local scout beside the
+/// enemy's start structure shows it, then dies, and ticks run until the view remembers it. Nothing
+/// of the local player sees that spot again in the window, so the image is held unchanged and the
+/// view writer, the fog refill, the pool and the marks builder draw it every tick.
+fn hold_remembered_structure(simulation: &mut sim_core::SimWorld) -> TestResult {
+    let viewer = attack_snapshot_stage::LOCAL_PLAYER;
+    let (structure, at) = simulation
+        .map
+        .structures()
+        .keys()
+        .find_map(|id| {
+            let unit = simulation.entities.get(id)?;
+            (unit.owner == attack_snapshot_stage::ENEMY).then_some((*id, unit.position))
+        })
+        .ok_or("the enemy starts with a structure")?;
+    let kind = simulation
+        .entities
+        .values()
+        .find(|unit| unit.owner == viewer && !unit.is_immobile)
+        .ok_or("a local unit")?
+        .unit_type_id;
+    let scout = [(0, 5), (5, 0), (0, -5), (-5, 0), (4, 4), (-4, -4)]
+        .into_iter()
+        .find_map(|(dx, dy)| {
+            simulation
+                .spawn_unit(kind, viewer, at + sim_types::SimVec2::from_i32(dx, dy))
+                .ok()
+        })
+        .ok_or("open ground beside the enemy's structure")?;
+    let step = |simulation: &mut sim_core::SimWorld| {
+        simulation.step(&sim_types::TickBundle {
+            tick: sim_types::Tick(simulation.current_tick),
+            commands: Vec::new(),
+            state_checksum: None,
+        });
+    };
+    step(simulation);
+    simulation
+        .entities
+        .get_mut(&scout)
+        .ok_or("the scout lives")?
+        .hp = sim_types::SimScalar::ZERO;
+    let mut view = sim_types::PlayerView::default();
+    for _ in 0..10 {
+        step(simulation);
+        simulation.write_player_view(viewer, &mut view);
+        if view
+            .remembered_structures
+            .iter()
+            .any(|entry| entry.entity == structure)
+        {
+            return Ok(());
+        }
+    }
+    Err("the view never remembered the enemy's structure".into())
+}
+
 /// Adds a spell caster's image to the held one (plan `2026-11-27-launch-and-spell-visibility`
 /// V-25): an enemy caster on another cliff storms a local unit below it, and ticks run until the
 /// storm has ended, so its `Hidden` pulses are over and the image is held unchanged.
@@ -567,8 +624,12 @@ fn check_minimap(app: &App, rebuilds_before: u64) -> TestResult {
         .iter()
         .filter(|subject| **subject == client::minimap::marks::MarkSubject::Image)
         .count();
-    if images == 0 {
-        return Err("the held attack snapshot has no square on the minimap".into());
+    if images < 2 {
+        return Err(format!(
+            "the held attack snapshot and remembered structure have {images} squares on the \
+             minimap, not 2"
+        )
+        .into());
     }
     if frame.marks_generation() <= rebuilds_before + 2 {
         return Err(format!(
@@ -604,6 +665,7 @@ fn stage_variant(
     let crew = if variant.is_running() {
         let crew = add_gas_crew(simulation)?;
         hold_attack_snapshot(simulation)?;
+        hold_remembered_structure(simulation)?;
         Some(crew)
     } else {
         None
