@@ -1,12 +1,13 @@
-//! Catalog validation of strike magazines and impact spawns (plan `2026-11-28-broodlings` D-3,
-//! D-4).
+//! Catalog validation of strike magazines, impact spawns (plan `2026-11-28-broodlings` D-3,
+//! D-4) and death spawns (plan `2026-12-01-death-spawns-and-hangar-commands` D-1).
 //!
 //! # Responsibility
 //! Refuses, with a typed [`SimCoreError::CatalogInvalidValue`] naming the slug and field, every
-//! authored strike magazine and impact spawn the mechanisms cannot run: a magazine's counts and
-//! ticks out of range or on a unit whose weapons it cannot gate, an impact spawn on a weapon
-//! that launches no missile or whose buffer could grow unbounded, and a spawned unit that could
-//! enter the world otherwise than by spawning, could not act, or would spawn in turn.
+//! authored strike magazine, impact spawn and death spawn the mechanisms cannot run: a magazine's
+//! counts and ticks out of range or on a unit whose weapons it cannot gate, an impact spawn on a
+//! weapon that launches no missile or whose buffer could grow unbounded, a death spawn creating
+//! none or more than [`MAX_DEATH_SPAWN_COUNT`] units, and a spawned unit that could enter the
+//! world otherwise than by spawning, could not act, or would spawn in turn.
 //!
 //! # How it fits
 //! The per-row rules run in `UnitArchetypeDef::validate` and `WeaponSpecDef::validate` before a
@@ -21,17 +22,46 @@
 //! at most `capacity` strikes at once, launches no magazine and neither delays nor spaces its
 //! strikes. An impact spawn is on a missile weapon, creates at least one unit per strike within
 //! a nonnegative search range, at most [`MAX_SPAWNS_PER_MISSILE`] per missile, and its unit is a
-//! mobile, armed, supply-free unit with no hangar, strike magazine or impact spawn of its own,
-//! trained by no structure.
+//! mobile, armed, supply-free unit with no hangar, strike magazine, impact spawn or death spawn of
+//! its own, trained by no structure. A death spawn creates 1 to [`MAX_DEATH_SPAWN_COUNT`] units
+//! within a nonnegative search range, and its unit is a mobile, supply-free unit (no structure)
+//! with no hangar, strike magazine, impact spawn or death spawn of its own, trained by no
+//! structure; any archetype may carry one.
 
 use super::validation::{invalid, nonnegative};
-use super::{UnitArchetype, UnitArchetypeDef, UnitCatalog, WeaponSpecDef};
+use super::{DeathSpawnSpecDef, UnitArchetype, UnitArchetypeDef, UnitCatalog, WeaponSpecDef};
 use crate::error::{SimCoreError, SimResult};
 use sim_types::{ShapeKind, SimScalar, WeaponSpec};
 
 /// Most units one missile may create (`per_strike × attacks_count`), which bounds the combat
 /// phase's retained spawn buffer per finishing missile (plan `2026-11-28-broodlings` D-4).
 pub(crate) const MAX_SPAWNS_PER_MISSILE: u16 = 8;
+
+/// Most units one death creates (plan `2026-12-01-death-spawns-and-hangar-commands` D-1): above
+/// 5.0.14's largest `SpawnCount` of a death response (9, the town halls' Broodlings), and the
+/// bound the client's render pool reserves per dying unit (D-8).
+pub(crate) const MAX_DEATH_SPAWN_COUNT: u8 = 16;
+
+impl DeathSpawnSpecDef {
+    /// D-1, per row: 1 to [`MAX_DEATH_SPAWN_COUNT`] units, a nonnegative search range. The rules
+    /// that need the created unit run once the bundle is loaded
+    /// ([`UnitCatalog::validate_production_references`]).
+    pub(super) fn validate(&self, definition: &str) -> SimResult<()> {
+        nonnegative(
+            definition,
+            "capabilities.death_spawn.search_range",
+            f64::from(self.search_range),
+        )?;
+        if !(1..=MAX_DEATH_SPAWN_COUNT).contains(&self.count) {
+            return Err(invalid(
+                definition,
+                "capabilities.death_spawn.count",
+                "a death spawn creates 1 to 16 units",
+            ));
+        }
+        Ok(())
+    }
+}
 
 impl WeaponSpecDef {
     /// D-4: an impact spawn creates at least one unit per strike, searches a nonnegative range,
@@ -186,7 +216,7 @@ impl UnitCatalog {
                 let unit = self
                     .get(spawn.unit)
                     .map_err(|_| fail("the spawned unit names no unit of the catalog"))?;
-                if let Some(reason) = self.spawned_unit_fault(unit) {
+                if let Some(reason) = self.spawned_unit_fault(unit, true) {
                     return Err(fail(reason));
                 }
             }
@@ -194,20 +224,51 @@ impl UnitCatalog {
         Ok(())
     }
 
-    /// The first rule of D-4 the spawned archetype `unit` breaks, if any.
-    fn spawned_unit_fault(&self, unit: &UnitArchetype) -> Option<&'static str> {
+    /// Plan `2026-12-01-death-spawns-and-hangar-commands` D-1: every death spawn's unit, in the
+    /// complete catalog, is a mobile unit (no structure) with no supply cost, no hangar, strike
+    /// magazine, impact spawn or death spawn of its own (no chain), and trained by no structure.
+    /// The host may be any archetype.
+    ///
+    /// # Errors
+    /// [`SimCoreError::CatalogInvalidValue`] on the host's `capabilities.death_spawn.unit` with
+    /// the broken rule.
+    pub(super) fn validate_death_spawns(&self) -> SimResult<()> {
+        for archetype in self.archetypes() {
+            let Some(spawn) = archetype.capabilities.death_spawn else {
+                continue;
+            };
+            let fail = |reason| -> SimCoreError {
+                invalid(&archetype.slug, "capabilities.death_spawn.unit", reason)
+            };
+            let unit = self
+                .get(spawn.unit)
+                .map_err(|_| fail("the spawned unit names no unit of the catalog"))?;
+            if let Some(reason) = self.spawned_unit_fault(unit, false) {
+                return Err(fail(reason));
+            }
+        }
+        Ok(())
+    }
+
+    /// The first rule the spawned archetype `unit` breaks, if any: D-4 of the broodlings plan for
+    /// an impact spawn (`armed`: it must have a striking weapon), D-1 of the death-spawns plan
+    /// for a death spawn (no weapon required).
+    fn spawned_unit_fault(&self, unit: &UnitArchetype, armed: bool) -> Option<&'static str> {
         let striking = weapons_of(unit).any(|weapon| weapon.magazine_launch.is_none());
         let spawns = weapons_of(unit).any(|weapon| weapon.impact_spawn.is_some());
         let trained = self
             .archetypes()
             .any(|trainer| trainer.trains_units.contains(&unit.slug));
-        let rules: [(bool, &'static str); 8] = [
+        let rules: [(bool, &'static str); 9] = [
             (
                 !matches!(unit.shape, ShapeKind::BuildingDome { .. }),
                 "the spawned unit is a unit, not a structure",
             ),
             (unit.max_speed > SimScalar::ZERO, "the spawned unit moves"),
-            (striking, "the spawned unit has a weapon of its own"),
+            (
+                striking || !armed,
+                "the spawned unit has a weapon of its own",
+            ),
             (unit.supply_cost == 0, "the spawned unit takes no supply"),
             (
                 unit.capabilities.hangar.is_none(),
@@ -218,6 +279,10 @@ impl UnitCatalog {
                 "the spawned unit has no strike magazine",
             ),
             (!spawns, "the spawned unit spawns nothing in turn"),
+            (
+                unit.capabilities.death_spawn.is_none(),
+                "the spawned unit leaves nothing when it dies",
+            ),
             (
                 !trained,
                 "the spawned unit is trained by no structure, only created by its spawn",
@@ -252,7 +317,7 @@ fn weapons_of(archetype: &UnitArchetype) -> impl Iterator<Item = &WeaponSpec> {
 mod tests {
     //! B-10 (plan `2026-11-28-broodlings` §6.1): every rule of D-3 and D-4 refused with the field
     //! it names; the shipped catalog validates.
-    use super::super::{CatalogFile, ImpactSpawnDef, UnitArchetypeDef};
+    use super::super::{CatalogFile, DeathSpawnSpecDef, ImpactSpawnDef, UnitArchetypeDef};
     use crate::error::{SimCoreError, SimResult};
     use sim_types::{MagazineLaunch, MoverType, SpawnOrder, StrikeMagazineSpec, TimedLifeSpec};
 
@@ -558,5 +623,222 @@ mod tests {
             .swap_remove(index)
             .into_archetype(&factions, &classes, &ids);
         assert_eq!(field(converted), format!("{weapon}.impact_spawn.unit"));
+    }
+
+    /// A well-formed authored death spawn creating `unit`: 5.0.14's `ZergBuildingDies9` (plan
+    /// `2026-12-01-death-spawns-and-hangar-commands` §2.2).
+    fn death_spawn_def(unit: &str) -> DeathSpawnSpecDef {
+        DeathSpawnSpecDef {
+            unit: unit.to_owned(),
+            count: 9,
+            delay_ticks: 9,
+            search_range: 0.0,
+            timed_life: Some(TimedLifeSpec {
+                ticks: 143,
+                random_extra_ticks: 5,
+            }),
+            disabled_while_constructing: true,
+        }
+    }
+
+    /// The shipped structures file, parsed.
+    fn structures_file() -> super::super::StructureCatalogFile {
+        ron::from_str(include_str!("../../../../assets/catalog/structures.ron"))
+            .expect("invariant: the shipped structures.ron parses")
+    }
+
+    /// DS-11 (plan `2026-12-01-death-spawns-and-hangar-commands` D-1), per row: a count of 1 to 16
+    /// and a nonnegative range are accepted on a unit's capabilities and on a structure; a count
+    /// of 0 or 17 and a negative range are refused naming the field; a structure row without the
+    /// field reads `None`.
+    #[test]
+    fn every_death_spawn_row_rule_is_refused_naming_its_field() {
+        type Edit = fn(&mut DeathSpawnSpecDef);
+        let cases: [(Edit, &str); 5] = [
+            (|_| {}, "accepted"),
+            (|d| d.count = 16, "accepted"),
+            (|d| d.count = 0, "capabilities.death_spawn.count"),
+            (|d| d.count = 17, "capabilities.death_spawn.count"),
+            (
+                |d| d.search_range = -0.5,
+                "capabilities.death_spawn.search_range",
+            ),
+        ];
+        let mut file = structures_file();
+        let structure = file.structures.swap_remove(0);
+        assert!(
+            structure.death_spawn.is_none(),
+            "an omitted field reads None"
+        );
+        let mut structure = Some(structure);
+        for (index, (edit, expected)) in cases.into_iter().enumerate() {
+            let mut spawn = death_spawn_def("x");
+            edit(&mut spawn);
+            let mut unit = spawner_row("x");
+            unit.capabilities.death_spawn = Some(spawn.clone());
+            assert_eq!(field(unit.validate()), expected, "unit, case {index}");
+            let mut row = structure.take().expect("invariant: put back below");
+            row.death_spawn = Some(spawn);
+            assert_eq!(field(row.validate()), expected, "structure, case {index}");
+            structure = Some(row);
+        }
+    }
+
+    /// DS-11, on the complete catalog: a death spawn's unit must be a mobile, supply-free unit (no
+    /// structure) with no hangar, strike magazine, impact spawn or death spawn of its own that no
+    /// structure trains; an unarmed unit is accepted. Each broken rule is refused at the host's
+    /// `capabilities.death_spawn.unit`; an unknown slug is refused when the structure converts.
+    #[test]
+    #[allow(clippy::too_many_lines, reason = "one table of cases, each a rule")]
+    fn every_death_spawned_unit_rule_is_refused_on_the_complete_catalog() -> TestResult {
+        type Edit = fn(&mut crate::catalog::UnitArchetype);
+        let mut catalogs = crate::test_support::shipped_catalogs();
+        let units = &mut catalogs.units;
+        let mut ground: Vec<_> = units
+            .archetypes()
+            .filter(|a| a.mover_type == MoverType::Ground && a.weapon.is_some())
+            .filter(|a| a.capabilities.modes.is_empty() && a.harvester.is_none())
+            .filter(|a| a.capabilities.transport_capacity == 0)
+            .map(|a| a.unit_type_id)
+            .collect();
+        ground.sort();
+        let spawned = ground[0];
+        let spawned_slug = units.get(spawned)?.slug.clone();
+        for trainer in units
+            .archetypes()
+            .map(|a| a.unit_type_id)
+            .collect::<Vec<_>>()
+        {
+            units
+                .get_mut(trainer)?
+                .trains_units
+                .retain(|slug| *slug != spawned_slug);
+        }
+        units.get_mut(spawned)?.supply_cost = 0;
+        let mut domes: Vec<_> = units
+            .archetypes()
+            .filter(|a| matches!(a.shape, sim_types::ShapeKind::BuildingDome { .. }))
+            .map(|a| a.unit_type_id)
+            .collect();
+        domes.sort();
+        let host = domes[0];
+        let host_slug = units.get(host)?.slug.clone();
+        units.get_mut(host)?.capabilities.death_spawn = Some(sim_types::DeathSpawnSpec {
+            unit: spawned,
+            count: 9,
+            delay_ticks: 9,
+            search_range: sim_types::SimScalar::ZERO,
+            timed_life: None,
+            disabled_while_constructing: true,
+        });
+        assert_eq!(field(units.validate_death_spawns()), "accepted");
+        let cases: [(Edit, &str); 7] = [
+            (
+                |a| {
+                    a.weapon = None;
+                    a.ground_weapon = None;
+                    a.air_weapon = None;
+                },
+                "accepted",
+            ),
+            (|a| a.supply_cost = 2, "rejected"),
+            (|a| a.max_speed = sim_types::SimScalar::ZERO, "rejected"),
+            (
+                |a| {
+                    a.capabilities.strike_magazine = Some(StrikeMagazineSpec {
+                        capacity: 1,
+                        start: 1,
+                        build_ticks: 2,
+                        arming_ticks: 1,
+                    });
+                },
+                "rejected",
+            ),
+            (
+                |a| {
+                    let unit = a.unit_type_id;
+                    if let Some(weapon) = a.weapon.as_mut() {
+                        weapon.impact_spawn = Some(sim_types::ImpactSpawn {
+                            unit,
+                            per_strike: 1,
+                            search_range: sim_types::SimScalar::ZERO,
+                            timed_life: None,
+                            order: SpawnOrder::AttackTargetOrPoint,
+                        });
+                    }
+                },
+                "rejected",
+            ),
+            (
+                |a| {
+                    a.capabilities.death_spawn = Some(sim_types::DeathSpawnSpec {
+                        unit: a.unit_type_id,
+                        count: 1,
+                        delay_ticks: 1,
+                        search_range: sim_types::SimScalar::ZERO,
+                        timed_life: None,
+                        disabled_while_constructing: false,
+                    });
+                },
+                "rejected",
+            ),
+            (
+                |a| {
+                    a.capabilities.hangar = Some(sim_types::HangarSpec {
+                        member: a.unit_type_id,
+                        max_count: 8,
+                        start_count: 4,
+                        build_ticks: 214,
+                        queue_size: 5,
+                        auto_build: true,
+                        leash: sim_types::SimScalar::from_i32(12),
+                        on_death: sim_types::HangarDeath::KillMembers,
+                    });
+                },
+                "rejected",
+            ),
+        ];
+        for (index, (edit, expected)) in cases.iter().enumerate() {
+            let saved = units.get(spawned)?.clone();
+            edit(units.get_mut(spawned)?);
+            let expected = if *expected == "accepted" {
+                "accepted".to_owned()
+            } else {
+                "capabilities.death_spawn.unit".to_owned()
+            };
+            assert_eq!(
+                field(units.validate_death_spawns()),
+                expected,
+                "case {index}"
+            );
+            *units.get_mut(spawned)? = saved;
+        }
+        let saved = units.get(spawned)?.clone();
+        units.get_mut(spawned)?.shape = units.get(host)?.shape;
+        assert_eq!(
+            field(units.validate_death_spawns()),
+            "capabilities.death_spawn.unit",
+            "a structure is refused"
+        );
+        *units.get_mut(spawned)? = saved;
+        let trainer = units
+            .archetypes()
+            .find(|a| !a.trains_units.is_empty())
+            .map(|a| a.unit_type_id)
+            .ok_or("a trainer")?;
+        units.get_mut(trainer)?.trains_units.push(spawned_slug);
+        let refused = units.validate_death_spawns();
+        assert!(
+            matches!(&refused, Err(SimCoreError::CatalogInvalidValue { definition, field, .. })
+                if *definition == host_slug && field == "capabilities.death_spawn.unit"),
+            "{refused:?}"
+        );
+        let factions = crate::test_support::shipped_factions();
+        let mut file = structures_file();
+        let mut row = file.structures.swap_remove(0);
+        row.death_spawn = Some(death_spawn_def("no_such_unit"));
+        let converted = row.into_archetype(&factions, &std::collections::BTreeMap::new());
+        assert_eq!(field(converted), "capabilities.death_spawn.unit");
+        Ok(())
     }
 }

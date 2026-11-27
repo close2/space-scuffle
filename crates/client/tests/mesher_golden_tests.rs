@@ -16,7 +16,7 @@
 //! # Inputs
 //! - The two shipped maps, `assets/maps/default_arena.scmap.ron` and `showcase_canyon.scmap.ron`,
 //!   loaded through the real `MapFile` loader.
-//! - One seeded synthetic map whose cells cover what the shipped maps do not: all eight ramp
+//! - One seeded synthetic map (`support/terrain_mesh.rs`) whose cells cover what the shipped maps do not: all eight ramp
 //!   directions (including the diagonal ones the mesher skips walls for), ramps beside abyss,
 //!   saddle cases and multi-level cliff stacks, at a size that is not a multiple of the chunk size.
 //! - For the texture arrays: the shipped first theme of `assets/catalog/terrain_themes.ron`,
@@ -30,6 +30,27 @@
 //!   footprints are gone and ramp cells wall their own edges. The synthetic mesh hash was
 //!   re-recorded again at `ef26242`, plan `2026-11-09-ramp-geometry` WP2: flank walls beside
 //!   higher ground and walls between ramps of different height. The pick hashes did not change.
+//! - The three mesh hashes and the three ramp-free chunk hashes were re-recorded at `aaa5d450`, plan
+//!   `2026-11-30-terrain-and-air-indicators` WP1: cliff profiles set back by `FOOT_WIDTH` where the
+//!   low side is ground, toe on the edge, and by `WALL_JITTER_AMPLITUDE` where it is void (B-243,
+//!   W1); review capture `~/scratch/terrain-indicators/review/wp1/`. The pick hashes and hit
+//!   counts did not change.
+//! - The `showcase_canyon` and synthetic mesh and ramp-free chunk hashes were re-recorded at
+//!   `6c47fc4d`, plan `2026-11-30-terrain-and-air-indicators` WP3: concave cliff corners square
+//!   and mitred, saddles low-connected (B-245, Q0136 default (a)); review capture
+//!   `~/scratch/terrain-indicators/review/wp3/`. `default_arena` has no concave corner, and no pick
+//!   hash changed.
+//! - The `showcase_canyon` and synthetic mesh and ramp-free chunk hashes were re-recorded at
+//!   `a786f902`, plan `2026-12-01-straight-diagonal-cliffs` WP1: void concave corners drawn through
+//!   the midpoints again (D-6); review capture `~/scratch/straight-diagonals/review/`
+//!   (`contact_sheet_wp1.png`, column `diagonals_wp1/`). `default_arena` has no concave corner,
+//!   and no pick hash changed.
+//! - The `showcase_canyon` and synthetic mesh and ramp-free chunk hashes were re-recorded at
+//!   `1fe78950` (and are unchanged at `058435c4`), plan `2026-12-01-straight-diagonal-cliffs` WP2:
+//!   ground diagonals drawn as straight chamfers through the low cells' corners (Q0136 (c)); 24
+//!   full cuts on `showcase_canyon`, 7 on the synthetic map; review capture
+//!   `~/scratch/straight-diagonals/review/` (`contact_sheet.png`, column `diagonals_wp2/`).
+//!   `default_arena` has no staircase, and no pick hash changed.
 //! - A golden may only change together with a deliberate, documented change in terrain output.
 
 #![allow(
@@ -42,7 +63,12 @@
     clippy::many_single_char_names
 )]
 
-use std::path::PathBuf;
+#[allow(
+    dead_code,
+    reason = "shared by several test binaries that each use a subset"
+)]
+#[path = "support/terrain_mesh.rs"]
+mod terrain_mesh;
 
 use asset_baker::terrain_theme::{TerrainTheme, TerrainThemeCatalog, TerrainThemeError};
 use bevy::image::{Image, ImageSampler};
@@ -53,8 +79,8 @@ use client::terrain::picking::pick_terrain;
 use client::terrain::theme_gpu::{
     load_theme_texture_arrays, terrain_anisotropy_clamp, TERRAIN_ANISOTROPY_OVERRIDE_ENV,
 };
-use sim_map::grid::{CellFlags, CliffLevel, GameMap, MapCell, RampDir, TerrainKind};
-use sim_map::map_format::MapFile;
+use sim_map::grid::GameMap;
+use terrain_mesh::{load_shipped_map, synthetic_map, SplitMix64};
 
 /// Rays cast per map axis; the picker golden casts `RAY_GRID * RAY_GRID` rays per map.
 const RAY_GRID: u32 = 64;
@@ -89,126 +115,6 @@ impl Fnv64 {
     fn f32(&mut self, v: f32) {
         self.u32(v.to_bits());
     }
-}
-
-fn resolve_map_path(relative: &str) -> PathBuf {
-    let assets = resolve_assets_dir();
-    let direct = assets.join("maps").join(relative);
-    if direct.exists() {
-        return direct;
-    }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../assets/maps")
-        .join(relative)
-}
-
-fn load_shipped_map(filename: &str) -> GameMap {
-    let path = resolve_map_path(filename);
-    MapFile::load(&path)
-        .unwrap_or_else(|e| panic!("failed to load {}: {e}", path.display()))
-        .decode()
-        .unwrap_or_else(|e| panic!("failed to decode {}: {e}", path.display()))
-        .to_game_map()
-        .unwrap_or_else(|e| panic!("failed to build GameMap from {}: {e}", path.display()))
-}
-
-/// `SplitMix64`: a tiny, fully specified generator for the synthetic map.
-struct SplitMix64(u64);
-
-impl SplitMix64 {
-    fn next(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        z ^ (z >> 31)
-    }
-
-    fn below(&mut self, n: u64) -> u64 {
-        self.next() % n
-    }
-}
-
-/// A 37x29 seeded map: 3x3 plateau blocks at levels 0..=3, scattered abyss, and ramps in all
-/// eight directions, some in straight runs of up to four cells.
-fn synthetic_map() -> GameMap {
-    const W: u32 = 37;
-    const H: u32 = 29;
-    const DIRS: [RampDir; 8] = [
-        RampDir::North,
-        RampDir::South,
-        RampDir::East,
-        RampDir::West,
-        RampDir::NorthEast,
-        RampDir::NorthWest,
-        RampDir::SouthEast,
-        RampDir::SouthWest,
-    ];
-    let base = MapCell {
-        terrain_kind: TerrainKind::MetalPlate,
-        cliff_level: CliffLevel(0),
-        flags: CellFlags::BUILDABLE | CellFlags::GROUND_PATHABLE,
-        ramp: None,
-        occupying_structure: None,
-        occupying_resource: None,
-    };
-    let mut map = GameMap::new(W, H, base).expect("synthetic map dimensions are non-zero");
-    let mut rng = SplitMix64(0x5ca1_ab1e_0009_0004);
-
-    let blocks_x = W.div_ceil(3) as usize;
-    let blocks_y = H.div_ceil(3) as usize;
-    let mut block_levels = vec![0u8; blocks_x * blocks_y];
-    for level in &mut block_levels {
-        *level = rng.below(4) as u8;
-    }
-    for y in 0..H {
-        for x in 0..W {
-            let level = block_levels[(y / 3) as usize * blocks_x + (x / 3) as usize];
-            let cell = map.cell_mut(x, y).expect("in bounds");
-            cell.cliff_level = CliffLevel(level);
-            cell.terrain_kind = if rng.below(100) < 7 {
-                TerrainKind::Abyss
-            } else {
-                TerrainKind::Grass
-            };
-        }
-    }
-
-    // Straight runs: a direction, a start cell and a length, all on one cliff level.
-    for _ in 0..14 {
-        let dir = DIRS[rng.below(8) as usize];
-        let (dx, dy): (i64, i64) = match dir {
-            RampDir::North => (0, 1),
-            RampDir::South => (0, -1),
-            RampDir::East => (1, 0),
-            RampDir::West => (-1, 0),
-            RampDir::NorthEast => (1, 1),
-            RampDir::NorthWest => (-1, 1),
-            RampDir::SouthEast => (1, -1),
-            RampDir::SouthWest => (-1, -1),
-        };
-        let len = 1 + rng.below(4) as i64;
-        let start_x = rng.below(u64::from(W)) as i64;
-        let start_y = rng.below(u64::from(H)) as i64;
-        let level = rng.below(3) as u8;
-        // Ramps are two cells wide across the run, like the shipped maps.
-        let (wx, wy) = if dx == 0 { (1, 0) } else { (0, 1) };
-        for k in 0..len {
-            for w in 0..2 {
-                let x = start_x + k * dx + w * wx;
-                let y = start_y + k * dy + w * wy;
-                let (Ok(ux), Ok(uy)) = (u32::try_from(x), u32::try_from(y)) else {
-                    continue;
-                };
-                if let Ok(cell) = map.cell_mut(ux, uy) {
-                    cell.ramp = Some(dir);
-                    cell.cliff_level = CliffLevel(level);
-                    cell.terrain_kind = TerrainKind::Dirt;
-                }
-            }
-        }
-    }
-    map
 }
 
 fn hash_stats(h: &mut Fnv64, s: &MeshStats) {
@@ -352,7 +258,7 @@ fn default_arena_mesh_and_picking_are_bit_exact() {
         "default_arena",
         mesh_hash(&map),
         pick_hash(&map),
-        (0x0f0d_39ef_7f97_58db, 0x0d13_089f_628a_56b8, 2321),
+        (0x8b6b_69ce_ed8b_cf97, 0x0d13_089f_628a_56b8, 2321),
     );
 }
 
@@ -363,7 +269,7 @@ fn showcase_canyon_mesh_and_picking_are_bit_exact() {
         "showcase_canyon",
         mesh_hash(&map),
         pick_hash(&map),
-        (0x771c_cfc1_98c0_befd, 0xd059_17a4_edfe_bf3a, 2262),
+        (0x7d2d_6667_3729_6669, 0xd059_17a4_edfe_bf3a, 2262),
     );
 }
 
@@ -374,27 +280,29 @@ fn synthetic_map_mesh_and_picking_are_bit_exact() {
         "synthetic",
         mesh_hash(&map),
         pick_hash(&map),
-        (0xce78_5e16_375b_bd4c, 0xe991_3ab4_d9ba_9745, 1532),
+        (0xc7cf_28f9_598e_a15e, 0xe991_3ab4_d9ba_9745, 1532),
     );
 }
 
 /// Chunks with no ramp corner in any dual cell are untouched by ramp geometry: their hashes were
 /// recorded before plan `2026-11-09-ramp-geometry` WP1 changed the mesher's ramp handling, and
-/// must not move with any later ramp change (plan section 4, D-3 and D-5).
+/// must not move with any later ramp change (plan section 4, D-3 and D-5). They move with cliff
+/// changes, and were re-recorded by plan `2026-11-30-terrain-and-air-indicators` WP1 and WP3 and
+/// plan `2026-12-01-straight-diagonal-cliffs` WP1 and WP2.
 #[test]
 fn ramp_free_chunks_are_bit_exact() {
     let maps = [
         (
             "default_arena",
             load_shipped_map("default_arena.scmap.ron"),
-            (0x1d88_581e_ad3f_f398, 21),
+            (0xed16_db8a_3005_9794, 21),
         ),
         (
             "showcase_canyon",
             load_shipped_map("showcase_canyon.scmap.ron"),
-            (0xdbb5_9ede_15b0_9c12, 21),
+            (0x7070_0bdb_731b_c5d3, 21),
         ),
-        ("synthetic", synthetic_map(), (0x4b31_db42_9fac_1b7d, 1)),
+        ("synthetic", synthetic_map(), (0xebb4_3f3f_7c63_f8e8, 1)),
     ];
     let mut changed = Vec::new();
     for (name, map, expected) in maps {

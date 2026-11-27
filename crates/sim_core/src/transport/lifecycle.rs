@@ -4,6 +4,8 @@
 //! member's release through the production ledger formula, removes its sole possible
 //! foundation, then commits membership/economy without another fallible operation.
 //! Local preparation failure leaves that group unchanged and permits unrelated roots.
+//! Each committed member's death spawn is queued just before it leaves the entity map (plan
+//! `2026-12-01-death-spawns-and-hangar-commands` D-3), so a retried group queues nothing twice.
 
 use crate::production::ProductionInvariant;
 use crate::{PlayerResources, SimWorld};
@@ -73,6 +75,9 @@ impl SimWorld {
                         continue;
                     }
                     for &(_, id) in &members[start..end] {
+                        // Every member removed here dies, so its death spawn is queued first
+                        // (plan `2026-12-01-death-spawns-and-hangar-commands` D-3).
+                        self.queue_death_spawn(id);
                         // Exclusive access preserves every prepared member until commit.
                         self.entities.remove(&id);
                     }

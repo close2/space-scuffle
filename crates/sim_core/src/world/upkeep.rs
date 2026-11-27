@@ -2,9 +2,9 @@
 //!
 //! # Responsibility
 //! Advances production, then each living entity's channel, cooldown, buff, damage-delay,
-//! regeneration, mode-drain, strike-magazine, hit-flash and timed-life timers, then the effect
-//! engine's missiles, persistents, statuses
-//! and displacements (stepped by `crate::effects`, which owns them), then completes
+//! regeneration, mode-drain, strike-magazine, hit-flash and timed-life timers, then the world's
+//! pending death spawns (`super::death_spawns`), then the effect engine's missiles, persistents,
+//! statuses and displacements (stepped by `crate::effects`, which owns them), then completes
 //! production.
 //!
 //! # How it fits
@@ -61,6 +61,11 @@ impl SimWorld {
         for entity in self.entities.values_mut() {
             upkeep_entity(entity, catalog);
         }
+
+        // Death spawns whose delay runs out are created after the per-entity upkeep, so their
+        // clocks first count on the next tick (plan `2026-12-01-death-spawns-and-hangar-commands`
+        // D-3).
+        self.step_death_spawns();
 
         self.step_effects();
 

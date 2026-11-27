@@ -329,6 +329,24 @@ impl Harness {
         world_to_window(camera, transform, point).expect("point must be in front of the camera")
     }
 
+    /// The world-space ray of the RTS camera through window (or canvas) position `position`, in
+    /// logical pixels from the top-left corner (a pixel's centre is its index plus one half): the
+    /// inverse of [`Self::screen_position`]. The camera's viewport may not start at the window's
+    /// corner (the battle view leaves room for its side panel), so the position is moved into
+    /// the viewport first.
+    pub fn pixel_ray(&mut self, position: Vec2) -> Ray3d {
+        let world = self.app.world_mut();
+        let (camera, transform) = world
+            .query_filtered::<(&Camera, &GlobalTransform), With<RtsCamera>>()
+            .single(world);
+        let origin = camera
+            .logical_viewport_rect()
+            .map_or(Vec2::ZERO, |rect| rect.min);
+        camera
+            .viewport_to_world(transform, position - origin)
+            .expect("the position lies in the camera's viewport")
+    }
+
     /// Window position showing the center of unit `id`'s bubble.
     pub fn unit_on_screen(&mut self, id: EntityId) -> Vec2 {
         let world = self.app.world_mut();

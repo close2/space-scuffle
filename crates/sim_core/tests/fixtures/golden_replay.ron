@@ -536,14 +536,22 @@
 // Re-recorded for plan 2026-11-28-broodlings (checksum schema 60 -> 61): entity strike magazine
 // and timed life, weapon impact spawn encoded; with the schema at 60 and the fields unhashed every
 // checkpoint reproduced. Behaviour: none in these worlds (no Brood Lord analogue).
+// Re-recorded for plan 2026-12-01-death-spawns-and-hangar-commands WPA1 (checksum schema 61 -> 62): pending
+// death spawns encoded; with the schema at 61 and the section unhashed every checkpoint reproduced.
+// Behaviour: none in these worlds (no Swarm structure). Proved on native debug and release and
+// wasm32-wasip1 release and debug, each in a fresh target directory.
 // Re-recorded for plan 2026-11-29-wall-clearance WP1 (B-240): a corner is handed off only along a
 // leg the step rule (`probe_permits`) lets the body walk, and the wedged escape is gone. The first
 // changed checkpoint is index 3 (ticks 151 to 200): on tick 151 rhino beetle 15 at (30.24, 29.71),
 // at the foot of the ramp, keeps its corner (30.42, 29.96), which the base handed off on the wedged
 // escape. Proof: a scratch build of WP1 with the rule off reproduces the previous checksums at every
 // checkpoint.
+// Re-recorded on merging main 2a90a9b4 (schema 62) into wall-clearance WP1: the WP1 change above on the
+// schema-62 world. First changed checkpoint against main's list: index 3 (ticks 151 to 200), WP1's tick-151
+// hand-off. Proof: the merged tree with main's locomotion (the rule off) reproduces main's list at every
+// checkpoint.
 (
-    checksum_schema: 61,
+    checksum_schema: 62,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -569,25 +577,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x4e5050bbad56f6b0,
-        0x3f54ea013d3cbe90,
-        0x09bc16ab321759da,
-        0x667fb36817d70816,
-        0xd62a2abce550b34b,
-        0xdefda500650e6367,
-        0x17072565ed980fcc,
-        0x4a64caa1514902f1,
-        0x3ed57b1d63ea8032,
-        0xd26303611ab2528e,
-        0x2fb6639791f14c26,
-        0x41d8140d299cd7cb,
-        0x699b0f4d13b633bf,
-        0xca4493c66a01e35b,
-        0xe9aae70705939630,
-        0x49ab96d94cb787e6,
-        0xd12decb634ff1393,
-        0x032ed257262bdb34,
-        0x502974e48069c73b,
-        0xd9329e7adb43d1fd,
+        0xac8332ef211f920e,
+        0xf500eedaa1c51556,
+        0x44ee41262f611503,
+        0xd9d885c9a2b61a88,
+        0xba83dec1e9084ac2,
+        0xc96812e4714fe1e3,
+        0x596b0eecdfee3c96,
+        0xe48941198c9e17f2,
+        0xbbd7bd819ac834ca,
+        0x0e44e93ed57686d5,
+        0xc54cc4d923831e8e,
+        0xe09d5db99233b8f3,
+        0x1f82419e12c3ae88,
+        0x84e52f0b0baa80d2,
+        0x43ed5c4a199e57b1,
+        0xa6ba4de8040f3b06,
+        0x497d188881f5e21e,
+        0x4c81d0f4dc67658b,
+        0x321f5619535ad9f4,
+        0x3510e44c629058cd,
     ],
 )

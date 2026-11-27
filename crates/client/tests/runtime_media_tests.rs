@@ -713,6 +713,63 @@ fn a_spawning_unit_is_presentable_only_with_its_spawns_media() -> TestResult {
     Ok(())
 }
 
+/// DS-16 (plan `2026-12-01-death-spawns-and-hangar-commands` D-8 item 1): a structure that
+/// leaves units when it dies brings them into the battle, so it is presentable only when the
+/// created unit's media are admitted too. A shipped structure and a shipped mobile identity with
+/// real media, by id, stand in for the host and the created unit on an edited catalog (the
+/// structure gains a death spawn); their real files are copied to a temporary root, the created
+/// unit's only in the second boot. Nothing is written under `assets/`.
+#[test]
+fn a_structure_is_presentable_only_with_its_death_spawns_media() -> TestResult {
+    let mut catalog = bundle()?.catalogs.units;
+    let first_with_media = |structure: bool| {
+        let mut shipped: Vec<(UnitTypeId, String)> = catalog
+            .archetypes()
+            .filter(|arch| matches!(arch.shape, ShapeKind::BuildingDome { .. }) == structure)
+            .filter(|arch| ships_media(&arch.slug))
+            .filter(|arch| arch.created_units().is_empty())
+            .map(|arch| (arch.unit_type_id, arch.slug.clone()))
+            .collect();
+        shipped.sort();
+        shipped.into_iter().next()
+    };
+    let (host, host_slug) = first_with_media(true).ok_or("a shipped structure with media")?;
+    let (spawned, spawned_slug) =
+        first_with_media(false).ok_or("a shipped mobile identity with media")?;
+    catalog.get_mut(host)?.capabilities.death_spawn = Some(sim_types::DeathSpawnSpec {
+        unit: spawned,
+        count: 9,
+        delay_ticks: 9,
+        search_range: sim_types::SimScalar::ZERO,
+        timed_life: None,
+        disabled_while_constructing: true,
+    });
+    for with_spawn in [false, true] {
+        let directory = temporary_root()?;
+        copy_media(directory.path(), &host_slug, true)?;
+        if with_spawn {
+            copy_media(directory.path(), &spawned_slug, true)?;
+        }
+        let mut app = app(
+            directory.path(),
+            catalog.clone(),
+            LabState::default(),
+            MediaFailurePolicy::default(),
+        )?;
+        app.update();
+        let result = presentable(&app, host);
+        if with_spawn {
+            result?;
+        } else {
+            assert!(
+                matches!(result, Err(ClientMediaError::Unavailable { ref slug, .. }) if *slug == spawned_slug),
+                "{result:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// H-16 (plan `2026-11-28-carrier-interceptors` D-11 item 1): a hangar unit launches its
 /// member into the battle, so it is presentable only when the member's media are admitted too.
 /// Two shipped mobile identities with real media, by id, stand in for the hangar unit and its

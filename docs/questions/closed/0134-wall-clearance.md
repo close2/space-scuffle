@@ -45,3 +45,5 @@ Followed as answered, on branch `wall-clearance-plan`:
   [`2026-11-29-wall-clearance`](../../evidence/2026-11-29-wall-clearance.md) WP0.
 - **Judged on both.** The plan's Amendment 1 makes these crowd scenes, together with the showcase seeds, the basis
   of WP1 to WP3's acceptance and of any later (b) or (c) decision; the showcase alone never decides.
+- **Built under (a).** WP1 (B-240) is done on branch `wall-clearance-wp1` (plan Amendment 2; its mixed figures went
+  to [Q0137](0137-wall-clearance-wp1-mixed.md), answered: keep it). WP2 (B-241) is parked; WP3 waits for window X.

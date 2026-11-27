@@ -820,7 +820,7 @@ scenes": both known answers hold in all 144 scenes under each arm; up to half th
    or threshold changes.
 2. **"Not worse" is read on the crowd scenes together with the showcases** (Amendment 1, from the owner's answer to
    Q0134: the showcase alone never decides). The ramp W rise on `showcase_effects.ron` and the mixed crowd figures are
-   recorded, not waived silently: they go to the owner as [Q0137](../questions/open/0137-wall-clearance-wp1-mixed.md),
+   recorded, not waived silently: they go to the owner as [Q0137](../questions/closed/0137-wall-clearance-wp1-mixed.md),
    whose default merges WP1.
 3. **WP1 merges** once the harness step rule, the G hard checks and held-out HA (still running at this writing) hold.
    If any of them fails, WP1 stops and stays parked.

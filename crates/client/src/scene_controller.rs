@@ -1053,17 +1053,21 @@ fn park(commands: &mut Commands<'_, '_>, entity: Entity) {
         .insert((ParkedBattleBubble, Visibility::Hidden));
 }
 
-/// The render-pool bound of the presented `session` whose first presented snapshot has `start`
-/// records (plan `2026-11-29-render-entity-pool` D-3), read from the session's catalog. A session
-/// without a world has no catalog to read, so its bound is its start alone.
+/// The render-pool bound of the presented `session` whose first presented snapshot has the
+/// records `start` (plan `2026-11-29-render-entity-pool` D-3), read from the session's catalog,
+/// with the death spawns of those records (plan `2026-12-01-death-spawns-and-hangar-commands`
+/// D-8). A session without a world has no catalog to read, so its bound is its start alone.
 fn session_bound(
     session: &crate::battle_pipeline::session::BattleSession,
-    start: usize,
+    start: &[BubbleRenderInstance],
 ) -> RenderPoolBound {
     let players = session.metadata.players.len();
     session.world().map_or_else(
-        || RenderPoolBound::without_catalog(players, start),
-        |world| RenderPoolBound::for_session(&world.catalog, players, start),
+        || RenderPoolBound::without_catalog(players, start.len()),
+        |world| {
+            RenderPoolBound::for_session(&world.catalog, players, start.len())
+                .with_start_records(&world.catalog, start.iter().map(|record| record.unit_type))
+        },
     )
 }
 
@@ -1191,7 +1195,7 @@ pub fn sync_live_battle_system(
     }
     let snapshot = session.frames.presented();
     render_entities.follow(&mut commands, session.commands.generation(), || {
-        session_bound(&session, snapshot.bubbles.len())
+        session_bound(&session, &snapshot.bubbles)
     });
     render_entities.depart(&snapshot.bubbles, |id, entity| {
         park(&mut commands, entity);
