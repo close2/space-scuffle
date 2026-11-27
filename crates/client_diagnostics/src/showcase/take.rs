@@ -212,9 +212,11 @@ fn install(
         .insert_resource(client::media::MediaFailurePolicy::new(true))
         // The director selects nothing, so the command panel would be an empty band across the
         // bottom of every battle frame. The video leaves it out and gives its room to the world;
-        // the resource bar, the fog and the feed stay the real game's (evidence, WP4).
+        // the resource bar, the fog and the feed stay the real game's (evidence, WP4). The
+        // minimap sits in that panel, so the video shows none (plan 2026-12-01-minimap D-14).
         .insert_resource(client::battle_hud::HudLayout {
             command_panel: false,
+            minimap: false,
         })
         .insert_resource(evidence.clone())
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::ZERO))
