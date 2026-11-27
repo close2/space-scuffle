@@ -17,7 +17,9 @@
 //!   concealed entities by detection), nodes by `Visible` cells, and a site is judged with
 //!   [`Knowledge::Player`]. An attack snapshot is the viewer's own record of what struck it
 //!   unseen (plan `2026-11-24-attacker-snapshot` D-4): its pose at the strike, never the
-//!   attacker's state now.
+//!   attacker's state now. A remembered structure (plan `2026-12-01-minimap` D-16) is created
+//!   only from the viewer's own sight and holds the pose that sight showed, so nothing hidden
+//!   reaches the view through it.
 //! - A warmed [`PlayerView`] is refilled without allocating unless a list grows.
 //! - A viewer outside the player slots gets an empty view and no panic.
 
@@ -29,8 +31,9 @@ use sim_map::PlacementFailureReason;
 use sim_types::{
     AbilityEffectSpec, AbilityLockView, AttackSnapshotView, CarrierView, CastStateView,
     CommandOptionView, CommandSubject, ModeStateView, PlacementFlag, PlayerId, PlayerStatusView,
-    PlayerView, QueuedItem, QueuedJobView, RallyTarget, RallyView, ResourceNodeId, ShapeKind,
-    SiteRefusal, StructureQueueView, Tick, UnitTypeId, VisibilityState, VisibleNodeView,
+    PlayerView, QueuedItem, QueuedJobView, RallyTarget, RallyView, RememberedStructureView,
+    ResourceNodeId, ShapeKind, SiteRefusal, StructureQueueView, Tick, UnitTypeId, VisibilityState,
+    VisibleNodeView,
 };
 
 impl SimWorld {
@@ -96,6 +99,7 @@ impl SimWorld {
                 .map(|entity| entity.id),
         );
         self.record_attack_snapshots(viewer, out);
+        self.record_remembered_structures(viewer, out);
         for (node, index) in self.map.resources().iter().zip(0_u32..) {
             if vision.visibility_at(node.cell.0, node.cell.1) == VisibilityState::Visible {
                 out.visible_nodes.push(VisibleNodeView {
@@ -129,6 +133,46 @@ impl SimWorld {
                     &record.pose,
                     arch,
                     &self.map,
+                    None,
+                ),
+            });
+        }
+    }
+
+    /// Fills `out.remembered_structures` with `viewer`'s remembered structures, sorted by entity,
+    /// each as the structure's still render record when last seen (plan `2026-12-01-minimap`
+    /// Amendment 1, D-16). Call after [`Self::record_attack_snapshots`].
+    ///
+    /// A record is left out while its structure is shown to the viewer, so the view never holds
+    /// both the structure and its image, and while the same entity is listed in
+    /// `out.attack_snapshots`: the attack image is newer and wins, and the remembered one returns
+    /// when the attack image ends. One image per entity, never two.
+    fn record_remembered_structures(&self, viewer: PlayerId, out: &mut PlayerView) {
+        for record in self.presentation.remembered_structures_of(viewer) {
+            let shown = self.entities.get(&record.structure).is_some_and(|entity| {
+                entity.is_alive()
+                    && !entity.is_hidden()
+                    && Self::shown_to(&self.map, &self.vision_maps, viewer, entity)
+            });
+            let attack_image = out
+                .attack_snapshots
+                .binary_search_by_key(&record.structure, |entry| entry.entity)
+                .is_ok();
+            if shown || attack_image {
+                continue;
+            }
+            let Ok(arch) = self.catalog.get(record.pose.unit_type) else {
+                continue;
+            };
+            out.remembered_structures.push(RememberedStructureView {
+                entity: record.structure,
+                seen: record.seen,
+                bubble: crate::world::snapshot::snapshot_bubble(
+                    record.structure,
+                    &record.pose,
+                    arch,
+                    &self.map,
+                    record.construction,
                 ),
             });
         }

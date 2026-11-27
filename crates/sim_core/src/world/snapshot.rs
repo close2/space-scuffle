@@ -470,16 +470,32 @@ fn bubble_instance(
     }
 }
 
-/// The render record of the attack snapshot of `attacker` in `pose`, of archetype `arch`, on
-/// `map`: the attacker as it stood at its strike, still (zero velocity, idle, no swing,
+/// A foundation's build progress and its construction health share, both in `0..=1` and both
+/// exactly as the live render record publishes them; `None` on an entity not under construction
+/// (plan `2026-12-01-minimap` Amendment 1, D-16). A producing structure's queue is never part of
+/// it.
+pub(crate) fn foundation_state(entity: &Entity) -> Option<(SimScalar, SimScalar)> {
+    let record = entity.construction.as_ref()?;
+    let done = record.total_ticks.saturating_sub(record.remaining_ticks);
+    let progress = u64::from(done) * (1 << 16) / u64::from(record.total_ticks.max(1));
+    let progress = SimScalar::from_raw(i64::try_from(progress).unwrap_or(0) << 16);
+    let share = fraction(entity.hp, record.built_hp(entity.max_hp));
+    Some((progress, share))
+}
+
+/// The render record of the image of `attacker` in `pose`, of archetype `arch`, on `map`: the
+/// entity as it stood when the viewer last saw it, still (zero velocity, idle, no swing,
 /// unselected, unconcealed, not housed, no flashes, no statuses) in the settled stance of its
 /// mode (plan `2026-11-24-attacker-snapshot` D-4). `arch` is looked up by the pose's type, so a
-/// dead attacker's image is built as well.
+/// dead entity's image is built as well. `construction`, a remembered foundation's progress and
+/// health share ([`foundation_state`]), shows it `Constructing` at that progress (plan
+/// `2026-12-01-minimap` D-16); an attack snapshot passes `None`.
 pub(crate) fn snapshot_bubble(
     attacker: EntityId,
     pose: &SnapshotPose,
     arch: &UnitArchetype,
     map: &SimMap,
+    construction: Option<(SimScalar, SimScalar)>,
 ) -> BubbleRenderInstance {
     let mode_weapon = pose
         .mode
@@ -502,14 +518,18 @@ pub(crate) fn snapshot_bubble(
         is_attacking: false,
         weapon_visual: placed.weapon_visual,
         attack_target_pos: None,
-        anim_state: AnimState::Idle,
+        anim_state: if construction.is_some() {
+            AnimState::Constructing
+        } else {
+            AnimState::Idle
+        },
         attack_swing: None,
         hp_ratio: published_share(pose.hp_fraction),
         shield_ratio: published_share(pose.shield_fraction),
         shield_hit_flash: 0.0,
         hull_hit_angle_rad: 0.0,
         hull_hit_flash: 0.0,
-        build_or_queue_progress: None,
+        build_or_queue_progress: construction.map(|(progress, _)| progress.to_f32()),
         selected: false,
         concealment: Concealment::None,
         stance: StanceView {
@@ -517,7 +537,7 @@ pub(crate) fn snapshot_bubble(
             transition: None,
         },
         status: StatusFlags::default(),
-        construction_hp_ratio: None,
+        construction_hp_ratio: construction.map(|(_, share)| published_share(share)),
         barrier_ratio: 0.0,
         speed_boosted: false,
         housed: false,
@@ -916,7 +936,7 @@ mod tests {
         assert_eq!(entity.current_anim, AnimState::Idle, "premise");
         let live = bubble_instance(entity, &arch, &world.map, None, false);
         let pose = crate::combat_resolution::snapshot_pose(entity, &arch);
-        assert_eq!(snapshot_bubble(id, &pose, &arch, &world.map), live);
+        assert_eq!(snapshot_bubble(id, &pose, &arch, &world.map, None), live);
     }
 
     /// D-4: in a settled mode whose weapon replaces the archetype's, the image keeps the mode's
@@ -949,7 +969,7 @@ mod tests {
         let live = bubble_instance(entity, &arch, &world.map, None, false);
         assert!(live.stance.mode.is_some(), "premise: in the mode");
         let pose = crate::combat_resolution::snapshot_pose(entity, &arch);
-        assert_eq!(snapshot_bubble(id, &pose, &arch, &world.map), live);
+        assert_eq!(snapshot_bubble(id, &pose, &arch, &world.map, None), live);
     }
 
     /// P-9 (plan `2026-11-24-attacker-snapshot` §5): no tick decision reads the attack
@@ -1022,6 +1042,89 @@ mod tests {
             );
         }
         assert!(kept > 0, "premise: the keeping world recorded snapshots");
+    }
+
+    /// R-8 (plan `2026-12-01-minimap` Amendment 1): no tick decision reads the remembered
+    /// structures. Two worlds run the same scouting: a unit of player 0 beside a structure of
+    /// player 1 walks away out of sight; one world forgets every remembered structure after each
+    /// tick. Their checksums agree on every tick over 400, and the other world did remember.
+    #[test]
+    fn forgetting_remembered_structures_changes_no_checksum() {
+        use sim_types::{TickBundle, UnitOrder};
+        let build = || {
+            let map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0)))
+                .expect("invariant: a flat map");
+            let mut world = crate::test_support::world(map, 0x252);
+            let dome = world
+                .catalog
+                .archetypes()
+                .find(|arch| {
+                    matches!(arch.shape, ShapeKind::BuildingDome { footprint_w, .. } if footprint_w <= 3)
+                        && !arch.capabilities.is_gas_extractor
+                })
+                .map(|arch| arch.unit_type_id)
+                .expect("the shipped catalog has a small structure");
+            let walker = world
+                .catalog
+                .archetypes()
+                .find(|arch| {
+                    matches!(arch.shape, ShapeKind::UnitSphere)
+                        && arch.mover_type == MoverType::Ground
+                        && arch.max_speed > SimScalar::ZERO
+                        && !arch.is_detector()
+                })
+                .map(|arch| arch.unit_type_id)
+                .expect("the shipped catalog has a mobile ground unit");
+            world
+                .spawn_structure(dome, PlayerId(1), 30, 30)
+                .expect("invariant: open ground");
+            let scout = world
+                .spawn_unit(walker, PlayerId(0), SimVec2::from_i32(31, 26))
+                .expect("invariant: a free spot");
+            world
+                .entities
+                .get_mut(&scout)
+                .expect("spawned")
+                .issue_order(
+                    UnitOrder::Move {
+                        target: SimVec2::from_i32(31, 2),
+                    },
+                    false,
+                )
+                .expect("invariant: a move is admitted");
+            world
+        };
+        let (mut keeping, mut forgetting) = (build(), build());
+        let mut kept = 0;
+        for tick in 0..400 {
+            let bundle = TickBundle {
+                tick: Tick(tick),
+                commands: Vec::new(),
+                state_checksum: None,
+            };
+            keeping.step(&bundle);
+            forgetting.step(&bundle);
+            forgetting.presentation.forget_remembered_structures();
+            kept += keeping
+                .presentation
+                .remembered_structures_of(PlayerId(0))
+                .count();
+            assert_eq!(
+                keeping.last_checksum, forgetting.last_checksum,
+                "tick {tick}"
+            );
+        }
+        assert!(
+            kept > 0,
+            "premise: the keeping world remembered the structure"
+        );
+        let mut view = sim_types::PlayerView::default();
+        keeping.write_player_view(PlayerId(0), &mut view);
+        assert_eq!(
+            view.remembered_structures.len(),
+            1,
+            "out of sight, remembered"
+        );
     }
 
     /// The world of V-22: a plateau 32 × 32 (x >= 16 one level up, no ramp); a ground missile
