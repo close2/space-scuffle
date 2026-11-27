@@ -48,3 +48,5 @@ Recommendation: (c) is the only option that enforces your Hold Position and push
 holds. Otherwise (a).
 
 ## Answer
+
+- **Option (c): Plan and run a full acceptance pass for shipping WP1 (the movement redesign's contact layer) without WP2's gated intent.** Verify its standalone zig-zag figures and confirm every benchmark holds `≥ 50` ticks/s (Q0093); this cleanly isolates WP1's Hold Position immovability, enemy non-pushing, and `44–49 % → 10–14 %` crowd-overlap reduction before deciding whether any WP2 follow-up is needed.
