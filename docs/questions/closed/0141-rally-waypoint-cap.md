@@ -22,3 +22,10 @@ Recommendation: (c) if you can check in game; otherwise (a).
 ## Answer
 
 - **Option (c): Raise `max_waypoints` in `structures.ron` to `32` (ignoring extra Shift-clicks past the cap) and close `B-215`.** Simple data change that gives a generous StarCraft II-like rally queue without adding code complexity.
+
+## Resolution
+
+2026-11-27. Option (c), built by plan `docs/plans/2026-12-01-rallies-and-smart-command.md` Amendment 1 on branch
+`rallies-wp3`: every producer in `assets/catalog/structures.ron` has `max_waypoints: 32`. A Shift-click on a full
+route is ignored through today's refusal path: the route is unchanged, the client's rally marker still flashes for
+the click, and the status line reports "the rally holds its most waypoints". B-215 is fixed. Closed.

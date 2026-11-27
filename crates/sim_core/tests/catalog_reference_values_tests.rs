@@ -5557,8 +5557,9 @@ fn structures_with_energy_regenerate_as_5_0_14() {
 ///   1 for workers that a right click on the ground does not set (`SetOnGround 0`), both
 ///   excluding the Queen (`NotQueen`, liberty ValidatorData:1598-1601). Their auto-rally fills
 ///   slot 1 (voidmulti EffectData:2507-2537).
-/// - Every rally holds up to four waypoints (`TeamLiquid` 2011, plan S10; a community figure,
-///   B-215).
+/// - Every rally holds up to 32 waypoints, and a Shift-click past them is ignored: the owner's
+///   answer to Q0141 (c) (plan `2026-12-01-rallies-and-smart-command` Amendment 1; B-215 closed).
+///   5.0.14's data has no waypoint count.
 #[test]
 fn the_shipped_rallies_are_5_0_14s() -> TestResult {
     use sim_types::RallyUsers;
@@ -5581,7 +5582,7 @@ fn the_shipped_rallies_are_5_0_14s() -> TestResult {
             .rally
             .as_ref()
             .ok_or(format!("{slug}: no rally"))?;
-        assert_eq!(rally.max_waypoints, 4, "{slug}");
+        assert_eq!(rally.max_waypoints, 32, "{slug}: Q0141 (c)");
         assert!(
             rally.slots.iter().all(|slot| !slot.label.is_empty()),
             "{slug}"

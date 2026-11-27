@@ -1101,9 +1101,11 @@ fn cap_of(b: &Base, producer: EntityId) -> Result<usize, Box<dyn std::error::Err
     ))
 }
 
-/// P-4 (D-3, B-165, B-215): Shift appends a waypoint until the route holds the cap the row
-/// authors; the next Shift-click is refused with `RallyWaypointsFull` and changes nothing, and a
-/// click without Shift starts the route again.
+/// P-4 (D-3, B-165) and the owner's answer to Q0141 (c), B-215 closed: Shift appends a waypoint
+/// until the route holds the cap the row authors (32); the next Shift-click is ignored, refused
+/// with `RallyWaypointsFull` and changing nothing, and a click without Shift starts the route
+/// again. The targets are distinct points on an 8-wide grid of the 32-cell map, clear of the
+/// producers and the nodes.
 #[test]
 fn shift_appends_waypoints_up_to_the_cap() -> TestResult {
     let mut b = Base::new()?;
@@ -1111,7 +1113,10 @@ fn shift_appends_waypoints_up_to_the_cap() -> TestResult {
     assert!(cap > 1, "a cap that allows waypoints");
     let targets: Vec<RallyTarget> = (0..=cap)
         .zip(0_u32..)
-        .map(|(_, i)| RallyTarget::Point(at(10.5 + 2.0 * f64::from(i), 26.5)))
+        .map(|(_, i)| {
+            let (column, row) = (f64::from(i % 8), f64::from(i / 8));
+            RallyTarget::Point(at(9.5 + 2.0 * column, 18.5 + 2.0 * row))
+        })
         .collect();
     for (i, &target) in targets.iter().enumerate().take(cap) {
         assert_eq!(
