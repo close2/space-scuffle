@@ -1,5 +1,5 @@
 //! The minimap on a real GPU: the real shader, the theme's real albedo arrays and the production
-//! client (plan `2026-12-01-minimap` §6, G-1 and G-6).
+//! client (plan `2026-12-01-minimap` §6, G-1 to G-4, G-3′ and G-6).
 //!
 //! # Responsibility
 //! Each child plays a skirmish on a real window under the GPU test harness, stops the clock once
@@ -15,6 +15,10 @@
 //!   and in team mode the same pixels are `StarCraft` II's team colours.
 //! - G-3, fog: a fogged cell is darker than a visible cell of the same ground by the fog's
 //!   darkening, and an enemy in the fog leaves no pixel of its colour.
+//! - G-3′, no structure in the terrain: the enemy's start structure, in the fog, is drawn as the
+//!   fogged walkable ground around it (Amendment 1, A1.9).
+//! - G-4, frustum: the pixels along the camera's predicted trapezoid show `frustum_color`, those
+//!   3 px inside do not, and a pan of [`FRUSTUM_PAN`] units moves it by that many units' pixels.
 //! - M-S3: over [`STEADY_FRAMES`] frames with the clock running, the renderer creates no buffer,
 //!   texture or bind group.
 //! - G-6, in the HUD: a window screenshot taken after the readback shows, inside
@@ -821,6 +825,12 @@ struct MarksShot {
     border: [f32; 3],
     /// Every mark's centre and half-width, pixels, of the player-mode shot.
     marks: Vec<[f32; 3]>,
+    /// The camera frustum's corners in pixels at the player shot, and at the team shot after a
+    /// pan of [`FRUSTUM_PAN`] world units along +x (G-4).
+    frustum: [[f32; 2]; 4],
+    frustum_panned: [[f32; 2]; 4],
+    /// `frustum_color`, sRGB.
+    frustum_color: [f32; 3],
     /// GPU resources created before and after the steady window (M-S3).
     created_before: [u64; 5],
     created_after: [u64; 5],
@@ -831,6 +841,70 @@ struct MarksShot {
     pass_gpu_ms: Vec<f64>,
     /// Marks drawn by the pass in the steady window.
     marks_drawn: u64,
+}
+
+/// How far the marks child pans the camera between its two shots, world units (G-4).
+const FRUSTUM_PAN: f32 = 10.0;
+
+/// Share of the sampled points along the frustum's edges that must show its colour (G-4).
+const FRUSTUM_HIT_SHARE: f64 = 0.9;
+
+/// The frame's frustum corners in pixels.
+fn frustum_pixels(frame: &MinimapFrame) -> [[f32; 2]; 4] {
+    let layout = frame.layout().expect("a layout");
+    frame
+        .frustum()
+        .expect("the frustum is cast")
+        .map(|corner| layout.to_minimap(corner).to_array())
+}
+
+/// G-4: the pixels along the four edges of `corners` show `colour` at
+/// [`FRUSTUM_HIT_SHARE`] of the points sampled on the map, and pixels 3 px inside the
+/// trapezoid do not.
+fn assert_frustum(shot: &MarksShot, texture: &Texture, corners: [[f32; 2]; 4], what: &str) {
+    let corners = corners.map(Vec2::from_array);
+    let map_min = Vec2::from_array(shot.offset) + Vec2::splat(2.0);
+    let map_max = Vec2::from_array(shot.offset)
+        + Vec2::new(shot.map[0] as f32, shot.map[1] as f32) * shot.scale
+        - Vec2::splat(2.0);
+    let on_map = |p: Vec2| p.cmpge(map_min).all() && p.cmple(map_max).all();
+    let centroid = corners.iter().copied().sum::<Vec2>() / 4.0;
+    let (mut sampled, mut hits, mut inside_hits, mut inside) = (0_u32, 0_u32, 0_u32, 0_u32);
+    for edge in 0..4 {
+        let (a, b) = (corners[edge], corners[(edge + 1) % 4]);
+        for step in 1..40 {
+            let point = a.lerp(b, step as f32 / 40.0);
+            if !on_map(point) {
+                continue;
+            }
+            sampled += 1;
+            hits += u32::from(is_color(
+                texture.at(point.x as u32, point.y as u32),
+                shot.frustum_color,
+            ));
+            let within = point + (centroid - point).normalize_or_zero() * 3.0;
+            if on_map(within) {
+                inside += 1;
+                inside_hits += u32::from(is_color(
+                    texture.at(within.x as u32, within.y as u32),
+                    shot.frustum_color,
+                ));
+            }
+        }
+    }
+    eprintln!("G-4 {what}: {hits} of {sampled} edge points, {inside_hits} of {inside} inside");
+    assert!(
+        sampled >= 20,
+        "{what}: enough of the frustum lies on the map"
+    );
+    assert!(
+        f64::from(hits) >= FRUSTUM_HIT_SHARE * f64::from(sampled),
+        "{what}: {hits} of {sampled} edge points show the frustum's colour"
+    );
+    assert!(
+        f64::from(inside_hits) < 0.1 * f64::from(inside.max(1)),
+        "{what}: {inside_hits} of {inside} points 3 px inside show it"
+    );
 }
 
 /// Bevy's render diagnostic of the minimap pass's GPU time (the node's `pass_span`).
@@ -977,6 +1051,17 @@ fn g2_g3_dots_fog_and_a_steady_gpu_state_on_the_real_shader() -> TestResult {
     }
     assert_fog_darkens(&shot, &player);
     assert_no_structure_in_terrain(&shot, &player);
+    // G-4: the frustum at both shots; the pan moved it by the pan times the scale.
+    assert_frustum(&shot, &player, shot.frustum, "before the pan");
+    assert_frustum(&shot, &team, shot.frustum_panned, "after the pan");
+    for (before, after) in shot.frustum.iter().zip(shot.frustum_panned) {
+        let moved = Vec2::from_array(after) - Vec2::from_array(*before);
+        assert!(
+            (moved - Vec2::new(FRUSTUM_PAN * shot.scale, 0.0)).length() < 0.5,
+            "a corner moved by {moved}, not {} px along x",
+            FRUSTUM_PAN * shot.scale
+        );
+    }
     // M-S3: the running steady window created nothing on the GPU.
     eprintln!(
         "GPU resources created: {:?} before, {:?} after {} drawn frames",
@@ -1334,6 +1419,8 @@ fn record_marks(
         team_own: style.team.own.srgb,
         team_hostile: style.team.hostile.srgb,
         border: style.border.srgb,
+        frustum: frustum_pixels(frame),
+        frustum_color: style.frustum.srgb,
         marks: frame
             .marks()
             .iter()
@@ -1403,6 +1490,9 @@ fn stage_marks(
         }
         MarksPhase::Drawing { shot, .. } => {
             let frame = frame.expect("the minimap exists");
+            if shot == 1 {
+                staging.shot.frustum_panned = frustum_pixels(&frame);
+            }
             if shot == 0 {
                 record_marks(
                     &mut staging.shot,
@@ -1460,6 +1550,7 @@ fn read_shot(commands: &mut Commands<'_, '_>, directory: &Path, frame: &MinimapF
               mut staging: ResMut<'_, MarksStaging>,
               mut settings: ResMut<'_, MinimapSettings>,
               mut lab: ResMut<'_, LabState>,
+              mut cameras: Query<'_, '_, &mut client::RtsCamera>,
               evidence: Res<'_, MinimapRenderEvidence>| {
             if staging.phase != (MarksPhase::Reading { shot }) {
                 return;
@@ -1468,6 +1559,9 @@ fn read_shot(commands: &mut Commands<'_, '_>, directory: &Path, frame: &MinimapF
             commands.entity(trigger.entity()).despawn();
             staging.phase = if shot == 0 {
                 settings.color_mode = ColorMode::Team;
+                for mut camera in &mut cameras {
+                    camera.target.x += FRUSTUM_PAN;
+                }
                 MarksPhase::Drawing {
                     shot: 1,
                     since: evidence.frames(),

@@ -24,8 +24,14 @@
 //! `:561–590`): the viewer's units `self`, selected ones `selected`, every other player
 //! `hostile` (no teams exist), neutral `neutral`.
 //!
+//! # Subjects
+//! Beside each mark the builder records its [`MarkSubject`]: the resource node or the live unit
+//! it shows. The minimap's pick ([`super::pick`]) reads them, so what a press picks is exactly
+//! what is drawn there.
+//!
 //! # Invariants
 //! - The list is a pure function of its inputs: two builds from the same inputs are equal.
+//! - `subjects` has one entry per mark, index for index.
 //! - The output vector is cleared and refilled, so a rebuild at or below its high-water mark
 //!   allocates nothing.
 
@@ -42,6 +48,23 @@ use crate::runtime_battle::MapObjectSnapshot;
 
 /// The `kind` of a filled square with a border.
 pub const MARK_SQUARE: u32 = 0;
+
+/// The `kind` of a segment from `a` to `b`, `stroke` pixels wide (the shader draws the camera
+/// frustum's edges with it, from the uniform).
+pub const MARK_SEGMENT: u32 = 1;
+
+/// What a mark shows, for picking on the minimap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkSubject {
+    /// The resource node of this index in map order.
+    Node(u32),
+    /// A live unit or structure.
+    Bubble(EntityId),
+    /// A still image of a unit or structure, never picked.
+    Image,
+    /// Anything else (a watchtower, a line, a ring), never picked.
+    Other,
+}
 
 /// Everything a build reads.
 #[derive(Clone, Copy)]
@@ -81,31 +104,41 @@ pub struct MarkSources<'a> {
 // loop. A diff would cost more bookkeeping than it saves, and the upload is one buffer write per
 // rebuild either way. The output keeps its capacity across rebuilds.
 // Trade-off: An unchanged bubble is rewritten on every rebuild.
-pub fn build_marks(sources: &MarkSources<'_>, out: &mut Vec<MinimapMark>) {
+pub fn build_marks(
+    sources: &MarkSources<'_>,
+    out: &mut Vec<MinimapMark>,
+    subjects: &mut Vec<MarkSubject>,
+) {
     out.clear();
-    push_map_objects(sources, out);
-    push_bubbles(sources, out, true);
-    push_bubbles(sources, out, false);
+    subjects.clear();
+    push_map_objects(sources, out, subjects);
+    push_bubbles(sources, out, subjects, true);
+    push_bubbles(sources, out, subjects, false);
 }
 
 /// Pushes the resources the viewer last saw present, then the watchtowers.
-fn push_map_objects(sources: &MarkSources<'_>, out: &mut Vec<MinimapMark>) {
+fn push_map_objects(
+    sources: &MarkSources<'_>,
+    out: &mut Vec<MinimapMark>,
+    subjects: &mut Vec<MarkSubject>,
+) {
     let style = sources.style;
     let remembered = sources
         .fog
         .map(BattleFog::node_present)
         .filter(|present| !present.is_empty());
-    for (index, object) in sources.objects.iter().enumerate() {
+    for (index, object) in (0_u32..).zip(sources.objects) {
         let position = [object.position.x, object.position.z];
-        if let Some(node) = sources.nodes.get(index) {
+        if let Some(node) = sources.nodes.get(index as usize) {
             let present = remembered.map_or(object.visible, |present| {
-                present.get(index).copied().unwrap_or(false)
+                present.get(index as usize).copied().unwrap_or(false)
             });
             if present {
                 let half = node.placed.map_or(object.size * 0.5, |placed| {
                     f32::from(placed.footprint.width.max(placed.footprint.height)) * 0.5
                 });
                 out.push(square(sources, position, half, style.resource.linear));
+                subjects.push(MarkSubject::Node(index));
             }
         } else if object.visible {
             out.push(square(
@@ -114,12 +147,18 @@ fn push_map_objects(sources: &MarkSources<'_>, out: &mut Vec<MinimapMark>) {
                 style.watchtower_half,
                 style.watchtower.linear,
             ));
+            subjects.push(MarkSubject::Other);
         }
     }
 }
 
 /// Pushes the listed structures (`structures` true) or units.
-fn push_bubbles(sources: &MarkSources<'_>, out: &mut Vec<MinimapMark>, structures: bool) {
+fn push_bubbles(
+    sources: &MarkSources<'_>,
+    out: &mut Vec<MinimapMark>,
+    subjects: &mut Vec<MarkSubject>,
+    structures: bool,
+) {
     for bubble in sources.bubbles {
         let footprint = bubble.shape.footprint();
         if footprint.is_some() != structures || !listed(sources, bubble) {
@@ -133,6 +172,7 @@ fn push_bubbles(sources: &MarkSources<'_>, out: &mut Vec<MinimapMark>, structure
         });
         let [x, y, _] = bubble.world_pos;
         out.push(square(sources, [x, y], half, color));
+        subjects.push(MarkSubject::Bubble(bubble.entity_id));
     }
 }
 

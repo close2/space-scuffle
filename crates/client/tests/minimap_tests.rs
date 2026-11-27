@@ -1,5 +1,5 @@
 //! The minimap through public client APIs and the production plugin, without a GPU (plan
-//! `2026-12-01-minimap` §6, M-1 to M-4 and M-11).
+//! `2026-12-01-minimap` §6, M-1 to M-7 and M-11).
 //!
 //! # Responsibility
 //! - M-1: [`MinimapLayout`] maps the map onto the image and back, letterboxes a map that is not
@@ -10,6 +10,14 @@
 //!   and the field.
 //! - M-4: the marks follow the world's presence rule under fog, are sized from footprints and
 //!   radii, coloured by player or team and drawn resources, structures, units.
+//! - M-2′: the terrain encodes no structure: walkability under a structure is its prior flags.
+//! - M-5: the frustum is the viewport's ground trapezoid, shrinks with zoom, follows a pan and is
+//!   never cut at the shipped zoom range.
+//! - M-6: a left press or drag on the minimap moves the camera, selects nothing, starts no box and
+//!   cancels a middle-button drag.
+//! - M-7: a right press on the minimap is the world's right click at the aim picked there (ground,
+//!   mineral, enemy in sight, enemy in fog, a structure's rally, Shift); a mode aims or is
+//!   cancelled; nothing orders without a selection or after the match.
 //! - M-11: the sandbox has no minimap at all; the default layout puts it inside the command panel
 //!   with the world rectangle unchanged; a layout without the panel draws it alone, reserving
 //!   nothing.
@@ -43,9 +51,12 @@ mod battle_harness;
 use std::path::{Path, PathBuf};
 
 use battle_harness::{Harness, LOCAL_PLAYER};
+use bevy::input::ButtonState;
 use bevy::prelude::*;
 use bevy::render::render_resource::TextureUsages;
+use bevy::window::CursorMoved;
 use client::battle_hud::{HudGeometry, HudLayout};
+use client::battle_input::command_mode::CommandMode;
 use client::battle_pipeline::fog::BattleFog;
 use client::battle_pipeline::session::BattleSession;
 use client::battle_selection::BattleSelection;
@@ -62,7 +73,7 @@ use client::{ClientMode, RtsCamera};
 use sim_map::grid::{CellFlags, GameMap, TerrainKind};
 use sim_map::validation::CellRect;
 use sim_types::snapshot::BubbleRenderInstance;
-use sim_types::{Concealment, EntityId, PlayerId};
+use sim_types::{Concealment, EntityId, PlayerCommand, PlayerId, UnitOrder};
 
 fn assets() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")
@@ -627,8 +638,11 @@ fn build_twice(
         selected: world.resource::<BattleSelection>().ids(),
     };
     let (mut first, mut second) = (Vec::new(), Vec::new());
-    build_marks(&sources, &mut first);
-    build_marks(&sources, &mut second);
+    let (mut first_subjects, mut second_subjects) = (Vec::new(), Vec::new());
+    build_marks(&sources, &mut first, &mut first_subjects);
+    build_marks(&sources, &mut second, &mut second_subjects);
+    assert_eq!(first_subjects, second_subjects);
+    assert_eq!(first_subjects.len(), first.len(), "one subject per mark");
     [first, second]
 }
 
@@ -856,6 +870,474 @@ fn m4_marks_are_sized_ordered_and_coloured() {
         mark_of(&harness, workers[0], own).is_some(),
         "player colour again"
     );
+}
+
+// --- M-5: the frustum ---------------------------------------------------------------------------
+
+/// The RTS camera's lens, pose and controller.
+fn camera(harness: &mut Harness) -> (Camera, GlobalTransform, RtsCamera) {
+    let world = harness.app.world_mut();
+    let (camera, transform, rts) = world
+        .query::<(&Camera, &Transform, &RtsCamera)>()
+        .single(world);
+    (
+        camera.clone(),
+        GlobalTransform::from(*transform),
+        rts.clone(),
+    )
+}
+
+/// The trapezoid's area, by the shoelace formula.
+fn area(corners: [Vec2; 4]) -> f32 {
+    (0..4)
+        .map(|i| corners[i].perp_dot(corners[(i + 1) % 4]))
+        .sum::<f32>()
+        .abs()
+        * 0.5
+}
+
+/// Whether `point` lies inside the convex quadrilateral `corners`.
+fn inside(corners: [Vec2; 4], point: Vec2) -> bool {
+    let signs: Vec<f32> = (0..4)
+        .map(|i| (corners[(i + 1) % 4] - corners[i]).perp_dot(point - corners[i]))
+        .collect();
+    signs.iter().all(|s| *s > 0.0) || signs.iter().all(|s| *s < 0.0)
+}
+
+/// The frame's trapezoid after the camera settles at `target`, `distance` away.
+fn settled_frustum(harness: &mut Harness, target: Vec2, distance: f32) -> [Vec2; 4] {
+    {
+        let world = harness.app.world_mut();
+        let mut rts = world.query::<&mut RtsCamera>().single_mut(world);
+        rts.target = target;
+        rts.distance = distance;
+    }
+    harness.step(40);
+    frame(harness).frustum().expect("the frustum is cast")
+}
+
+#[test]
+fn m5_the_frustum_is_the_viewports_ground_trapezoid() {
+    let mut harness = skirmish();
+    let size = frame(&harness).map_size();
+    let centre = Vec2::new(size.x as f32, size.y as f32) * 0.5;
+    let corners = settled_frustum(&mut harness, centre, 22.0);
+    // The analytic reference: each viewport corner's ray met with the plane y = look_at_y.
+    let (lens, pose, rts) = camera(&mut harness);
+    let viewport = lens.logical_viewport_size().expect("a viewport") - Vec2::splat(0.5);
+    for (index, fraction) in [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
+        .into_iter()
+        .enumerate()
+    {
+        let ray = lens
+            .viewport_to_world(&pose, Vec2::new(fraction.0, fraction.1) * viewport)
+            .expect("a corner ray");
+        let along = (rts.look_at_y - ray.origin.y) / ray.direction.y;
+        assert!(along > 0.0, "corner {index} meets the ground in front");
+        let hit = ray.origin + *ray.direction * along;
+        assert!(
+            corners[index].distance(Vec2::new(hit.x, hit.z)) < 1e-3,
+            "corner {index}: {} vs {hit}",
+            corners[index]
+        );
+    }
+    let far = corners[0].distance(corners[1]);
+    let near = corners[3].distance(corners[2]);
+    assert!(
+        far > near,
+        "the far edge {far} is longer than the near {near}"
+    );
+    assert!(
+        inside(corners, rts.target),
+        "the trapezoid holds the target"
+    );
+    // Zooming in shrinks it.
+    let zoomed = settled_frustum(&mut harness, centre, 10.0);
+    assert!(
+        area(zoomed) < area(corners),
+        "{} < {}",
+        area(zoomed),
+        area(corners)
+    );
+    // A pan on level ground translates it by the pan.
+    let pan = {
+        let level = |point: Vec2| {
+            harness
+                .world()
+                .map
+                .terrain_altitude_scalar(battle_harness::sim_position(point))
+        };
+        [
+            (3.0, -2.0),
+            (-3.0, 2.0),
+            (2.0, 3.0),
+            (-2.0, -3.0),
+            (4.0, 0.0),
+            (0.0, 4.0),
+        ]
+        .into_iter()
+        .map(|(x, y)| Vec2::new(x, y))
+        .find(|pan| level(centre) == level(centre + *pan))
+        .expect("some pan from the centre stays on one level")
+    };
+    let panned = settled_frustum(&mut harness, centre + pan, 10.0);
+    for (moved, before) in panned.iter().zip(zoomed) {
+        assert!(
+            (*moved - before - pan).length() < 1e-2,
+            "{moved} vs {before} + {pan}"
+        );
+    }
+    // At the farthest zoom the shipped cut is never reached.
+    let widest = settled_frustum(&mut harness, centre, client::camera::MAX_CAMERA_DISTANCE);
+    let (lens, pose, rts) = camera(&mut harness);
+    let uncut = client::minimap::frustum::ground_trapezoid(&lens, &pose, rts.look_at_y, f32::MAX)
+        .expect("a trapezoid");
+    assert_eq!(
+        widest, uncut,
+        "the cut at the shipped distance changes nothing"
+    );
+}
+
+// --- M-6: the left button moves the camera -------------------------------------------------------
+
+/// The window position, in logical pixels, of map point `world` on the minimap image.
+fn on_minimap(harness: &Harness, world: Vec2) -> Vec2 {
+    let square = hud(harness).minimap.expect("the minimap is drawn");
+    let frame = frame(harness);
+    let layout = frame.layout().expect("a layout");
+    let points_per_pixel = square.width() / frame.side_px() as f32;
+    let pixel = layout.to_minimap(world);
+    Vec2::new(square.min.x, square.min.y) + pixel * points_per_pixel
+}
+
+fn camera_target(harness: &mut Harness) -> Vec2 {
+    camera(harness).2.target
+}
+
+#[test]
+fn m6_the_left_button_on_the_minimap_moves_the_camera_and_nothing_else() {
+    let mut harness = skirmish();
+    let structure = harness.local_structure();
+    harness.look_at_unit(structure);
+    harness.select(structure);
+    let selected = harness.selection().ids().to_vec();
+    assert_eq!(selected, [structure]);
+    // A middle-button drag begun in the world.
+    let world_point = harness.ground_on_screen(harness.simulated_position(structure));
+    harness.move_cursor(world_point);
+    // The camera's drag reads the window's ordered native events.
+    let window = harness.window();
+    harness
+        .app
+        .world_mut()
+        .send_event(bevy::window::WindowEvent::CursorMoved(CursorMoved {
+            window,
+            position: world_point,
+            delta: None,
+        }));
+    harness
+        .app
+        .world_mut()
+        .send_event(bevy::window::WindowEvent::MouseButtonInput(
+            bevy::input::mouse::MouseButtonInput {
+                button: MouseButton::Middle,
+                state: ButtonState::Pressed,
+                window,
+            },
+        ));
+    harness.send_mouse(MouseButton::Middle, ButtonState::Pressed);
+    let drag = |harness: &Harness| {
+        harness
+            .app
+            .world()
+            .resource::<client::camera_drag::CameraDragState>()
+            .diagnostics()
+    };
+    assert!(drag(&harness).active, "the middle drag is on");
+    // Press on the minimap at (40, 20) and drag to (10, 50).
+    let first = Vec2::new(40.0, 20.0);
+    harness.move_cursor(on_minimap(&harness, first));
+    harness.send_mouse(MouseButton::Left, ButtonState::Pressed);
+    assert!(!drag(&harness).active, "the middle drag is cancelled");
+    assert!(
+        camera_target(&mut harness).distance(first) < 0.2,
+        "{} is not {first}",
+        camera_target(&mut harness)
+    );
+    for step in 1..=4 {
+        let point = first + (Vec2::new(10.0, 50.0) - first) * (step as f32 / 4.0);
+        harness.move_cursor(on_minimap(&harness, point));
+        let gesture = harness
+            .app
+            .world()
+            .resource::<client::battle_input::gesture::SelectionGesture>();
+        assert_eq!(gesture.drag_rect(), None, "no box selection begins");
+    }
+    assert!(camera_target(&mut harness).distance(Vec2::new(10.0, 50.0)) < 0.2);
+    harness.send_mouse(MouseButton::Left, ButtonState::Released);
+    harness.send_mouse(MouseButton::Middle, ButtonState::Released);
+    // The image's very corner clamps to the camera's bound.
+    let corner = hud(&harness).minimap.expect("the minimap").min;
+    harness.click(MouseButton::Left, Vec2::new(corner.x + 0.2, corner.y + 0.2));
+    assert!(camera_target(&mut harness).distance(Vec2::splat(EDGE_INSET)) < 0.2);
+    assert_eq!(
+        harness.selection().ids(),
+        selected,
+        "the selection is unchanged"
+    );
+    assert_eq!(harness.pending_orders(), 0, "nothing is ordered");
+}
+
+// --- M-7: orders on the minimap ------------------------------------------------------------------
+
+/// Captured commands in the order they were issued, while the battle is paused.
+fn pending(harness: &Harness) -> Vec<PlayerCommand> {
+    harness
+        .app
+        .world()
+        .resource::<BattleSession>()
+        .commands
+        .pending_commands()
+        .map(|(_, command)| command.clone())
+        .collect()
+}
+
+/// The local harvesters, by ID.
+fn local_workers(harness: &Harness) -> Vec<EntityId> {
+    let world = harness.world();
+    world
+        .entities
+        .values()
+        .filter(|unit| {
+            unit.owner == LOCAL_PLAYER
+                && world
+                    .catalog
+                    .get(unit.unit_type_id)
+                    .is_ok_and(|arch| arch.capabilities.harvester.is_some())
+        })
+        .map(|unit| unit.id)
+        .collect()
+}
+
+/// A shipped armed ground unit that is no harvester.
+fn soldier_type(harness: &Harness) -> sim_types::UnitTypeId {
+    harness
+        .world()
+        .catalog
+        .archetypes()
+        .find(|arch| {
+            arch.ground_weapon.is_some()
+                && arch.capabilities.harvester.is_none()
+                && arch.max_speed > sim_types::SimScalar::ZERO
+                && arch.mover_type == sim_types::MoverType::Ground
+                && arch.selectable
+                && arch.order_targetable
+                && battle_harness::presentable(&assets(), &arch.slug)
+        })
+        .expect("the catalog ships a soldier")
+        .unit_type_id
+}
+
+/// Right-clicks the minimap at map point `world`.
+fn right_click_minimap(harness: &mut Harness, world: Vec2) {
+    let at = on_minimap(harness, world);
+    harness.click(MouseButton::Right, at);
+}
+
+fn move_target(command: &PlayerCommand) -> Vec2 {
+    let UnitOrder::Move { target } = command.order else {
+        panic!("expected a move: {:?}", command.order);
+    };
+    Vec2::new(target.x.to_f32(), target.y.to_f32())
+}
+
+#[test]
+fn m7_a_right_click_on_minimap_ground_is_the_worlds_right_click() {
+    let mut harness = skirmish();
+    let worker = local_workers(&harness)[0];
+    harness.look_at_unit(worker);
+    harness.select(worker);
+    let ground = harness.open_ground(harness.simulated_position(worker), 6.0);
+    let at = harness.ground_on_screen(ground);
+    harness.click(MouseButton::Right, at);
+    right_click_minimap(&mut harness, ground);
+    harness.with_key_held(KeyCode::ShiftLeft, |harness| {
+        right_click_minimap(harness, ground);
+    });
+    let orders = pending(&harness);
+    assert_eq!(orders.len(), 3, "status: {}", harness.status());
+    let (world, minimap, queued) = (&orders[0], &orders[1], &orders[2]);
+    assert_eq!(minimap.entities, world.entities, "the same recipients");
+    assert_eq!(minimap.queue, world.queue);
+    assert!(!minimap.queue);
+    // The minimap's point is its pixel's, so it lies within one pixel of the world's.
+    let pixel = 1.0 / frame(&harness).layout().expect("a layout").scale;
+    assert!(move_target(minimap).distance(move_target(world)) < pixel + 0.1);
+    assert!(queued.queue, "Shift queues");
+    assert!(matches!(queued.order, UnitOrder::Move { .. }));
+}
+
+#[test]
+fn m7_minimap_targets_follow_the_worlds_rules() {
+    let mut harness = skirmish();
+    let workers = local_workers(&harness);
+    let worker = workers[0];
+    harness.look_at_unit(worker);
+    harness.select(worker);
+    // A mineral's square: Harvest.
+    let mineral = harness
+        .world()
+        .map
+        .resources()
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| node.kind == sim_types::ResourceKind::Mineral)
+        .map(|(index, node)| {
+            let at = Vec2::new(node.pos.x.to_f32(), node.pos.y.to_f32());
+            (index, at)
+        })
+        .min_by(|a, b| {
+            a.1.distance(harness.simulated_position(worker))
+                .total_cmp(&b.1.distance(harness.simulated_position(worker)))
+        })
+        .expect("a mineral");
+    right_click_minimap(&mut harness, mineral.1);
+    let orders = pending(&harness);
+    // Mineral squares of a line overlap on the minimap; the topmost under the point is harvested.
+    let Some(UnitOrder::Harvest { target }) = orders.last().map(|order| order.order.clone()) else {
+        panic!(
+            "expected a harvest: {orders:?}, status: {}",
+            harness.status()
+        );
+    };
+    let node = harness.world().map.resources()[target.0 as usize].pos;
+    let node = Vec2::new(node.x.to_f32(), node.y.to_f32());
+    assert!(
+        node.distance(mineral.1) < 3.0,
+        "the harvested node {node} lies under the press at {}",
+        mineral.1
+    );
+    // A soldier, an enemy in sight beside it and an enemy far away in the fog.
+    let soldier_kind = soldier_type(&harness);
+    let home = harness.simulated_position(worker);
+    let soldier_at = harness.open_ground(home, 6.0);
+    let enemy_at = harness.open_ground(soldier_at, 4.0);
+    let world = harness.world_mut();
+    let soldier = world
+        .spawn_unit(
+            soldier_kind,
+            LOCAL_PLAYER,
+            battle_harness::sim_position(soldier_at),
+        )
+        .expect("open ground");
+    let enemy = world
+        .spawn_unit(soldier_kind, ENEMY, battle_harness::sim_position(enemy_at))
+        .expect("open ground");
+    let size = frame(&harness).map_size();
+    let far_at = harness.open_ground(Vec2::new(size.x as f32, size.y as f32) - home, 3.0);
+    let hidden = harness
+        .world_mut()
+        .spawn_unit(soldier_kind, ENEMY, battle_harness::sim_position(far_at))
+        .expect("open ground");
+    harness.resume();
+    harness.step(3);
+    harness.pause();
+    harness.look_at(soldier_at);
+    harness.select(soldier);
+    assert_eq!(harness.selection().ids(), [soldier]);
+    assert!(
+        harness
+            .app
+            .world()
+            .resource::<BattleFog>()
+            .sees(enemy_at.x, enemy_at.y),
+        "the near enemy is in sight"
+    );
+    let before = pending(&harness).len();
+    let enemy_now = harness.simulated_position(enemy);
+    right_click_minimap(&mut harness, enemy_now);
+    let orders = pending(&harness);
+    assert_eq!(orders.len(), before + 1, "status: {}", harness.status());
+    assert!(
+        matches!(orders[before].order, UnitOrder::AttackTarget { target, .. } if target == enemy),
+        "{:?}",
+        orders[before].order
+    );
+    // The fogged enemy has no square: a ground move.
+    let hidden_now = harness.simulated_position(hidden);
+    right_click_minimap(&mut harness, hidden_now);
+    let orders = pending(&harness);
+    let target = move_target(&orders[before + 1]);
+    assert!(
+        target.distance(hidden_now) < 1.5,
+        "{target} near {hidden_now}"
+    );
+    // AttackMove: a left press orders the point, a right press cancels the mode.
+    *harness.app.world_mut().resource_mut::<CommandMode>() = CommandMode::AttackMove;
+    harness.step(1);
+    let ground = harness.open_ground(soldier_at, 5.0);
+    let at = on_minimap(&harness, ground);
+    harness.click(MouseButton::Left, at);
+    let orders = pending(&harness);
+    assert!(
+        matches!(orders[before + 2].order, UnitOrder::AttackMove { .. }),
+        "{:?}",
+        orders[before + 2].order
+    );
+    assert_eq!(
+        *harness.app.world().resource::<CommandMode>(),
+        CommandMode::Normal
+    );
+    assert_eq!(harness.selection().ids(), [soldier], "the selection stays");
+    *harness.app.world_mut().resource_mut::<CommandMode>() = CommandMode::AttackMove;
+    harness.step(1);
+    right_click_minimap(&mut harness, ground);
+    assert_eq!(
+        *harness.app.world().resource::<CommandMode>(),
+        CommandMode::Normal
+    );
+    assert_eq!(
+        pending(&harness).len(),
+        before + 3,
+        "the cancel orders nothing"
+    );
+}
+
+#[test]
+fn m7_a_structure_rallies_and_nothing_orders_without_a_selection_or_a_match() {
+    let mut harness = skirmish();
+    let structure = harness.local_structure();
+    harness.look_at_unit(structure);
+    harness.select(structure);
+    let ground = harness.open_ground(harness.simulated_position(structure), 8.0);
+    right_click_minimap(&mut harness, ground);
+    let orders = pending(&harness);
+    assert_eq!(orders.len(), 1, "status: {}", harness.status());
+    assert!(
+        matches!(orders[0].order, UnitOrder::SetRally { .. }),
+        "{:?}",
+        orders[0].order
+    );
+    // An empty selection orders nothing.
+    harness
+        .app
+        .world_mut()
+        .resource_mut::<BattleSelection>()
+        .clear();
+    harness.step(1);
+    right_click_minimap(&mut harness, ground);
+    assert_eq!(pending(&harness).len(), 1);
+    // After the match nothing orders, and the left button still moves the camera.
+    harness.select(structure);
+    harness.world_mut().match_state.result = sim_types::MatchResult::Draw {
+        tick: sim_types::Tick(0),
+    };
+    harness.step(1);
+    right_click_minimap(&mut harness, ground);
+    assert_eq!(pending(&harness).len(), 1, "the match is over");
+    let at = on_minimap(&harness, Vec2::new(20.0, 20.0));
+    harness.click(MouseButton::Left, at);
+    assert!(camera_target(&mut harness).distance(Vec2::new(20.0, 20.0)) < 0.2);
 }
 
 // --- The shader ----------------------------------------------------------------------------------

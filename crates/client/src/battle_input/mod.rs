@@ -10,9 +10,9 @@
 //!
 //! Where a press aims is kept apart from what order follows (plan `2026-12-01-minimap` D-7): a
 //! press first becomes a [`PointerAim`] (the unit, the resource node and the ground it found),
-//! built along a world ray by [`BattleView::aim_along`] or on the minimap, and the order
-//! functions take only that aim. So the world and the minimap share one order path with no
-//! second copy.
+//! built along a world ray by [`BattleView::aim_along`] or on the minimap by
+//! [`crate::minimap::pick::aim_at`], and the order functions take only that aim. So the world and
+//! the minimap ([`minimap_orders`]) share one order path with no second copy.
 //!
 //! # How it fits
 //! These systems run in [`BattleSet::CollectIntent`], after UI ownership is sampled and before the
@@ -34,6 +34,7 @@
 pub mod command_mode;
 pub mod context_order;
 pub mod gesture;
+pub mod minimap_orders;
 pub mod order_marker;
 pub mod rally_marker;
 

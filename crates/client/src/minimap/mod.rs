@@ -6,15 +6,21 @@
 //! the map onto the image ([`layout`]), the per-cell terrain texels ([`terrain`]), the image the
 //! renderer draws into and the egui texture that shows it. The render world draws the frame with
 //! one render-graph node and the real shader `assets/shaders/minimap.wgsl` ([`render`]); egui
-//! shows the image in the command panel ([`panel`]). The look is data,
-//! `assets/catalog/minimap.ron` ([`style`]).
+//! shows the image in the command panel ([`panel`]) and turns presses on it into a
+//! [`MinimapIntent`]. The intent moves the camera ([`apply_minimap_intent`]) or, through the
+//! battle input's one order path, issues orders at an aim picked on the minimap ([`pick`],
+//! [`crate::battle_input::minimap_orders`]). The camera's view is drawn as its ground trapezoid
+//! ([`frustum`]). The look is data, `assets/catalog/minimap.ron` ([`style`]).
 //!
 //! # How it fits
 //! ```text
 //! Startup             load_minimap_style
-//! CollectIntent       ensure_minimap_image, before battle_hud_system (which draws the panel);
-//!                     collect_minimap_keys (Alt+T, the terrain toggle)
-//! Present             prepare_minimap_frame, after camera_control_system
+//! CollectIntent       ensure_minimap_image, before battle_hud_system (which draws the panel
+//!                     and writes MinimapIntent); apply_minimap_intent, then the battle input's
+//!                     collect_minimap_orders, after it and before the world's pointer system;
+//!                     collect_minimap_keys (Alt+T terrain, Alt+F colours)
+//! Present             prepare_minimap_frame, build_minimap_marks, refresh_minimap_fog,
+//!                     update_minimap_frustum, after camera_control_system
 //! ExtractSchedule     render::extract_minimap (clone_from into retained vectors)
 //! Render              render::prepare_minimap_gpu (uploads on change only); MinimapNode
 //!                     before the camera driver, and so before egui's window pass
@@ -30,9 +36,11 @@
 //! - The cell texels are rebuilt only when the session or the terrain's revision moves.
 //! - Every retained vector keeps its storage across rebuilds of the same size.
 
+pub mod frustum;
 pub mod layout;
 pub mod marks;
 pub mod panel;
+pub mod pick;
 pub mod render;
 pub mod style;
 pub mod terrain;
@@ -92,6 +100,21 @@ impl Default for MinimapSettings {
     }
 }
 
+/// What the pointer did on the minimap this frame, in world units (simulation `(x, y)`, clamped
+/// to the camera's bound; plan `2026-12-01-minimap` D-7). Written by the HUD each frame it draws
+/// the minimap, cleared at the start of every HUD frame.
+#[derive(Resource, Debug, Default, Clone, Copy, PartialEq)]
+pub struct MinimapIntent {
+    /// Left button pressed or dragged with no command mode armed: centre the camera here.
+    pub look_at: Option<Vec2>,
+    /// Left press with a command mode armed: aim the mode here.
+    pub aim_left: Option<Vec2>,
+    /// Right press: the smart command here, or cancel an armed mode.
+    pub aim_right: Option<Vec2>,
+    /// Shift held at the press.
+    pub shift: bool,
+}
+
 /// One shape on the minimap, in minimap pixels (plan `2026-12-01-minimap` D-5). Packed for the
 /// storage buffer the marks pass reads.
 #[repr(C)]
@@ -138,6 +161,7 @@ pub struct MinimapFrame {
     albedo: Option<Handle<Image>>,
     splat: Option<Handle<Image>>,
     marks: Vec<MinimapMark>,
+    subjects: Vec<marks::MarkSubject>,
     marks_generation: u64,
     marks_key: Option<MarksKey>,
     selection_seen: Vec<EntityId>,
@@ -146,6 +170,7 @@ pub struct MinimapFrame {
     fog_key: Option<(u64, UVec2)>,
     terrain_on: bool,
     tick: u32,
+    frustum: Option<[Vec2; 4]>,
 }
 
 /// What the marks were built from, besides the selection.
@@ -228,6 +253,19 @@ impl MinimapFrame {
         &self.marks
     }
 
+    /// What each mark shows, index for index with [`Self::marks`].
+    #[must_use]
+    pub fn subjects(&self) -> &[marks::MarkSubject] {
+        &self.subjects
+    }
+
+    /// The camera's ground trapezoid this frame, in world units: top-left, top-right,
+    /// bottom-right, bottom-left of the view ([`frustum`]).
+    #[must_use]
+    pub const fn frustum(&self) -> Option<[Vec2; 4]> {
+        self.frustum
+    }
+
     /// Bumped by every rebuild of [`Self::marks`].
     #[must_use]
     pub const fn marks_generation(&self) -> u64 {
@@ -282,6 +320,11 @@ impl MinimapFrame {
                 self.marks.capacity(),
             ),
             (
+                "minimap.subjects",
+                self.subjects.as_ptr().addr(),
+                self.subjects.capacity(),
+            ),
+            (
                 "minimap.selection_seen",
                 self.selection_seen.as_ptr().addr(),
                 self.selection_seen.capacity(),
@@ -302,6 +345,7 @@ impl Plugin for MinimapPlugin {
             return;
         }
         app.init_resource::<MinimapFrame>()
+            .init_resource::<MinimapIntent>()
             .init_resource::<MinimapSettings>()
             .init_resource::<MinimapStyleStatus>()
             .add_systems(Startup, load_minimap_style)
@@ -313,9 +357,20 @@ impl Plugin for MinimapPlugin {
                         .in_set(BattleSet::CollectIntent),
                     collect_minimap_keys.in_set(BattleSet::CollectIntent),
                     (
+                        apply_minimap_intent,
+                        crate::battle_input::minimap_orders::collect_minimap_orders,
+                    )
+                        .chain()
+                        .after(crate::battle_hud::panels::battle_hud_system)
+                        .after(crate::input_policy::sample_input_ownership)
+                        .after(crate::lab_ui_system)
+                        .before(crate::battle_input::collect_pointer_intent)
+                        .in_set(BattleSet::CollectIntent),
+                    (
                         prepare_minimap_frame,
                         build_minimap_marks,
                         refresh_minimap_fog,
+                        update_minimap_frustum,
                     )
                         .chain()
                         .after(crate::camera_control_system)
@@ -557,7 +612,7 @@ pub fn build_minimap_marks(mut frame: ResMut<'_, MinimapFrame>, inputs: MarkInpu
             .map_or(&[], |terrain| terrain.map.resources()),
         selected: selection,
     };
-    marks::build_marks(&sources, &mut frame.marks);
+    marks::build_marks(&sources, &mut frame.marks, &mut frame.subjects);
     frame.marks_key = Some(key);
     frame.marks_generation += 1;
 }
@@ -602,6 +657,51 @@ pub fn refresh_minimap_fog(
     }
     frame.fog_key = Some(key);
     frame.fog_generation += 1;
+}
+
+/// Centres the camera where the minimap's left button points (plan `2026-12-01-minimap` D-7).
+/// `camera_control_system` clamps the target and eases the height as for any move. A jump
+/// cancels a middle-button camera drag in progress, so the two never fight.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+pub fn apply_minimap_intent(
+    intent: Res<'_, MinimapIntent>,
+    mut cameras: Query<'_, '_, &mut crate::RtsCamera>,
+    mut drag: ResMut<'_, crate::camera_drag::CameraDragState>,
+) {
+    let Some(target) = intent.look_at else {
+        return;
+    };
+    for mut camera in &mut cameras {
+        camera.target = target;
+    }
+    drag.interrupt();
+}
+
+/// Casts the camera's view onto the ground it looks at, every frame (plan `2026-12-01-minimap`
+/// D-8). The pose is the one `camera_control_system` just computed, so the trapezoid matches the
+/// frame the world draws.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+pub fn update_minimap_frustum(
+    mut frame: ResMut<'_, MinimapFrame>,
+    style: Option<Res<'_, MinimapStyle>>,
+    cameras: Query<'_, '_, (&Camera, &Transform, &crate::RtsCamera)>,
+) {
+    let frame = frame.as_mut();
+    frame.frustum = style.as_deref().and_then(|style| {
+        let (camera, transform, rts) = cameras.get_single().ok()?;
+        frustum::ground_trapezoid(
+            camera,
+            &GlobalTransform::from(*transform),
+            rts.look_at_y,
+            style.frustum_max_distance,
+        )
+    });
 }
 
 /// `value` in `[0, 1]` as the nearest byte.

@@ -85,6 +85,9 @@ struct StyleFile {
     resource_color: SrgbTriple,
     watchtower_color: SrgbTriple,
     watchtower_half: f32,
+    frustum_color: SrgbTriple,
+    frustum_px: f32,
+    frustum_max_distance: f32,
     team_colors: TeamFile,
 }
 
@@ -190,6 +193,13 @@ pub struct MinimapStyle {
     pub watchtower: MinimapColor,
     /// Half-width of a watchtower's square, in world units.
     pub watchtower_half: f32,
+    /// Colour of the camera's view trapezoid (`FrustumColor`, `:687`).
+    pub frustum: MinimapColor,
+    /// Width of the trapezoid's edges, in image pixels.
+    pub frustum_px: f32,
+    /// Farthest a corner of the trapezoid lies from the camera, in world units; a corner ray
+    /// that meets the ground farther away (or never) is cut there (D-8).
+    pub frustum_max_distance: f32,
     /// The team colours.
     pub team: TeamColors,
 }
@@ -267,6 +277,8 @@ impl MinimapStyle {
         if !file.watchtower_half.is_finite() || file.watchtower_half <= 0.0 {
             return Err(("watchtower_half", "must be positive and finite"));
         }
+        positive("frustum_px", file.frustum_px)?;
+        positive("frustum_max_distance", file.frustum_max_distance)?;
         let team = file.team_colors;
         Ok(Self {
             side_points: file.side_points,
@@ -285,6 +297,9 @@ impl MinimapStyle {
             resource: MinimapColor::prepare("resource_color", file.resource_color)?,
             watchtower: MinimapColor::prepare("watchtower_color", file.watchtower_color)?,
             watchtower_half: file.watchtower_half,
+            frustum: MinimapColor::prepare("frustum_color", file.frustum_color)?,
+            frustum_px: file.frustum_px,
+            frustum_max_distance: file.frustum_max_distance,
             team: TeamColors {
                 own: MinimapColor::prepare("team_colors", team.own)?,
                 ally: MinimapColor::prepare("team_colors", team.ally)?,
@@ -293,6 +308,15 @@ impl MinimapStyle {
                 selected: MinimapColor::prepare("team_colors", team.selected)?,
             },
         })
+    }
+}
+
+/// `Ok` when `value` of `field` is positive and finite.
+fn positive(field: &'static str, value: f32) -> Result<(), (&'static str, &'static str)> {
+    if value.is_finite() && value > 0.0 {
+        Ok(())
+    } else {
+        Err((field, "must be positive and finite"))
     }
 }
 
@@ -360,6 +384,9 @@ mod tests {
         resource_color: (0.494, 0.749, 0.945),
         watchtower_color: (0.9, 0.9, 0.9),
         watchtower_half: 1.0,
+        frustum_color: (1.0, 1.0, 1.0),
+        frustum_px: 1.0,
+        frustum_max_distance: 200.0,
         team_colors: (self: (0.0, 0.7333, 0.0), ally: (1.0, 1.0, 0.0), hostile: (1.0, 0.0, 0.0),
                       neutral: (0.4941, 0.749, 0.945), selected: (0.0, 1.0, 0.0)),
     )";
@@ -409,6 +436,21 @@ mod tests {
         assert_eq!(
             field_of(&GOOD.replace("hostile: (1.0, 0.0, 0.0)", "hostile: (1.0, -0.1, 0.0)")),
             "team_colors"
+        );
+        assert_eq!(
+            field_of(&GOOD.replace("frustum_px: 1.0", "frustum_px: 0.0")),
+            "frustum_px"
+        );
+        assert_eq!(
+            field_of(&GOOD.replace("frustum_max_distance: 200.0", "frustum_max_distance: -1.0")),
+            "frustum_max_distance"
+        );
+        assert_eq!(
+            field_of(&GOOD.replace(
+                "frustum_color: (1.0, 1.0, 1.0)",
+                "frustum_color: (1.0, 1.5, 1.0)"
+            )),
+            "frustum_color"
         );
         assert_eq!(
             field_of(&GOOD.replace("format_version: 1", "format_version: 2")),

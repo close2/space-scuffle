@@ -132,7 +132,8 @@ pub const ACTION_KEYS: [&[KeyCode]; 9] = [
 pub const BATTLE_CONTROLS_HELP: &str = "Left click selects, drag boxes, Shift adds. Right click \
 moves, attacks, gathers, builds or boards by its target, Shift queues; with a structure it sets \
 the rally, and Shift adds a rally waypoint. H holds, X stops. Escape cancels a command mode. \
-Ctrl+0-9 assigns a group, 0-9 recalls it. Alt+T toggles the minimap's terrain, Alt+F its colours.";
+Ctrl+0-9 assigns a group, 0-9 recalls it. On the minimap, left click moves the camera and right \
+click orders. Alt+T toggles the minimap's terrain, Alt+F its colours.";
 
 /// Returns whether any key of `keys` is held.
 #[must_use]

@@ -10,8 +10,11 @@
 //   are soft, then lerps the colour toward the background, as 5.0.14's MinimapTerrain.fx lerps
 //   to black.
 // - `mark_vs` / `mark_fs`: one six-vertex quad per instance of the marks storage buffer, in
-//   minimap pixels: a square filled with its colour inside a border `stroke` pixels wide. Fog never
-//   hides a mark: what is listed is what the viewer may see.
+//   minimap pixels: a square filled with its colour inside a border `stroke` pixels wide, or a
+//   segment `stroke` pixels wide. Fog never hides a mark: what is listed is what the viewer may
+//   see. Instances past the buffer's `mark_count` are the camera frustum's four edges (D-8),
+//   read from the uniform's corners, so a camera move needs no buffer write. Segments are cut at
+//   the map rectangle, so a view past the map's edge is clipped there.
 //
 // Coordinates: `@builtin(position)` in the fragment stage is in target pixels from the top-left,
 // pixel centres at +0.5. Map points are simulation (x, y) in world units, one unit per cell; the
@@ -36,9 +39,16 @@ struct MinimapUniform {
     terrain_on: u32,
     // Presented simulation tick.
     tick: u32,
-    pad0: u32,
-    pad1: u32,
-    pad2: u32,
+    // Marks in the storage buffer; instances from here on are the frustum's edges.
+    mark_count: u32,
+    // 1 draws the frustum.
+    frustum_on: u32,
+    // Width of the frustum's edges in pixels.
+    frustum_px: f32,
+    frustum_color: vec4<f32>,
+    // The view's ground trapezoid in pixels: top-left, top-right (xy, zw of [0]), bottom-right,
+    // bottom-left (of [1]).
+    frustum: array<vec4<f32>, 2>,
 }
 
 // One shape in minimap pixels (Rust `MinimapMark`, 48 bytes).
@@ -62,6 +72,10 @@ struct MinimapMark {
 @group(0) @binding(6) var<storage, read> marks: array<MinimapMark>;
 // R8Unorm, one byte per cell: how far fog darkens the cell toward the background (D-4).
 @group(0) @binding(7) var fog: texture_2d<f32>;
+
+// Mark kinds (Rust `minimap::marks::MARK_*`).
+const MARK_SQUARE: u32 = 0u;
+const MARK_SEGMENT: u32 = 1u;
 
 // Albedo array layers, in `TerrainTheme::ordered_layers` order (terrain.wgsl).
 const LAYER_GRASS: i32 = 0;
@@ -141,6 +155,42 @@ struct MarkOut {
     // Half-size and border width, pixels.
     @location(2) @interpolate(flat) half_size: vec2<f32>,
     @location(3) @interpolate(flat) stroke: f32,
+    @location(4) @interpolate(flat) kind: u32,
+}
+
+// Corner `index` (0..4) of the frustum trapezoid, pixels.
+fn frustum_corner(index: u32) -> vec2<f32> {
+    let pair = minimap.frustum[index / 2u];
+    if (index % 2u == 0u) {
+        return pair.xy;
+    }
+    return pair.zw;
+}
+
+// The frustum's edge `edge` (0..4) as a segment mark.
+fn frustum_edge(edge: u32) -> MinimapMark {
+    var mark: MinimapMark;
+    mark.a = frustum_corner(edge);
+    mark.b = frustum_corner((edge + 1u) % 4u);
+    mark.color = minimap.frustum_color;
+    mark.kind = MARK_SEGMENT;
+    mark.start_tick = 0u;
+    mark.stroke = minimap.frustum_px;
+    mark.pad = 0.0;
+    return mark;
+}
+
+// Pixel of corner `vertex` of a segment's quad from `a` to `b`, `width` pixels wide, extended
+// by half its width past each end so that joined segments close their corners.
+fn segment_corner(vertex: u32, a: vec2<f32>, b: vec2<f32>, width: f32) -> vec2<f32> {
+    let corner = quad_corner(vertex);
+    let delta = b - a;
+    let span = max(length(delta), 1e-4);
+    let along = delta / span;
+    let across = vec2<f32>(-along.y, along.x);
+    let half = width * 0.5;
+    let t = (corner.x * 0.5 + 0.5);
+    return mix(a - along * half, b + along * half, t) + across * corner.y * half;
 }
 
 // Corner `vertex` of a mark's quad, two triangles, in units of the mark's half-size.
@@ -154,8 +204,16 @@ fn quad_corner(vertex: u32) -> vec2<f32> {
 
 @vertex
 fn mark_vs(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance: u32) -> MarkOut {
-    let mark = marks[instance];
-    let pixel = mark.a + quad_corner(vertex) * mark.b;
+    var mark: MinimapMark;
+    if (instance < minimap.mark_count) {
+        mark = marks[instance];
+    } else {
+        mark = frustum_edge(instance - minimap.mark_count);
+    }
+    var pixel = mark.a + quad_corner(vertex) * mark.b;
+    if (mark.kind == MARK_SEGMENT) {
+        pixel = segment_corner(vertex, mark.a, mark.b, mark.stroke);
+    }
     let clip = vec2<f32>(pixel.x / minimap.side * 2.0 - 1.0, 1.0 - pixel.y / minimap.side * 2.0);
     var out: MarkOut;
     out.position = vec4<f32>(clip, 0.0, 1.0);
@@ -163,11 +221,20 @@ fn mark_vs(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance
     out.local = pixel - mark.a;
     out.half_size = mark.b;
     out.stroke = mark.stroke;
+    out.kind = mark.kind;
     return out;
 }
 
 @fragment
 fn mark_fs(in: MarkOut) -> @location(0) vec4<f32> {
+    if (in.kind == MARK_SEGMENT) {
+        // Segments are cut at the map rectangle.
+        let world = (in.position.xy - minimap.offset) / minimap.scale;
+        if (any(world < vec2<f32>(0.0)) || any(world >= minimap.map_size)) {
+            discard;
+        }
+        return vec4<f32>(in.color.rgb, 1.0);
+    }
     // Distance of this pixel's centre inside the square's nearest edge.
     let inside = in.half_size - abs(in.local);
     if (min(inside.x, inside.y) < in.stroke) {

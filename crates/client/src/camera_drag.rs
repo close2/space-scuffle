@@ -31,6 +31,9 @@ pub enum DragCancellation {
     InvalidRay,
     /// Owning window/camera was removed or replaced.
     MissingWindow,
+    /// Something else moved the camera to a new place: a minimap press (plan
+    /// `2026-12-01-minimap` D-7).
+    Jump,
 }
 
 /// Passive derived gesture evidence; never authoritative game state.
@@ -152,6 +155,18 @@ impl CameraDragState {
     #[must_use]
     pub fn diagnostics(&self) -> DragDiagnostics {
         self.evidence
+    }
+
+    /// Ends a gesture in progress because something else moved the camera
+    /// ([`DragCancellation::Jump`]). Nothing happens when no gesture is active. A counter
+    /// overflow fails the gesture state, as an overflow during [`Self::advance`] does.
+    pub fn interrupt(&mut self) {
+        if self.cancel(DragCancellation::Jump).is_err() {
+            self.failed = true;
+            self.evidence.active = false;
+            self.evidence.window = None;
+            self.anchor = None;
+        }
     }
 
     fn cancel(&mut self, reason: DragCancellation) -> Result<(), DragCounterOverflow> {
