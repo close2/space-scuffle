@@ -27,3 +27,4 @@ package has landed; (c) if you prefer to keep movement untouched.
 
 ## Answer
 
+- **Option (b): Clip convex square plateau corners in the simulation too** (using the same mechanism as diagonal cliffs, in its own follow-up package after the diagonal-cliff package lands), so units stop ~`0.09` cells earlier at a bevelled corner and never float over the drop. Keeps beveled plateau corners and aligns simulation and rendered cliff edges everywhere (updating `default_arena` golden replays as needed).
