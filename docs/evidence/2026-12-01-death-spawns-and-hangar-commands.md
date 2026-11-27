@@ -185,3 +185,11 @@ four runs of the shipped row: 67, 45, 61, 65.
 
 Not done after the stop, for the orchestrator's decision: `DESIGN.md` §4 B-234 marked fixed, the §5 row and Combat
 row, the pointer in plan `2026-11-28-broodlings` §14, the plan's `## As built` (part A).
+
+## After merging `main` `b2ba4621` (`8b32ca78`, `27b9fe03`)
+
+`main` gained the Baneling's whole cost (Q0135, `units.ron`) and plan documents; its schema is still 61, so **62 stays
+the next free**. Re-taken on the merged tree `27b9fe03`: its worlds equal `main`'s byte for byte (`compare-merged.txt`:
+490 files, 0 differing); the re-recorded goldens and sandbox value reproduce on the four builds (**8 of 8**,
+`proof-merged/status`); and with the schema at 61, the section unhashed and `main`'s goldens and sandbox value
+restored, every checkpoint reproduces `main`'s (**8 of 8**, `proof-merged-latent/status`).
