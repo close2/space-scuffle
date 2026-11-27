@@ -45,6 +45,12 @@
 //!   the midpoints again (D-6); review capture `~/scratch/straight-diagonals/review/`
 //!   (`contact_sheet_wp1.png`, column `diagonals_wp1/`). `default_arena` has no concave corner,
 //!   and no pick hash changed.
+//! - The `showcase_canyon` and synthetic mesh and ramp-free chunk hashes were re-recorded at
+//!   `1fe78950` (and are unchanged at `058435c4`), plan `2026-12-01-straight-diagonal-cliffs` WP2:
+//!   ground diagonals drawn as straight chamfers through the low cells' corners (Q0136 (c)); 24
+//!   full cuts on `showcase_canyon`, 7 on the synthetic map; review capture
+//!   `~/scratch/straight-diagonals/review/` (`contact_sheet.png`, column `diagonals_wp2/`).
+//!   `default_arena` has no staircase, and no pick hash changed.
 //! - A golden may only change together with a deliberate, documented change in terrain output.
 
 #![allow(
@@ -263,7 +269,7 @@ fn showcase_canyon_mesh_and_picking_are_bit_exact() {
         "showcase_canyon",
         mesh_hash(&map),
         pick_hash(&map),
-        (0x9711_8e48_b41d_7893, 0xd059_17a4_edfe_bf3a, 2262),
+        (0x7d2d_6667_3729_6669, 0xd059_17a4_edfe_bf3a, 2262),
     );
 }
 
@@ -274,7 +280,7 @@ fn synthetic_map_mesh_and_picking_are_bit_exact() {
         "synthetic",
         mesh_hash(&map),
         pick_hash(&map),
-        (0x0295_96f2_2649_d218, 0xe991_3ab4_d9ba_9745, 1532),
+        (0xc7cf_28f9_598e_a15e, 0xe991_3ab4_d9ba_9745, 1532),
     );
 }
 
@@ -282,7 +288,7 @@ fn synthetic_map_mesh_and_picking_are_bit_exact() {
 /// recorded before plan `2026-11-09-ramp-geometry` WP1 changed the mesher's ramp handling, and
 /// must not move with any later ramp change (plan section 4, D-3 and D-5). They move with cliff
 /// changes, and were re-recorded by plan `2026-11-30-terrain-and-air-indicators` WP1 and WP3 and
-/// plan `2026-12-01-straight-diagonal-cliffs` WP1.
+/// plan `2026-12-01-straight-diagonal-cliffs` WP1 and WP2.
 #[test]
 fn ramp_free_chunks_are_bit_exact() {
     let maps = [
@@ -294,9 +300,9 @@ fn ramp_free_chunks_are_bit_exact() {
         (
             "showcase_canyon",
             load_shipped_map("showcase_canyon.scmap.ron"),
-            (0x0514_9608_6fec_6fa6, 21),
+            (0x7070_0bdb_731b_c5d3, 21),
         ),
-        ("synthetic", synthetic_map(), (0x4d48_d3b0_e0ad_5713, 1)),
+        ("synthetic", synthetic_map(), (0xebb4_3f3f_7c63_f8e8, 1)),
     ];
     let mut changed = Vec::new();
     for (name, map, expected) in maps {
