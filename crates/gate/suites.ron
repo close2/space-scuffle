@@ -86,6 +86,9 @@ SuiteCatalog(
         "client/battle_flipbook_tests": (class: Slow, test_threads: Some(3)),
         "client/battle_fog_tests": (class: Slow, test_threads: Some(2)),
         "client/battle_hud_tests": (class: Slow, test_threads: Some(2)),
+        // The minimap's CPU claims (plan 2026-12-01-minimap §6): several tests each boot the
+        // production client on the shipped skirmish, so they are capped like the HUD's.
+        "client/minimap_tests": (class: Slow, test_threads: Some(2)),
         "client/battle_input_tests": (class: Slow, test_threads: Some(2)),
         "client/battle_result_tests": (class: Slow, test_threads: Some(2)),
         "client/sync_steady_state_tests": (class: Slow, test_threads: Some(2)),
@@ -113,6 +116,12 @@ SuiteCatalog(
         "client/attack_snapshot_gpu_tests": (class: Gpu, triggers: [
             "crates/client/src/{battle_hud/**,battle_pipeline/fog.rs,bubble_shader.rs,effects/catalog/**}",
             "assets/catalog/effects.ron",
+        ]),
+        // The minimap on the real shader (plan 2026-12-01-minimap G-1 to G-6): children that read
+        // the minimap texture back and shoot the window.
+        "client/minimap_gpu_tests": (class: Gpu, triggers: [
+            "crates/client/src/{minimap/**,battle_hud/**,battle_pipeline/fog.rs}",
+            "assets/{shaders/minimap.wgsl,catalog/minimap.ron}",
         ]),
         // A selected structure's rally (plan 2026-11-23-production-queue WP5): one child, three
         // shots.
@@ -202,7 +211,7 @@ SuiteCatalog(
         // it spawns and the bubble material it writes are its own subject (plan
         // 2026-11-29-render-entity-pool §1, WP1).
         "client/sync_allocation_count_tests": (class: Valgrind, triggers: [
-            "crates/client/src/{battle_pipeline/**,presentation.rs,runtime_battle/**,player_presentation/**,effects/**,battle_hud/attack_snapshots.rs}",
+            "crates/client/src/{battle_pipeline/**,presentation.rs,runtime_battle/**,player_presentation/**,effects/**,battle_hud/attack_snapshots.rs,minimap/**}",
             "crates/client/src/{scene_controller.rs,render_pool.rs,indicators.rs,bubble_shader.rs}",
         ]),
         // Valgrind: counts the effect engine's steady-state allocations (plan
@@ -256,7 +265,7 @@ SuiteCatalog(
         ),
         (
             name: "live sync",
-            paths: ["crates/client/src/{battle_pipeline/**,presentation.rs,runtime_battle/**,player_presentation/**}"],
+            paths: ["crates/client/src/{battle_pipeline/**,presentation.rs,runtime_battle/**,player_presentation/**,minimap/**}"],
             targets: [
                 "client/sync_allocation_count_tests",
                 "client/skirmish_match_tests",

@@ -67,7 +67,10 @@ pub struct HudGeometry {
     pub bottom: Option<egui::Rect>,
     /// The failure banner above the resource bar.
     pub failure: Option<egui::Rect>,
-    /// The left column of the command panel.
+    /// The minimap's square, in the command panel's left part or alone at the bottom left (plan
+    /// `2026-12-01-minimap` D-14).
+    pub minimap: Option<egui::Rect>,
+    /// The left column of the command panel, right of the minimap.
     pub selection_column: Option<egui::Rect>,
     /// The middle column of the command panel.
     pub queue_column: Option<egui::Rect>,
@@ -108,16 +111,23 @@ pub struct HudGeometry {
 /// which then reserves no room: the world viewport extends to the bottom of the window. Nothing
 /// else changes; the selection, the card and their keys keep working, and a run that draws the
 /// panel again gets it back on the next frame.
+///
+/// The minimap sits in the command panel's left part. A layout without the panel but with the
+/// minimap draws the minimap alone at the bottom left, reserving no room; one without either
+/// draws no minimap (plan `2026-12-01-minimap` D-14).
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HudLayout {
     /// Whether the command panel (selection, queue and card) is drawn along the bottom.
     pub command_panel: bool,
+    /// Whether the minimap is drawn.
+    pub minimap: bool,
 }
 
 impl Default for HudLayout {
     fn default() -> Self {
         Self {
             command_panel: true,
+            minimap: true,
         }
     }
 }

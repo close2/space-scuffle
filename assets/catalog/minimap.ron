@@ -1,0 +1,11 @@
+// Minimap presentation (plan docs/plans/2026-12-01-minimap.md). Read at run time; changing it needs no rebuild.
+// Colours are sRGB in [0, 1]; durations are simulation ticks (25 per Faster second, Q0052 S-5; a 5.0.14 Normal
+// second is 25 / 1.4 ticks, plan §2.3).
+(
+    format_version: 1,
+    side_points: 172.0,               // the square's side in egui points inside the 180-point panel (D-14)
+    background: (0.0, 0.0, 0.0),      // core GameUIData:694 BackGroundColor
+    level_brightness: [0.55, 0.70, 0.85, 1.0], // cliff levels 0..=3 (art, Q0020)
+    unpathable_color: (0.06, 0.06, 0.08),
+    edge_mix: 0.6,
+)
