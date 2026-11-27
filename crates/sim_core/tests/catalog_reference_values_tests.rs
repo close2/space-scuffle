@@ -5620,6 +5620,70 @@ fn the_shipped_rallies_are_5_0_14s() -> TestResult {
     Ok(())
 }
 
+/// The number of rally slots of `producer` that take `product`, by 5.0.14's use rules read from
+/// `RallyHatchery` (liberty AbilData:885-897, plan `2026-12-01-rallies-and-smart-command` S8):
+/// a slot takes a unit when its `used_by` filter accepts it, a worker being an archetype with a
+/// harvester capability (`UseFilters "Worker;-"` and `"-;Worker"`), and its `excludes` do not
+/// name it (`UseValidators NotQueen`). A producer with no authored rally has the default
+/// ability's one slot, which takes every unit. An oracle written from the data against the
+/// catalog's public fields, independent of `sim_core::production::rally_slots`.
+fn slots_taking(producer: &UnitArchetype, product: &UnitArchetype) -> usize {
+    use sim_types::RallyUsers;
+    let Some(rally) = producer.rally.as_ref() else {
+        return 1;
+    };
+    let worker = product.capabilities.harvester.is_some();
+    rally
+        .slots
+        .iter()
+        .filter(|slot| {
+            let used = match slot.used_by {
+                RallyUsers::All => true,
+                RallyUsers::Workers => worker,
+                RallyUsers::NonWorkers => !worker,
+            };
+            used && !slot.excludes.contains(&product.slug)
+        })
+        .count()
+}
+
+/// Every `(producer, product, slots taking it)` of `catalog` whose count breaks §2.2 rule 4 of
+/// plan `2026-12-01-rallies-and-smart-command`: at most one slot takes any product, and none
+/// takes exactly the Queen analogue (found by its `sc2_analogue`), which every slot excludes.
+fn rally_slot_breaches(catalog: &sim_core::UnitCatalog) -> Vec<(String, String, usize)> {
+    let mut breaches = Vec::new();
+    for producer in catalog.archetypes().filter(|a| !a.trains_units.is_empty()) {
+        for slug in &producer.trains_units {
+            let Some(product) = catalog.get_by_slug(slug) else {
+                breaches.push((producer.slug.clone(), slug.clone(), usize::MAX));
+                continue;
+            };
+            let count = slots_taking(producer, product);
+            let queen = analogue(product).starts_with("Queen");
+            if count > 1 || (count == 0) != queen {
+                breaches.push((producer.slug.clone(), slug.clone(), count));
+            }
+        }
+    }
+    breaches
+}
+
+/// P-4, B-217 (plan `2026-12-01-rallies-and-smart-command` D-4, §2.2 rule 4): no shipped product
+/// is taken by two rally slots of its producer, so "the first slot whose use rule accepts" and
+/// "the first accepting slot that holds a rally" give the same answer for every unit the game
+/// makes; only the Queen analogue is taken by none.
+#[test]
+fn no_shipped_product_is_taken_by_two_rally_slots() {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    assert_eq!(rally_slot_breaches(&catalogs.units), []);
+    let queens = catalogs
+        .units
+        .archetypes()
+        .filter(|a| !is_structure(a) && analogue(a).starts_with("Queen"))
+        .count();
+    assert_eq!(queens, 1, "the oracle sees the Queen analogue");
+}
+
 /// V-19 (plan `2026-11-27-launch-and-spell-visibility` §2.1 S4, S5, D-1): of every shipped spell
 /// damage and missile node, only Psionic Storm's periodic pulse shows nothing of its caster
 /// (`PsiStormDamage` `Visibility Hidden`, `liberty` EffectData:2099); every other one keeps the
