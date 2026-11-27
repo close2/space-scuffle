@@ -504,10 +504,48 @@ second reading is of record (C-0 needs load below 8). By instructions, the canyo
 to 55 ticks/s × 39.04 / 39.14 ≈ 54.9 ticks/s from `Gated` WP0b's 55 (WP2's tree: 40.25 G, ≈ 53.4). Measured under
 load 16: canyon R 54, 49, 54; G 57, 58, 57; every other scenario and arm above 100.
 
-**Still running at hand-back** (`scripts/window_queue_w1.sh`, log `window/logs/queue_w1.log`, stage markers
-`window/logs/q1-*.done`): the harness (13 families and the mirror, seeds 1 to 1,000) for the base and WP1 under S,
-R and L and for WP1 under G; then the held-out set HA (showcase seeds 1,001 to 1,024 and crowd 1,001 to 1,008 with
-the meter, the matrix tool's first 92 non-record seeds, of which the 69th to 92nd are HA's, and the harness on
-9,200,001 to 9,201,000 under S, R and L, base and WP1). Their tables, the harness step rule (`movement_harness
---aggregate`) and `Gated`'s re-base harness tables are to be read from `window/basem/` and `wp1/worldsm/` when the
-markers appear.
+**Harness step rule** (`Gated` §6.3, seeds 1 to 1,000; `scripts/step_rule.sh`: `movement_harness --aggregate` of the
+base against itself and of WP1 against the base, then the per-seed beyond-noise check of the moved families' main
+columns; outputs `wp1/harness_{S,R,L}.md`, `wp1/step_rule_{R,L}.txt`). Only gap, corner and lanes move; the mirror
+and the other ten families are byte-identical. **Holds under S, R and L: no threshold verdict turns from holds to
+fails.**
+- S: T4 corner turns to holds (give-ups 7 → 0); gap's failed T4 has 50 → 56 give-ups, within noise (base 95 %
+  interval of the per-seed mean [0.029, 0.074], WP1 0.056); M1 gap 1.09 → 1.12, lanes 1.13 → 1.10, corner 0.49 →
+  0.41, all within noise.
+- R: T4 corner to holds (9 → 0); gap give-ups 43 → 49, within noise; corner reversals and friend overlap better beyond
+  noise; lanes' progress violations 0.131 → 0.158 a scene, above the base's interval, while T3 (M4 0.05 % → 0.06 %)
+  still holds, which the step rule asks.
+- L: no verdict changes; gap give-ups 454 → 441; no column beyond noise.
+- T7 (failed by the base in all three families) records the largest terrain penetration: corner 0 → 1 × 10⁻⁵ in one
+  scene of 1,000 under S and R (gap and lanes fall), within H-5's 2⁻¹⁰ and H-W1's 2.4 × 10⁻⁵. Reported.
+
+**Arm G, harness** (`wp1/hard-G.md`, `hard3b.py`): H-1 holding 0, H-1b out of band 0, H-2 repaired 0 in every family,
+enemy overlap 0 %, H-5 0, H-7 lag 1; attackers moved 2,253,979 (enemy-press), 5,558, 4,505 and 119,463, exactly
+`Gated` WP1's §11.3. **G's hard checks hold** (with the matrix and clashes above).
+
+**Held-out HA** (registered in §6.4 and Amendment 1, run once; `heldout/`):
+- **Showcases**, seeds 1,001 to 1,024 (`heldout/compare_showcase.md`): hand-offs that cut at the decision fall from
+  310 to **0** (scratch build, 48 runs). `showcase.ron`: every region's M-1 to M-4 and longest episode within the
+  base's interval, as on the development seeds; M-5a as counted by the meter 35 → 31. `showcase_effects.ron`: the
+  development seeds' pattern exactly (ramp W M-4 22.6 → 28.5, longest 32 → 41; block M-1 104 → 87; whole map M-1
+  186 → 168, M-4 65.0 → 62.7), as its seed-insensitivity predicts. Deepest body 2.1 × 10⁻⁶ unchanged.
+- **Crowd scenes**, seeds 1,001 to 1,008 (`heldout/crowd_compare.md`): cutting hand-offs at the decision 1,640 /
+  1,627 / 1,133 → **0** under S / R / L; both known answers hold in 144 of 144 scenes per arm; cell-figures beyond
+  noise worse / better: S 7 / 19, R 7 / 12, L 4 / 5 (development: 7 / 5, 7 / 2, 6 / 7).
+- **Matrix**, the tool's 69th to 92nd non-record seeds of each battle (`--seeds 92`, filtered by
+  `scripts/ha_filter.py`): under S, R and L only battle 40 moves (6, 6 and 3 of 24 seeds), no winner flips,
+  give-ups 11 / 12 / 0 unchanged, expectation failures unchanged (0 / 29, 0 / 29, 0 / 21).
+- **Harness**, seeds 9,200,001 to 9,201,000 (`heldout/step_rule_{S,R}.txt`): S and R as on the development range:
+  no verdict from holds to fails, only gap, corner and lanes move, corner better (R: give-ups 29 → 5, beyond noise),
+  gap give-ups 39 → 48 (S) and 43 → 45 (R) within noise. L: no verdict from holds to fails; gap, corner and lanes move,
+  every main column within noise (gap give-ups 376 → 406 against development's 454 → 441, both within). Twelve of
+  L's thirteen families on WP1's tree were run without the gate lock, nice 10, 6 jobs (`scripts/ha_L_nolock.sh`), because
+  other agents' runs held the lock for up to 37 minutes a family; the figures are deterministic and cannot depend on
+  it.
+- **HA does not contradict any development direction** (plan §6.4, §7 rule 7): the decision-time count is 0 on every
+  held-out run, the matrix moves only battle 40 with no flip, the harness turns no threshold, and the showcase and
+  crowd figures repeat the development pattern.
+
+**Result (Amendment 2, item 3).** The harness step rule holds under S, R and L, `Gated`'s hard checks hold under G,
+and HA confirms the development directions. `Gated`'s re-base is recorded in
+`docs/evidence/2026-11-27-gated-movement.md` §12.
