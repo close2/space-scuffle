@@ -628,6 +628,10 @@ Constants (`mesher.rs`, each documented): `CHUNK_DUAL_CELLS = 16`, `RIM_WIDTH = 
   straight cliff lies exactly on the simulation boundary between cells; outer/inner corners become
   45° cuts of half a cell (area 1/8 cell, documented as the only visual/sim deviation), and a
   staircase of single-cell steps renders as a straight 45° cliff — the SC2 look, from a rule.
+  *Superseded by plan [`2026-12-01-straight-diagonal-cliffs`](2026-12-01-straight-diagonal-cliffs.md)
+  (Q0136 (c), B-246): a staircase whose low side is ground renders as a straight chamfer through the
+  low cells' corners, half a cell further onto the high side than this 45° line, so no rock is drawn
+  in a walkable cell; a staircase beside the void keeps this 45° line through the edge midpoints.*
 - Case index for threshold `t`: bits `BL=1, BR=2, TR=4, TL=8` set when corner level ≥ t.
   Saddles 5 and 10 resolve **high-connected** (both high corners joined; warning `DiagonalPinch`).
   *Superseded by plan [`2026-11-30-terrain-and-air-indicators`](2026-11-30-terrain-and-air-indicators.md)

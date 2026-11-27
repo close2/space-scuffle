@@ -357,6 +357,15 @@ fn no_profile_rises_inside_walkable_ground_synthetic() {
 }
 
 #[test]
+fn no_profile_rises_inside_walkable_ground_diagonal_fixture() {
+    assert_no_violations(
+        "diagonal_fixture",
+        &terrain_mesh::diagonal_fixture(),
+        &[Class::Profile],
+    );
+}
+
+#[test]
 fn no_profile_rises_inside_walkable_ground_ramp_fixture() {
     assert_no_violations(
         "ramp_fixture",
@@ -390,6 +399,15 @@ fn no_terrain_rises_inside_walkable_ground_synthetic() {
     assert_no_violations(
         "synthetic",
         &terrain_mesh::synthetic_map(),
+        &[Class::Profile, Class::Corner],
+    );
+}
+
+#[test]
+fn no_terrain_rises_inside_walkable_ground_diagonal_fixture() {
+    assert_no_violations(
+        "diagonal_fixture",
+        &terrain_mesh::diagonal_fixture(),
         &[Class::Profile, Class::Corner],
     );
 }
