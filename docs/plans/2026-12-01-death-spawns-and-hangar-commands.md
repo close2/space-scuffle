@@ -938,3 +938,37 @@ a slot that auto-build fills again at once: the cancel only helps after switchin
   `structures.ron`, `start_loadouts.ron`, `scenarios/*.ron`, `required_set.ron`. `movement/solver.rs` was read for its
   coincident-centre rule only.
 - Web search 2026-11-26 (S9): Liquipedia's Extractor page excerpt.
+
+## Amendment 1 (orchestrator, 2026-11-27): the `razed` row is judged on instructions while the host is loaded
+
+**What happened.** WPA4 stopped on stop rule 5. The new `razed` bench row ran 67 and 45 ticks/s, then 61 and 65 when re-run. The host load average was 87 to 96 on 16 cores during the measurements. With every death spawn cut to one unit, the row ran 46 and 48 ticks/s. So the low round is load noise on a costly scenario, not the mechanism. Instructions on the existing rows moved +0.010 %.
+
+**Decision.** Following the rule the wall-clearance and `Gated` packages used on this host (`Gated` C-0: no wall-clock figure of record above load 8), the `razed` row is judged by callgrind instruction count. That count is converted to ticks/s with the instructions-per-second rate of the existing rows, measured in the same session.
+- If the projection is at least 50 ticks/s, WPA4 completes: records, B-234 marked fixed, `DESIGN.md` §5 row marked "projected, loaded host".
+- If it is below 50, WPA4 stops, and the row is re-designed before merge, keeping its 12 structures and shrinking the army.
+
+CI's throughput job, run on a quiet runner, remains the arbiter after merge.
+
+## As built
+
+### Part A (B-234): WPA0 to WPA4
+
+| Package | Commit | What landed |
+|---|---|---|
+| WPA0 | `03e174b4` | B-234 restated; census (stop rule 9 holds), probe and control (no measured world kills a Swarm structure), frozen close list (14, 26, 31, 33, 35, 38a, 38b), four-build baseline 8 of 8 at schema 61, throughput. Committed after WPA1 to WPA3, measured on `a7c03026` |
+| WPA1 | `62e6dd5e`, `88d286e6` | `ArchetypeCapabilities::death_spawn` (`DeathSpawnSpec`), validation, `SimWorld::pending_death_spawns` (hashed section `death-spawns`, schema 62, provisional), queue at the reap commit, creation in upkeep after the per-entity loop, `DeathSpawnBlocked`; `world::spawns` shares the placement search and clock draw with impact spawns; C7 allowlist for the authored range. Latent proof 8 of 8; re-recorded goldens and sandbox proved 8 of 8 |
+| WPA2 | `6a311368` | The 14 Swarm structure analogues author 9 or 6 `brood_mite` (S8's lines); DS-13 to DS-15 |
+| WPA3 | `827a5f81` | `created_units` lists the death spawn; `RenderPoolBound::death`; DS-16 to DS-18 (steady state, and valgrind 0 allocations) |
+| WPA4 | `c82467b3`, `3f82dd04`, the records commit | The `razed` bench row (`c82467b3` added it at 200 units despite its subject; `3f82dd04` halved the army per Amendment 1); held-out seeds byte-identical; records |
+
+Deviations and findings:
+- DS-3: a cancel goes through the reap like a death, as 5.0.14's `Cancel` is no `Remove`. With the authored
+  `disabled_while_constructing: true`, a foundation never leaves units.
+- Two tests that loaded `structures.ron` without units now load the units first: a death spawn names its unit by
+  slug.
+- DS-7 held (nine coincident units apart within 25 ticks): no movement file edited.
+- WPA0's probe did not count hangar units; WPB0 does.
+- The `razed` row was re-designed from 200 to 100 units. It is judged on instructions per measured tick against the
+  400-unit row (38.09 M against 54.44 M), not on wall-clock ticks/s on the loaded host.
+
+Part B (B-230) is not built.

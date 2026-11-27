@@ -164,7 +164,11 @@ use std::path::PathBuf;
 /// strike magazine and timed life, each weapon its impact spawn; with those left out at schema 60
 /// a copy of the final tree reproduces `14_163_679_094_600_060_237` on all four builds.
 /// Behaviour: none (no Brood Lord analogue appears). (61 is provisional, the next free at merge.)
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 15_139_787_397_984_595_262;
+/// Re-recorded for plan 2026-12-01-death-spawns-and-hangar-commands WPA1 (checksum schema 61 ->
+/// 62): the world encodes its pending death spawns; with the section left out at schema 61 a copy
+/// of the WPA1 tree reproduces `15_139_787_397_984_595_262` on all four builds. Behaviour: none
+/// (no Swarm structure appears). (62 is provisional, the next free at merge.)
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 2_323_604_560_490_998_891;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")
