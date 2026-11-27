@@ -3179,11 +3179,17 @@
             attack_target_priority: 20,
             primary_weapon: Either,
             acquire_tie_break: Closest,
-            mineral_cost: 25,
+            // 5.0.14 morphs the Baneling from the Zergling; this analogue is trained whole, so it
+            // carries the morphed unit's total (B-86, owner answer Q0135 (a)): CostResource 50
+            // minerals, 25 gas (liberty UnitData:9365-9366) and Food -0.5 (:9315), rounded up to 1
+            // supply as our Zergling's. Its time is the Zergling's LarvaTrain Train2 24 Normal s
+            // (liberty AbilData:2485) plus the MorphToBaneling Stats delay 20 (voidmulti
+            // AbilData:1720): 44 x 25 / 1.4 = 785.7 ticks, rounded half up to 786.
+            mineral_cost: 50,
             gas_cost: 25,
-            supply_cost: 0,
+            supply_cost: 1,
             supply_provided: 0,
-            build_time_ticks: 357,
+            build_time_ticks: 786,
             armor_class: Some("swarm_ground_carapace"),
             weapon: Some((
                 name: "Volatile Burst",

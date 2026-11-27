@@ -29,3 +29,14 @@ cost.
 ## Answer
 
 - **Option (c): Straight diagonals moved onto the high side.** Keep the straight 45° diagonal cliff look by drawing each diagonal through the low cells' corners so it lies entirely on high ground (in its own plan), avoiding both the sawtooth staircase look of Option (a) and low-ground units clipping into rock under Option (b).
+
+## Resolution
+
+Planned in [`docs/plans/2026-12-01-straight-diagonal-cliffs.md`](../../plans/2026-12-01-straight-diagonal-cliffs.md)
+(the commit that closes this question; status Proposed). A convex corner of a high step cell is cut along the
+cell's anti-diagonal, through the low cells' corners, where the cut continues a ground diagonal. A chain of such
+cuts draws one straight chamfer whose foot and wall lie entirely on high ground (D-1 to D-5). Isolated inner corners
+stay square, and void-side diagonals return to the 45° line through the edge midpoints (D-6). The plan measures the
+cost on the high side: half of every step cell is drawn at the low floor, so small ground units at a step's outer
+corner are drawn hanging over the cliff (D-8). It drafts Q0138 for the owner to confirm that size. Until the plan is
+built, `main` keeps the square inner corners of default (a) (B-246).
