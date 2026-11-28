@@ -1072,6 +1072,7 @@ impl Entity {
                     | UnitOrder::Construct { .. }
                     | UnitOrder::Load { .. }
                     | UnitOrder::UnloadAll
+                    | UnitOrder::LoadUnit { .. }
             )
         )
     }
@@ -1874,7 +1875,8 @@ mod order_walks_tests {
             | UnitOrder::Build { .. }
             | UnitOrder::Construct { .. }
             | UnitOrder::Load { .. }
-            | UnitOrder::UnloadAll => task_goal,
+            | UnitOrder::UnloadAll
+            | UnitOrder::LoadUnit { .. } => task_goal,
             UnitOrder::Idle
             | UnitOrder::AttackTarget { .. }
             | UnitOrder::HoldPosition
@@ -1953,6 +1955,9 @@ mod order_walks_tests {
             UnitOrder::HangarBuild,
             UnitOrder::HangarCancelLast,
             UnitOrder::SetHangarAutoBuild { enabled: false },
+            UnitOrder::LoadUnit {
+                passenger: EntityId(99),
+            },
         ];
         let entity = world.entities.get_mut(&unit).ok_or("unit")?;
         for order in orders {
@@ -2087,6 +2092,9 @@ mod weapon_target_tests {
             UnitOrder::HangarBuild,
             UnitOrder::HangarCancelLast,
             UnitOrder::SetHangarAutoBuild { enabled: false },
+            UnitOrder::LoadUnit {
+                passenger: EntityId(99),
+            },
         ];
         for order in &orders {
             match order {
@@ -2112,7 +2120,8 @@ mod weapon_target_tests {
                 | UnitOrder::Follow { .. }
                 | UnitOrder::HangarBuild
                 | UnitOrder::HangarCancelLast
-                | UnitOrder::SetHangarAutoBuild { .. } => {}
+                | UnitOrder::SetHangarAutoBuild { .. }
+                | UnitOrder::LoadUnit { .. } => {}
             }
         }
         orders

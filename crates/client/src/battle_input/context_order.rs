@@ -25,6 +25,7 @@
 //!   per-frame cost.
 
 use bevy::math::Vec3;
+use sim_core::movement::MovementLayer;
 use sim_core::SimWorld;
 use sim_types::{
     AttackOrigin, EntityId, FollowKind, PlayerId, RallyTarget, ResourceNodeId, SimScalar, SimVec2,
@@ -135,14 +136,18 @@ impl SmartPlan {
 /// | Friendly completed carrier `c` | `Load { c }`; else `Follow { c, Move }`; nothing for `c` itself |
 /// | Friendly completed dropoff | `ReturnCargo` (a member holding cargo); else `Move` to the ground |
 /// | Friendly completed extractor on node `n` | `Harvest { n }`; else `Move` to the ground |
-/// | Friendly mobile unit `u` | `Follow { u, Move }`; nothing for `u` itself |
+/// | Friendly mobile ground unit `u` | `LoadUnit { u }` (a carrier member); else `Follow { u, Move }`; nothing for `u` itself |
+/// | Friendly mobile air unit `u` | `Follow { u, Move }`; nothing for `u` itself |
 /// | Any other friendly structure | `Move` to the ground |
 /// | Node `n` | `Harvest { n }`; else `Move` to the ground |
 /// | Ground | `Move` to the ground |
 ///
 /// A friend that is several of these (a carrier that is also a dropoff) offers its rows in the
-/// order `Construct`, `Load`, `ReturnCargo`, `Harvest`, `Follow`, and a structure then the ground
-/// `Move`. A right click never attacks one's own unit (5.0.14's attack ability has
+/// order `Construct`, `Load`, `ReturnCargo`, `Harvest`, `LoadUnit`, `Follow`, and a structure then
+/// the ground `Move`. A carrier's right click on one of its owner's walkers loads it (5.0.14
+/// `CAbilTransport` `AllowSmartCmd 1`, `core` AbilData:1192-1204; plan
+/// `2026-12-03-movement-work-on-solver` WP-T1, B-247), before the move ability's follow, as
+/// `MedivacTransport` comes before `move` in the Medivac's abilities (rallies plan S5). A right click never attacks one's own unit (5.0.14's attack ability has
 /// `SmartFilters "-;Player,Ally"`, `core` AbilData:115-119). The move ability takes the smart
 /// command on anything (`core` AbilData:533-561): on a unit it follows, on the ground it moves.
 #[must_use]
@@ -261,8 +266,9 @@ pub fn sim_point(point: Vec3) -> SimVec2 {
     SimVec2::new(SimScalar::from_num(point.x), SimScalar::from_num(point.z))
 }
 
-/// The rows `friend`, one of the player's own units, offers, in order. The follow of a mobile
-/// friend is its last row (plan `2026-11-26-follow-order` D-10; 5.0.14's smart command on one's
+/// The rows `friend`, one of the player's own units, offers, in order. A completed mobile walker
+/// offers a carrier its pickup (`LoadUnit`) before the follow. The follow of a mobile friend is
+/// its last row (plan `2026-11-26-follow-order` D-10; 5.0.14's smart command on one's
 /// own unit is a `move` on it), and a structure ends with the move to `ground`, a Bevy world
 /// point: a carrier still loads and an extractor still harvests first. A friend that is gone or
 /// has no archetype offers only the move.
@@ -278,6 +284,7 @@ fn friendly_rows(world: &SimWorld, friend: EntityId, ground: Vec3) -> Vec<UnitOr
     };
     let completed = entity.is_completed;
     let mobile = !archetype.is_immobile_by_default();
+    let walker = MovementLayer::from_mover(archetype.mover_type) == MovementLayer::Ground;
     [
         entity
             .construction
@@ -290,6 +297,7 @@ fn friendly_rows(world: &SimWorld, friend: EntityId, ground: Vec3) -> Vec<UnitOr
             .then(|| node_under(world, friend))
             .flatten()
             .map(|target| UnitOrder::Harvest { target }),
+        (completed && mobile && walker).then_some(UnitOrder::LoadUnit { passenger: friend }),
         mobile.then_some(UnitOrder::Follow {
             target: friend,
             kind: FollowKind::Move,
@@ -708,6 +716,50 @@ mod tests {
             plan_on(&world, &[carrier, passenger], target),
             [(UnitOrder::Load { carrier }, vec![passenger])],
             "the carrier in the selection does not stop the others, and takes nothing"
+        );
+        Ok(())
+    }
+
+    /// Plan `2026-12-03-movement-work-on-solver` WP-T1 (B-247): a carrier's right click on an own
+    /// walker picks it up, before the follow the rest of the selection takes; an own flyer, which
+    /// cannot board, is followed by the carrier too; and the walker itself takes nothing.
+    #[test]
+    fn a_carrier_picks_up_an_own_walker_and_follows_an_own_flyer() -> TestResult {
+        let mut world = flat_world()?;
+        let carrier = unit_where(&mut world, 0, |a| a.capabilities.transport_capacity > 0)?;
+        let friend = soldier(&mut world, 1)?;
+        let walker = soldier(&mut world, 2)?;
+        let flyer = unit_where(&mut world, 3, |a| {
+            a.mover_type == MoverType::Air
+                && a.capabilities.transport_capacity == 0
+                && a.max_speed > SimScalar::ZERO
+        })?;
+
+        assert_eq!(
+            plan_on(
+                &world,
+                &[friend, carrier, walker],
+                PointerTarget::Friendly(walker, POINT)
+            ),
+            [
+                (UnitOrder::LoadUnit { passenger: walker }, vec![carrier]),
+                (follow(walker), vec![friend]),
+            ]
+        );
+        assert_eq!(
+            plan_on(&world, &[carrier], PointerTarget::Friendly(flyer, POINT)),
+            [(follow(flyer), vec![carrier])],
+            "a flyer is no passenger"
+        );
+        world
+            .entities
+            .get_mut(&walker)
+            .ok_or("walker")?
+            .is_completed = false;
+        assert_eq!(
+            plan_on(&world, &[carrier], PointerTarget::Friendly(walker, POINT)),
+            [(follow(walker), vec![carrier])],
+            "an unfinished unit offers no pickup"
         );
         Ok(())
     }

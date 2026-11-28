@@ -554,8 +554,12 @@
 // hangar's auto-build switch encoded; with the schema at 62 and the field unhashed every checkpoint
 // reproduced. Behaviour: none in these worlds (no hangar command). Proved on native debug and release
 // and wasm32-wasip1 release and debug, each in a fresh target directory.
+// Re-recorded for plan 2026-12-03-movement-work-on-solver WP-T1 (checksum schema 63 -> 64, the next free
+// at merge): the `LoadUnit` order's tag (23) and passenger encoded; unreachable in these worlds. With the order
+// present and its arm unencoded at schema 63 every checkpoint reproduced. Behaviour: none (no transport is
+// told to pick a unit up). Proved on native debug and release and wasm32-wasip1 release and debug.
 (
-    checksum_schema: 63,
+    checksum_schema: 64,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -581,25 +585,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x0dac09d6a9fce03a,
-        0x7c4d8b98ab3dc367,
-        0xd3e14e3f19674c94,
-        0x9c64b15a7756ac71,
-        0xe4eeded0bc03cd79,
-        0x7a1f7e34d6d14236,
-        0x4bb0a513e697e4ad,
-        0xd047050aa3c0411f,
-        0x1c7763848e1ed755,
-        0x631ac310166254fd,
-        0xba21ae866fa87041,
-        0x6a9a24fb7025eac2,
-        0xaea8bdc4c2e6c8ff,
-        0x63bf70f773972e1a,
-        0xfcaed850c5750c49,
-        0x4061e2a3ff5be7c8,
-        0x3df1cb1a87e78023,
-        0xf1a902df2d85857d,
-        0x898608d88fddd30e,
-        0x488abb1ab3e516e3,
+        0x9f9ebe0d0528e983,
+        0xfecbc17a994ca968,
+        0xadfffd7b52ee1640,
+        0x3f6f37af7f7c838a,
+        0x3ff6be9a4481bd79,
+        0xd5502f2c3bd013b8,
+        0x49ed4def3ea5a0b8,
+        0x9ae8e45eba38db45,
+        0x234568da554dc66c,
+        0x9aeb0104f3b6687a,
+        0xf664039b7745ba27,
+        0xe09a851062692379,
+        0xe434b7eed76ab436,
+        0x68a3d6b5b5165759,
+        0xfd1070b5ef508a51,
+        0x7d45944ea41522b4,
+        0xac0efe78a886a58f,
+        0xb9a90e9ebecd9152,
+        0xfc264917c9209abe,
+        0xe4edea5d3f5f263a,
     ],
 )

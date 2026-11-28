@@ -197,3 +197,64 @@ most waypoints". `catalog_reference_values_tests::the_shipped_rallies_are_5_0_14
 Client targets reading the harness change: `battle_input_tests` 41, `battle_card_tests` 35,
 `battle_context_order_tests` 34, `rally_gpu_tests` 1 (one ignored by design), `runtime_battle_tests` 18, all passing.
 The client's source is unchanged, so the valgrind and steady-state suites are not re-run. Workspace clippy exits 0.
+
+
+## 7. WP-D1, built as WP-T1 of plan `2026-12-03-movement-work-on-solver` (`6efa92df`, `132d2489`)
+
+Built on branch `transport-load` from `main` `cd11ec75` (schema 63, hangar commands merged), under that plan's WP-T1
+and this plan's Amendment 2. Scratch material: `~/scratch/transport-load/`.
+
+### 7.1 Sources re-read
+
+- `CAbilTransport` (`core` AbilData:1192–1212): `Range 1`, `MaxUnloadRange 3`, `AllowSmartCmd 1`,
+  `AllowPassengerSmartCmd 1`. The load range is 1, as `BOARDING_REACH` (1.0, edge to edge) already is, so no bug row
+  is filed (movement plan §3.4). `MedivacTransport` (`liberty` AbilData:1359–1379) sets no range of its own, and no
+  later layer overrides it.
+- Whether the passenger keeps its orders while the transport comes is still not in the data; it stays an inference
+  [INF], and the tests pin the built rule (the passenger keeps them until it boards).
+
+### 7.2 Red runs
+
+On the stub (the variant present, its admission `UnsupportedOrder`, the client's row off), every new test failed:
+`red-sim-core-transport-pickup.log` (10 of 10 in `transport_pickup_tests`; the refusal test was split in two after
+the red run, for the function-length lint) and `red-client-smart-row.log` (`context_order`'s
+`a_carrier_picks_up_an_own_walker_and_follows_an_own_flyer` and `battle_context_order_tests`'
+`a_transport_right_clicking_an_own_soldier_picks_it_up`: the carrier was planned a `Follow`).
+
+### 7.3 Schema (movement plan §4.6, stop rule T-2)
+
+`6efa92df` with the `LoadUnit` arm encoding nothing, at schema 63, reproduces both goldens at every checkpoint and
+the sandbox's `7_726_200_156_173_230_158` on native debug and release and `wasm32-wasip1` release and debug: 8 of 8
+plus the sandbox on four builds (`golden-latent63/summary.txt`). `132d2489` then took schema 66 (provisional), and the
+orchestrator renumbered it to **64**, the next free at merge (transport-load merges before missiles): tag 23 and the
+passenger are encoded, both goldens and the sandbox (`5_660_790_611_332_926_540`) re-recorded at 64, and the
+re-record reproduces on native debug and release and `wasm32-wasip1` release.
+
+### 7.4 Worlds and the skirmish
+
+- **Worlds** (`scripts/world.sh`, this plan's `measure.sh` and `compare.sh`): `main` `1c0f922c` (`world-base/`) and
+  `6efa92df` at schema 63 (`world-head/`), 555 files each (the matrix with every battle on its seeds of record and 16
+  seeds, battles 31 and 33 on 100 and 64 seeds, both showcases on their default seed and seeds 1 to 8 for 6,000
+  ticks): **0 differing**. The matrix log reads "1220 runs: expectation failures 2 on the seeds of record, 26 over
+  all seeds" on both. No scenario issues `LoadUnit`, and `step_load`'s refactor into the shared `pursue_unit` and
+  `within_boarding_reach` keeps the passenger's walk byte for byte.
+- **The skirmish** (`a_match_is_won_through_real_input_alone`, release, radv): won in 1,644 frames at tick 6,338 on
+  both trees, every stage line identical (`client-base/`, `client-head/`); only the wall-clock seconds differ. The
+  pilot never right-clicks an own unit with a transport selected.
+
+### 7.5 Throughput
+
+Callgrind on the 64×64, 400-unit row (release bench binaries, instructions at 300 measured ticks less those at 0,
+over 300), both trees in one session under one hold of the gate lock (`throughput/`; load average 54 to 79, which
+does not move instruction counts): `main` `1c0f922c` 54.455 M per tick, branch `89613e32` 54.453 M per tick
+(**−0.002 %**), within the 3 % of rallies plan P-8. Nothing new runs per tick unless a carrier holds `LoadUnit`.
+
+### 7.6 Client checks
+
+- `context_order` and `battle_pipeline` unit tests 167, `battle_context_order_tests` 35, `battle_input_tests` 41.
+- `sync_steady_state_tests::frames_after_a_mixed_right_click_create_modify_and_remove_nothing`, now with a second
+  transport's pickup of a lone soldier in flight through the window: passes.
+- `sync_allocation_count_tests::smart_mixed_frames_allocate_nothing` (valgrind, alone under the gate lock), the pair
+  with the same pickup in flight: live 6 and 10 blocks in the windows of 64 and 128 frames, baseline 6 and 10; the
+  live sync adds no allocation.
+- `cargo gate quick` green on `89613e32`.

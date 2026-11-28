@@ -154,6 +154,17 @@ pub enum UnitOrder {
         /// On or off.
         enabled: bool,
     },
+    /// Fly or walk to one of the player's own ground units and load it (`StarCraft` II 5.0.14
+    /// `CAbilTransport`'s `Load` with a unit target, which its `AllowSmartCmd 1` makes the
+    /// transport's right click on that unit, `core` AbilData:1192–1204; plan
+    /// `2026-12-03-movement-work-on-solver` WP-T1, B-247). The carrier's side of [`Self::Load`]:
+    /// the carrier pursues the passenger, which keeps its own orders, and boards it once within
+    /// reach. The order ends when the passenger boards, dies, is carried by another carrier, or
+    /// no longer fits.
+    LoadUnit {
+        /// The unit to pick up.
+        passenger: EntityId,
+    },
 }
 
 impl UnitOrder {

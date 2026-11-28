@@ -65,8 +65,11 @@
 //!   the same pair on the shipped skirmish, resumed, after one right click of a mixed selection on
 //!   the local transport, planned by `smart_plan` and queued by `submit_smart` before the warm-up:
 //!   two ground soldiers board it and an armed air unit follows it, so boarders walk and the
-//!   follower flies through the window (plan `2026-12-01-rallies-and-smart-command` P-6). Their
-//!   parent is `smart_mixed_frames_allocate_nothing`.
+//!   follower flies through the window (plan `2026-12-01-rallies-and-smart-command` P-6). A second
+//!   transport's right click on a lone soldier of the player's, planned and queued the same way,
+//!   keeps a pickup (`LoadUnit`) in flight through the window too (plan
+//!   `2026-12-03-movement-work-on-solver` WP-T1). Their parent is
+//!   `smart_mixed_frames_allocate_nothing`.
 //! - `razing_cycle_live_frames` and `razing_cycle_baseline_frames` are the same pair with a
 //!   weaponless enemy structure carrying the shipped death spawn with the most units raised and
 //!   killed every 200 ticks by a system both children run, so its units arrive and expire on
@@ -671,17 +674,25 @@ fn planted_allocation() {
 
 /// The mixed group of the variant `smart_mixed`: two ground soldiers and an armed air unit of the
 /// local player and the local transport they right-click, all presentable by their shipped
-/// media.
+/// media; and a second transport with the lone soldier it right-clicks to pick up.
 #[derive(Resource, Clone, Copy, Debug)]
 struct MixedGroup {
     soldiers: [sim_types::EntityId; 2],
     flyer: sim_types::EntityId,
     carrier: sim_types::EntityId,
+    picker: sim_types::EntityId,
+    pickup: sim_types::EntityId,
 }
 
 /// Map distance, in world units, from the soldiers to the transport: their walk to board lasts
 /// past the warm-up and the longer window (96 ticks, under 4 s at a soldier's speed).
 const MIXED_CARRIER_DISTANCE: i32 = 22;
+
+/// Radius, beyond the soldiers' ring of 6, in world units, of the ring around the local base on
+/// which the lone soldier the second transport picks up stands, at the point farthest from the
+/// transport's start on the ring of 12: the flight lasts past the warm-up and the longer window
+/// (`check_mixed_window` fails otherwise).
+const PICKUP_DISTANCE: i32 = 24;
 
 /// Spawns the [`MixedGroup`] near the local base of `simulation`, on ground cells both bodies
 /// can stand on; unit types are chosen by capability and by shipped media under `assets`.
@@ -773,17 +784,47 @@ fn stage_mixed_group(
     let second = around(simulation, 8)?;
     let beside = around(simulation, 10)?;
     let far = around(simulation, 6 + MIXED_CARRIER_DISTANCE)?;
+    let hangar = around(simulation, 12)?;
+    let lone = farthest_open_ground(simulation, base, 6 + PICKUP_DISTANCE, hangar, &walkable)?;
     let soldiers = [
         simulation.spawn_unit(soldier, local, first)?,
         simulation.spawn_unit(soldier, local, second)?,
     ];
     let flyer = simulation.spawn_unit(flyer, local, beside)?;
+    let picker = simulation.spawn_unit(carrier, local, hangar)?;
     let carrier = simulation.spawn_unit(carrier, local, far)?;
+    let pickup = simulation.spawn_unit(soldier, local, lone)?;
     Ok(MixedGroup {
         soldiers,
         flyer,
         carrier,
+        picker,
+        pickup,
     })
+}
+
+/// The open ground, by `walkable`, among 16 points on the ring of `radius` world units around
+/// `base` that lies farthest from `from`: where the lone soldier of the variant `smart_mixed`
+/// stands, so the second transport's flight to it outlasts the window.
+fn farthest_open_ground(
+    simulation: &sim_core::SimWorld,
+    base: sim_types::SimVec2,
+    radius: i32,
+    from: sim_types::SimVec2,
+    walkable: &dyn Fn(&sim_core::SimWorld, sim_types::SimVec2) -> bool,
+) -> Result<sim_types::SimVec2, Box<dyn std::error::Error>> {
+    Ok((0..16)
+        .filter_map(|step| {
+            let angle = f64::from(step) * std::f64::consts::TAU / 16.0;
+            let at = base
+                + sim_types::SimVec2::new(
+                    sim_types::SimScalar::from_num(angle.cos() * f64::from(radius)),
+                    sim_types::SimScalar::from_num(angle.sin() * f64::from(radius)),
+                );
+            walkable(simulation, at).then_some(at)
+        })
+        .max_by_key(|at| sim_types::SimVec2::distance(*at, from))
+        .ok_or("open ground for the lone soldier")?)
 }
 
 /// The mixed right click: the client's own plan of a right click by the group on its transport
@@ -820,6 +861,22 @@ fn click_smart_mixed(app: &mut App, group: MixedGroup) -> TestResult {
         return Err(format!("the mixed click planned {orders:?}").into());
     }
     queue.submit_smart(world, local, &plan, false)?;
+    let ground = world.entities[&group.pickup].position;
+    let target = client::battle_input::context_order::PointerTarget::Friendly(
+        group.pickup,
+        Vec3::new(ground.x.to_f32(), 0.0, ground.y.to_f32()),
+    );
+    let pickup =
+        client::battle_input::context_order::smart_plan(world, local, &[group.picker], target);
+    let orders: Vec<_> = pickup.orders.iter().map(|entry| &entry.order).collect();
+    if orders
+        != [&sim_types::UnitOrder::LoadUnit {
+            passenger: group.pickup,
+        }]
+    {
+        return Err(format!("the transport's click on the soldier planned {orders:?}").into());
+    }
+    queue.submit_smart(world, local, &pickup, false)?;
     Ok(())
 }
 
@@ -854,6 +911,18 @@ fn check_mixed_window(app: &App, group: MixedGroup, ticked: u32, frames: u32) ->
         Some(sim_types::UnitOrder::Follow { target, .. }) if *target == group.carrier
     ) {
         return Err(format!("the air unit must still follow: {:?}", follower.order_queue).into());
+    }
+    let picker = &world.entities[&group.picker];
+    let picking = matches!(
+        picker.order_queue.front(),
+        Some(sim_types::UnitOrder::LoadUnit { passenger }) if *passenger == group.pickup
+    );
+    if !picking || world.entities[&group.pickup].is_loaded_in_transport() {
+        return Err(format!(
+            "the second transport must still fly to its pickup: {:?}",
+            picker.order_queue
+        )
+        .into());
     }
     Ok(())
 }

@@ -588,6 +588,91 @@ fn a_mixed_selection_right_clicking_its_transport_boards_and_follows_it() {
     );
 }
 
+/// Plan `2026-12-03-movement-work-on-solver` WP-T1 (B-247): a transport and a soldier right-click
+/// another soldier. The transport is given the pickup (5.0.14 `CAbilTransport` `AllowSmartCmd 1`)
+/// and the soldier the follow, in one tick's bundle; the clicked soldier is given nothing, and
+/// the transport then flies to it and loads it.
+#[test]
+fn a_transport_right_clicking_an_own_soldier_picks_it_up() {
+    let mut harness = skirmish();
+    let origin = harness.simulated_position(workers(&harness)[0]);
+    let soldier_type = presentable_type(&harness, |a| {
+        a.mover_type == sim_types::MoverType::Ground
+            && a.capabilities.harvester.is_none()
+            && !a.capabilities.can_construct
+            && a.capabilities.transport_capacity == 0
+    });
+    let carrier_type = presentable_type(&harness, |a| a.capabilities.transport_capacity > 0);
+    let spots = [5.0, 7.0, 10.0].map(|distance| harness.open_ground(origin, distance));
+    let escort = spawn_shown(&mut harness, soldier_type, LOCAL_PLAYER, spots[0]);
+    let passenger = spawn_shown(&mut harness, soldier_type, LOCAL_PLAYER, spots[1]);
+    let carrier = spawn_shown(&mut harness, carrier_type, LOCAL_PLAYER, spots[2]);
+    harness.look_at(spots[1]);
+    select_all(&mut harness, &[escort, carrier]);
+
+    let at = harness.unit_on_screen(passenger);
+    harness.click(MouseButton::Right, at);
+
+    let captured: Vec<_> = pending(&harness)
+        .iter()
+        .map(|command| (command.order.clone(), command.entities.clone()))
+        .collect();
+    let follow = UnitOrder::Follow {
+        target: passenger,
+        kind: FollowKind::Move,
+    };
+    assert_eq!(
+        captured,
+        [
+            (UnitOrder::LoadUnit { passenger }, vec![carrier]),
+            (follow.clone(), vec![escort]),
+        ],
+        "status: {}",
+        harness.status()
+    );
+
+    harness.resume();
+    harness.step(1);
+    harness.pause();
+    assert!(
+        pending(&harness).is_empty(),
+        "both went into one tick's bundle"
+    );
+    let front = |harness: &Harness, unit: EntityId| {
+        harness.world().entities[&unit].order_queue.front().cloned()
+    };
+    assert_eq!(
+        front(&harness, carrier),
+        Some(UnitOrder::LoadUnit { passenger })
+    );
+    assert_eq!(front(&harness, escort), Some(follow));
+    assert_eq!(
+        front(&harness, passenger),
+        None,
+        "the clicked soldier is given nothing"
+    );
+
+    harness.resume();
+    for _ in 0..MINING_ROUND_FRAMES {
+        if harness.world().entities[&passenger].transport_carrier() == Some(carrier) {
+            break;
+        }
+        harness.step(1);
+    }
+    harness.pause();
+    assert_eq!(
+        harness.world().entities[&passenger].transport_carrier(),
+        Some(carrier),
+        "the transport picked the soldier up; status: {}",
+        harness.status()
+    );
+    assert_eq!(
+        front(&harness, carrier),
+        None,
+        "the pickup ended with the load"
+    );
+}
+
 /// P-2: a worker and a soldier right-clicking a mineral get a harvest and a move to the field in
 /// the same tick (the soldier was given nothing before, B-222). After 200 ticks the worker is
 /// still harvesting the field and the soldier has arrived beside it.
