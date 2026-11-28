@@ -67,7 +67,7 @@ pub use placement::{PlacementFlag, PlacementFlags};
 pub use player_view::{
     AbilityLockView, AttackSnapshotView, CarrierView, CastStateView, CommandOptionView,
     CommandSubject, HangarView, ModeStateView, OptionLock, PlayerView, QueuedItem, QueuedJobView,
-    RallyView, SiteRefusal, StructureQueueView, VisibleNodeView,
+    RallyView, RememberedStructureView, SiteRefusal, StructureQueueView, VisibleNodeView,
 };
 pub use presentation::{
     AbilitySource, AreaView, Concealment, EffectSource, LineView, LinkView, ModeTransitionView,

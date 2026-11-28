@@ -51,3 +51,8 @@ batch pushes to a few a day, and run at most one or two building agents at once.
   - `cargo clippy --workspace --all-targets --locked -- -D warnings`
   - `cargo gate full`: every test executable and doc test of the workspace, each executable with its thread cap
     from `crates/gate/suites.ron` so that the run fits the runner's memory, and the golden replays.
+- **Shards on CI.** CI runs the full gate as three parallel jobs, each `cargo gate full` with
+  `SPACE_SCUFFLE_GATE_SHARD=<k>/3`. A target's `shard: Some(k)` in `crates/gate/suites.ron` assigns it to shard
+  `k`; the last shard runs every unassigned target, clippy, the doc tests and the golden replays, so the shards
+  together run the complete suite, each target once. A shard writes no stamp. Assign a long GPU or valgrind target
+  to the lighter shard when it would push a shard past about 40 minutes of tests on CI.

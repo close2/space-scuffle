@@ -27,7 +27,8 @@
 //!
 //! A selection holding production structures ends its root list with one rally entry per rally
 //! slot of their abilities, named by data, each arming [`CommandMode::Rally`] (plan
-//! `2026-11-25-rallies` D-8). Like every entry they take their position's key (B-214, Q0115).
+//! `2026-11-25-rallies` D-8). Like every entry they take their position's key (S-rally-keys,
+//! Q0115).
 //!
 //! # Invariants
 //! - Pure: [`derive_card`] depends only on its arguments, and no Bevy type but [`Resource`] is here.
@@ -782,8 +783,9 @@ fn root_entries(model: &HudModel, facts: &[SelectedFact], mut emit: impl FnMut(C
 
 /// Calls `emit` with one rally entry per slot index of the selected completed structures' rally
 /// abilities (plan `2026-11-25-rallies` D-8), after every other root entry, so the entries take
-/// the positions, and so the keys, that follow (B-214, Q0115's default (a)). Each entry is named
-/// by the first selected structure that has the slot, and arms [`CommandMode::Rally`].
+/// the positions, and so the keys, that follow (S-rally-keys: Q0115 (a), sanctioned in Q0052).
+/// Each entry is named by the first selected structure that has the slot, and arms
+/// [`CommandMode::Rally`].
 fn rally_entries(model: &HudModel, facts: &[SelectedFact], mut emit: impl FnMut(CardEntry)) {
     let slots = completed(model, facts)
         .map(|archetype| archetype.rally_labels.len())

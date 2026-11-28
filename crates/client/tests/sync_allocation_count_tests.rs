@@ -44,8 +44,9 @@
 //!   They hold a spell caster's image beside it: an enemy caster on another cliff stormed a
 //!   local unit below it, and the storm ended before the session began, so the pool holds two
 //!   images, one of each cause (plan `2026-11-27-launch-and-spell-visibility` V-25). The
-//!   running live child also runs the minimap's frame systems (layout, marks rebuilt on every
-//!   tick, fog bytes on every refill; plan `2026-12-01-minimap` M-S2).
+//!   running live child also runs the minimap's frame systems (the alert log, layout, marks
+//!   rebuilt on every tick with the held snapshot's square, fog bytes on every refill; plan
+//!   `2026-12-01-minimap` M-S2).
 //! - `brood_cycle_live_frames` and `brood_cycle_baseline_frames` are the same pair on the default
 //!   battle with every mobile unit killed and a Brood Lord analogue attacking a durable unarmed
 //!   target, so Broodlings arrive and expire on their own clocks; one 40 ms tick a frame, a
@@ -60,6 +61,12 @@
 //!   derive its hangar entries and members line every tick (plan
 //!   `2026-12-01-death-spawns-and-hangar-commands` HC-16). Their parent is
 //!   `hangar_cycle_frames_allocate_nothing`.
+//! - `smart_mixed_live_frames` and `smart_mixed_baseline_frames` (the variant `smart_mixed`) are
+//!   the same pair on the shipped skirmish, resumed, after one right click of a mixed selection on
+//!   the local transport, planned by `smart_plan` and queued by `submit_smart` before the warm-up:
+//!   two ground soldiers board it and an armed air unit follows it, so boarders walk and the
+//!   follower flies through the window (plan `2026-12-01-rallies-and-smart-command` P-6). Their
+//!   parent is `smart_mixed_frames_allocate_nothing`.
 //! - `razing_cycle_live_frames` and `razing_cycle_baseline_frames` are the same pair with a
 //!   weaponless enemy structure carrying the shipped death spawn with the most units raised and
 //!   killed every 200 ticks by a system both children run, so its units arrive and expire on
@@ -158,6 +165,12 @@ enum Variant {
     HangarCycleLive,
     /// The battle driver and the cycle's driver alone on the same staged battle.
     HangarCycleBaseline,
+    /// The live synchroniser and battle driver on the resumed skirmish after a mixed right click
+    /// on the local transport: boarders walk to it and an air unit follows it (plan
+    /// `2026-12-01-rallies-and-smart-command` P-6, the variant `smart_mixed`).
+    SmartMixedLive,
+    /// The battle driver alone after the same click.
+    SmartMixedBaseline,
     /// The live synchroniser and battle driver on the default battle with every mobile unit
     /// killed and an enemy structure with a death spawn raised and killed every 200 ticks, so
     /// its units arrive and expire on their own clocks (plan
@@ -182,6 +195,8 @@ impl Variant {
             Self::BroodCycleBaseline => "brood_cycle_baseline_frames",
             Self::HangarCycleLive => "hangar_cycle_live_frames",
             Self::HangarCycleBaseline => "hangar_cycle_baseline_frames",
+            Self::SmartMixedLive => "smart_mixed_live_frames",
+            Self::SmartMixedBaseline => "smart_mixed_baseline_frames",
             Self::RazingCycleLive => "razing_cycle_live_frames",
             Self::RazingCycleBaseline => "razing_cycle_baseline_frames",
         }
@@ -207,6 +222,11 @@ impl Variant {
         self.cycles_broods() || self.cycles_hangars() || self.cycles_razing()
     }
 
+    /// Whether the child plays the mixed right click of the variant `smart_mixed`.
+    fn clicks_smart_mixed(self) -> bool {
+        matches!(self, Self::SmartMixedLive | Self::SmartMixedBaseline)
+    }
+
     /// Whether a splash event is sent every frame.
     fn streams_effects(self) -> bool {
         matches!(self, Self::EffectStream | Self::EffectBaseline)
@@ -225,6 +245,7 @@ impl Variant {
                 | Self::RunningBaseline
                 | Self::BroodCycleBaseline
                 | Self::HangarCycleBaseline
+                | Self::SmartMixedBaseline
                 | Self::RazingCycleBaseline
         )
     }
@@ -411,6 +432,63 @@ fn hold_attack_snapshot(simulation: &mut sim_core::SimWorld) -> TestResult {
     Err("the enemy on the cliff never struck unseen".into())
 }
 
+/// Holds a remembered structure (plan `2026-12-01-minimap` M-S2′): a local scout beside the
+/// enemy's start structure shows it, then dies, and ticks run until the view remembers it. Nothing
+/// of the local player sees that spot again in the window, so the image is held unchanged and the
+/// view writer, the fog refill, the pool and the marks builder draw it every tick.
+fn hold_remembered_structure(simulation: &mut sim_core::SimWorld) -> TestResult {
+    let viewer = attack_snapshot_stage::LOCAL_PLAYER;
+    let (structure, at) = simulation
+        .map
+        .structures()
+        .keys()
+        .find_map(|id| {
+            let unit = simulation.entities.get(id)?;
+            (unit.owner == attack_snapshot_stage::ENEMY).then_some((*id, unit.position))
+        })
+        .ok_or("the enemy starts with a structure")?;
+    let kind = simulation
+        .entities
+        .values()
+        .find(|unit| unit.owner == viewer && !unit.is_immobile)
+        .ok_or("a local unit")?
+        .unit_type_id;
+    let scout = [(0, 5), (5, 0), (0, -5), (-5, 0), (4, 4), (-4, -4)]
+        .into_iter()
+        .find_map(|(dx, dy)| {
+            simulation
+                .spawn_unit(kind, viewer, at + sim_types::SimVec2::from_i32(dx, dy))
+                .ok()
+        })
+        .ok_or("open ground beside the enemy's structure")?;
+    let step = |simulation: &mut sim_core::SimWorld| {
+        simulation.step(&sim_types::TickBundle {
+            tick: sim_types::Tick(simulation.current_tick),
+            commands: Vec::new(),
+            state_checksum: None,
+        });
+    };
+    step(simulation);
+    simulation
+        .entities
+        .get_mut(&scout)
+        .ok_or("the scout lives")?
+        .hp = sim_types::SimScalar::ZERO;
+    let mut view = sim_types::PlayerView::default();
+    for _ in 0..10 {
+        step(simulation);
+        simulation.write_player_view(viewer, &mut view);
+        if view
+            .remembered_structures
+            .iter()
+            .any(|entry| entry.entity == structure)
+        {
+            return Ok(());
+        }
+    }
+    Err("the view never remembered the enemy's structure".into())
+}
+
 /// Adds a spell caster's image to the held one (plan `2026-11-27-launch-and-spell-visibility`
 /// V-25): an enemy caster on another cliff storms a local unit below it, and ticks run until the
 /// storm has ended, so its `Hidden` pulses are over and the image is held unchanged.
@@ -494,9 +572,10 @@ fn add_snapshot_presentation(app: &mut App) {
 /// Side of the minimap image the running live child stands in for egui, in pixels and points.
 const MINIMAP_SIDE: u32 = 172;
 
-/// Adds the minimap's frame systems after the fog refill: the layout and cells, the marks
-/// rebuilt on every tick and the fog bytes rebuilt on every refill (plan `2026-12-01-minimap`
-/// M-S2). The map's billboards are stood in for with one record per node, as the battle scene
+/// Adds the minimap's frame systems after the fog refill: the alert log fed by the published
+/// strikes, the layout and cells, the marks rebuilt on every tick (with the held attack snapshot's
+/// square) and the fog bytes rebuilt on every refill (plan `2026-12-01-minimap` M-S2, extended in
+/// WP4). The map's billboards are stood in for with one record per node, as the battle scene
 /// makes them, so resource squares are listed too. No renderer and no egui run here.
 fn add_minimap(app: &mut App) -> TestResult {
     let root = app.world().resource::<client::ResolvedAssetsRoot>().clone();
@@ -527,6 +606,7 @@ fn add_minimap(app: &mut App) -> TestResult {
             side_points,
         ))
         .init_resource::<client::minimap::MinimapSettings>()
+        .init_resource::<client::minimap::alerts::AlertLog>()
         .insert_resource(client::terrain::TerrainState::new(map))
         .insert_resource(client::runtime_battle::MapPresentation {
             objects,
@@ -536,12 +616,14 @@ fn add_minimap(app: &mut App) -> TestResult {
         .add_systems(
             Update,
             (
+                client::minimap::collect_alerts,
                 client::minimap::prepare_minimap_frame,
                 client::minimap::build_minimap_marks,
                 client::minimap::refresh_minimap_fog,
             )
                 .chain()
-                .after(refresh_snapshot_fog),
+                .after(refresh_snapshot_fog)
+                .after(publish_combat_events),
         );
     Ok(())
 }
@@ -560,6 +642,18 @@ fn check_minimap(app: &App, rebuilds_before: u64) -> TestResult {
     if frame.marks().is_empty() || frame.fog().is_empty() {
         return Err("the minimap built no marks or no fog in the window".into());
     }
+    let images = frame
+        .subjects()
+        .iter()
+        .filter(|subject| **subject == client::minimap::marks::MarkSubject::Image)
+        .count();
+    if images < 2 {
+        return Err(format!(
+            "the held attack snapshot and remembered structure have {images} squares on the \
+             minimap, not 2"
+        )
+        .into());
+    }
     if frame.marks_generation() <= rebuilds_before + 2 {
         return Err(format!(
             "the minimap's marks were not rebuilt in the window: {rebuilds_before} then {}",
@@ -573,6 +667,195 @@ fn check_minimap(app: &App, rebuilds_before: u64) -> TestResult {
 /// The positive control: one heap allocation, freed in the same frame.
 fn planted_allocation() {
     drop(std::hint::black_box(Vec::<u8>::with_capacity(64)));
+}
+
+/// The mixed group of the variant `smart_mixed`: two ground soldiers and an armed air unit of the
+/// local player and the local transport they right-click, all presentable by their shipped
+/// media.
+#[derive(Resource, Clone, Copy, Debug)]
+struct MixedGroup {
+    soldiers: [sim_types::EntityId; 2],
+    flyer: sim_types::EntityId,
+    carrier: sim_types::EntityId,
+}
+
+/// Map distance, in world units, from the soldiers to the transport: their walk to board lasts
+/// past the warm-up and the longer window (96 ticks, under 4 s at a soldier's speed).
+const MIXED_CARRIER_DISTANCE: i32 = 22;
+
+/// Spawns the [`MixedGroup`] near the local base of `simulation`, on ground cells both bodies
+/// can stand on; unit types are chosen by capability and by shipped media under `assets`.
+fn stage_mixed_group(
+    simulation: &mut sim_core::SimWorld,
+    assets: &Path,
+) -> Result<MixedGroup, Box<dyn std::error::Error>> {
+    let local = sim_types::PlayerId(0);
+    let find = |test: &dyn Fn(&sim_core::catalog::UnitArchetype) -> bool, what: &'static str| {
+        simulation
+            .catalog
+            .archetypes()
+            .find(|a| {
+                !a.is_immobile_by_default()
+                    && assets
+                        .join("textures")
+                        .join(format!("{}.flipbook.ron", a.slug))
+                        .is_file()
+                    && test(a)
+            })
+            .map(|a| a.unit_type_id)
+            .ok_or(what)
+    };
+    let soldier = find(
+        &|a| {
+            a.mover_type == sim_types::MoverType::Ground
+                && a.capabilities.harvester.is_none()
+                && !a.capabilities.can_construct
+                && a.capabilities.transport_capacity == 0
+        },
+        "a presentable ground soldier",
+    )?;
+    let carrier = find(
+        &|a| a.capabilities.transport_capacity > 0,
+        "a presentable transport",
+    )?;
+    let flyer = find(
+        &|a| {
+            a.mover_type == sim_types::MoverType::Air
+                && a.capabilities.transport_capacity == 0
+                && client::battle_pipeline::commands::is_armed(a)
+        },
+        "a presentable armed air unit",
+    )?;
+    let base = simulation
+        .entities
+        .values()
+        .find(|e| e.owner == local && e.is_immobile)
+        .map(|e| e.position)
+        .ok_or("a local base")?;
+    let walkable = |world: &sim_core::SimWorld, at: sim_types::SimVec2| {
+        (-1..=1).all(|dx: i32| {
+            (-1..=1).all(|dy: i32| {
+                let probe = at
+                    + sim_types::SimVec2::new(
+                        sim_types::SimScalar::from_i32(dx),
+                        sim_types::SimScalar::from_i32(dy),
+                    );
+                world
+                    .map
+                    .world_to_cell(probe)
+                    .ok()
+                    .and_then(|(x, y)| world.map.cell(x, y).ok())
+                    .is_some_and(|cell| {
+                        cell.flags.contains(sim_map::CellFlags::GROUND_PATHABLE)
+                            && !cell.flags.intersects(
+                                sim_map::CellFlags::OCCUPIED_BY_STRUCTURE
+                                    | sim_map::CellFlags::UNPASSABLE_CLIFF,
+                            )
+                    })
+            })
+        })
+    };
+    let around = |world: &sim_core::SimWorld, distance: i32| {
+        (0..16)
+            .map(|step| {
+                let angle = f64::from(step) * std::f64::consts::TAU / 16.0;
+                let offset = sim_types::SimVec2::new(
+                    sim_types::SimScalar::from_num(angle.cos() * f64::from(distance)),
+                    sim_types::SimScalar::from_num(angle.sin() * f64::from(distance)),
+                );
+                base + offset
+            })
+            .find(|at| walkable(world, *at))
+            .ok_or("open ground near the local base")
+    };
+    // Each body on its own open ground, clear of structures and cliffs.
+    let first = around(simulation, 6)?;
+    let second = around(simulation, 8)?;
+    let beside = around(simulation, 10)?;
+    let far = around(simulation, 6 + MIXED_CARRIER_DISTANCE)?;
+    let soldiers = [
+        simulation.spawn_unit(soldier, local, first)?,
+        simulation.spawn_unit(soldier, local, second)?,
+    ];
+    let flyer = simulation.spawn_unit(flyer, local, beside)?;
+    let carrier = simulation.spawn_unit(carrier, local, far)?;
+    Ok(MixedGroup {
+        soldiers,
+        flyer,
+        carrier,
+    })
+}
+
+/// The mixed right click: the client's own plan of a right click by the group on its transport
+/// (`smart_plan`) queued by the client's own submission (`submit_smart`), as the pointer would.
+/// Fails unless it gives the soldiers `Load` and the air unit `Follow`.
+fn click_smart_mixed(app: &mut App, group: MixedGroup) -> TestResult {
+    let local = sim_types::PlayerId(0);
+    let mut session = app.world_mut().resource_mut::<BattleSession>();
+    let (world, queue) = session.world_and_commands();
+    let world = world.ok_or("invariant: the prepared session holds its world")?;
+    let ground = world.entities[&group.carrier].position;
+    let target = client::battle_input::context_order::PointerTarget::Friendly(
+        group.carrier,
+        Vec3::new(ground.x.to_f32(), 0.0, ground.y.to_f32()),
+    );
+    let selection = [
+        group.soldiers[0],
+        group.soldiers[1],
+        group.flyer,
+        group.carrier,
+    ];
+    let plan = client::battle_input::context_order::smart_plan(world, local, &selection, target);
+    let orders: Vec<_> = plan.orders.iter().map(|entry| &entry.order).collect();
+    let expected = [
+        &sim_types::UnitOrder::Load {
+            carrier: group.carrier,
+        },
+        &sim_types::UnitOrder::Follow {
+            target: group.carrier,
+            kind: sim_types::FollowKind::Move,
+        },
+    ];
+    if orders != expected {
+        return Err(format!("the mixed click planned {orders:?}").into());
+    }
+    queue.submit_smart(world, local, &plan, false)?;
+    Ok(())
+}
+
+/// The `smart_mixed` children's check after their window of `frames` 20 ms frames, in which the
+/// battle ran `ticked` ticks: one 40 ms tick every other frame, and the soldiers are still
+/// walking to board and the air unit still follows, so the orders ran through the whole window.
+fn check_mixed_window(app: &App, group: MixedGroup, ticked: u32, frames: u32) -> TestResult {
+    if ticked != frames / 2 {
+        return Err(format!("the battle ran {ticked} ticks in {frames} frames").into());
+    }
+    let session = app.world().resource::<BattleSession>();
+    let world = session
+        .world()
+        .ok_or("invariant: the running session holds its world")?;
+    for soldier in group.soldiers {
+        let entity = &world.entities[&soldier];
+        let boarding = matches!(
+            entity.order_queue.front(),
+            Some(sim_types::UnitOrder::Load { carrier }) if *carrier == group.carrier
+        );
+        if !boarding || entity.is_loaded_in_transport() {
+            return Err(format!(
+                "{soldier:?} must still walk to board after the window: {:?}",
+                entity.order_queue
+            )
+            .into());
+        }
+    }
+    let follower = &world.entities[&group.flyer];
+    if !matches!(
+        follower.order_queue.front(),
+        Some(sim_types::UnitOrder::Follow { target, .. }) if *target == group.carrier
+    ) {
+        return Err(format!("the air unit must still follow: {:?}", follower.order_queue).into());
+    }
+    Ok(())
 }
 
 /// What [`stage_variant`] stages: the gas crew, the cycling kind's watcher, the Carriers' driver
@@ -594,6 +877,7 @@ fn stage_variant(
     let crew = if variant.is_running() {
         let crew = add_gas_crew(simulation)?;
         hold_attack_snapshot(simulation)?;
+        hold_remembered_structure(simulation)?;
         Some(crew)
     } else {
         None
@@ -706,7 +990,7 @@ fn add_hangar_card(app: &mut App, host: sim_types::EntityId) {
 
 /// Adds what [`stage_variant`] staged to `app`: the gas crew's and the cycling kind's watchers,
 /// the Carriers' and the razing drivers (before the tick), and the battle driver of a baseline
-/// child that ticks.
+/// child that ticks (the `smart_mixed` baseline among them).
 fn add_staged(app: &mut App, variant: Variant, staged: &Staged) {
     let &(crew, brood, hangars, razing) = staged;
     if let Some(crew) = crew {
@@ -732,6 +1016,7 @@ fn add_staged(app: &mut App, variant: Variant, staged: &Staged) {
             | Variant::BroodCycleBaseline
             | Variant::HangarCycleBaseline
             | Variant::RazingCycleBaseline
+            | Variant::SmartMixedBaseline
     ) {
         app.add_systems(Update, advance_battle_ticks);
     }
@@ -743,15 +1028,20 @@ fn steady_state_app(variant: Variant) -> Result<App, Box<dyn std::error::Error>>
     let root = client::ResolvedAssetsRoot::from_directory(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets"),
     )?;
-    let scenario = if variant.is_running() {
+    let scenario = if variant.is_running() || variant.clicks_smart_mixed() {
         SKIRMISH_SCENARIO
     } else {
         DEFAULT_BATTLE_SCENARIO
     };
-    let ticking = variant.is_running() || variant.cycles_units();
+    let ticking = variant.is_running() || variant.cycles_units() || variant.clicks_smart_mixed();
     let definition = BattleDefinition::load(root.as_path(), scenario.as_ref())?;
     let mut simulation = definition.instantiate()?;
     let (crew, brood, hangars, razing) = stage_variant(variant, &mut simulation)?;
+    let mixed = if variant.clicks_smart_mixed() {
+        Some(stage_mixed_group(&mut simulation, root.as_path())?)
+    } else {
+        None
+    };
     let session = BattleSession::prepare(
         SessionGeneration::FIRST,
         &mut simulation,
@@ -797,6 +1087,10 @@ fn steady_state_app(variant: Variant) -> Result<App, Box<dyn std::error::Error>>
         ),
     );
     add_staged(&mut app, variant, &(crew, brood, hangars, razing));
+    if let Some(group) = mixed {
+        click_smart_mixed(&mut app, group)?;
+        app.insert_resource(group);
+    }
     if variant.presents() {
         app.add_systems(
             Update,
@@ -1362,21 +1656,33 @@ fn warm_up(app: &mut App, variant: Variant) -> TestResult {
     Ok(())
 }
 
-/// Runs one child: returns at once without `FRAMES_ENV`, otherwise warms the app of `variant`
-/// and runs the requested number of frames, paused or, for a running variant, ticking.
-fn run_child(variant: Variant) -> TestResult {
+/// The frame count `FRAMES_ENV` asks the child of `variant` for, or `None` when it is not set
+/// and the child does nothing (a plain `cargo test`).
+/// # Errors
+/// The variable is not UTF-8 or not a number.
+fn requested_frames(variant: Variant) -> Result<Option<u32>, Box<dyn std::error::Error>> {
     let Some(frames) = std::env::var_os(FRAMES_ENV) else {
         println!(
             "{}: {FRAMES_ENV} is not set, so this child does nothing; \
              steady_state_frames_allocate_nothing runs it under valgrind",
             variant.child_test()
         );
+        return Ok(None);
+    };
+    Ok(Some(
+        frames
+            .to_str()
+            .ok_or_else(|| format!("{FRAMES_ENV} is not UTF-8"))?
+            .parse()?,
+    ))
+}
+
+/// Runs one child: returns at once without `FRAMES_ENV`, otherwise warms the app of `variant`
+/// and runs the requested number of frames, paused or, for a running variant, ticking.
+fn run_child(variant: Variant) -> TestResult {
+    let Some(frames) = requested_frames(variant)? else {
         return Ok(());
     };
-    let frames: u32 = frames
-        .to_str()
-        .ok_or_else(|| format!("{FRAMES_ENV} is not UTF-8"))?
-        .parse()?;
     let mut app = steady_state_app(variant)?;
     warm_up(&mut app, variant)?;
     // A hangar child's window is counted in cycles: that many times the last warm-up cycle's
@@ -1421,6 +1727,9 @@ fn run_child(variant: Variant) -> TestResult {
         check_effect_stream(&app, frames, spawned_before)?;
     }
     let after = tick(&app);
+    if let Some(group) = app.world().get_resource::<MixedGroup>().copied() {
+        return check_mixed_window(&app, group, after - before, frames);
+    }
     if !variant.is_running() {
         if after != 0 {
             return Err(format!("the battle must stay paused, but reached tick {after}").into());
@@ -1496,24 +1805,27 @@ fn check_brood_window(app: &App, frames: u32, before: &BroodWatch, ticked: u32) 
     Ok(())
 }
 
-/// The running live child's check after its window: the fog lists the two held images (a strike's
-/// and a spell caster's) and the pool draws each on one visible entity.
+/// The running live child's check after its window: the fog lists the two held attack images (a
+/// strike's and a spell caster's) and the held remembered structure (plan `2026-12-01-minimap`
+/// M-S2′), and the pool draws each on one visible entity.
 fn check_held_snapshot(app: &mut App) -> TestResult {
-    let listed = app
+    let fog = app
         .world()
-        .resource::<client::battle_pipeline::fog::BattleFog>()
-        .attack_snapshots()
-        .len();
+        .resource::<client::battle_pipeline::fog::BattleFog>();
+    let listed = fog.attack_snapshots().len();
+    let remembered = fog.remembered_structures().len();
     let world = app.world_mut();
     let shown = world
         .query_filtered::<&Visibility, With<client::battle_hud::attack_snapshots::AttackSnapshotBubble>>()
         .iter(world)
         .filter(|visibility| **visibility != Visibility::Hidden)
         .count();
-    // A strike's image and a spell caster's (plan `2026-11-27-launch-and-spell-visibility` V-25).
-    if (listed, shown) != (2, 2) {
+    // A strike's image and a spell caster's (plan `2026-11-27-launch-and-spell-visibility` V-25),
+    // and the enemy's start structure remembered.
+    if (listed, remembered, shown) != (2, 1, 3) {
         return Err(format!(
-            "the window must hold two attack images, each drawn once: {listed} listed, {shown} shown"
+            "the window must hold two attack images and one remembered structure, each drawn \
+             once: {listed} and {remembered} listed, {shown} shown"
         )
         .into());
     }
@@ -1680,6 +1992,16 @@ fn hangar_cycle_live_frames() -> TestResult {
 #[test]
 fn hangar_cycle_baseline_frames() -> TestResult {
     run_child(Variant::HangarCycleBaseline)
+}
+
+#[test]
+fn smart_mixed_live_frames() -> TestResult {
+    run_child(Variant::SmartMixedLive)
+}
+
+#[test]
+fn smart_mixed_baseline_frames() -> TestResult {
+    run_child(Variant::SmartMixedBaseline)
 }
 
 #[test]
@@ -2236,6 +2558,56 @@ fn dhat_json_reads_through_ron() -> TestResult {
             window: 3,
             total: 3
         }
+    );
+    Ok(())
+}
+
+/// P-6 under valgrind (plan `2026-12-01-rallies-and-smart-command`, the variant `smart_mixed`):
+/// after a mixed right click on the local transport, queued before the warm-up, the live
+/// synchroniser's windows of [`SHORT_FRAMES`] and [`LONG_FRAMES`] running frames differ by
+/// exactly what the battle driver's alone differ by, while two boarders walk and an air unit
+/// follows: the mixed orders cost the live battle sync no allocation. The baseline keeps the tick
+/// driver and the same click, so the simulation's own allocations cancel.
+#[test]
+fn smart_mixed_frames_allocate_nothing() -> TestResult {
+    let runs: Vec<Run> = [Variant::SmartMixedLive, Variant::SmartMixedBaseline]
+        .into_iter()
+        .flat_map(|variant| {
+            [SHORT_FRAMES, LONG_FRAMES].map(|frames| Run {
+                variant,
+                frames,
+                repeat: 0,
+            })
+        })
+        .collect();
+    let directory = tempfile::tempdir()?;
+    let counts = count_all(&runs, directory.path())?;
+    let [live_short, live_long, base_short, base_long] = counts.as_slice() else {
+        return Err("invariant: count_all returns one count per run".into());
+    };
+    let report = format!(
+        "blocks allocated inside {WINDOW_FUNCTION} after {WARM_FRAMES} warm frames; windows of \
+         {SHORT_FRAMES} and {LONG_FRAMES} frames:\n  live {} (process {}), {} (process {})\n  \
+         baseline {} (process {}), {} (process {})",
+        live_short.window,
+        live_short.total,
+        live_long.window,
+        live_long.total,
+        base_short.window,
+        base_short.total,
+        base_long.window,
+        base_long.total
+    );
+    println!("{report}");
+    let live = i128::from(live_long.window) - i128::from(live_short.window);
+    let baseline = i128::from(base_long.window) - i128::from(base_short.window);
+    assert_eq!(
+        live - baseline,
+        0,
+        "the client's battle sync systems allocated {} times over {} frames of mixed smart \
+         orders running, beyond the tick driver's and Bevy's own work\n{report}",
+        live - baseline,
+        LONG_FRAMES - SHORT_FRAMES
     );
     Ok(())
 }

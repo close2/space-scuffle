@@ -147,9 +147,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         objects: &objects,
         nodes: world.map.resources(),
         selected: &[],
+        snapshots: fog.attack_snapshots(),
+        rallies: &[],
+        alerts: None,
+        tick: 0,
     };
-    let mut marks = Vec::new();
-    let rebuild = time(|| build_marks(black_box(&sources), black_box(&mut marks)));
+    let (mut marks, mut subjects) = (Vec::new(), Vec::new());
+    let (marks, subjects) = (black_box(&mut marks), black_box(&mut subjects));
+    let rebuild = time(|| build_marks(black_box(&sources), marks, subjects));
     let states = fog.cell_states();
     let darkening = style.fog_darkening;
     #[expect(

@@ -25,6 +25,9 @@
 //! image the view lists, not a unit: it has no [`Presence`], no unit asks about it, and nothing
 //! reads it here but the snapshot pool (`battle_hud::attack_snapshots`), which draws it and never
 //! lets it be picked. The fog only copies the list; the rule that made it is the simulation's.
+//! The view's `remembered_structures` are the same kind of image: structures of other players
+//! the viewer was shown and does not see now, as it last saw them (plan `2026-12-01-minimap`
+//! Amendment 1, D-17). The fog copies them alike; they are images, not units.
 //!
 //! # How it fits
 //! The simulation writes a viewer-scoped [`PlayerView`] once per tick. The HUD copies the part
@@ -49,7 +52,7 @@
 use bevy::prelude::*;
 use sim_types::{
     AttackSnapshotView, BubbleRenderInstance, CombatEventVisual, Concealment, EntityId, PlayerId,
-    PlayerView, Tick, VisibilityState,
+    PlayerView, RememberedStructureView, Tick, VisibilityState,
 };
 
 use super::commands::SessionGeneration;
@@ -123,6 +126,9 @@ pub struct BattleFog {
     /// Still images of attackers that struck the viewer unseen, sorted by entity, as the view
     /// listed them (plan `2026-11-24-attacker-snapshot` D-5).
     attack_snapshots: Vec<AttackSnapshotView>,
+    /// Still images of other players' structures the viewer was shown, sorted by entity, as the
+    /// view listed them (plan `2026-12-01-minimap` D-17).
+    remembered_structures: Vec<RememberedStructureView>,
     /// Session, viewer and tick this fog was written for.
     written: Option<(SessionGeneration, PlayerId, Tick)>,
     /// Session whose map seeded `node_present`.
@@ -162,6 +168,11 @@ impl BattleFog {
                 "fog.attack_snapshots",
                 self.attack_snapshots.as_ptr().addr(),
                 self.attack_snapshots.capacity(),
+            ),
+            (
+                "fog.remembered_structures",
+                self.remembered_structures.as_ptr().addr(),
+                self.remembered_structures.capacity(),
             ),
         ]
         .into_iter()
@@ -272,6 +283,13 @@ impl BattleFog {
         &self.attack_snapshots
     }
 
+    /// The remembered structures of the latest view, sorted by entity: still images to draw,
+    /// never units to pick (plan `2026-12-01-minimap` D-17). Empty when closed.
+    #[must_use]
+    pub fn remembered_structures(&self) -> &[RememberedStructureView] {
+        &self.remembered_structures
+    }
+
     /// What the viewer knows of each cell, row-major with the map's width as stride: the view's
     /// three states. Empty before the first refresh and after [`Self::close`].
     #[must_use]
@@ -299,7 +317,7 @@ impl BattleFog {
 
     /// Address and capacity of each retained buffer, which an allocation would move or grow.
     #[must_use]
-    pub fn buffers(&self) -> [(usize, usize); 5] {
+    pub fn buffers(&self) -> [(usize, usize); 6] {
         [
             (self.cells.as_ptr() as usize, self.cells.capacity()),
             (
@@ -315,6 +333,10 @@ impl BattleFog {
                 self.attack_snapshots.as_ptr() as usize,
                 self.attack_snapshots.capacity(),
             ),
+            (
+                self.remembered_structures.as_ptr() as usize,
+                self.remembered_structures.capacity(),
+            ),
         ]
     }
 
@@ -326,6 +348,7 @@ impl BattleFog {
         self.revealed.clear();
         self.attack_revealed.clear();
         self.attack_snapshots.clear();
+        self.remembered_structures.clear();
         self.written = None;
     }
 
@@ -369,6 +392,10 @@ impl BattleFog {
         self.attack_snapshots.clone_from(&view.attack_snapshots);
         self.attack_snapshots
             .sort_unstable_by_key(|snapshot| snapshot.entity);
+        self.remembered_structures
+            .clone_from(&view.remembered_structures);
+        self.remembered_structures
+            .sort_unstable_by_key(|image| image.entity);
         for node in &view.visible_nodes {
             if let Some(present) = self.node_present.get_mut(node.id.0 as usize) {
                 *present = node.remaining > 0;
@@ -762,7 +789,7 @@ mod tests {
         view.attack_revealed = vec![EntityId(7), EntityId(3)];
         let mut fog = fog_of(&view);
         let warmed = fog.buffers();
-        assert_eq!(warmed.len(), 5, "the fog retains the attack-revealed list");
+        assert_eq!(warmed.len(), 6, "the fog retains the attack-revealed list");
         view.attack_revealed = vec![EntityId(3)];
         fog.refill(SessionGeneration::FIRST, &view, std::iter::empty());
         assert_eq!(fog.buffers(), warmed, "a refill reuses every buffer");
@@ -808,6 +835,39 @@ mod tests {
             Presence::Hidden,
             "an image is not the unit"
         );
+    }
+
+    /// M-12 (plan `2026-12-01-minimap` Amendment 1): the fog copies the view's remembered
+    /// structures sorted by entity, refills them in place and lists none once closed.
+    #[test]
+    fn remembered_structures_are_copied_sorted_refilled_in_place_and_closed() {
+        let remembered = |id: u32, seen: u32| RememberedStructureView {
+            entity: EntityId(id),
+            seen: Tick(seen),
+            bubble: snapshot(id, seen).bubble,
+        };
+        let mut view = view();
+        view.remembered_structures = vec![remembered(9, 4), remembered(3, 6)];
+        let mut fog = fog_of(&view);
+        let listed: Vec<_> = fog
+            .remembered_structures()
+            .iter()
+            .map(|entry| entry.entity)
+            .collect();
+        assert_eq!(listed, [EntityId(3), EntityId(9)]);
+        let warmed = fog.buffers();
+        assert!(fog
+            .retained_buffers()
+            .any(|(name, _, _)| name == "fog.remembered_structures"));
+        view.remembered_structures = vec![remembered(9, 8)];
+        fog.refill(SessionGeneration::FIRST, &view, std::iter::empty());
+        assert_eq!(fog.buffers(), warmed, "a refill reuses every buffer");
+        assert_eq!(
+            fog.remembered_structures(),
+            view.remembered_structures.as_slice()
+        );
+        fog.close();
+        assert_eq!(fog.remembered_structures(), [], "a closed fog lists none");
     }
 
     /// D-5: a refill replaces the list in place, reusing its buffer, and closing the fog empties

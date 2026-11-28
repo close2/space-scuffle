@@ -4,9 +4,15 @@
 //! Owns the player's hands on a live battle: left click and box drag change
 //! [`BattleSelection`], right click and the order keys go through
 //! [`BattleCommandQueue`](crate::battle_pipeline::commands::BattleCommandQueue), and control group
-//! keys store and recall selections. What a right click means is decided by [`context_order()`],
-//! and while a [`CommandMode`] is armed, the left button belongs to it. Keys come from
-//! [`crate::input_bindings`].
+//! keys store and recall selections. What a right click means is decided member by member by
+//! [`smart_plan()`], and while a [`CommandMode`] is armed, the left button belongs to it. Keys
+//! come from [`crate::input_bindings`].
+//!
+//! Where a press aims is kept apart from what order follows (plan `2026-12-01-minimap` D-7): a
+//! press first becomes a [`PointerAim`] (the unit, the resource node and the ground it found),
+//! built along a world ray by [`BattleView::aim_along`] or on the minimap by
+//! [`crate::minimap::pick::aim_at`], and the order functions take only that aim. So the world and
+//! the minimap ([`minimap_orders`]) share one order path with no second copy.
 //!
 //! # How it fits
 //! These systems run in [`BattleSet::CollectIntent`], after UI ownership is sampled and before the
@@ -28,6 +34,7 @@
 pub mod command_mode;
 pub mod context_order;
 pub mod gesture;
+pub mod minimap_orders;
 pub mod order_marker;
 pub mod rally_marker;
 
@@ -60,7 +67,7 @@ use crate::selection::ray_sphere_intersect;
 use crate::terrain::{pick_terrain, TerrainState};
 
 use command_mode::{orders_open, CommandMode};
-use context_order::{context_order, rally_target, resolve_target, PointerTarget};
+use context_order::{rally_target, resolve_target, smart_plan, PointerTarget};
 use gesture::{GestureOutcome, SelectionGesture};
 use order_marker::{OrderMarkerKind, OrderMarkers};
 
@@ -148,17 +155,33 @@ pub fn controls_open(lab: &LabState, session: &BattleSession) -> bool {
 }
 
 /// A unit under the pointer.
-#[derive(Debug, Clone, Copy)]
-struct PickedUnit {
-    id: EntityId,
-    owner: PlayerId,
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PickedUnit {
+    /// The unit.
+    pub id: EntityId,
+    /// Its owner.
+    pub owner: PlayerId,
     /// Point on the ground below the unit, in Bevy world space.
-    ground: Vec3,
+    pub ground: Vec3,
+}
+
+/// What a press found where it aimed, before any order is chosen: the nearest unit the viewer
+/// may pick, the nearest shown resource node with its billboard's centre, and the ground, each in
+/// Bevy world space (plan `2026-12-01-minimap` D-7). Built along a world ray
+/// ([`BattleView::aim_along`]) or on the minimap.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct PointerAim {
+    /// The unit under the aim, neutral ones included.
+    pub unit: Option<PickedUnit>,
+    /// The resource node under the aim and its billboard's centre.
+    pub node: Option<(ResourceNodeId, Vec3)>,
+    /// The ground under the aim.
+    pub ground: Option<Vec3>,
 }
 
 impl BattleView<'_, '_> {
     /// Whether a battle is on screen and its controls may act.
-    fn is_open(&self, session: &BattleSession) -> bool {
+    pub(crate) fn is_open(&self, session: &BattleSession) -> bool {
         controls_open(&self.lab, session)
     }
 
@@ -194,7 +217,12 @@ impl BattleView<'_, '_> {
     /// `selectable` or not `order_targetable` (a hangar's member) is never picked, so a click
     /// on it falls through to what is beneath it and a box leaves it out (plan
     /// `2026-11-28-carrier-interceptors` D-11 item 2).
-    fn can_pick(world: &SimWorld, viewer: PlayerId, id: EntityId, owner: PlayerId) -> bool {
+    pub(crate) fn can_pick(
+        world: &SimWorld,
+        viewer: PlayerId,
+        id: EntityId,
+        owner: PlayerId,
+    ) -> bool {
         let player_facing = world.entities.get(&id).is_none_or(|entity| {
             world
                 .catalog
@@ -294,33 +322,44 @@ impl BattleView<'_, '_> {
         Some(hit.point)
     }
 
-    /// Resolves what a right click along `ray` landed on, or `None` if it found nothing at all.
-    ///
-    /// [`resolve_target`] chooses between a unit and a node. Neutral units count as ground.
-    fn pointer_target(
-        &self,
-        world: &SimWorld,
-        owner: PlayerId,
-        selection: &[EntityId],
-        ray: Ray3d,
-    ) -> Option<PointerTarget> {
-        let ground = self.ground_point(ray);
-        let unit = self
-            .pick_unit(world, owner, ray)
-            .filter(|unit| unit.owner != PlayerId::NEUTRAL)
-            .map(|unit| {
-                if unit.owner == owner {
-                    PointerTarget::Friendly(unit.id, ground.unwrap_or(unit.ground))
-                } else {
-                    PointerTarget::Enemy(unit.id, unit.ground)
-                }
-            });
-        let node = self
-            .pick_node(world, ray)
-            .map(|(node, center)| PointerTarget::Node(node, ground.unwrap_or(center)));
-        resolve_target(world, owner, selection, unit, node).or(ground.map(PointerTarget::Ground))
+    /// What a press along `ray` aims at: [`Self::pick_unit`], [`Self::pick_node`] and
+    /// [`Self::ground_point`] together.
+    fn aim_along(&self, world: &SimWorld, owner: PlayerId, ray: Ray3d) -> PointerAim {
+        PointerAim {
+            unit: self.pick_unit(world, owner, ray),
+            node: self.pick_node(world, ray),
+            ground: self.ground_point(ray),
+        }
     }
+}
 
+/// Resolves what a right click at `aim` landed on, or `None` if it found nothing at all.
+///
+/// [`resolve_target`] chooses between a unit and a node. Neutral units count as ground.
+fn pointer_target(
+    world: &SimWorld,
+    owner: PlayerId,
+    selection: &[EntityId],
+    aim: PointerAim,
+) -> Option<PointerTarget> {
+    let ground = aim.ground;
+    let unit = aim
+        .unit
+        .filter(|unit| unit.owner != PlayerId::NEUTRAL)
+        .map(|unit| {
+            if unit.owner == owner {
+                PointerTarget::Friendly(unit.id, ground.unwrap_or(unit.ground))
+            } else {
+                PointerTarget::Enemy(unit.id, unit.ground)
+            }
+        });
+    let node = aim
+        .node
+        .map(|(node, center)| PointerTarget::Node(node, ground.unwrap_or(center)));
+    resolve_target(world, owner, selection, unit, node).or(ground.map(PointerTarget::Ground))
+}
+
+impl BattleView<'_, '_> {
     /// Returns the local player's units inside `area`, a rectangle in window coordinates.
     ///
     /// Mobile units win over structures, so sweeping an army past a base selects only the army.
@@ -362,7 +401,7 @@ impl BattleView<'_, '_> {
 
 /// What this frame's pointer handlers share.
 #[derive(Debug, Clone, Copy)]
-struct PointerFrame {
+pub(crate) struct PointerFrame {
     /// The local player.
     owner: PlayerId,
     /// Whether Shift is held.
@@ -471,7 +510,10 @@ fn handle_normal_pointer(
         && session.world().is_none_or(orders_open)
     {
         if let Some(ray) = cursor.and_then(|cursor| view.ray(cursor)) {
-            issue_pointer_order(view, ray, frame, selection, session, markers);
+            let aim = session.world().map_or_else(PointerAim::default, |world| {
+                view.aim_along(world, owner, ray)
+            });
+            issue_pointer_order(aim, frame, selection, session, markers);
         }
     }
 }
@@ -502,11 +544,28 @@ fn handle_targeting_pointer(
         return;
     }
     let ray = frame.cursor.and_then(|cursor| view.ray(cursor));
-    let ground = ray.and_then(|ray| view.ground_point(ray));
+    let aim = match (ray, session.world()) {
+        (Some(ray), Some(world)) => view.aim_along(world, frame.owner, ray),
+        _ => PointerAim::default(),
+    };
+    targeting_press(aim, frame, mode, selection, session, markers);
+}
+
+/// A left press at `aim` with `mode` armed: the mode's order there, as the world's click and
+/// the minimap's both issue it. Only an accepted order ends the mode, and Shift keeps it.
+pub(crate) fn targeting_press(
+    aim: PointerAim,
+    frame: PointerFrame,
+    mode: &mut CommandMode,
+    selection: &BattleSelection,
+    session: &mut BattleSession,
+    markers: &mut OrderMarkers<'_, '_>,
+) {
+    let ground = aim.ground;
     let (world, queue) = session.world_and_commands();
     let result = world.ok_or(SubmissionError::NotReady).and_then(|world| {
         if let Some(key) = mode.cast_key() {
-            let target = cast_target(view, world, frame.owner, *mode, ray, ground)?;
+            let target = cast_target(*mode, aim, ground)?;
             let cast = CastOrder {
                 key,
                 target_pos: target.pos,
@@ -522,7 +581,7 @@ fn handle_targeting_pointer(
         // (plans `2026-11-24-attack-orders` D-5 and `2026-11-26-follow-order` D-10; B-175,
         // Q0104's default, Q0119 (b)).
         if *mode == CommandMode::AttackMove {
-            if let Some(unit) = ray.and_then(|ray| view.pick_unit(world, frame.owner, ray)) {
+            if let Some(unit) = aim.unit {
                 queue.submit_attack_on_unit(
                     world,
                     frame.owner,
@@ -537,8 +596,7 @@ fn handle_targeting_pointer(
         // In a rally mode the click rallies the slot on what is under the pointer, as a right
         // click would (plan `2026-11-25-rallies` D-8).
         if let CommandMode::Rally { slot } = *mode {
-            let target = ray
-                .and_then(|ray| view.pointer_target(world, frame.owner, selection.ids(), ray))
+            let target = pointer_target(world, frame.owner, selection.ids(), aim)
                 .ok_or(SubmissionError::NoDestination)?;
             let rally = UnitOrder::SetRally {
                 target: rally_target(world, frame.owner, target),
@@ -574,23 +632,18 @@ struct CastAim {
     marker: Vec3,
 }
 
-/// What a left click along `ray` aims the armed cast at.
+/// What a left click at `aim` aims the armed cast at.
 ///
 /// A point cast takes the ground under the pointer; a unit cast takes the nearest unit the viewer
 /// may pick there, with the same fog rules as selection ([`BattleView::pick_unit`]), so a hidden
 /// unit cannot be aimed at. Range is not judged: the caster walks into range.
 fn cast_target(
-    view: &BattleView<'_, '_>,
-    world: &SimWorld,
-    owner: PlayerId,
     mode: CommandMode,
-    ray: Option<Ray3d>,
+    aim: PointerAim,
     ground: Option<Vec3>,
 ) -> Result<CastAim, SubmissionError> {
     if let CommandMode::CastOnUnit(_) = mode {
-        let unit = ray
-            .and_then(|ray| view.pick_unit(world, owner, ray))
-            .ok_or(SubmissionError::NoCastTarget)?;
+        let unit = aim.unit.ok_or(SubmissionError::NoCastTarget)?;
         return Ok(CastAim {
             pos: None,
             unit: Some(unit.id),
@@ -627,10 +680,10 @@ fn apply_click(
     }
 }
 
-/// Sends the selection the order that a right click along `ray` means.
-fn issue_pointer_order(
-    view: &BattleView<'_, '_>,
-    ray: Ray3d,
+/// Sends the selection the order that a right click at `aim` means, as the world's right click
+/// and the minimap's both issue it.
+pub(crate) fn issue_pointer_order(
+    aim: PointerAim,
     frame: PointerFrame,
     selection: &BattleSelection,
     session: &mut BattleSession,
@@ -642,28 +695,32 @@ fn issue_pointer_order(
         queue.reject(&SubmissionError::NotReady);
         return;
     };
-    let Some(target) = view.pointer_target(world, owner, selection.ids(), ray) else {
+    let Some(target) = pointer_target(world, owner, selection.ids(), aim) else {
         queue.reject(&SubmissionError::NoDestination);
         return;
     };
-    let (order, kind, position) = context_order(world, owner, selection.ids(), target);
+    let plan = smart_plan(world, owner, selection.ids(), target);
     // The selection's production structures take the click as their rally (plan
-    // `2026-11-23-production-queue` D-10); the units take the context order. A selection of
-    // structures alone submits only the rally, and the click is accepted when either submission
-    // is, so a mixed selection reports no refusal its other half was spared.
+    // `2026-11-23-production-queue` D-10); each unit takes the first row of the click's table it
+    // can carry out (plan `2026-12-01-rallies-and-smart-command` D-1), one command per distinct
+    // order. A selection of structures alone submits only the rally, and the click is accepted
+    // when either submission is, so a mixed selection reports no refusal its other half was
+    // spared.
     let rally = UnitOrder::SetRally {
         target: rally_target(world, owner, target),
         slot: None,
     };
     let rallies = any_recipient(world, owner, selection.ids(), &rally);
-    let orders = !rallies || any_recipient(world, owner, selection.ids(), &order);
-    let ordered =
-        orders.then(|| queue.submit_selection(world, owner, selection.ids(), order, shift));
+    let orders = !rallies || !plan.orders.is_empty();
+    let ordered = orders.then(|| queue.submit_smart(world, owner, &plan, shift));
     let rallied =
         rallies.then(|| queue.submit_selection(world, owner, selection.ids(), rally, shift));
     match (ordered, rallied) {
-        (Some(Ok(_)), _) => markers.show(kind, position),
-        (_, Some(Ok(_))) => markers.show(OrderMarkerKind::Rally, position),
+        (Some(Ok(_)), _) => {
+            let (kind, position) = plan.marker();
+            markers.show(kind, position);
+        }
+        (_, Some(Ok(_))) => markers.show(OrderMarkerKind::Rally, plan.marker_at),
         (Some(Err(error)), _) | (None, Some(Err(error))) => queue.reject(&error),
         (None, None) => {}
     }

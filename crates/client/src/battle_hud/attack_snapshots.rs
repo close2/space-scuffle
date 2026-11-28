@@ -6,7 +6,12 @@
 //! the first layer of its idle clip, at the pose of its last strike, with the catalog's snapshot
 //! look (`effects.ron` `defaults.snapshot`) written into the bubble's shell. This is `StarCraft`
 //! II's damage `Visibility Snapshot` in the fog (plan `2026-11-24-attacker-snapshot` D-5); the
-//! minimap half waits for a minimap (B-204).
+//! minimap draws the same list as squares (B-204, plan `2026-12-01-minimap` D-6).
+//!
+//! The pool shows a second list the same way: [`BattleFog::remembered_structures`], the
+//! structures of other players the viewer was shown and does not see now, each as it last saw it
+//! (`FogVisibility Snapshot`; plan `2026-12-01-minimap` Amendment 1, D-17). Entries `0..a` are the
+//! attack snapshots and `a..a + r` the remembered structures; both take the one snapshot look.
 //!
 //! # How it fits
 //! Runs in `PreparePresentation` after [`refresh_battle_fog`](super::fog::refresh_battle_fog),
@@ -19,10 +24,11 @@
 //! issues the point order bare ground issues.
 //!
 //! # Invariants
-//! - Entry `i` of the fog's list is shown on pooled entity `i`; every entity past the list's end
-//!   is hidden on the same frame.
-//! - An entity is restyled only when the `(session, attacker, strike tick)` it shows changes, so
-//!   a held snapshot modifies no material and no component.
+//! - Entry `i` of the two lists, attack snapshots first, is shown on pooled entity `i`; every
+//!   entity past their end is hidden on the same frame.
+//! - An entity is restyled only when the `(session, image kind, entity, tick)` it shows changes,
+//!   where the tick is the strike's or the last sight's, so a held image modifies no material and
+//!   no component.
 //! - The pool grows by spawning only when a list is longer than every list before it; in steady
 //!   state it spawns nothing and allocates nothing.
 //! - No colour or number of the look is written here: the look is data (`effects.ron`).
@@ -30,7 +36,7 @@
 use bevy::app::AppExit;
 use bevy::prelude::*;
 use bevy::render::batching::NoAutomaticBatching;
-use sim_types::{AnimState, AttackSnapshotView, EntityId, ShapeKind, Tick};
+use sim_types::{AnimState, BubbleRenderInstance, EntityId, ShapeKind, Tick};
 
 use crate::battle_pipeline::commands::SessionGeneration;
 use crate::battle_pipeline::fog::BattleFog;
@@ -49,9 +55,18 @@ use crate::player_presentation::{PlayerStyle, PresentationContext, PresentationE
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AttackSnapshotBubble;
 
-/// What a pooled entity shows: the session, the attacker and the tick of the strike its image
-/// is from. A new session restarts entity IDs, so the session is part of the identity.
-type Shown = (Option<SessionGeneration>, EntityId, Tick);
+/// Which list an image comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImageKind {
+    /// An attack snapshot: the tick is its strike's.
+    Attack,
+    /// A remembered structure: the tick is its last sight's.
+    Remembered,
+}
+
+/// What a pooled entity shows: the session, the image's list, its entity and its tick. A new
+/// session restarts entity IDs, so the session is part of the identity.
+type Shown = (Option<SessionGeneration>, ImageKind, EntityId, Tick);
 
 /// One pooled entity and the image it was last styled for.
 #[derive(Debug, Clone, Copy)]
@@ -135,17 +150,17 @@ struct SnapshotFrame {
 }
 
 impl SnapshotFrame {
-    /// Resolves `entry`'s atlas, uniform, shell and pose. Pure: touches no ECS state.
+    /// Resolves the atlas, uniform, shell and pose of the image `bubble`. Pure: touches no ECS
+    /// state.
     ///
     /// # Errors
     /// [`PresentationError::Flipbook`] when the idle slice cannot be held by the flipbook clock.
     fn new(
-        entry: &AttackSnapshotView,
+        bubble: &BubbleRenderInstance,
         registry: &FlipbookRegistry,
         style: PlayerStyle,
         pool: &AttackSnapshotPool,
     ) -> Result<Self, PresentationError> {
-        let bubble = &entry.bubble;
         let stance = shown_stance(bubble, |mode| {
             registry.get_mode(bubble.unit_type, mode).is_some()
         });
@@ -214,10 +229,11 @@ impl SnapshotAssets<'_> {
     }
 }
 
-/// Shows the fog's attack snapshots on the pool, on every frame on which the fog was rewritten
-/// or the effect catalog changed (plan `2026-11-24-attacker-snapshot` D-5).
+/// Shows the fog's attack snapshots, then its remembered structures, on the pool, on every frame
+/// on which the fog was rewritten or the effect catalog changed (plan
+/// `2026-11-24-attacker-snapshot` D-5, plan `2026-12-01-minimap` D-17).
 ///
-/// Entry `i` is shown on pooled entity `i`, restyled only when its `(session, attacker, strike
+/// Entry `i` is shown on pooled entity `i`, restyled only when its `(session, kind, entity,
 /// tick)` differs from what the entity shows; a list longer than the pool spawns the missing
 /// entities; every entity past the list's end is hidden. A player style or flipbook failure is
 /// reported as the live sync reports it, and nothing is substituted (charter §1.2).
@@ -251,9 +267,21 @@ pub fn sync_attack_snapshots(
         return;
     }
     let generation = session.commands.generation();
-    let entries = fog.attack_snapshots();
-    for (index, entry) in entries.iter().enumerate() {
-        let wanted = (generation, entry.entity, entry.struck);
+    let attacks = fog
+        .attack_snapshots()
+        .iter()
+        .map(|entry| (ImageKind::Attack, entry.entity, entry.struck, &entry.bubble));
+    let remembered = fog.remembered_structures().iter().map(|entry| {
+        (
+            ImageKind::Remembered,
+            entry.entity,
+            entry.seen,
+            &entry.bubble,
+        )
+    });
+    let count = fog.attack_snapshots().len() + fog.remembered_structures().len();
+    for (index, (kind, id, tick, bubble)) in attacks.chain(remembered).enumerate() {
+        let wanted = (generation, kind, id, tick);
         let slot = pool.slots.get(index).copied();
         if let Some(slot) = slot.filter(|slot| slot.shown == Some(wanted)) {
             if let Ok((.., mut visibility, _)) = query.get_mut(slot.entity) {
@@ -261,17 +289,14 @@ pub fn sync_attack_snapshots(
             }
             continue;
         }
-        let style = match owners
-            .palette
-            .battle_style(entry.bubble.owner, &session.metadata)
-        {
+        let style = match owners.palette.battle_style(bubble.owner, &session.metadata) {
             Ok(style) => style,
             Err(error) => {
                 owners.reject(error, &mut exit_events);
                 return;
             }
         };
-        let frame = match SnapshotFrame::new(entry, &assets.registry, style, &pool) {
+        let frame = match SnapshotFrame::new(bubble, &assets.registry, style, &pool) {
             Ok(frame) => frame,
             Err(error) => {
                 owners.reject(error, &mut exit_events);
@@ -284,30 +309,30 @@ pub fn sync_attack_snapshots(
                 &mut commands,
                 &mut assets,
                 slot.entity,
-                entry,
+                bubble,
                 frame,
             );
             pool.slots[index].shown = Some(wanted);
         } else {
-            let entity = spawn(&mut commands, &mut assets, entry, frame);
+            let entity = spawn(&mut commands, &mut assets, bubble, frame);
             pool.slots.push(PoolSlot {
                 entity,
                 shown: Some(wanted),
             });
         }
     }
-    for slot in pool.slots.iter().skip(entries.len()) {
+    for slot in pool.slots.iter().skip(count) {
         if let Ok((.., mut visibility, _)) = query.get_mut(slot.entity) {
             visibility.set_if_neq(Visibility::Hidden);
         }
     }
 }
 
-/// Spawns a pooled entity showing `entry` as `frame`, and returns it.
+/// Spawns a pooled entity showing the image `bubble` as `frame`, and returns it.
 fn spawn(
     commands: &mut Commands<'_, '_>,
     assets: &mut SnapshotAssets<'_>,
-    entry: &AttackSnapshotView,
+    bubble: &BubbleRenderInstance,
     frame: SnapshotFrame,
 ) -> Entity {
     let mesh = assets.mesh(frame.is_dome).clone();
@@ -319,9 +344,9 @@ fn spawn(
         AttackSnapshotBubble,
         Mesh3d(mesh),
         MeshMaterial3d(material),
-        Transform::from_translation(frame.translation).with_scale(Vec3::splat(entry.bubble.radius)),
+        Transform::from_translation(frame.translation).with_scale(Vec3::splat(bubble.radius)),
         Visibility::Inherited,
-        BubbleInstance(entry.bubble.clone()),
+        BubbleInstance(bubble.clone()),
     ));
     // Bevy bins shadow draws by mesh, so a bubble whose shell moves its shadow caster must cast
     // with its own material (`effects::stance::casts_own_shadow`).
@@ -331,13 +356,14 @@ fn spawn(
     spawned.id()
 }
 
-/// Brings the pooled `entity` up to `entry` as `frame`, shown; every write compares first.
+/// Brings the pooled `entity` up to the image `image` as `frame`, shown; every write compares
+/// first.
 fn restyle(
     query: &mut SnapshotQuery<'_, '_>,
     commands: &mut Commands<'_, '_>,
     assets: &mut SnapshotAssets<'_>,
     entity: Entity,
-    entry: &AttackSnapshotView,
+    image: &BubbleRenderInstance,
     frame: SnapshotFrame,
 ) {
     let Ok((mut transform, mut bubble, mut mesh, material, mut visibility, unbatched)) =
@@ -353,13 +379,13 @@ fn restyle(
     );
     sync_bubble_shell(&mut assets.materials, &material.0, &frame.shell);
     transform.set_if_neq(
-        Transform::from_translation(frame.translation).with_scale(Vec3::splat(entry.bubble.radius)),
+        Transform::from_translation(frame.translation).with_scale(Vec3::splat(image.radius)),
     );
     let target = assets.mesh(frame.is_dome);
     if mesh.0 != *target {
         mesh.0.clone_from(target);
     }
-    bubble.0.clone_from(&entry.bubble);
+    bubble.0.clone_from(image);
     visibility.set_if_neq(Visibility::Inherited);
     match (casts_own_shadow(&frame.shell), unbatched) {
         (true, false) => {

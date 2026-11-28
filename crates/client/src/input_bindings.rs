@@ -111,12 +111,25 @@ pub const MINIMAP_TERRAIN_KEY: KeyCode = KeyCode::KeyT;
 /// (`StarCraft` II's `MinimapColors` hotkey; plan `2026-12-01-minimap` D-10).
 pub const MINIMAP_COLOR_KEY: KeyCode = KeyCode::KeyF;
 
+/// With [`ALT_MODIFIERS`] held, arms a ping: the next left press on the minimap pings there
+/// (`StarCraft` II's `MinimapPing` hotkey; plan `2026-12-01-minimap` D-10). Alt + left click on
+/// the minimap pings at once.
+pub const MINIMAP_PING_KEY: KeyCode = KeyCode::KeyG;
+
+/// Jumps the camera to the latest "under attack" alert, and on further presses to each older one
+/// (`StarCraft` II's Space; plan `2026-12-01-minimap` D-13, S10).
+pub const ALERT_JUMP_KEY: KeyCode = KeyCode::Space;
+
 /// Every key acted on only with [`ALT_MODIFIERS`] held, grouped by action. A chord is its own
 /// binding: `Alt+T` is not the card position `T`.
-pub const ALT_ACTION_KEYS: [&[KeyCode]; 2] = [&[MINIMAP_TERRAIN_KEY], &[MINIMAP_COLOR_KEY]];
+pub const ALT_ACTION_KEYS: [&[KeyCode]; 3] = [
+    &[MINIMAP_TERRAIN_KEY],
+    &[MINIMAP_COLOR_KEY],
+    &[MINIMAP_PING_KEY],
+];
 
 /// Every action key, grouped by the action that owns it.
-pub const ACTION_KEYS: [&[KeyCode]; 9] = [
+pub const ACTION_KEYS: [&[KeyCode]; 10] = [
     &PAN_FORWARD_KEYS,
     &PAN_BACK_KEYS,
     &PAN_LEFT_KEYS,
@@ -126,13 +139,16 @@ pub const ACTION_KEYS: [&[KeyCode]; 9] = [
     &[CANCEL_KEY],
     &COMMAND_CARD_KEYS,
     &CONTROL_GROUP_KEYS,
+    &[ALERT_JUMP_KEY],
 ];
 
 /// One-line summary of the battle controls, shown in the inspector.
-pub const BATTLE_CONTROLS_HELP: &str = "Left click selects, drag boxes, Shift adds. Right click \
-moves, attacks, gathers, builds or boards by its target, Shift queues; with a structure it sets \
-the rally, and Shift adds a rally waypoint. H holds, X stops. Escape cancels a command mode. \
-Ctrl+0-9 assigns a group, 0-9 recalls it. Alt+T toggles the minimap's terrain, Alt+F its colours.";
+pub const BATTLE_CONTROLS_HELP: &str = "Left click selects, drag boxes, Shift adds. Right click: \
+each unit does what it can with the target (moves, attacks, follows, gathers, builds or boards), \
+Shift queues; with a structure it sets the rally, and Shift adds a rally waypoint. H holds, X \
+stops. Escape cancels a command mode. Ctrl+0-9 assigns a group, 0-9 recalls it. On the minimap, \
+left click moves the camera and right click orders; Space jumps to the latest alert; Alt+click \
+pings; Alt+F and Alt+T toggle colours and terrain.";
 
 /// Returns whether any key of `keys` is held.
 #[must_use]

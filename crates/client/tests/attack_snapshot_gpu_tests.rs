@@ -561,3 +561,335 @@ fn sandbox_snapshot_child() {
         watch_sandbox.in_set(BattleSet::Present),
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// G-8 (plan 2026-12-01-minimap Amendment 1): a remembered structure, drawn with the same look.
+// ---------------------------------------------------------------------------------------------
+
+/// Name of the libtest entry of the remembered-structure child.
+const REMEMBERED_CHILD_TEST: &str = "remembered_structure_child";
+
+/// The remembered-structure child's three shots, in order.
+const REMEMBERED_SHOTS: [&str; 3] = ["remembered", "remembered_without", "remembered_live"];
+
+/// G-8: the enemy's start structure, scouted and left, is drawn by the pool where its footprint
+/// projects, dimmer than the same structure live.
+#[test]
+fn a_remembered_structure_is_drawn_dimmed_on_the_real_shader() -> TestResult {
+    if gpu_run::gpu_tests_opted_out() {
+        return Ok(());
+    }
+    let (report, directory) = run_child(REMEMBERED_CHILD_TEST, "remembered structure")?;
+    assert!(report.listed && report.revealed, "{report:?}");
+    let shot = |name: &str| -> TestResult<image::RgbImage> {
+        Ok(image::open(directory.path().join(format!("{name}.png")))?.to_rgb8())
+    };
+    if let Some(keep) = std::env::var_os(KEEP_VAR) {
+        std::fs::create_dir_all(&keep)?;
+        for name in REMEMBERED_SHOTS {
+            let file = format!("{name}.png");
+            std::fs::copy(directory.path().join(&file), Path::new(&keep).join(&file))?;
+        }
+    }
+    let [image, without, live] = [
+        shot(REMEMBERED_SHOTS[0])?,
+        shot(REMEMBERED_SHOTS[1])?,
+        shot(REMEMBERED_SHOTS[2])?,
+    ];
+    let pixels = patch_pixels(report.footprint, &image);
+    assert!(pixels > 50, "the footprint is on screen: {report:?}");
+    let changed = changed_pixels(&without, &image, report.footprint);
+    let (dimmed, lit) = (
+        mean_chroma(&image, report.footprint),
+        mean_chroma(&live, report.footprint),
+    );
+    eprintln!(
+        "driver {}: footprint {:?} of {pixels} pixels; the image changed {changed}; mean chroma \
+         {dimmed:.2} remembered, {lit:.2} live",
+        gpu_run::selected_driver().driver,
+        report.footprint,
+    );
+    assert!(
+        changed as f64 >= FOOTPRINT_SHARE * pixels as f64,
+        "the image changed only {changed} of {pixels} pixels of its footprint"
+    );
+    assert!(
+        dimmed <= DIMMED_SHARE * lit,
+        "the remembered structure's mean chroma {dimmed:.2} is not at most {DIMMED_SHARE} of \
+         the live structure's {lit:.2}"
+    );
+    Ok(())
+}
+
+/// What the remembered-structure child is waiting for.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+enum RememberedPhase {
+    #[default]
+    Boot,
+    /// A local scout shows the structure until tick `until`.
+    Scouting {
+        until: u32,
+    },
+    /// The scout is dead; the clock runs until the view remembers the structure.
+    Forgetting,
+    /// The camera's height settles.
+    Framing {
+        still: u32,
+        height: f32,
+    },
+    /// Shot `shot` waits a few frames.
+    Settling {
+        shot: usize,
+        frames: u32,
+    },
+    /// Shot `shot` was requested.
+    Capturing {
+        shot: usize,
+    },
+    /// A second scout shows the structure; the clock runs until the view drops the image.
+    Revealing,
+    Done,
+}
+
+/// The remembered-structure child's staging.
+#[derive(Resource, Default)]
+struct RememberedStaging {
+    directory: PathBuf,
+    phase: RememberedPhase,
+    /// The enemy's start structure and its map centre.
+    structure: Option<(sim_types::EntityId, Vec2)>,
+    /// The first scout, which dies once it has shown the structure.
+    scout: Option<sim_types::EntityId>,
+    report: SnapshotReport,
+}
+
+/// Spawns a local scout of the local workers' type on open ground about five units from `at`.
+fn spawn_scout(world: &mut sim_core::SimWorld, at: Vec2) -> sim_types::EntityId {
+    let kind = world
+        .entities
+        .values()
+        .find(|unit| unit.owner == LOCAL_PLAYER && !unit.is_immobile)
+        .expect("a local unit")
+        .unit_type_id;
+    let open = |point: Vec2| {
+        world
+            .map
+            .world_to_cell(sim_at(point))
+            .ok()
+            .and_then(|(x, y)| world.map.cell(x, y).ok())
+            .is_some_and(|cell| {
+                cell.flags.contains(sim_map::CellFlags::GROUND_PATHABLE)
+                    && !cell
+                        .flags
+                        .contains(sim_map::CellFlags::OCCUPIED_BY_STRUCTURE)
+            })
+    };
+    let spot = (0..16)
+        .map(|step| at + Vec2::from_angle(step as f32 * std::f32::consts::TAU / 16.0) * 5.0)
+        .find(|point| open(*point))
+        .expect("open ground beside the structure");
+    world
+        .spawn_unit(kind, LOCAL_PLAYER, sim_at(spot))
+        .expect("open ground")
+}
+
+/// A map position as the simulation's fixed point.
+fn sim_at(point: Vec2) -> sim_types::SimVec2 {
+    sim_types::SimVec2::new(
+        sim_types::SimScalar::from_num(point.x),
+        sim_types::SimScalar::from_num(point.y),
+    )
+}
+
+/// Whether the local view remembers `structure`.
+fn remembered(model: &HudModel, structure: sim_types::EntityId) -> bool {
+    model
+        .view
+        .remembered_structures
+        .iter()
+        .any(|entry| entry.entity == structure)
+}
+
+/// Advances the remembered-structure child by one frame.
+#[allow(
+    clippy::needless_pass_by_value,
+    clippy::too_many_arguments,
+    reason = "a Bevy system with one declared parameter per dependency"
+)]
+fn stage_remembered(
+    mut commands: Commands<'_, '_>,
+    mut staging: ResMut<'_, RememberedStaging>,
+    mut session: ResMut<'_, BattleSession>,
+    mut lab: ResMut<'_, LabState>,
+    model: Res<'_, HudModel>,
+    pool: Option<Res<'_, AttackSnapshotPool>>,
+    images: Query<'_, '_, (&GlobalTransform, &Visibility), With<AttackSnapshotBubble>>,
+    mut cameras: Query<'_, '_, (&Camera, &GlobalTransform, &mut RtsCamera)>,
+) {
+    if !session.is_ready() {
+        return;
+    }
+    let Ok((camera, camera_transform, mut rts)) = cameras.get_single_mut() else {
+        return;
+    };
+    let tick = published_tick(&session);
+    staging.phase = match staging.phase {
+        RememberedPhase::Boot if tick < 2 => RememberedPhase::Boot,
+        RememberedPhase::Boot => {
+            let world = session.world_mut().expect("a ready session has a world");
+            let (id, at) = world
+                .map
+                .structures()
+                .keys()
+                .find_map(|id| {
+                    let unit = world.entities.get(id)?;
+                    (unit.owner != LOCAL_PLAYER && unit.owner != sim_types::PlayerId::NEUTRAL).then(
+                        || {
+                            (
+                                *id,
+                                Vec2::new(unit.position.x.to_f32(), unit.position.y.to_f32()),
+                            )
+                        },
+                    )
+                })
+                .expect("the enemy starts with a structure");
+            staging.scout = Some(spawn_scout(world, at));
+            staging.structure = Some((id, at));
+            rts.target = at;
+            rts.distance = CAMERA_DISTANCE;
+            lab.battle_paused = false;
+            RememberedPhase::Scouting { until: tick + 3 }
+        }
+        RememberedPhase::Scouting { until } if tick < until => RememberedPhase::Scouting { until },
+        RememberedPhase::Scouting { .. } => {
+            let world = session.world_mut().expect("a ready session has a world");
+            let scout = staging.scout.expect("staged");
+            if let Some(unit) = world.entities.get_mut(&scout) {
+                unit.hp = sim_types::SimScalar::ZERO;
+            }
+            RememberedPhase::Forgetting
+        }
+        RememberedPhase::Forgetting => {
+            let (structure, _) = staging.structure.expect("staged");
+            if remembered(&model, structure) && pooled_image(pool.as_deref(), &images).is_some() {
+                lab.battle_paused = true;
+                RememberedPhase::Framing {
+                    still: 0,
+                    height: rts.look_at_y,
+                }
+            } else {
+                RememberedPhase::Forgetting
+            }
+        }
+        RememberedPhase::Framing { still, height } if still < STILL_CAMERA_FRAMES => {
+            RememberedPhase::Framing {
+                still: if (rts.look_at_y - height).abs() < 1e-4 {
+                    still + 1
+                } else {
+                    0
+                },
+                height: rts.look_at_y,
+            }
+        }
+        RememberedPhase::Framing { .. } => {
+            let (structure, _) = staging.structure.expect("staged");
+            staging.report.listed = remembered(&model, structure);
+            let (_, centre, radius) =
+                pooled_image(pool.as_deref(), &images).expect("the image is drawn");
+            staging.report.footprint =
+                patch((camera, camera_transform), centre, radius * FOOTPRINT_HALF);
+            RememberedPhase::Settling { shot: 0, frames: 0 }
+        }
+        RememberedPhase::Settling { shot, frames } if frames < SETTLE_FRAMES => {
+            RememberedPhase::Settling {
+                shot,
+                frames: frames + 1,
+            }
+        }
+        RememberedPhase::Settling { shot, .. } => {
+            capture_remembered(&mut commands, &staging.directory, shot);
+            RememberedPhase::Capturing { shot }
+        }
+        RememberedPhase::Capturing { shot } => RememberedPhase::Capturing { shot },
+        RememberedPhase::Revealing => {
+            let (structure, _) = staging.structure.expect("staged");
+            if remembered(&model, structure) {
+                RememberedPhase::Revealing
+            } else {
+                lab.battle_paused = true;
+                staging.report.revealed = true;
+                RememberedPhase::Settling { shot: 2, frames: 0 }
+            }
+        }
+        RememberedPhase::Done => RememberedPhase::Done,
+    };
+}
+
+/// Requests remembered shot `shot`; the observer writes it and stages the next.
+fn capture_remembered(commands: &mut Commands<'_, '_>, directory: &Path, shot: usize) {
+    let path = directory.join(format!("{}.png", REMEMBERED_SHOTS[shot]));
+    commands.spawn(Screenshot::primary_window()).observe(
+        move |trigger: Trigger<'_, ScreenshotCaptured>,
+              mut staging: ResMut<'_, RememberedStaging>,
+              mut session: ResMut<'_, BattleSession>,
+              mut lab: ResMut<'_, LabState>,
+              pool: Option<Res<'_, AttackSnapshotPool>>,
+              mut visibilities: Query<'_, '_, &mut Visibility, With<AttackSnapshotBubble>>,
+              mut exit: EventWriter<'_, AppExit>| {
+            trigger
+                .event()
+                .0
+                .clone()
+                .try_into_dynamic()
+                .expect("a screenshot converts to an image")
+                .to_rgb8()
+                .save(&path)
+                .expect("a screenshot must be written");
+            staging.phase = match shot {
+                0 => {
+                    for entity in pool.iter().flat_map(|pool| pool.entities()) {
+                        if let Ok(mut visibility) = visibilities.get_mut(entity) {
+                            *visibility = Visibility::Hidden;
+                        }
+                    }
+                    RememberedPhase::Settling { shot: 1, frames: 0 }
+                }
+                1 => {
+                    let (_, at) = staging.structure.expect("staged");
+                    spawn_scout(
+                        session.world_mut().expect("a ready session has a world"),
+                        at,
+                    );
+                    lab.battle_paused = false;
+                    RememberedPhase::Revealing
+                }
+                _ => {
+                    let text = ron::to_string(&staging.report).expect("plain data");
+                    std::fs::write(staging.directory.join(REPORT_FILE), text)
+                        .expect("the parent's directory is writable");
+                    exit.send(AppExit::Success);
+                    RememberedPhase::Done
+                }
+            };
+        },
+    );
+}
+
+/// The child of [`a_remembered_structure_is_drawn_dimmed_on_the_real_shader`].
+#[test]
+#[ignore = "launched by the test above on a virtual display"]
+fn remembered_structure_child() {
+    let directory = std::env::var_os(CHILD_OUT_VAR).expect("the parent names a directory");
+    let mut app = client::build_graphical_app_off_main_thread(
+        ClientMode::Skirmish,
+        Some(CHILD_FRAME_LIMIT),
+        SKIRMISH_SCENARIO.as_ref(),
+    )
+    .expect("the shipped assets must start the client");
+    app.insert_resource(RememberedStaging {
+        directory: Path::new(&directory).to_path_buf(),
+        ..RememberedStaging::default()
+    })
+    .add_systems(Update, stage_remembered.in_set(BattleSet::Present));
+    assert!(client::render_compatibility::run_render_app(&mut app).is_success());
+}

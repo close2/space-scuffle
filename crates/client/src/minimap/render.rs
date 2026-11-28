@@ -7,14 +7,15 @@
 //!   retained vectors, and only for the parts whose generation moved.
 //! - **Uploads.** [`prepare_minimap_gpu`] writes the uniform every frame, the cell texture when
 //!   the cells' generation moved, the fog texture when the fog's generation moved and the marks
-//!   storage buffer when the marks' generation moved.
+//!   storage buffer when the marks' generation moved. The camera frustum's corners travel in the
+//!   uniform, so a camera move writes no buffer but the uniform.
 //!   A buffer or texture is created only when it is first needed or outgrown, and the bind group
 //!   only when one of the resources it names was created. No Bevy asset is touched per frame.
 //! - **Drawing.** [`MinimapNode`] is a top-level node with an edge to the camera driver, and so
 //!   runs before egui's window pass, which `bevy_egui` adds after the camera driver
 //!   (`render_systems.rs`, `setup_new_window_nodes_system`): egui samples the image this frame's
 //!   pass wrote. It records one render pass into the minimap image: the full-screen terrain
-//!   triangle, then one instanced draw of the marks.
+//!   triangle, then one instanced draw of the marks followed by the frustum's four edges.
 //!
 //! # Failure
 //! A pipeline that fails to compile is an error, never a reason to draw something else (charter
@@ -76,7 +77,10 @@ const _: () = assert!(CELL_TEXEL_BYTES as usize == super::terrain::CELL_TEXEL_BY
 /// Format of the fog texture: one byte per map cell, how far it darkens, sampled bilinearly.
 const FOG_FORMAT: TextureFormat = TextureFormat::R8Unorm;
 
-/// The shader's `MinimapUniform`, 112 bytes.
+/// Instances the marks draw adds past the marks for the camera frustum's edges.
+const FRUSTUM_EDGES: u32 = 4;
+
+/// The shader's `MinimapUniform`, 160 bytes.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 struct MinimapUniform {
@@ -91,8 +95,13 @@ struct MinimapUniform {
     edge_mix: f32,
     terrain_on: u32,
     tick: u32,
-    pad: [u32; 3],
+    mark_count: u32,
+    frustum_on: u32,
+    frustum_px: f32,
+    frustum_color: [f32; 4],
+    frustum: [[f32; 4]; 2],
 }
+const _: () = assert!(size_of::<MinimapUniform>() == 160);
 
 /// What the renderer created and drew, shared between the main and render worlds.
 ///
@@ -195,6 +204,7 @@ pub struct ExtractedMinimap {
     marks_generation: u64,
     terrain_on: bool,
     tick: u32,
+    frustum: Option<[Vec2; 4]>,
     style: Option<MinimapStyle>,
 }
 
@@ -220,6 +230,7 @@ pub fn extract_minimap(
     extracted.map_size = frame.map_size;
     extracted.terrain_on = frame.terrain_on;
     extracted.tick = frame.tick;
+    extracted.frustum = frame.frustum;
     if extracted.cells_generation != frame.cells_generation {
         extracted.cells.clone_from(&frame.cells);
         extracted.cells_generation = frame.cells_generation;
@@ -379,6 +390,7 @@ pub struct MinimapGpu {
     mark_capacity: usize,
     marks_uploaded: u64,
     mark_count: u32,
+    frustum_on: bool,
     bind_group: Option<BindGroup>,
     bound: Option<BoundResources>,
     target: Option<TextureView>,
@@ -424,10 +436,10 @@ pub fn prepare_minimap_gpu(
         return;
     };
     let counters = &evidence.0;
-    write_uniform(&device, &queue, gpu, counters, &extracted, layout, style);
     upload_cells(&device, &queue, gpu, counters, &extracted);
     upload_fog(&device, &queue, gpu, counters, &extracted);
     upload_marks(&device, &queue, gpu, counters, &extracted);
+    write_uniform(&device, &queue, gpu, counters, &extracted, layout, style);
     let (Some(uniform), Some((_, cells, _)), Some((_, fog, _)), Some(marks)) =
         (&gpu.uniform, &gpu.cells, &gpu.fog, &gpu.marks)
     else {
@@ -482,15 +494,16 @@ fn write_uniform(
     layout: MinimapLayout,
     style: &MinimapStyle,
 ) {
-    let uniform = gpu.uniform.get_or_insert_with(|| {
-        counters.uniform_buffers.fetch_add(1, Ordering::Relaxed);
-        device.create_buffer(&BufferDescriptor {
-            label: Some("minimap_uniform"),
-            size: size_of::<MinimapUniform>() as u64,
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        })
+    let corners = extracted
+        .frustum
+        .map(|corners| corners.map(|corner| layout.to_minimap(corner)));
+    let frustum = corners.map_or([[0.0; 4]; 2], |c| {
+        [
+            [c[0].x, c[0].y, c[1].x, c[1].y],
+            [c[2].x, c[2].y, c[3].x, c[3].y],
+        ]
     });
+    gpu.frustum_on = corners.is_some();
     let values = MinimapUniform {
         background: style.background.linear,
         unpathable: style.unpathable.linear,
@@ -503,8 +516,21 @@ fn write_uniform(
         edge_mix: style.edge_mix,
         terrain_on: u32::from(extracted.terrain_on),
         tick: extracted.tick,
-        pad: [0; 3],
+        mark_count: gpu.mark_count,
+        frustum_on: u32::from(gpu.frustum_on),
+        frustum_px: style.frustum_px,
+        frustum_color: style.frustum.linear,
+        frustum,
     };
+    let uniform = gpu.uniform.get_or_insert_with(|| {
+        counters.uniform_buffers.fetch_add(1, Ordering::Relaxed);
+        device.create_buffer(&BufferDescriptor {
+            label: Some("minimap_uniform"),
+            size: size_of::<MinimapUniform>() as u64,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
+    });
     queue.write_buffer(uniform, 0, bytemuck::bytes_of(&values));
 }
 
@@ -699,9 +725,10 @@ impl Node for MinimapNode {
         pass.set_bind_group(0, group, &[]);
         pass.set_render_pipeline(terrain);
         pass.draw(0..3, 0..1);
-        if gpu.mark_count > 0 {
+        let instances = gpu.mark_count + if gpu.frustum_on { FRUSTUM_EDGES } else { 0 };
+        if instances > 0 {
             pass.set_render_pipeline(marks);
-            pass.draw(0..6, 0..gpu.mark_count);
+            pass.draw(0..6, 0..instances);
         }
         span.end(&mut pass);
         evidence.0.frames.fetch_add(1, Ordering::Relaxed);

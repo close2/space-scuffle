@@ -827,3 +827,13 @@ scenes": both known answers hold in all 144 scenes under each arm; up to half th
 4. **WP2 is parked** on branch `wall-clearance-plan` (kept). B-241 stays open. It is re-planned after `Gated` WP4,
    alongside WP3 in window X, because Gated's contact layer is what turns the friend.
 5. The draft question of §11.2 is renumbered to the next free number, Q0138, if it is ever filed.
+
+## Amendment 3 (orchestrator, 2026-11-28): the redesign ended; WP2, WP3 and WP5 re-planned on `Solver`
+
+The `Gated` redesign ended without shipping (Q0143 and Q0147 closed as (a) on `docs-train-3`; evidence
+`2026-12-02-contact-layer-acceptance` §5). §5 (windows W and X, `Gated`'s re-base), H-W5 and the arms R and G no
+longer apply. WP2 (B-241) and WP3 (B-242) are re-planned against `Solver` in plan [`2026-12-03-movement-work-on-solver`](2026-12-03-movement-work-on-solver.md) (WP-W2, WP-W3), which keeps this
+plan's design (D-2, D-3), constants (§4.6), meter (§6.1), crowd scenes (Amendment 1) and stop rules (§7, rule 9
+replaced by that plan's no-redesign rule §4.1). Held-out HB stays registered for WP3; WP2 takes HC there. WP4 is not
+built under Q0134 (a). WP5's bookkeeping is that plan's WP-R9. WP2's guard failure and mixed figures go to the owner as
+Q0148.

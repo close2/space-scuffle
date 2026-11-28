@@ -22,10 +22,19 @@
 //! tick t + cap. A strike of phase 7 records a snapshot on the same vision, so no snapshot is
 //! ever recorded for an attacker this phase showed.
 //!
+//! [`SimWorld::update_remembered_structures`] keeps each player's memory of the structures of
+//! other players it was shown (plan `2026-12-01-minimap` Amendment 1, D-16). It is not part of
+//! phase 3: `step_into` calls it once per tick after the last phase that changes an entity, so a
+//! structure struck in that tick's combat is remembered as the tick's view draws it (R-1).
+//!
 //! # Invariants
 //! - Incremental recasting leaves every counter and state exactly as a full recount would.
+//! - The remembered structures are presentation: refreshed only from a player's own sight
+//!   ([`SimWorld::shown_to`]) and dropped only on it, written to the unhashed presentation
+//!   workspace and read by no tick decision.
 //! - Sight lists are sorted by ID, with watchtowers at the top of the ID range.
 
+use crate::world::presentation::RememberedStructureRecord;
 use crate::SimWorld;
 use sim_map::{watchtower_source, CellFlags, VisionSource};
 use sim_types::{EntityId, PerPlayer, PlayerId, PlayerSlot, SimScalar, SimVec2, VisibilityState};
@@ -252,6 +261,70 @@ impl SimWorld {
         });
     }
 
+    /// Refreshes and drops each player's remembered structures (plan `2026-12-01-minimap`
+    /// Amendment 1, D-16). Runs once per tick in `step_into`, after phase 8 (the reap) and before
+    /// the checksum and the render snapshot, on this tick's vision maps:
+    /// 1. **Refresh.** Every placed structure (`map.structures()`, ID order) that lives, is not
+    ///    hidden, belongs to another player than the viewer (neutral included) and is shown to the
+    ///    viewer is recorded with `seen = now`, its pose and its foundation's state. A lifted or
+    ///    uprooted structure is not placed, so it is not refreshed.
+    /// 2. **Drop.** A record not refreshed this tick is dropped when the cell of its spot is
+    ///    `Visible` to the viewer (the structure is not shown there: destroyed, cancelled, lifted,
+    ///    or concealed and undetected), or when its entity lives, is not hidden and is shown to the
+    ///    viewer elsewhere (as a unit). Death or change out of sight drops nothing.
+    // PERFORMANCE RATIONALE:
+    // Why: The memory must follow sight every tick, and a full-map scan per player would cost
+    // O(players × cells).
+    // What: One pass over the placed structures per player slot, one cell lookup each, and one
+    // `retain` over the records; binary-search upserts into a retained, sorted `Vec`.
+    // Trade-off: O(players × structures + records) per tick, with no allocation once warm.
+    pub(crate) fn update_remembered_structures(&mut self) {
+        let now = sim_types::Tick(self.current_tick);
+        let (map, vision_maps, entities, catalog) =
+            (&self.map, &self.vision_maps, &self.entities, &self.catalog);
+        let presentation = &mut self.presentation;
+        for slot in PlayerSlot::ALL {
+            let viewer = slot.id();
+            for placed in map.structures().values() {
+                let Some(entity) = entities.get(&placed.id).filter(|entity| {
+                    entity.owner != viewer
+                        && entity.is_alive()
+                        && !entity.is_hidden()
+                        && Self::shown_to(map, vision_maps, viewer, entity)
+                }) else {
+                    continue;
+                };
+                let Ok(arch) = catalog.get(entity.unit_type_id) else {
+                    continue;
+                };
+                presentation.remember_structure(RememberedStructureRecord {
+                    viewer,
+                    structure: entity.id,
+                    seen: now,
+                    pose: crate::combat_resolution::snapshot_pose(entity, arch),
+                    construction: crate::world::snapshot::foundation_state(entity),
+                });
+            }
+        }
+        presentation.prune_remembered_structures(|record| {
+            if record.seen == now {
+                return true;
+            }
+            let Some(vision) = vision_maps.get(record.viewer) else {
+                return false;
+            };
+            let spot_seen = map
+                .world_to_cell(record.pose.position)
+                .is_ok_and(|(cx, cy)| vision.visibility_at(cx, cy) == VisibilityState::Visible);
+            let shown_elsewhere = entities.get(&record.structure).is_some_and(|entity| {
+                entity.is_alive()
+                    && !entity.is_hidden()
+                    && Self::shown_to(map, vision_maps, record.viewer, entity)
+            });
+            !spot_seen && !shown_elsewhere
+        });
+    }
+
     /// Whether the attacker of `record` lives, is not hidden and is shown to the record's
     /// viewer ([`Self::shown_to`]): the viewer then sees the unit itself, and its snapshot is
     /// dropped here and left out of the viewer's view (plan `2026-11-24-attacker-snapshot` D-2).
@@ -471,5 +544,142 @@ mod tests {
         world.current_tick += 1;
         world.update_vision();
         assert_eq!(kept(&world), 0, "the cap is reached");
+    }
+
+    /// A flat 64x64 world with a structure of player 1 that player 0 was shown by a scout which
+    /// then died: player 0 remembers it. Returns the world, the structure, its spot and the
+    /// scout's type.
+    fn remembered_world() -> (SimWorld, EntityId, SimVec2, UnitTypeId) {
+        let map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0)))
+            .expect("invariant: a flat map");
+        let mut world = crate::test_support::world(map, 0x252);
+        let dome = world
+            .catalog
+            .archetypes()
+            .find(|arch| {
+                matches!(arch.shape, ShapeKind::BuildingDome { footprint_w, .. } if footprint_w <= 3)
+                    && !arch.capabilities.is_gas_extractor
+            })
+            .map(|arch| arch.unit_type_id)
+            .expect("the shipped catalog has a small structure");
+        let scout = world
+            .catalog
+            .archetypes()
+            .find(|arch| {
+                matches!(arch.shape, ShapeKind::UnitSphere)
+                    && arch.mover_type == MoverType::Ground
+                    && arch.max_speed > SimScalar::ZERO
+                    && !arch.is_detector()
+            })
+            .map(|arch| arch.unit_type_id)
+            .expect("the shipped catalog has a mobile ground unit");
+        let structure = world
+            .spawn_structure(dome, PlayerId(1), 30, 30)
+            .expect("invariant: open ground");
+        let spot = world.entities[&structure].position;
+        world
+            .spawn_unit(scout, PlayerId(0), at(4.5, 4.5))
+            .expect("invariant: a free spot");
+        let eye = world
+            .spawn_unit(scout, PlayerId(0), spot + SimVec2::from_i32(0, 4))
+            .expect("invariant: a free spot");
+        world.update_vision();
+        world.update_remembered_structures();
+        world.entities.get_mut(&eye).expect("spawned").hp = SimScalar::ZERO;
+        world.reap_dead_and_emit_shatter();
+        world.current_tick += 1;
+        world.update_vision();
+        world.update_remembered_structures();
+        let remembered: Vec<_> = world
+            .presentation
+            .remembered_structures_of(PlayerId(0))
+            .map(|record| record.structure)
+            .collect();
+        assert_eq!(remembered, [structure], "premise: remembered");
+        (world, structure, spot, scout)
+    }
+
+    fn view_of(world: &SimWorld) -> sim_types::PlayerView {
+        let mut view = sim_types::PlayerView::default();
+        world.write_player_view(PlayerId(0), &mut view);
+        view
+    }
+
+    /// R-6 (plan `2026-12-01-minimap` Amendment 1): a structure that leaves the map's structure
+    /// list while it lives (no shipped mechanic does yet, so the test unplaces it) is kept while
+    /// it is not shown and dropped on the tick the viewer is shown it elsewhere as a unit.
+    #[test]
+    fn a_structure_shown_off_its_footprint_drops_its_image() {
+        let (mut world, structure, spot, scout) = remembered_world();
+        world
+            .map
+            .remove_structure(structure)
+            .expect("invariant: placed");
+        let elsewhere = spot + SimVec2::from_i32(-20, 0);
+        world.entities.get_mut(&structure).expect("lives").position = elsewhere;
+        world.current_tick += 1;
+        world.update_vision();
+        world.update_remembered_structures();
+        assert_eq!(
+            view_of(&world).remembered_structures.len(),
+            1,
+            "not shown: kept"
+        );
+        world
+            .spawn_unit(scout, PlayerId(0), elsewhere + SimVec2::from_i32(0, 3))
+            .expect("invariant: a free spot");
+        world.current_tick += 1;
+        world.update_vision();
+        world.update_remembered_structures();
+        assert_eq!(
+            world
+                .presentation
+                .remembered_structures_of(PlayerId(0))
+                .count(),
+            0,
+            "shown elsewhere: dropped"
+        );
+    }
+
+    /// R-7: while the viewer keeps an attack snapshot of a remembered structure, the view lists
+    /// only the attack image; once the cap ends it, the remembered image is listed again.
+    #[test]
+    fn an_attack_image_wins_over_a_remembered_one_until_it_ends() {
+        let (mut world, structure, spot, _) = remembered_world();
+        let pose = world
+            .presentation
+            .remembered_structures_of(PlayerId(0))
+            .next()
+            .expect("remembered")
+            .pose;
+        world
+            .presentation
+            .record_attack_snapshot(AttackSnapshotRecord {
+                viewer: PlayerId(0),
+                attacker: structure,
+                struck: Tick(world.current_tick),
+                pose: SnapshotPose {
+                    position: spot,
+                    ..pose
+                },
+            });
+        let view = view_of(&world);
+        assert_eq!(view.attack_snapshots.len(), 1);
+        assert_eq!(view.remembered_structures, [], "one image per entity");
+        let cap = world
+            .catalog
+            .attack_snapshot_cap()
+            .expect("the shipped catalog authors a cap")
+            .get();
+        world.current_tick += cap;
+        world.update_vision();
+        world.update_remembered_structures();
+        let view = view_of(&world);
+        assert_eq!(view.attack_snapshots, []);
+        assert_eq!(
+            view.remembered_structures.len(),
+            1,
+            "the remembered image returns"
+        );
     }
 }

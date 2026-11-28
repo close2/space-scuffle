@@ -1038,3 +1038,10 @@ plan [`2026-11-29-render-entity-pool`](2026-11-29-render-entity-pool.md) WP4 wri
 
 **Owner questions.** Q0129 is closed on `main` with its resolution. Q0130 is open; its default (a), interceptors hover,
 is what is built (B-229). Q0131 is closed (answered (a) with a cap, then (b); the WP5 continuation).
+
+## Amendment 1 (orchestrator, 2026-11-28): the strafe (B-229) re-planned on `Solver`
+
+D-10's "after Gated WP4" no longer applies: the redesign ended (Q0143, Q0147). The strafe is planned in plan [`2026-12-03-movement-work-on-solver`](2026-12-03-movement-work-on-solver.md),
+WP-I0 (sources: `core` WeaponData:40–44 gives `CWeaponStrafe`'s `LoiterRadius` 4 and `LoiterInnerRadius` 2) and
+WP-I1 (`WeaponSpec::strafe`, a pursuit stage in `movement/strafe.rs`, one hashed pass point), after hangar commands
+and missiles WP1 merge. Q0130 (a), hovering, holds until then.

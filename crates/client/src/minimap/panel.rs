@@ -9,17 +9,48 @@
 //! - alone, in a bottom-left area that reserves no room, when a layout leaves the command panel
 //!   out but keeps the minimap ([`draw_alone`]).
 //!
-//! It returns the square it drew, in egui points, which the HUD records as
-//! [`HudGeometry::minimap`](crate::battle_hud::HudGeometry::minimap).
+//! It returns the image's response, whose square, in egui points, the HUD records as
+//! [`HudGeometry::minimap`](crate::battle_hud::HudGeometry::minimap), and [`read_intent`] turns
+//! the pointer on it into a [`MinimapIntent`] (plan D-7):
+//! - a left press, or a left drag that began on the image, with no command mode armed centres the
+//!   camera on the point (`look_at`); it never selects;
+//! - a left press with a mode armed aims the mode there (`aim_left`);
+//! - a right press orders there, or cancels an armed mode (`aim_right`);
+//! - Alt + a left press, or a left press after the ping key, pings there (`ping`) and moves no
+//!   camera;
+//! - Shift at the press queues.
+//!
+//! Presses act on the press, as in the world. egui owns the pointer over the image, so the world
+//! sees none of these presses, and egui's drag capture keeps a drag begun on the image there until
+//! release.
 //!
 //! # Invariants
 //! - Nothing is drawn until the image and its texture exist; the left part is still reserved, so
 //!   the columns never move when the image appears.
 //! - The square is `side_points` wide, at most the room it is given, and centred in it.
 
+use bevy::ecs::system::SystemParam;
+use bevy::math::Vec2;
+use bevy::prelude::{ButtonInput, KeyCode, Res, ResMut};
 use bevy_egui::egui;
 
-use super::MinimapFrame;
+use super::style::MinimapStyleStatus;
+use super::{MinimapFrame, MinimapIntent};
+
+/// What the HUD reads and writes of the minimap: absent outside the player's profile.
+#[derive(SystemParam)]
+pub struct MinimapHud<'w> {
+    /// The retained frame, whose image the HUD shows.
+    pub frame: Option<Res<'w, MinimapFrame>>,
+    /// Whether the style loaded.
+    pub status: Option<Res<'w, MinimapStyleStatus>>,
+    /// This frame's pointer intent, written by the HUD.
+    pub intent: Option<ResMut<'w, MinimapIntent>>,
+    /// The keyboard, for Shift and Alt: the world reads them from here too.
+    pub keyboard: Res<'w, ButtonInput<KeyCode>>,
+    /// The alert log, whose armed ping turns the next left press into a ping.
+    pub alerts: Option<Res<'w, super::alerts::AlertLog>>,
+}
 
 /// Gap between the minimap's part of the command panel and the columns, in egui points.
 pub const MINIMAP_GAP: f32 = 6.0;
@@ -55,22 +86,21 @@ fn square_in(frame: &MinimapFrame, room: egui::Rect) -> Option<(egui::TextureId,
     })
 }
 
-/// Draws the image centred in `left`, the minimap's part of the command panel. Returns the square
-/// drawn.
+/// Draws the image centred in `left`, the minimap's part of the command panel. Returns its
+/// response.
 pub fn draw_in_panel(
     ui: &mut egui::Ui,
     frame: &MinimapFrame,
     left: egui::Rect,
-) -> Option<egui::Rect> {
+) -> Option<egui::Response> {
     let (texture, square) = square_in(frame, left)?;
-    ui.put(square, image(texture, square.size()));
-    Some(square)
+    Some(ui.put(square, image(texture, square.size())))
 }
 
 /// Draws the image alone at the bottom left of the window, on an area that reserves no room.
-/// Returns the square drawn.
+/// Returns its response.
 #[must_use]
-pub fn draw_alone(ctx: &egui::Context, frame: &MinimapFrame) -> Option<egui::Rect> {
+pub fn draw_alone(ctx: &egui::Context, frame: &MinimapFrame) -> Option<egui::Response> {
     let texture = frame.texture()?;
     let side = frame.side_points();
     let corner = ctx.screen_rect().left_bottom();
@@ -78,12 +108,75 @@ pub fn draw_alone(ctx: &egui::Context, frame: &MinimapFrame) -> Option<egui::Rec
         .pivot(egui::Align2::LEFT_BOTTOM)
         .fixed_pos(corner)
         .show(ctx, |ui| ui.add(image(texture, egui::Vec2::splat(side))));
-    Some(area.inner.rect)
+    Some(area.inner)
 }
 
-/// The image widget of `texture` at `size` points.
+/// The image widget of `texture` at `size` points, sensing clicks and drags.
 fn image(texture: egui::TextureId, size: egui::Vec2) -> egui::Image<'static> {
     egui::Image::new(egui::load::SizedTexture::new(texture, size))
+        .sense(egui::Sense::click_and_drag())
+}
+
+/// What the keyboard and the modes say about this frame's presses on the minimap.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PressModifiers {
+    /// A command mode is armed: a left press aims it.
+    pub mode_armed: bool,
+    /// Shift is held: an order queues.
+    pub shift: bool,
+    /// Alt is held, or the ping key armed a ping: a left press pings.
+    pub ping: bool,
+}
+
+/// The intent of this frame's pointer on the minimap image `response`, under `modifiers` (read
+/// from the keyboard as the world reads it). Points are map points in world units, clamped to
+/// the camera's bound.
+#[must_use]
+pub fn read_intent(
+    response: &egui::Response,
+    frame: &MinimapFrame,
+    modifiers: PressModifiers,
+) -> MinimapIntent {
+    let mut intent = MinimapIntent::default();
+    let Some(layout) = frame.layout() else {
+        return intent;
+    };
+    let rect = response.rect;
+    let (pressed_left, pressed_right, pointer) = response.ctx.input(|input| {
+        (
+            input.pointer.button_pressed(egui::PointerButton::Primary),
+            input.pointer.button_pressed(egui::PointerButton::Secondary),
+            input.pointer.interact_pos(),
+        )
+    });
+    let Some(pointer) = pointer.filter(|_| rect.width() > 0.0) else {
+        return intent;
+    };
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "the image side is a window's size in pixels"
+    )]
+    let pixels_per_point = frame.side_px() as f32 / rect.width();
+    let pixel = Vec2::new(pointer.x - rect.min.x, pointer.y - rect.min.y) * pixels_per_point;
+    let point = layout.to_world_clamped(pixel);
+    let hovered = response.hovered() || response.contains_pointer();
+    let left_held_here = response.dragged_by(egui::PointerButton::Primary);
+    intent.shift = modifiers.shift;
+    if hovered && pressed_right {
+        intent.aim_right = Some(point);
+    }
+    if modifiers.ping {
+        if hovered && pressed_left {
+            intent.ping = Some(point);
+        }
+    } else if modifiers.mode_armed {
+        if hovered && pressed_left {
+            intent.aim_left = Some(point);
+        }
+    } else if (hovered && pressed_left) || left_held_here {
+        intent.look_at = Some(point);
+    }
+    intent
 }
 
 #[cfg(test)]

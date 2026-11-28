@@ -12,9 +12,12 @@
 //! the simulation.
 //!
 //! # Invariants
-//! - Everything hidden from the viewer is absent by construction, so a reader cannot leak it.
+//! - Everything hidden from the viewer is absent by construction, so a reader cannot leak it. A
+//!   remembered structure is created only from the viewer's own sight and holds the pose that
+//!   sight showed, so it leaks nothing the viewer was not shown.
 //! - Integers and enums, except presentation output converted from fixed point on its way out
-//!   (charter §3.2): a rally's point and an attack snapshot's render record. Nothing here
+//!   (charter §3.2): a rally's point and the render records of attack snapshots and remembered
+//!   structures. Nothing here
 //!   flows back into the simulation.
 //! - Every list has a documented sort order, so equal worlds give equal views.
 //! - `visibility.len() == map_width * map_height`, in row-major order.
@@ -112,6 +115,14 @@ pub struct PlayerView {
     /// so a record without hangar units keeps its serialized bytes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hangars: Vec<HangarView>,
+    /// Structures of other players the viewer was shown and does not see now, each as it last
+    /// saw it, sorted by entity (`StarCraft` II's `FogVisibility Snapshot`; plan
+    /// `2026-12-01-minimap` Amendment 1, D-16). An entry stays until the viewer sees its spot or
+    /// the structure itself elsewhere; never while the structure is shown, and never for an entity
+    /// listed in `attack_snapshots`. An image, never a target. Skipped when empty, so a record
+    /// without remembered structures keeps its serialized bytes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remembered_structures: Vec<RememberedStructureView>,
 }
 
 impl PlayerView {
@@ -139,6 +150,7 @@ impl PlayerView {
         self.attack_revealed.clear();
         self.attack_snapshots.clear();
         self.hangars.clear();
+        self.remembered_structures.clear();
     }
 
     /// The jobs of `queue`, front of the queue first.
@@ -176,6 +188,21 @@ pub struct AttackSnapshotView {
     /// The image: the attacker's render record at that strike, still (zero velocity, idle,
     /// unselected, unconcealed, not housed, no hit flashes). Positions are world units, angles
     /// radians, as in every render record.
+    pub bubble: BubbleRenderInstance,
+}
+
+/// A structure of another player that the viewer was shown and does not see now, as it last saw
+/// it: a still image, never a target (`StarCraft` II's `FogVisibility Snapshot`; plan
+/// `2026-12-01-minimap` Amendment 1, D-16).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RememberedStructureView {
+    /// The structure. It may since have died or changed; the record says only what the viewer saw.
+    pub entity: EntityId,
+    /// The last tick on which the viewer was shown it.
+    pub seen: Tick,
+    /// The image: the structure's render record at that tick, still (as
+    /// [`AttackSnapshotView::bubble`]), with a foundation's progress and construction health
+    /// share as seen, and no queue progress. Positions are world units, angles radians.
     pub bubble: BubbleRenderInstance,
 }
 
@@ -535,6 +562,11 @@ mod tests {
                 auto_build: true,
                 auto_build_toggle: true,
             }],
+            remembered_structures: vec![RememberedStructureView {
+                entity: EntityId(40),
+                seen: Tick(70),
+                bubble: still_image(EntityId(40)),
+            }],
         }
     }
 
@@ -611,6 +643,26 @@ mod tests {
         let text = ron::to_string(&view).expect("the view has no unserializable field");
         assert!(
             !text.contains("hangars"),
+            "an empty list is skipped: {text}"
+        );
+        let back: PlayerView = ron::from_str(&text).expect("a missing list reads as empty");
+        assert_eq!(back, view);
+    }
+
+    /// Plan `2026-12-01-minimap` D-16: a view without remembered structures serializes without
+    /// the field, so its bytes are those of a view written before the field existed.
+    #[test]
+    fn a_view_without_remembered_structures_keeps_its_bytes() {
+        let mut view = populated();
+        let with = ron::to_string(&view).expect("the view has no unserializable field");
+        assert!(
+            with.contains("remembered_structures"),
+            "a non-empty list is written"
+        );
+        view.remembered_structures.clear();
+        let text = ron::to_string(&view).expect("the view has no unserializable field");
+        assert!(
+            !text.contains("remembered_structures"),
             "an empty list is skipped: {text}"
         );
         let back: PlayerView = ron::from_str(&text).expect("a missing list reads as empty");

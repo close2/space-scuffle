@@ -531,6 +531,92 @@ fn right_click_on_an_enemy_orders_the_attack_and_it_lands() {
     assert!(damaged, "the target must take damage");
 }
 
+/// Plan `2026-12-01-rallies-and-smart-command` P-2 (B-222): an armed unit and an unarmed one
+/// right-click an enemy. The armed one attacks it and the unarmed one follows it, in the same
+/// tick (5.0.14 resolves the smart command per unit; the unarmed unit's `move` takes it as a
+/// follow, S2). Before, the unarmed one was given nothing. The follower's front order is the
+/// follow on the next tick.
+#[test]
+fn an_unarmed_member_right_clicking_an_enemy_follows_it_while_the_armed_attack() {
+    let mut harness = Harness::battle();
+    let armed = harness.local_army()[0];
+    let enemy = harness.enemy_units()[0];
+    let assets = battle_harness::assets();
+    let unarmed_type = harness
+        .world()
+        .catalog
+        .archetypes()
+        .find(|archetype| {
+            !archetype.is_immobile_by_default()
+                && !client::battle_pipeline::commands::is_armed(archetype)
+                && battle_harness::presentable(&assets, &archetype.slug)
+        })
+        .map(|archetype| archetype.unit_type_id)
+        .expect("the catalog ships a presentable unarmed unit");
+    let beside = harness.near(armed, Vec2::new(1.5, 0.0));
+    let unarmed = harness
+        .world_mut()
+        .spawn_unit(unarmed_type, LOCAL_PLAYER, sim_position(beside))
+        .expect("open ground beside the army");
+    let ahead = harness.near(armed, Vec2::new(0.0, 4.0));
+    harness
+        .world_mut()
+        .entities
+        .get_mut(&enemy)
+        .expect("enemy")
+        .position = sim_position(ahead);
+    harness.resume();
+    harness.step(2);
+    harness.pause();
+    harness.select(armed);
+    harness.with_key_held(KeyCode::ShiftLeft, |harness| {
+        let position = harness.unit_on_screen(unarmed);
+        harness.click(MouseButton::Left, position);
+    });
+    let mut expected = vec![armed, unarmed];
+    expected.sort();
+    assert_eq!(harness.selection().ids(), expected);
+
+    let target = harness.unit_on_screen(enemy);
+    harness.click(MouseButton::Right, target);
+
+    let follow = UnitOrder::Follow {
+        target: enemy,
+        kind: sim_types::FollowKind::Move,
+    };
+    let captured: Vec<_> = harness
+        .app
+        .world()
+        .resource::<BattleSession>()
+        .commands
+        .pending_commands()
+        .map(|(_, command)| (command.order.clone(), command.entities.clone()))
+        .collect();
+    assert_eq!(
+        captured,
+        [
+            (UnitOrder::attack(enemy), vec![armed]),
+            (follow.clone(), vec![unarmed]),
+        ],
+        "status: {}",
+        harness.status()
+    );
+    let (kind, _) = harness.marker().expect("the order must show a marker");
+    assert_eq!(kind, OrderMarkerKind::Attack);
+    harness.resume();
+    harness.step(1);
+    let world = harness.world();
+    assert_eq!(world.entities[&unarmed].order_queue.front(), Some(&follow));
+    assert!(
+        matches!(
+            world.entities[&armed].order_queue.front(),
+            Some(UnitOrder::AttackTarget { target, .. }) if *target == enemy
+        ),
+        "{:?}",
+        world.entities[&armed].order_queue
+    );
+}
+
 #[test]
 fn right_click_with_a_foreign_unit_selected_issues_nothing() {
     let mut harness = Harness::battle();

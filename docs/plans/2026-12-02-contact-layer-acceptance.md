@@ -471,3 +471,58 @@ options (a) restate the claim as a deviation, (b) record a bug and stop.
 ```
 
 Bug rows are drafted only if a flipped battle's trace shows a broken behaviour (§7 rule 9), at the next free B-number.
+
+---
+
+## Amendment 1 (orchestrator, 2026-11-27): owner answer Q0147 (d) — evaluate WP1 + WP2 together, hard fallback to (a)
+
+WP-A stopped at T1 under G (contact layer alone; evidence `docs/evidence/2026-12-02-contact-layer-acceptance.md`).
+The owner answered Q0147 (d): evaluate the contact layer **with** the gated intent (`gated-wp2`, the Gated plan's
+Amendment 4 tree `0fee7be9`) through the remaining checks, with a small zig-zag tolerance on the five near-misses of
+Q0143; if it does not work out cleanly, stop, keep today's movement (Q0147 (a)) and re-plan the waiting movement
+work against `Solver` with no further redesign round. This amendment fixes the rules before any figure is read.
+
+**Arm G2.** `pipeline: Gated` with the gated intent, built from a new branch `gated-wp2-eval` that merges `main` into
+`gated-wp2` (`gated-wp2` itself stays untouched, as a reference). The merge keeps both sides' behaviour; conflicts
+with wall-clearance WP1 (`locomotion.rs`, `follow.rs`) and later `main` work are resolved so that `Solver` and
+`Legacy` worlds stay byte-identical to `main` (checked as WP-A's identity check: G2's twin S arm against `main`'s).
+No design change and no tuning is allowed in the merge; a conflict that needs one is a stop (fallback).
+
+**T1 under G2 (pre-registered tolerance).** Every T1 figure must be at most S's 95 % upper bound on `main`, except
+these five named near-misses of Q0143 (evidence `2026-11-27-gated-movement` §14.2, on branch `gated-wp2`), each of
+which may instead reach at most its Q0143 value:
+
+| Figure | Q0143 value (allowed at most) |
+|---|---|
+| battle 26 zerglings M1-hi | 0.88 |
+| battle 29 zerglings M1-hi | 0.34 |
+| battle 29 stalkers M1 | 1.43 |
+| harness gap M1 | 1.55 |
+| harness gap M1-hi | 0.58 |
+
+Any other T1 figure above S's bound (including families Q0143 never measured under G2) fails T1. No other
+tolerance is added later.
+
+**Clean means all of the following, judged as WP-A defines them (no amendment candidates; A-1 and A-2 are withdrawn):**
+1. T1 as above.
+2. The tests that were red on `gated-wp2` (§14.1 there: I2-T11 `stutter_displacement`, E2-T3
+   `a_grazing_walker_slides_along_an_enemy`, E2-T5 `a_body_pressed_by_friends_stops_at_an_enemy`) pass on the merged
+   tree without being changed. A unit standing in a local minimum or stopping short is broken behaviour (AGENTS.md
+   §8), not a figure to tolerate.
+3. The zero-tolerance hard checks: Hold Position never moves; an attacker is never pushed out of its weapon band by a
+   friend; enemies never push; order independence (permutation run); terrain penetration; stutter lag; the
+   four-build determinism of the merged tree.
+4. Overlap F-1′ and F-2′; the B-checks, T2–T9 and the known answers under the step rule.
+5. Cost: every throughput row at least 50 ticks/s (owner's bar, Q0093/Q0147), projected from callgrind instructions
+   against the 64x64/400 `Solver` row (54.44 M); the plan's 55 ticks/s margin is reported, not judged.
+6. The acceptance seeds 300,001–301,000 and the registered held-out sets, each run once, contradict no development
+   direction.
+
+**If all six hold:** WP-B switches on `Gated` with the gated intent (instead of C′ alone): the four-build proof, the
+goldens re-recorded once at the next free schema at merge (the gated intent hashes `gate_side_closed`), matrix
+restatements, the showcase re-render, and the records of WP-B; Q0143 and Q0147 are closed with the result.
+
+**If any fails:** stop at once (later checks unread, seeds stay fresh), record the failure in the evidence, close
+Q0143 and Q0147 as (a) with the evidence, park `gated-wp2-eval` beside `gated-wp2` (both kept), and the orchestrator
+re-plans the waiting movement work (wall clearance WP2/WP3, B-209, B-229, B-247) against `Solver`. No further solver
+redesign round.

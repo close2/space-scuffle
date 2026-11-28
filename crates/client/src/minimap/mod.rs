@@ -6,15 +6,24 @@
 //! the map onto the image ([`layout`]), the per-cell terrain texels ([`terrain`]), the image the
 //! renderer draws into and the egui texture that shows it. The render world draws the frame with
 //! one render-graph node and the real shader `assets/shaders/minimap.wgsl` ([`render`]); egui
-//! shows the image in the command panel ([`panel`]). The look is data,
-//! `assets/catalog/minimap.ron` ([`style`]).
+//! shows the image in the command panel ([`panel`]) and turns presses on it into a
+//! [`MinimapIntent`]. The intent moves the camera ([`apply_minimap_intent`]) or, through the
+//! battle input's one order path, issues orders at an aim picked on the minimap ([`pick`],
+//! [`crate::battle_input::minimap_orders`]). The camera's view is drawn as its ground trapezoid
+//! ([`frustum`]). Strikes on the viewer's units raise "under attack" alerts with red pings, the
+//! player pings with Alt + left click, and Space jumps to the latest alert ([`alerts`]). The look
+//! is data, `assets/catalog/minimap.ron` ([`style`]).
 //!
 //! # How it fits
 //! ```text
 //! Startup             load_minimap_style
-//! CollectIntent       ensure_minimap_image, before battle_hud_system (which draws the panel);
-//!                     collect_minimap_keys (Alt+T, the terrain toggle)
-//! Present             prepare_minimap_frame, after camera_control_system
+//! CollectIntent       ensure_minimap_image, before battle_hud_system (which draws the panel
+//!                     and writes MinimapIntent); apply_minimap_intent, then the battle input's
+//!                     collect_minimap_orders, after it and before the world's pointer system;
+//!                     collect_minimap_keys (Alt+T terrain, Alt+F colours, Alt+G ping, Space)
+//! Present             collect_alerts, after publish_combat_events; prepare_minimap_frame,
+//!                     build_minimap_marks, refresh_minimap_fog, update_minimap_frustum, after
+//!                     camera_control_system
 //! ExtractSchedule     render::extract_minimap (clone_from into retained vectors)
 //! Render              render::prepare_minimap_gpu (uploads on change only); MinimapNode
 //!                     before the camera driver, and so before egui's window pass
@@ -30,9 +39,12 @@
 //! - The cell texels are rebuilt only when the session or the terrain's revision moves.
 //! - Every retained vector keeps its storage across rebuilds of the same size.
 
+pub mod alerts;
+pub mod frustum;
 pub mod layout;
 pub mod marks;
 pub mod panel;
+pub mod pick;
 pub mod render;
 pub mod style;
 pub mod terrain;
@@ -50,7 +62,10 @@ use crate::battle_pipeline::session::BattleSession;
 use crate::battle_pipeline::BattleSet;
 use crate::battle_presentation::BattleProfile;
 use crate::battle_selection::BattleSelection;
-use crate::input_bindings::{any_pressed, ALT_MODIFIERS, MINIMAP_COLOR_KEY, MINIMAP_TERRAIN_KEY};
+use crate::input_bindings::{
+    any_pressed, ALERT_JUMP_KEY, ALT_MODIFIERS, MINIMAP_COLOR_KEY, MINIMAP_PING_KEY,
+    MINIMAP_TERRAIN_KEY,
+};
 use crate::input_policy::InputOwnership;
 use crate::player_presentation::PlayerPalette;
 use crate::runtime_battle::MapPresentation;
@@ -92,6 +107,23 @@ impl Default for MinimapSettings {
     }
 }
 
+/// What the pointer did on the minimap this frame, in world units (simulation `(x, y)`, clamped
+/// to the camera's bound; plan `2026-12-01-minimap` D-7). Written by the HUD each frame it draws
+/// the minimap, cleared at the start of every HUD frame.
+#[derive(Resource, Debug, Default, Clone, Copy, PartialEq)]
+pub struct MinimapIntent {
+    /// Left button pressed or dragged with no command mode armed: centre the camera here.
+    pub look_at: Option<Vec2>,
+    /// Left press with a command mode armed: aim the mode here.
+    pub aim_left: Option<Vec2>,
+    /// Right press: the smart command here, or cancel an armed mode.
+    pub aim_right: Option<Vec2>,
+    /// Alt + left press, or a left press after the ping key: ping here (D-13). No camera move.
+    pub ping: Option<Vec2>,
+    /// Shift held at the press.
+    pub shift: bool,
+}
+
 /// One shape on the minimap, in minimap pixels (plan `2026-12-01-minimap` D-5). Packed for the
 /// storage buffer the marks pass reads.
 #[repr(C)]
@@ -108,10 +140,11 @@ pub struct MinimapMark {
     pub kind: u32,
     /// Presented tick the mark's animation starts at (rings), else 0.
     pub start_tick: u32,
-    /// Border width in pixels (squares) or line width (segments).
+    /// Border width in pixels (squares) or line width (segments, rings).
     pub stroke: f32,
-    /// Padding to the 16-byte stride of the shader's struct; always 0.
-    pub pad: f32,
+    /// A ring's duration in ticks; 0 for every other kind. It also pads the struct to the
+    /// shader's 16-byte stride.
+    pub extra: f32,
 }
 
 /// The retained minimap of the main world: what the renderer draws and egui shows.
@@ -138,6 +171,7 @@ pub struct MinimapFrame {
     albedo: Option<Handle<Image>>,
     splat: Option<Handle<Image>>,
     marks: Vec<MinimapMark>,
+    subjects: Vec<marks::MarkSubject>,
     marks_generation: u64,
     marks_key: Option<MarksKey>,
     selection_seen: Vec<EntityId>,
@@ -146,6 +180,7 @@ pub struct MinimapFrame {
     fog_key: Option<(u64, UVec2)>,
     terrain_on: bool,
     tick: u32,
+    frustum: Option<[Vec2; 4]>,
 }
 
 /// What the marks were built from, besides the selection.
@@ -157,6 +192,7 @@ struct MarksKey {
     map_tick: Option<u32>,
     mode: ColorMode,
     layout: MinimapLayout,
+    alerts: u64,
 }
 
 /// What the cell texels were built from.
@@ -228,6 +264,19 @@ impl MinimapFrame {
         &self.marks
     }
 
+    /// What each mark shows, index for index with [`Self::marks`].
+    #[must_use]
+    pub fn subjects(&self) -> &[marks::MarkSubject] {
+        &self.subjects
+    }
+
+    /// The camera's ground trapezoid this frame, in world units: top-left, top-right,
+    /// bottom-right, bottom-left of the view ([`frustum`]).
+    #[must_use]
+    pub const fn frustum(&self) -> Option<[Vec2; 4]> {
+        self.frustum
+    }
+
     /// Bumped by every rebuild of [`Self::marks`].
     #[must_use]
     pub const fn marks_generation(&self) -> u64 {
@@ -282,6 +331,11 @@ impl MinimapFrame {
                 self.marks.capacity(),
             ),
             (
+                "minimap.subjects",
+                self.subjects.as_ptr().addr(),
+                self.subjects.capacity(),
+            ),
+            (
                 "minimap.selection_seen",
                 self.selection_seen.as_ptr().addr(),
                 self.selection_seen.capacity(),
@@ -302,6 +356,8 @@ impl Plugin for MinimapPlugin {
             return;
         }
         app.init_resource::<MinimapFrame>()
+            .init_resource::<MinimapIntent>()
+            .init_resource::<alerts::AlertLog>()
             .init_resource::<MinimapSettings>()
             .init_resource::<MinimapStyleStatus>()
             .add_systems(Startup, load_minimap_style)
@@ -313,9 +369,24 @@ impl Plugin for MinimapPlugin {
                         .in_set(BattleSet::CollectIntent),
                     collect_minimap_keys.in_set(BattleSet::CollectIntent),
                     (
+                        apply_minimap_intent,
+                        crate::battle_input::minimap_orders::collect_minimap_orders,
+                    )
+                        .chain()
+                        .after(crate::battle_hud::panels::battle_hud_system)
+                        .after(crate::input_policy::sample_input_ownership)
+                        .after(crate::lab_ui_system)
+                        .before(crate::battle_input::collect_pointer_intent)
+                        .in_set(BattleSet::CollectIntent),
+                    collect_alerts
+                        .after(crate::battle_pipeline::driver::publish_combat_events)
+                        .before(build_minimap_marks)
+                        .in_set(BattleSet::Present),
+                    (
                         prepare_minimap_frame,
                         build_minimap_marks,
                         refresh_minimap_fog,
+                        update_minimap_frustum,
                     )
                         .chain()
                         .after(crate::camera_control_system)
@@ -426,7 +497,8 @@ fn minimap_image(side: u32) -> Image {
     image
 }
 
-/// Alt+T toggles the terrain and Alt+F the colour mode, while the world owns the keyboard.
+/// Alt+T toggles the terrain, Alt+F the colour mode and Alt+G arms a ping, and Space jumps the
+/// camera to the latest alert, then to each older one (S10), while the world owns the keyboard.
 #[expect(
     clippy::needless_pass_by_value,
     reason = "Bevy passes system parameters by value"
@@ -435,9 +507,24 @@ pub fn collect_minimap_keys(
     keyboard: Res<'_, ButtonInput<KeyCode>>,
     ownership: Res<'_, InputOwnership>,
     mut settings: ResMut<'_, MinimapSettings>,
+    mut log: ResMut<'_, alerts::AlertLog>,
+    mut cameras: Query<'_, '_, &mut crate::RtsCamera>,
 ) {
-    if !ownership.keyboard || !any_pressed(&keyboard, &ALT_MODIFIERS) {
+    if !ownership.keyboard {
         return;
+    }
+    if !any_pressed(&keyboard, &ALT_MODIFIERS) {
+        if keyboard.just_pressed(ALERT_JUMP_KEY) {
+            if let Some(target) = log.next_jump() {
+                for mut camera in &mut cameras {
+                    camera.target = target;
+                }
+            }
+        }
+        return;
+    }
+    if keyboard.just_pressed(MINIMAP_PING_KEY) {
+        log.arm_ping(true);
     }
     if keyboard.just_pressed(MINIMAP_TERRAIN_KEY) {
         settings.terrain = !settings.terrain;
@@ -510,6 +597,8 @@ pub struct MarkInputs<'w> {
     objects: Option<Res<'w, MapPresentation>>,
     terrain: Option<Res<'w, TerrainState>>,
     selection: Res<'w, BattleSelection>,
+    model: Option<Res<'w, crate::battle_hud::model::HudModel>>,
+    alerts: Option<Res<'w, alerts::AlertLog>>,
 }
 
 /// Rebuilds the marks when the presented tick, the fog, the map's billboards, the selection, the
@@ -531,6 +620,10 @@ pub fn build_minimap_marks(mut frame: ResMut<'_, MinimapFrame>, inputs: MarkInpu
         map_tick: inputs.objects.as_deref().and_then(|objects| objects.tick),
         mode: inputs.settings.color_mode,
         layout,
+        alerts: inputs
+            .alerts
+            .as_deref()
+            .map_or(0, alerts::AlertLog::generation),
     };
     let selection = inputs.selection.ids();
     if frame.marks_key == Some(key) && frame.selection_seen.as_slice() == selection {
@@ -556,8 +649,15 @@ pub fn build_minimap_marks(mut frame: ResMut<'_, MinimapFrame>, inputs: MarkInpu
             .as_deref()
             .map_or(&[], |terrain| terrain.map.resources()),
         selected: selection,
+        snapshots: fog.map_or(&[], BattleFog::attack_snapshots),
+        rallies: inputs
+            .model
+            .as_deref()
+            .map_or(&[], |model| model.view.rallies.as_slice()),
+        alerts: inputs.alerts.as_deref(),
+        tick: key.tick,
     };
-    marks::build_marks(&sources, &mut frame.marks);
+    marks::build_marks(&sources, &mut frame.marks, &mut frame.subjects);
     frame.marks_key = Some(key);
     frame.marks_generation += 1;
 }
@@ -602,6 +702,121 @@ pub fn refresh_minimap_fog(
     }
     frame.fog_key = Some(key);
     frame.fog_generation += 1;
+}
+
+/// What [`collect_alerts`] reads besides the log.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct AlertInputs<'w, 's> {
+    events: EventReader<'w, 's, crate::CombatVisualEvent>,
+    session: Res<'w, BattleSession>,
+    fog: Option<Res<'w, BattleFog>>,
+    style: Option<Res<'w, MinimapStyle>>,
+    feed: Option<ResMut<'w, crate::battle_hud::feed::BattleFeed>>,
+    time: Res<'w, Time>,
+}
+
+/// Raises "under attack" alerts from this frame's strikes on the viewer's units, records the
+/// struck units for their flash, and prunes what ended (plan `2026-12-01-minimap` D-13). A new
+/// session starts an empty log.
+pub fn collect_alerts(
+    mut inputs: AlertInputs<'_, '_>,
+    mut log: ResMut<'_, alerts::AlertLog>,
+    mut session_seen: Local<'_, Option<SessionGeneration>>,
+) {
+    let generation = inputs.session.commands.generation();
+    if *session_seen != generation {
+        *session_seen = generation;
+        log.clear();
+    }
+    let (Some(style), Some(viewer)) = (
+        inputs.style.as_deref(),
+        inputs.fog.as_deref().and_then(BattleFog::viewer),
+    ) else {
+        inputs.events.clear();
+        return;
+    };
+    let presented = inputs.session.frames.presented();
+    let tick = presented.tick.0;
+    let now = inputs.time.elapsed_secs();
+    for event in inputs.events.read() {
+        let Some(ends) = crate::effects::struck::strike_ends(&event.0) else {
+            continue;
+        };
+        let Some(struck) = presented
+            .bubbles
+            .binary_search_by_key(&ends.target, |bubble| bubble.entity_id)
+            .ok()
+            .and_then(|index| presented.bubbles.get(index))
+            .filter(|bubble| bubble.owner == viewer)
+        else {
+            continue;
+        };
+        let (kind, text) = if struck.shape.footprint().is_some() {
+            (alerts::AlertKind::Town, &style.alerts.text_town)
+        } else {
+            (alerts::AlertKind::Unit, &style.alerts.text_unit)
+        };
+        let at = Vec2::new(struck.world_pos[0], struck.world_pos[1]);
+        if log.record_strike(&style.alerts, struck.entity_id, kind, at, tick) {
+            if let Some(feed) = inputs.feed.as_deref_mut() {
+                feed.begin_line(crate::battle_hud::feed::FeedTone::Notice, now)
+                    .push_str(text);
+            }
+        }
+    }
+    log.prune(style, tick);
+}
+
+/// Centres the camera where the minimap's left button points (plan `2026-12-01-minimap` D-7).
+/// `camera_control_system` clamps the target and eases the height as for any move. A jump
+/// cancels a middle-button camera drag in progress, so the two never fight.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+pub fn apply_minimap_intent(
+    intent: Res<'_, MinimapIntent>,
+    mut cameras: Query<'_, '_, &mut crate::RtsCamera>,
+    mut drag: ResMut<'_, crate::camera_drag::CameraDragState>,
+    mut log: ResMut<'_, alerts::AlertLog>,
+    style: Option<Res<'_, MinimapStyle>>,
+    session: Res<'_, BattleSession>,
+) {
+    if let (Some(at), Some(style)) = (intent.ping, style.as_deref()) {
+        log.ping(&style.alerts, at, session.frames.presented().tick.0);
+        log.arm_ping(false);
+    }
+    let Some(target) = intent.look_at else {
+        return;
+    };
+    for mut camera in &mut cameras {
+        camera.target = target;
+    }
+    drag.interrupt();
+}
+
+/// Casts the camera's view onto the ground it looks at, every frame (plan `2026-12-01-minimap`
+/// D-8). The pose is the one `camera_control_system` just computed, so the trapezoid matches the
+/// frame the world draws.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+pub fn update_minimap_frustum(
+    mut frame: ResMut<'_, MinimapFrame>,
+    style: Option<Res<'_, MinimapStyle>>,
+    cameras: Query<'_, '_, (&Camera, &Transform, &crate::RtsCamera)>,
+) {
+    let frame = frame.as_mut();
+    frame.frustum = style.as_deref().and_then(|style| {
+        let (camera, transform, rts) = cameras.get_single().ok()?;
+        frustum::ground_trapezoid(
+            camera,
+            &GlobalTransform::from(*transform),
+            rts.look_at_y,
+            style.frustum_max_distance,
+        )
+    });
 }
 
 /// `value` in `[0, 1]` as the nearest byte.

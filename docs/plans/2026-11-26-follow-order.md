@@ -698,6 +698,8 @@ Every package is implemented on branch `follow-order`:
 
 - **`FollowAcquireRange` (B-221).** No client gesture makes a follower of an enemy it can attack.
 - **Per-unit smart resolution (B-222).** A right click still gives one order to the members that take it.
+  Built by plan [`2026-12-01-rallies-and-smart-command`](2026-12-01-rallies-and-smart-command.md) WP1 (each member takes the first row it can carry out); its transport
+  pickup half is B-247 there (WP-D1, deferred).
 - **The Battlecruiser's slop (B-223).**
 - **Move on a structure** stays a point move to the ground under the pointer (D-2). 5.0.14 "move[s] to the
   friendly building" (S9), which matches.

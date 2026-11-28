@@ -791,3 +791,38 @@ Both are summarized in §4 D-8 and D-9; the files carry the full text and defaul
 - `~/scratch/combat_wp3_data/<layer>/`: the 5.0.14 data copy.
 - `~/scratch/weapon-delivery/census/movers.txt`: which launch flies which mover.
 - `~/scratch/death-spawns-plan/scripts/`: the measurement and proof scripts WP0 copies.
+
+---
+
+## Amendment 1 (orchestrator, 2026-11-27): owner answers Q0144 (b) and Q0145 (c)
+
+Stop rule 10 fired before any package started, so D-8 and D-9 are amended here; nothing else in the plan changes.
+
+**Q0144 (b), the escorts' look (D-8, WP4).** The escort is drawn with its own real Veo clip of the escort creature in
+flight, generated through `asset_baker` under the project's media rules (Q0020 and the broodlings plan's D-12 review
+rules: loops without jumps, audio as the style guide says, no rays or radiating stripes). Budget: at most 4
+generations and at most $4.00; take the best result inside that cap rather than spend more. The media ledger's total
+stays ≤ $230; WP4 reads the ledger's current total first and records every generation, its cost and each rejection
+reason in the evidence. If Veo is blocked (key, service, quota or budget), WP4 stops and reports; it never falls
+back to a drawn stand-in or to `brood_mite`'s flipbook in its place (charter §1.2). The escort look becomes its own
+presentation entry (a `look` slug with its own flipbook and radius); D-8's data shape, slots, retained children and
+presentability rule are unchanged. §9's "no new asset" no longer holds: WP4 adds one baked flipbook, covered by
+`runtime_media_tests.rs` and `bake_integrity_tests.rs` like every installed clip.
+
+**Q0145 (c), created units among other units (D-9, WP5).** The owner's reading: a created unit with placement enabled
+(battlefield spawns such as the Broodlings an escort impact or a death spawn creates) skips spots occupied by other
+units and lands on the nearest free, non-colliding spot beside them, never inside them, as StarCraft II's Broodlings
+surround their target. WP5 changes from records to a simulation package:
+- `world/spawns.rs`' shared placement ring search also rejects a candidate whose disc overlaps any unit's collision
+  disc that the new unit collides with (same collision classes as movement uses; read through the spatial hash, no
+  per-candidate scan of all units, no `movement/` file edited). Air and ground keep their own layers as the
+  collision classes say. Order of candidates and tie-breaks are unchanged, so the result stays deterministic.
+- Red-first tests: a Broodling impact onto a packed group lands beside it with zero overlap; a death spawn among units
+  places all its Broodlings without overlap; a spawn with no free ring spot within the existing search bound behaves
+  as the search bound already defines (recorded, not new behaviour); placement with no units nearby is byte-identical
+  to `main`.
+- World check: classify every first difference by the spawn that moved; battle 20 (Brood Lords) and any death-spawn
+  world are expected to move; restate any close-battle claim under AGENTS.md §8 with traces.
+- Throughput by callgrind instructions against §5's bar (stop rule 5); the hashed state and checksum format are
+  unchanged.
+- B-236 is closed by WP5 and Q0145 moves to `closed/` with its resolution.
