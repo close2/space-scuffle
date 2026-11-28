@@ -66,13 +66,41 @@ impl DiagonalCut {
     /// corners is a concave corner whose low cell is ground, and no cell of the block is a ramp.
     ///
     /// `cell` is the block centre's grid cell, carried into the result.
-    ///
-    /// **WP0 stub** (plan `2026-12-02-diagonal-cliff-walkability` §10, WP0 item 2): returns `None`
-    /// for every block, so the red tests of WP0 fail for the stated reason; WP1 moves the
-    /// drawing's rule here.
     #[must_use]
-    pub fn of_block(_cell: (u32, u32), _block: &BlockLevels) -> Option<Self> {
-        DIRECTIONS.iter().find_map(|_| None)
+    pub fn of_block(cell: (u32, u32), block: &BlockLevels) -> Option<Self> {
+        let mut levels = [[0_i8; 3]; 3];
+        for (row, source) in levels.iter_mut().zip(block) {
+            for (slot, level) in row.iter_mut().zip(source) {
+                *slot = (*level)?;
+            }
+        }
+        let at = |a: i8, b: i8| {
+            levels[usize::from((b + 1).unsigned_abs())][usize::from((a + 1).unsigned_abs())]
+        };
+        let la = at(0, 0);
+        if la < 0 {
+            return None;
+        }
+        DIRECTIONS.into_iter().find_map(|(dx, dy)| {
+            let (l1, l2) = (at(dx, 0), at(0, dy));
+            // Each neighbouring corner of C is a concave corner while its two high cells are
+            // high; it counts only where its low cell is ground.
+            let concave = [
+                (l1 >= 0).then(|| at(dx, -dy)),
+                (l2 >= 0).then(|| at(-dx, dy)),
+            ];
+            let reach = concave.into_iter().flatten().max()?;
+            let backed = at(-dx, 0).min(at(0, -dy)).min(at(-dx, -dy));
+            let t_hi = la.min(backed).min(reach);
+            let lb = l1.max(l2);
+            (lb < t_hi).then_some(Self {
+                cell,
+                dir: (dx, dy),
+                la,
+                lb,
+                t_hi,
+            })
+        })
     }
 
     /// Whether the cut holds at threshold `t` (a marching level).

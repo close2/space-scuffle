@@ -8,10 +8,13 @@
 //! line along it that enters no low cell passes through the `V`s, the anti-diagonal of every high
 //! step cell `X`. This module decides which cells are cut that way ([`full_cut`], [`Cut`]) and
 //! builds what the dual cells around a cut draw from it:
-//! - **The predicate (D-1)** reads the 3x3 block of cells around `X`: `X` convex at the corner,
-//!   the three cells behind the opposite corner high, at least one neighbouring corner a concave
-//!   corner with ground below, and no ramp in the block. A cell has at most one cut, over the
-//!   thresholds `max(L₁, L₂) < t ≤ t_hi` (its cut run).
+//! - **The predicate (D-1)** is the simulation's: `sim_map::diagonal` (plan
+//!   `docs/plans/2026-12-02-diagonal-cliff-walkability.md` D-1) reads the 3x3 block of cells
+//!   around `X` (`X` convex at the corner, the three cells behind the opposite corner high, at
+//!   least one neighbouring corner a concave corner with ground below, and no ramp in the block)
+//!   and gives a cell at most one cut, over the thresholds `max(L₁, L₂) < t ≤ t_hi` (its cut
+//!   run). This module builds its [`Cut`] from that [`DiagonalCut`], so the drawing and the
+//!   simulation read one rule.
 //! - **The dual cell's table ([`DualCuts`])** reads the 4x4 block of cells around a dual cell once
 //!   and records each corner cell's cut. Relative to a cut, a dual cell is the one at its corner
 //!   `C` (the cut cell's bit is cleared), at one end `P` of its foot (the chamfer passes through
@@ -42,7 +45,8 @@
 )]
 
 use bevy::prelude::*;
-use sim_map::grid::{GameMap, TerrainKind};
+use sim_map::diagonal::{marching_level, BlockLevels, DiagonalCut};
+use sim_map::grid::GameMap;
 
 use super::{
     chamfer_mitre, cliff_level_height, corner_direction, edge_setback, emit_dual_floor,
@@ -51,11 +55,8 @@ use super::{
     FLOOR_POLYGON_CAPACITY, MARCHING_CASES, RIM_WIDTH,
 };
 
-/// The four corner directions `(dx, dy)` a cut can take, each component `±1`.
-const DIRECTIONS: [(i32, i32); 4] = [(1, 1), (1, -1), (-1, 1), (-1, -1)];
-
 /// The full cut of cell `cell` at its corner in direction `dir` (plan D-1), over the thresholds
-/// `lb + 1 ..= t_hi`.
+/// `lb + 1 ..= t_hi`: `sim_map`'s [`DiagonalCut`] in the mesher's integer types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Cut {
     /// The cut cell `X`, in simulation cell coordinates.
@@ -69,52 +70,24 @@ pub(super) struct Cut {
     pub(super) lb: i32,
     /// The highest threshold at which the cut holds.
     pub(super) t_hi: i32,
+    /// The foot's integer constant `k` ([`DiagonalCut::foot_constant`]).
+    foot: i64,
 }
 
-/// The marching level of the cell at offset `(a, b)` from the centre of a 3x3 block: a plateau
-/// level, -1 for the void, `None` for a ramp cell.
-type BlockLevel<'a> = &'a dyn Fn(i32, i32) -> Option<i32>;
+impl From<DiagonalCut> for Cut {
+    fn from(cut: DiagonalCut) -> Self {
+        Self {
+            cell: (cut.cell.0 as i32, cut.cell.1 as i32),
+            dir: (i32::from(cut.dir.0), i32::from(cut.dir.1)),
+            la: i32::from(cut.la),
+            lb: i32::from(cut.lb),
+            t_hi: i32::from(cut.t_hi),
+            foot: cut.foot_constant(),
+        }
+    }
+}
 
 impl Cut {
-    /// The cut of the cell at the centre of a 3x3 block (`level(0, 0)`), if D-1 holds for it at
-    /// some threshold: convex at the corner, backed by three high cells behind the opposite
-    /// corner, beside at least one ground concave corner, and with no ramp in the block.
-    fn of_block(cell: (i32, i32), level: BlockLevel<'_>) -> Option<Self> {
-        let mut block = [[0_i32; 3]; 3];
-        for (j, row) in block.iter_mut().enumerate() {
-            for (i, slot) in row.iter_mut().enumerate() {
-                *slot = level(i as i32 - 1, j as i32 - 1)?;
-            }
-        }
-        let at = |a: i32, b: i32| {
-            block[(b + 1).unsigned_abs() as usize][(a + 1).unsigned_abs() as usize]
-        };
-        let la = at(0, 0);
-        if la < 0 {
-            return None;
-        }
-        DIRECTIONS.into_iter().find_map(|(dx, dy)| {
-            let (l1, l2) = (at(dx, 0), at(0, dy));
-            // Each neighbouring corner of C is a concave corner while its two high cells are
-            // high; it counts only where its low cell is ground.
-            let concave = [
-                (l1 >= 0).then(|| at(dx, -dy)),
-                (l2 >= 0).then(|| at(-dx, dy)),
-            ];
-            let reach = concave.into_iter().flatten().max()?;
-            let backed = at(-dx, 0).min(at(0, -dy)).min(at(-dx, -dy));
-            let t_hi = la.min(backed).min(reach);
-            let lb = l1.max(l2);
-            (lb < t_hi).then_some(Self {
-                cell,
-                dir: (dx, dy),
-                la,
-                lb,
-                t_hi,
-            })
-        })
-    }
-
     /// Whether the cut holds at threshold `t`.
     pub(super) fn active(&self, t: i32) -> bool {
         self.lb < t && t <= self.t_hi
@@ -128,17 +101,6 @@ impl Cut {
     /// The cut cell's centre, world XZ: it lies on the foot.
     pub(super) fn centre(&self) -> Vec2 {
         Vec2::new(self.cell.0 as f32 + 0.5, self.cell.1 as f32 + 0.5)
-    }
-
-    /// The foot's integer constant `k`: the foot is the line `dx·x + dy·y = k` through `X`'s
-    /// corners `P₁ = C − (0, dy)` and `P₂ = C − (dx, 0)`.
-    fn foot_constant(&self) -> i32 {
-        let (dx, dy) = self.dir;
-        let corner = (
-            self.cell.0 + i32::from(dx > 0),
-            self.cell.1 + i32::from(dy > 0),
-        );
-        dx * corner.0 + dy * corner.1 - 1
     }
 
     /// How far behind the foot the high floor at threshold `tb` stops, world units: the setback
@@ -156,7 +118,7 @@ impl Cut {
 
     /// The constant `c` of the line `dx·x + dy·y = c` that lies `inset` behind the foot.
     fn line_constant(&self, inset: f32) -> f32 {
-        self.foot_constant() as f32 - std::f32::consts::SQRT_2 * inset
+        self.foot as f32 - std::f32::consts::SQRT_2 * inset
     }
 
     /// Where the line `inset` behind the foot crosses the axis-aligned line `x = e`
@@ -235,36 +197,18 @@ fn restrict(rows: Vec<WallProfileRow>, ta: i32, tb: i32) -> Vec<WallProfileRow> 
         .collect()
 }
 
-/// The marching level of cell `(x, y)` for the cut predicate: plateau level, -1 for the void (the
-/// abyss or off the map), `None` for a ramp cell; the classification of `surface_class`.
-// PERFORMANCE RATIONALE:
-// Why: Every dual cell reads 16 cells through this function on each chunk rebuild, and
-// `surface_class` builds a ramp cell's profile, a walk along its run, that the predicate never
-// reads.
-// What: The cell's own fields decide the class: abyss first, then the ramp flag (a cell has a ramp
-// profile exactly when it has a ramp direction), then the cliff level.
-// Trade-off: A second copy of `surface_class`'s three-way rule, kept beside it and checked against
-// it by the unit test `cut_level_classifies_as_surface_class`.
-fn cut_level(map: &GameMap, x: i32, y: i32) -> Option<i32> {
-    let (Ok(ux), Ok(uy)) = (u32::try_from(x), u32::try_from(y)) else {
-        return Some(-1);
-    };
-    match map.cell(ux, uy) {
-        Err(_) => Some(-1),
-        Ok(cell) if cell.terrain_kind == TerrainKind::Abyss => Some(-1),
-        Ok(cell) if cell.ramp.is_some() => None,
-        Ok(cell) => Some(i32::from(cell.cliff_level.0)),
-    }
-}
-
 /// Whether cell `cell` has a full cut at its corner in direction `dir` (`(dx, dy)`, each `±1`)
 /// at threshold `t` (plan `docs/plans/2026-12-01-straight-diagonal-cliffs.md` D-1): a convex
 /// corner of a staircase whose straight diagonal is drawn through the low cells' corners. It reads
-/// the 3x3 block of cells around `cell`.
+/// the 3x3 block of cells around `cell` through [`GameMap::diagonal_cut`].
 #[must_use]
 pub fn full_cut(map: &GameMap, cell: (i32, i32), dir: (i32, i32), t: i32) -> bool {
-    let level = |a: i32, b: i32| cut_level(map, cell.0 + a, cell.1 + b);
-    Cut::of_block(cell, &level).is_some_and(|cut| cut.dir == dir && cut.active(t))
+    let (Ok(x), Ok(y)) = (u32::try_from(cell.0), u32::try_from(cell.1)) else {
+        return false;
+    };
+    map.diagonal_cut(x, y)
+        .map(Cut::from)
+        .is_some_and(|cut| cut.dir == dir && cut.active(t))
 }
 
 /// What a dual cell is to a cut of one of its corner cells (plan D-2).
@@ -358,19 +302,34 @@ impl DualCuts {
         let mut block = [[None; 4]; 4];
         for (j, row) in block.iter_mut().enumerate() {
             for (i, slot) in row.iter_mut().enumerate() {
-                *slot = cut_level(map, x0 - 2 + i as i32, y0 - 2 + j as i32);
+                *slot = marching_level(
+                    map,
+                    i64::from(x0 - 2 + i as i32),
+                    i64::from(y0 - 2 + j as i32),
+                );
             }
         }
         let mut corners = [None; 4];
         for (k, slot) in corners.iter_mut().enumerate() {
             let o = corner_direction(k);
             // Corner k's cell, in block coordinates: (1 or 2, 1 or 2).
-            let (ci, cj) = (i32::from(o.x > 0.0) + 1, i32::from(o.y > 0.0) + 1);
-            let level = |a: i32, b: i32| {
-                block[(cj + b).unsigned_abs() as usize][(ci + a).unsigned_abs() as usize]
+            let (ci, cj) = (usize::from(o.x > 0.0) + 1, usize::from(o.y > 0.0) + 1);
+            let mut window: BlockLevels = [[None; 3]; 3];
+            for (b, row) in window.iter_mut().enumerate() {
+                for (a, level) in row.iter_mut().enumerate() {
+                    *level = block[cj + b - 1][ci + a - 1];
+                }
+            }
+            // A corner cell off the map (west or south of it) is the void, which no cut has.
+            let (Ok(x), Ok(y)) = (
+                u32::try_from(x0 - 2 + ci as i32),
+                u32::try_from(y0 - 2 + cj as i32),
+            ) else {
+                continue;
             };
-            let cell_xy = (x0 - 2 + ci, y0 - 2 + cj);
-            *slot = Cut::of_block(cell_xy, &level).map(|cut| (cut, role(k, cut.dir)));
+            *slot = DiagonalCut::of_block((x, y), &window)
+                .map(Cut::from)
+                .map(|cut| (cut, role(k, cut.dir)));
         }
         Self { corners }
     }
@@ -423,8 +382,10 @@ fn may_be_opposite(map: &GameMap, centre: (i32, i32), level: i32) -> bool {
         let (ox, oy) = (o.x as i32, o.y as i32);
         // Corner k's cell, and its two neighbours away from the dual cell.
         let cell = (centre.0 + (ox - 1) / 2, centre.1 + (oy - 1) / 2);
-        let low = |l: Option<i32>| l.is_some_and(|l| l < level);
-        low(cut_level(map, cell.0 + ox, cell.1)) && low(cut_level(map, cell.0, cell.1 + oy))
+        let low = |x: i32, y: i32| {
+            marching_level(map, i64::from(x), i64::from(y)).is_some_and(|l| i32::from(l) < level)
+        };
+        low(cell.0 + ox, cell.1) && low(cell.0, cell.1 + oy)
     })
 }
 
@@ -1083,10 +1044,11 @@ fn emit_column_chain(
 mod tests {
     use super::super::{surface_class, SurfaceClass};
     use super::*;
-    use sim_map::grid::{CliffLevel, MapCell, RampDir};
+    use sim_map::grid::{CliffLevel, MapCell, RampDir, TerrainKind};
 
-    /// `cut_level` classifies every cell as `surface_class` does: a plateau by its level, the
-    /// abyss and every cell off the map as the void, a ramp cell as a ramp.
+    /// `sim_map::diagonal::marching_level`, which the cut rule reads, classifies every cell as
+    /// `surface_class` does: a plateau by its level, the abyss and every cell off the map as the
+    /// void, a ramp cell as a ramp.
     #[test]
     #[expect(clippy::expect_used, reason = "a failed test is a panic")]
     fn cut_level_classifies_as_surface_class() {
@@ -1108,7 +1070,11 @@ mod tests {
                     SurfaceClass::Plateau(level) => Some(level),
                     SurfaceClass::Ramp(_) => None,
                 };
-                assert_eq!(cut_level(&map, x, y), expected, "cell ({x}, {y})");
+                assert_eq!(
+                    marching_level(&map, i64::from(x), i64::from(y)).map(i32::from),
+                    expected,
+                    "cell ({x}, {y})"
+                );
             }
         }
     }
