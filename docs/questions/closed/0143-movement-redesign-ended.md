@@ -50,3 +50,10 @@ holds. Otherwise (a).
 ## Answer
 
 - **Option (c): Plan and run a full acceptance pass for shipping WP1 (the movement redesign's contact layer) without WP2's gated intent.** Verify its standalone zig-zag figures and confirm every benchmark holds `≥ 50` ticks/s (Q0093); this cleanly isolates WP1's Hold Position immovability, enemy non-pushing, and `44–49 % → 10–14 %` crowd-overlap reduction before deciding whether any WP2 follow-up is needed.
+
+## Resolution
+
+Option (c) was run as the contact-layer acceptance pass: WP1 alone failed its zig-zag check (Q0147), and under the
+owner's Q0147 answer WP1 + WP2 was evaluated and failed too (three tests red, evidence
+`docs/evidence/2026-12-02-contact-layer-acceptance.md` §5). Closed as **(a), keep today's movement**; the waiting
+movement work is re-planned against `Solver`.

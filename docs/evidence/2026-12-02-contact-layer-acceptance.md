@@ -124,3 +124,63 @@ By §4 and §7 rule 3, nothing after T1 is read:
 
 None of these seeds was played, so all of them stay fresh for any later attempt. Wall-clearance's HA and HB were
 not touched. No scratch directory under `~/scratch/contact-layer/` holds worlds on those seeds.
+
+## 5. Amendment 1: arm G2 (the contact layer with the gated intent) — stopped at item 2
+
+Measurements of plan Amendment 1 (owner answer Q0147 (d)). Scratch material is under `~/scratch/gated-wp2-eval/`
+(scripts, exported trees, binaries, arm catalogs, logs) and is never committed.
+
+**Result: G2 is not clean. It stops at Amendment 1 item 2.** All three tests that were red on `gated-wp2` (§14.1
+there) are still red on the merged tree, unchanged. Under the amendment's fallback, today's movement (`Solver`) stays
+shipped (Q0147 (a)). No figure of arm G2 was measured or read, and every seed set stays fresh.
+
+### 5.1 The merge
+
+- **Tree.** Branch `gated-wp2-eval`, cut from `gated-wp2` `0fee7be9` (left untouched), with `origin/main`
+  `96b2ea22` merged as `bf7ab244`. `main` changed no simulation code after `M₀` `edbac56b`: the only change is the
+  Q0147 file.
+- **Conflicts.** Each was resolved mechanically, with no design change and no tuning:
+  - `movement/locomotion/follow.rs`: `gated-wp2`'s step context (intent and gate) is kept, and the call uses `main`'s
+    new `drop_passed_waypoints` signature from wall-clearance WP1 (B-240). `locomotion.rs` merged without a conflict
+    on both sides' changes.
+  - `checksum.rs`, `checksum/encoding.rs`: both sides added hashed fields under schema 62. `main` added the pending
+    death spawns; `gated-wp2` added `gate_side` and `gate_side_closed`. The branch keeps 62 provisionally and says so
+    in the doc comment. It takes the next free number if it ever merges (WP-B).
+  - The goldens (`golden_replay.ron`, `golden_replay_orders.ron`) and `DEFAULT_SANDBOX_CHECKSUM` take `main`'s
+    values. They are stale on this tree, as expected, and were not re-recorded.
+  - Evidence `2026-11-27-gated-movement`: both sides are kept. `main`'s §12, the wall-clearance re-base, is
+    renumbered §15 on this branch.
+- `cargo check -p sim_core -p sim_fixtures --all-targets` is clean with no warnings, and `cargo fmt --check` is
+  clean.
+
+### 5.2 The tests that were red on `gated-wp2` (Amendment 1 item 2): **all three still red**
+
+They were run unchanged on `bf7ab244` (debug, `cargo test -p sim_core`, under the gate lock; logs
+`~/scratch/gated-wp2-eval/logs/red3*.log`):
+
+| Test | Result | Message |
+|---|---|---|
+| E2-T3 `contact_solver_tests::a_grazing_walker_slides_along_an_enemy` | **red** | `the walker did not get past: (30.94, 32.38)`: the walker stands at the post, the local minimum of `gated-wp2` §14.1 |
+| E2-T5 `contact_solver_tests::a_body_pressed_by_friends_stops_at_an_enemy` | **red** | `Some(2): the idle friend stopped 2 short of the post`, as on `gated-wp2` |
+| I2-T11 `stutter_step_tests::a_move_order_steps_on_the_next_tick_under_gated` and `…::an_attack_order_resumes_fire_under_gated` | **red** (both) | stutter seed 1: `answer_failed: stutter_displacement`, `stutter_short` 7, lag 1, `hard` 0, as on `gated-wp2` |
+
+The four other `_under_gated` contact-solver tests in the same run pass. Each failure repeats `gated-wp2`'s failures
+exactly, so the merge did not cause it. Amendment 1 item 2 counts a unit that stands in a local minimum or stops
+short as broken behaviour, not as a figure to tolerate. **The amendment's stop applies.**
+
+### 5.3 Not run or not read after the stop
+
+By Amendment 1 ("stop at once, later checks unread, seeds stay fresh"):
+- The byte-identity proof of the merged tree's `Solver` and `Legacy` worlds against `main`'s was not run. The
+  release binaries are built (`~/scratch/gated-wp2-eval/bin`, tags `e` and `eg`) and the runs are queued in
+  `scripts/queue1.sh`, but the queue stopped on the red tests before it ran anything. The only conflict in movement code was the
+  mechanical `follow.rs` call above.
+- Arm G2 was never played. Nothing was measured: T1 with the tolerance table (`scripts/t1.py` carries the table,
+  dry-run on WP-A's G data only), the hard checks, F-1′ and F-2′, the B-checks, T2–T9, the known answers or the
+  callgrind cost.
+- The acceptance seeds (harness 300,001 to 301,000) and the held-out sets (harness 9,100,001 to 9,101,000; the
+  matrix's 45th to 68th non-record seeds) were not played. They stay fresh.
+
+**Fallback (Amendment 1, "If any fails").** `Solver` stays shipped and `Gated` stays latent on `main`.
+`gated-wp2-eval` is parked beside `gated-wp2`, and both are kept. Closing Q0143 and Q0147 as (a) and re-planning
+the waiting movement work against `Solver` are the orchestrator's tasks.

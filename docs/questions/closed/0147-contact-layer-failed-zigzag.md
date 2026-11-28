@@ -51,3 +51,14 @@ movement defect for rule compliance, which AGENTS.md §8 ranks below natural mov
 
 - **Option (d), with a hard fallback to Option (a):** Evaluate **WP1 + WP2 (`gated-wp2`)** together through the remaining acceptance checks (hard pushing rules, crowd overlap, cost `≥ 50` TPS on every benchmark, and acceptance/held-out seeds), allowing a small practical zig-zag tolerance on the five tiny near-misses from Q0143 (e.g. Battle 26 `0.88` vs `0.64` and Battle 29 `0.34` vs `0.26` / `1.43` vs `1.36` reversals per 1,000 moving ticks — ~10× cleaner than WP1 alone and visually negligible).
 - **Stop rule:** If WP1 + WP2 does **not** work out cleanly on those remaining checks, **stop here and keep today's movement (Option (a))** — the current algorithm is good enough — and immediately re-plan the waiting movement work (wall clearance WP2/WP3, Colossus walk-under `B-209`, Interceptor strafing `B-229`, `B-247`) against today's movement with no further solver redesign rounds.
+
+## Resolution
+
+Closed as **(a), keep today's movement**, by the stop rule of the answer above (contact-layer plan Amendment 1).
+WP1 + WP2 was merged with main as branch `gated-wp2-eval` (bf7ab244, parked beside `gated-wp2` 0fee7be9; both kept).
+The three tests that were red on `gated-wp2` (E2-T3 `a_grazing_walker_slides_along_an_enemy`, E2-T5
+`a_body_pressed_by_friends_stops_at_an_enemy`, I2-T11 stutter displacement) are still red there, run unchanged, so
+arm G2 is not clean and the remaining checks were not run; the acceptance and held-out seeds stay unused. Evidence:
+`docs/evidence/2026-12-02-contact-layer-acceptance.md` §5. `Solver` stays shipped. B-193, B-219, B-220 and B-225 stay
+open, and wall clearance WP2/WP3, B-209, B-229 and B-247 are re-planned against `Solver` with no further redesign
+round.
