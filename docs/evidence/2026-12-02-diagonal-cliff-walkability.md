@@ -78,3 +78,7 @@ Findings while writing the tests (none changes the plan's design):
 - Green: T-D1, T-D2; `mesher_golden_tests` (6, hashes unchanged), `terrain_tests` (14, counts unchanged),
   `diagonal_cliff_tests` (9, and T-K′'s two ignored), `cliff_boundary_tests` (10), the mesher's unit tests (11). No simulation function reads
   the module yet, so no checksum and no world can change.
+- Throughput (callgrind, §7.5's procedure, one session under one hold of the gate lock, load average 5.9 to 2.4):
+  the 64x64, 400-unit row, release bench binaries, instructions at 300 measured ticks less those at 0, over 300.
+  `main` `cd11ec75`: 54.454 M per tick; branch `7d8fc8cd`: 54.455 M per tick (+0.0008 %). No simulation path calls
+  the new module in WP1, as expected.
