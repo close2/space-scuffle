@@ -225,8 +225,10 @@ the red run, for the function-length lint) and `red-client-smart-row.log` (`cont
 
 `6efa92df` with the `LoadUnit` arm encoding nothing, at schema 63, reproduces both goldens at every checkpoint and
 the sandbox's `7_726_200_156_173_230_158` on native debug and release and `wasm32-wasip1` release and debug: 8 of 8
-plus the sandbox on four builds (`golden-latent63/summary.txt`). `132d2489` then takes schema **66** (provisional:
-64 and 65 are the missiles and diagonal-walkability branches'), encodes tag 23 and the passenger, and re-records.
+plus the sandbox on four builds (`golden-latent63/summary.txt`). `132d2489` then took schema 66 (provisional), and the
+orchestrator renumbered it to **64**, the next free at merge (transport-load merges before missiles): tag 23 and the
+passenger are encoded, both goldens and the sandbox (`5_660_790_611_332_926_540`) re-recorded at 64, and the
+re-record reproduces on native debug and release and `wasm32-wasip1` release.
 
 ### 7.4 Worlds and the skirmish
 
