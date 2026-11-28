@@ -790,3 +790,26 @@ branch is B-252.
 
 Branches kept: `wall-clearance-plan` (WP2 code `496bd00d`), `collision-classes-wp3-wip` (`d0c67ceb`, `42761cf2`),
 `gated-wp2`, `gated-wp2-eval`.
+
+## Amendment 1 (orchestrator, 2026-11-28): WP-I0's findings, before WP-I1
+
+From `docs/evidence/2026-12-03-interceptor-strafe.md` (WP-I0, branch `wp-i0` 45188c61). Binding on WP-I1.
+
+1. **Stop rule I-1, pass shape.** The SC2Mapster *Data/Weapons/Strafe* page gives `LoiterInnerRadius` the job "distance
+   from the target before the attacking unit starts to turn around"; D-S2 uses it as the approach trigger that fixes
+   the exit point. The path (through the target, out to the loiter radius, back) agrees. D-S2 stands unchanged and its
+   use of the inner radius is recorded as a **minor deviation** in DESIGN.md §4 with B-229's fix; a banked turn
+   between 2 and 4 beyond the target is out of scope (charter §8: minor details). I-1 is satisfied by this amendment.
+2. **D-S3, the leash (Q0151).** As planned, the 12-unit leash would cut most passes (the first pass after every launch
+   included) and fail I-A2 and I-A4. Until the owner answers Q0151, WP-I1 builds Q0151's **default (b)**: a member
+   whose `strafe_exit` is set is not leashed until it reaches the exit; between passes the leash acts as today. The
+   choice lives in one function so that (a) is a small change. WP-I1's §6 row gains
+   `crates/sim_core/src/hangar/phase.rs` (the leash check only). D-S3's "leash unchanged" reads "leash unchanged
+   between passes".
+3. **B-254, strafe random delay.** `InterceptorBeam`'s `random_delay_ticks: (-1.1161, 2.2321)` is the `CWeaponLegacy`
+   default, which `CWeaponStrafe` does not inherit; 5.0.14's value is (0, 0). Fixed inside WP-I1 (a data line in
+   `units.ron`); it moves only WP-I0's census worlds.
+4. **Census gap.** D-S2 applies to any unit whose weapon has a strafe. During its package run WP-I1 adds a scratch
+   counter (not committed) in the strafe branch and lists every test that enters it; any test outside the census is
+   stop rule I-2.
+5. **Radii measure.** No source says; edge to edge stays (Q0057).
