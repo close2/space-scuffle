@@ -725,9 +725,9 @@
                 weapons: [(weapon: Air, travel: Some("plasma_bolt"), impact: Some("beam_burn"))],
             ),
             veo_prompts: {
-                Idle: "Roswell Flying Saucer: Spinning metallic disc with rotating perimeter lights and ventral purple anti-grav glow.",
-                Walk: "Roswell Flying Saucer: Smooth high-speed aerial flight banking into turns with iridescent energy trails.",
-                Attack: "Roswell Flying Saucer: Continuous sustained violet laser beam projecting from ventral emitter.",
+                Idle: "Roswell Flying Saucer: a single sleek silver saucer fighter, a thin flat disc with a small clear cockpit dome, fixed violet lights around its rim and a violet emitter lens at its front edge, held still, seen from above at a three-quarter angle looking down on its top, front toward the lower right, the whole saucer in the middle of the frame with wide margins, plain dark backdrop, lit softly from the front.",
+                Walk: "Roswell Flying Saucer: the same sleek silver saucer in fast level forward flight, its rim lights glowing bright, flying in place in the middle of the frame and fully visible, no other aircraft.",
+                Attack: "Roswell Flying Saucer: the same sleek silver saucer fires a thin steady violet beam forward from the emitter at its front edge.",
             },
         ),
         (
@@ -1742,9 +1742,10 @@
                 weapons: [(weapon: Primary, impact: Some("weld_sparks"))],
             ),
             veo_prompts: {
-                Idle: "Levitation Drone: Small gleaming alien probe with floating crystalline eye and humming repulsor field.",
-                Walk: "Levitation Drone: Smooth frictionless gliding tilting into forward velocity.",
-                Attack: "Levitation Drone: Concentrated short-range electric particle zap from front focal crystal.",
+                Idle: "Levitation Drone: a single small silver alien worker drone, a rounded teardrop body with one large cyan crystal eye at its front, two short golden grippers and a soft cyan glow under it, held still, seen from above at a three-quarter angle looking down on its top, front toward the lower right, the whole drone in the middle of the frame with wide margins, plain dark backdrop, lit softly from the front.",
+                Walk: "Levitation Drone: the same small silver drone gliding level and forward, flying in place in the middle of the frame and fully visible, no other machines.",
+                Attack: "Levitation Drone: the same small silver drone zaps a short bright cyan electric spark forward from its crystal eye.",
+                Cast: "Levitation Drone: the same small silver drone holds a steady thin green extraction beam from its crystal eye toward a point just outside the frame at the lower right.",
             },
         ),
         (
@@ -1854,9 +1855,9 @@
                 ],
             ),
             veo_prompts: {
-                Idle: "Phase Tripod: Sleek extraterrestrial tripedal combat strider in purple metallic exo-plating.",
-                Walk: "Phase Tripod: Rapid fluid three-legged predatory gallop bounding over uneven ground.",
-                Attack: "Phase Tripod: Ventral particle cannon unleashing cyan disruption bolt with crackling energy.",
+                Idle: "Phase Tripod: a single sleek alien three-legged walker, a compact silver-and-violet armoured body on three long jointed legs, a short cannon under its front, a cyan eye, standing still, seen from above at a three-quarter angle, front toward the lower right, whole and centred, plain dark backdrop, lit softly from the front, no floor, no shadow.",
+                Walk: "Phase Tripod: the same three-legged walker striding briskly, its three long legs stepping in turn.",
+                Attack: "Phase Tripod: the same three-legged walker fires a bright cyan particle bolt from the cannon under its front.",
             },
         ),
         (
@@ -1938,9 +1939,9 @@
                 weapons: [(weapon: Primary, travel: Some("prism_beam"), impact: Some("beam_burn"))],
             ),
             veo_prompts: {
-                Idle: "Force-Matrix Grey: Levitating robotic ocular sphere enclosed in rotating crystalline psionic rings.",
-                Walk: "Force-Matrix Grey: Gentle floating hover with gyroscopic ring rotation.",
-                Attack: "Force-Matrix Grey: Sustained continuous azure laser beam locking onto target unit.",
+                Idle: "Force-Matrix Grey: a single small alien support drone, a smooth silver sphere with one large cyan eye inside two thin fixed golden rings set with small violet crystals, held still, seen from above at a three-quarter angle looking down on its top, front toward the lower right, the whole drone in the middle of the frame with wide margins, plain dark backdrop, lit softly from the front.",
+                Walk: "Force-Matrix Grey: the same silver sphere drone in its two fixed golden rings gliding level and forward, flying in place in the middle of the frame and fully visible.",
+                Attack: "Force-Matrix Grey: the same silver sphere drone holds a thin steady azure beam forward from its eye.",
             },
         ),
         (
@@ -2022,9 +2023,9 @@
                 weapons: [(weapon: Primary, travel: Some("plasma_bolt"), impact: Some("plasma_hit"))],
             ),
             veo_prompts: {
-                Idle: "Astral Projecting Grey: Graceful alien skirmisher with glowing psi-glaive and floating psionic mantle.",
-                Walk: "Astral Projecting Grey: Gliding hovering sprint trailing ethereal turquoise afterimages.",
-                Attack: "Astral Projecting Grey: Spinning release of heavy glowing resonating glaive energy projectile.",
+                Idle: "Astral Projecting Grey: a single slender grey-skinned alien warrior with a large bald head and big violet eyes, silver armour with violet trim, a curved violet glaive held low, standing still, seen from above at a three-quarter angle, front toward the lower right, whole and centred, plain dark backdrop, lit softly from the front, no floor, no shadow.",
+                Walk: "Astral Projecting Grey: the same slender Grey warrior running lightly with its glaive held low.",
+                Attack: "Astral Projecting Grey: the same slender Grey warrior throws a glowing violet glaive blade forward.",
             },
         ),
         (
@@ -2127,9 +2128,9 @@
                 abilities: { "Psionic Storm": "psionic_storm" },
             ),
             veo_prompts: {
-                Idle: "Mind-Storm Elder: Venerable alien master hovering cross-legged with radiant violet psionic coronal aura.",
-                Walk: "Mind-Storm Elder: Serene levitation drifting across battlefield surrounded by crackling telepathic motes.",
-                Attack: "Mind-Storm Elder: Raising twin palms to cast an expansive crackling electrical psionic storm cloud.",
+                Idle: "Mind-Storm Elder: a single ancient grey-skinned alien elder with a huge bald head and glowing violet eyes, in long gold-and-violet robes, seated cross-legged on a small flat golden disc, its hands resting on its knees, seen from above at a three-quarter angle, front toward the lower right, whole and centred, plain dark backdrop, lit softly from the front, no floor, no shadow.",
+                Walk: "Mind-Storm Elder: the same robed elder seated on its golden disc, gliding forward in place in the middle of the frame and fully visible.",
+                Attack: "Mind-Storm Elder: the same robed elder raises both hands and a short crackling violet psionic bolt leaps from its palms.",
             },
         ),
         (
@@ -2212,9 +2213,9 @@
                 weapons: [(weapon: Primary, impact: Some("psi_slash"))],
             ),
             veo_prompts: {
-                Idle: "Cloaked Abductor: Shimmering translucent alien assassin wielding a curved crystalline warp blade.",
-                Walk: "Cloaked Abductor: Silent stalking forward glide with refractive optical distortion.",
-                Attack: "Cloaked Abductor: Blinding emerald crescent cleave slicing through steel and bone.",
+                Idle: "Cloaked Abductor: a single tall lean grey-skinned alien assassin in close dark violet armour and a hood, two green eyes under the hood, a long curved green crystal scythe held low, standing still, seen from above at a three-quarter angle, front toward the lower right, whole and centred, plain dark backdrop, lit softly from the front, no floor, no shadow.",
+                Walk: "Cloaked Abductor: the same hooded assassin stalking forward with long quiet strides, its scythe held low.",
+                Attack: "Cloaked Abductor: the same hooded assassin cleaves forward with its long curved green crystal scythe.",
             },
         ),
         (
@@ -2317,9 +2318,9 @@
                 weapons: [(weapon: Primary, travel: Some("cannon_tracer"), impact: Some("plasma_hit"))],
             ),
             veo_prompts: {
-                Idle: "Hardened Shield Walker: Four-legged alien walker with massive twin forward disruptor cannons and pulsing kinetic dome.",
-                Walk: "Hardened Shield Walker: Sturdy quadrupedal march advancing steadily under protective shield hum.",
-                Attack: "Hardened Shield Walker: Alternating heavy blue plasma bolts tearing into armored targets.",
+                Idle: "Hardened Shield Walker: a single heavy alien four-legged walker, a broad silver-and-gold armoured body on four thick jointed legs, two long forward cannons with blue muzzles, standing still, seen from above at a three-quarter angle, front toward the lower right, whole and centred, plain dark backdrop, lit softly from the front, no floor, no shadow.",
+                Walk: "Hardened Shield Walker: the same heavy four-legged walker marching steadily, its four legs stepping in turn.",
+                Attack: "Hardened Shield Walker: the same heavy four-legged walker fires both disruptor cannons with heavy blue plasma bolts.",
             },
         ),
         (
@@ -2429,9 +2430,9 @@
                 weapons: [(weapon: Primary, travel: Some("lance_beam"), impact: Some("lance_burn"), splash: Some("lance_sweep"))],
             ),
             veo_prompts: {
-                Idle: "Thermal Tripod: Towering slender tripod walker standing high above the battlefield with dual thermal emitters.",
-                Walk: "Thermal Tripod: High-stepping graceful tripod stride stepping effortlessly over cliffs and barricades.",
-                Attack: "Thermal Tripod: Twin blazing orange thermal laser beams sweeping across infantry ranks in wide arcs.",
+                Idle: "Thermal Tripod: a single tall alien war walker, a compact gold-and-silver body with an orange lens on each side on three very long thin legs, two heat lances under it, standing still, seen from above at a three-quarter angle, front toward the lower right, whole from body to feet and centred, plain dark backdrop, lit softly from the front, no floor, no shadow.",
+                Walk: "Thermal Tripod: the same tall three-legged walker striding with long slow steps of its three long legs.",
+                Attack: "Thermal Tripod: the same tall three-legged walker fires two thin orange heat beams forward from the lances under its body.",
             },
         ),
         (
@@ -2485,9 +2486,8 @@
                 is_resource_dropoff: false,
             ),
             veo_prompts: {
-                Idle: "Stealth Eye Orb: Transparent levitating alien reconnaissance probe with subtle crystalline refraction.",
-                Walk: "Stealth Eye Orb: Silent imperceptible aerial drift scanning terrain below.",
-                Attack: "Stealth Eye Orb: Flashing sensor array revealing camouflaged enemy units.",
+                Idle: "Stealth Eye Orb: a single small alien scout probe, a smooth dark silver oval body with one large glowing cyan lens at its front and two short fixed fins, held still, seen from above at a three-quarter angle looking down on its top, front toward the lower right, the whole probe in the middle of the frame with wide margins, plain dark backdrop, lit softly from the front.",
+                Walk: "Stealth Eye Orb: the same small dark silver probe gliding level and forward, flying in place in the middle of the frame and fully visible.",
             },
         ),
         (
@@ -2540,9 +2540,8 @@
                 transport_capacity: 8,
             ),
             veo_prompts: {
-                Idle: "Phase Transporter: Levitating faceted purple crystal vessel surrounded by floating containment pylons.",
-                Walk: "Phase Transporter: Fast gliding aerial passage with crystalline refraction trail.",
-                Attack: "Phase Transporter: Unfolding into stationary phasing mode projecting a vibrant psionic power matrix.",
+                Idle: "Phase Transporter: a single alien transport craft, a long faceted violet crystal hull set in a curved golden frame, two fixed golden side pods and a glowing cyan core inside the crystal, held still, seen from above at a three-quarter angle looking down on its top, front toward the lower right, the whole craft in the middle of the frame with wide margins, plain dark backdrop, lit softly from the front.",
+                Walk: "Phase Transporter: the same violet crystal transport in level forward flight, flying in place in the middle of the frame and fully visible, no other aircraft.",
             },
         ),
         (
@@ -2666,9 +2665,9 @@
                 ],
             ),
             veo_prompts: {
-                Idle: "Prismatic Saucer: Aerodynamic alien war vessel with rotating prongs surrounding a burning prismatic core.",
-                Walk: "Prismatic Saucer: Steady linear cruising with intense cyan ionic drive wash.",
-                Attack: "Prismatic Saucer: Prismatic beam ramping from thin thread to devastating thick thermal channel.",
+                Idle: "Prismatic Saucer: a single alien warship, a long flat gold-and-silver arrowhead hull with three fixed curved prongs at its front around a glowing white-violet prism core, held still, seen from above at a three-quarter angle looking down on its top, front toward the lower right, the whole warship in the middle of the frame with wide margins, plain dark backdrop, lit softly from the front.",
+                Walk: "Prismatic Saucer: the same golden arrowhead warship in steady level forward flight, flying in place in the middle of the frame and fully visible, no other aircraft.",
+                Attack: "Prismatic Saucer: the same golden arrowhead warship fires a violet beam forward from its prism core.",
             },
         ),
         (
@@ -3058,9 +3057,10 @@
                 weapons: [(weapon: Primary, impact: Some("claw_rake"))],
             ),
             veo_prompts: {
-                Idle: "Forager Ant: Iridescent forest insect worker with large grasping mandibles and bioluminescent antennae.",
-                Walk: "Forager Ant: Rapid hexapod scuttling over terrain with twitching antennae.",
-                Attack: "Forager Ant: Sharp snapping bite with jagged serrated chitinous mandibles.",
+                Idle: "Forager Ant: a single large worker ant of iridescent dark green chitin, a big head with broad mandibles, two short antennae with amber tips, six legs, standing still, seen from above at a three-quarter angle, head toward the lower right, whole and centred, plain dark backdrop, lit softly from the front, no floor, no shadow.",
+                Walk: "Forager Ant: the same large green worker ant scuttling quickly on its six legs, staying in place in the middle of the frame and fully visible.",
+                Attack: "Forager Ant: the same large green worker ant snaps its broad mandibles forward in a quick bite.",
+                Cast: "Forager Ant: the same large green worker ant works its mandibles at a point just outside the frame at the lower right.",
             },
         ),
         (
@@ -3142,9 +3142,9 @@
                 weapons: [(weapon: Primary, impact: Some("claw_rake"))],
             ),
             veo_prompts: {
-                Idle: "Razor Mantis: Sleek predatory green praying mantis with serrated foreleg scythes poised to strike.",
-                Walk: "Razor Mantis: Blistering sprint leaping across terrain with predatory agility.",
-                Attack: "Razor Mantis: Lightning-fast cross-scythe slash rending through target armor.",
+                Idle: "Razor Mantis: a single small lean predatory mantis of emerald green chitin, two long serrated scythe forelegs folded in front, four thin legs, a narrow head with amber eyes, crouched, seen from above at a three-quarter angle, head toward the lower right, whole and centred, plain dark backdrop, lit softly from the front, no floor, no shadow.",
+                Walk: "Razor Mantis: the same small green mantis sprinting low on its four thin legs, staying in place in the middle of the frame and fully visible.",
+                Attack: "Razor Mantis: the same small green mantis slashes with both serrated scythe forelegs.",
             },
         ),
         (
@@ -3257,9 +3257,9 @@
                 weapons: [(weapon: Primary, splash: Some("acid_burst"))],
             ),
             veo_prompts: {
-                Idle: "Acid-Burst Beetle: Swollen rounded insect with translucent glowing chartreuse bio-acid sac pulsating.",
-                Walk: "Acid-Burst Beetle: Rapid rolling tumbling motion propelled by frantic legs.",
-                Attack: "Acid-Burst Beetle: Violent explosive rupture splashing green corrosive acid in wide radius.",
+                Idle: "Acid-Burst Beetle: a single small round tick-like beetle with a swollen translucent bright green acid sac on its back, dark brown chitin plates, six short legs, crouched low, seen from above at a three-quarter angle, head toward the lower right, whole and centred, plain dark backdrop, lit softly from the front, no floor, no shadow.",
+                Walk: "Acid-Burst Beetle: the same small acid tick scuttling quickly on its six short legs, staying in place in the middle of the frame and fully visible.",
+                Attack: "Acid-Burst Beetle: the same small acid tick swells and sprays a burst of glowing green acid forward.",
             },
         ),
         (
@@ -3346,9 +3346,9 @@
                 weapons: [(weapon: Primary, travel: Some("acid_spit"), impact: Some("acid_hit"))],
             ),
             veo_prompts: {
-                Idle: "Bile-Artillery Beetle: Long-legged horned stag beetle with upward-curving dorsal bio-cannon.",
-                Walk: "Bile-Artillery Beetle: Nimble scuttling stride keeping artillery horn raised.",
-                Attack: "Bile-Artillery Beetle: High-angle mortar launch of sizzling orange corrosive bile.",
+                Idle: "Bile-Artillery Beetle: a single large stag beetle of dark brown chitin on long legs, two curved horns at its front, a tall curved tube cannon on its back glowing orange at its mouth, seen from above at a three-quarter angle, head toward the lower right, whole and centred, plain dark backdrop, lit softly from the front, no floor, no shadow.",
+                Walk: "Bile-Artillery Beetle: the same horned artillery beetle scuttling on its long legs, its cannon held up, staying in place in the middle of the frame and fully visible.",
+                Attack: "Bile-Artillery Beetle: the same horned artillery beetle lobs a glowing orange glob of bile from the cannon on its back.",
             },
         ),
         (
@@ -3457,9 +3457,9 @@
                 ],
             ),
             veo_prompts: {
-                Idle: "Spine-Spitter Cobra: Rearing serpent warrior with wide cobra hood packed with needle-sharp spines.",
-                Walk: "Spine-Spitter Cobra: Undulating high-speed slither surging across the battlefield.",
-                Attack: "Spine-Spitter Cobra: Rapid volley of pressurized bone spines firing from hood ridges.",
+                Idle: "Spine-Spitter Cobra: a single serpent creature rearing upright, a coiled body of dark green scales and brown chitin plates, a wide hood of bone spines, two small clawed arms, amber eyes, seen from above at a three-quarter angle, head toward the lower right, whole and centred, plain dark backdrop, lit softly from the front, no floor, no shadow.",
+                Walk: "Spine-Spitter Cobra: the same rearing spined serpent slithering forward, staying in place in the middle of the frame and fully visible.",
+                Attack: "Spine-Spitter Cobra: the same rearing spined serpent spits a quick volley of bone spines from its hood.",
             },
         ),
         (
@@ -3724,9 +3724,9 @@
                 ],
             ),
             veo_prompts: {
-                Idle: "Glaive Wasp: Winged predatory insectoid flyer with undulating tail and translucent fluttering wings.",
-                Walk: "Glaive Wasp: Agile aerial banking weaving through airspace at extreme speed.",
-                Attack: "Glaive Wasp: Tail flick launching spinning segmented bio-glaive worm projectile.",
+                Idle: "Glaive Wasp: a single winged predator wasp of dark green chitin, two pairs of long translucent amber-veined wings spread wide, a long segmented tail ending in a hooked stinger, glowing amber eyes, seen from above at a three-quarter angle, head toward the lower right, the whole wasp in the middle of the frame with wide margins, plain dark backdrop, lit softly from the front.",
+                Walk: "Glaive Wasp: the same winged green wasp flying forward in place, its wings beating, fully visible in the middle of the frame, no other creatures.",
+                Attack: "Glaive Wasp: the same winged green wasp flicks its tail and shoots a glowing amber barbed glaive forward.",
             },
         ),
         (
@@ -3813,9 +3813,9 @@
                 weapons: [(weapon: Air, travel: Some("spore_bolt"), impact: Some("acid_hit"))],
             ),
             veo_prompts: {
-                Idle: "Sky Leviathan: Heavily plated bio-mechanical squid beast hovering with undulating tentacles.",
-                Walk: "Sky Leviathan: Jet-propulsion pulse gliding through atmosphere with rhythmic contractions.",
-                Attack: "Sky Leviathan: Spewing dense stream of parasitic spores latching onto enemy hulls.",
+                Idle: "Sky Leviathan: a single heavy armoured flying beast shaped like a squid, a bulky body of dark green and brown chitin plates, a crown of short thick tentacles trailing behind it, glowing amber spore vents along its sides, seen from above at a three-quarter angle, head toward the lower right, the whole beast in the middle of the frame with wide margins, plain dark backdrop, lit softly from the front.",
+                Walk: "Sky Leviathan: the same armoured squid beast gliding forward in place, fully visible in the middle of the frame, no other creatures.",
+                Attack: "Sky Leviathan: the same armoured squid beast spews a stream of glowing amber spores forward from its front.",
             },
         ),
         (
@@ -4089,9 +4089,9 @@
                 weapons: [(weapon: Primary, impact: Some("claw_rake"), splash: Some("cleave_impact"))],
             ),
             veo_prompts: {
-                Idle: "Armored Stag Behemoth: Enormous quadrupedal juggernaut with towering multi-tined kaiser scythe horns.",
-                Walk: "Armored Stag Behemoth: Rampaging charge shoving smaller allies aside with unstoppable momentum.",
-                Attack: "Armored Stag Behemoth: Devastating horizontal horn cleave sweeping through entire squads.",
+                Idle: "Armored Stag Behemoth: a single enormous four-legged beast of thick dark brown chitin plates glowing amber between them, a low head with two huge curved scythe horns, standing still, seen from above at a three-quarter angle, head toward the lower right, whole and centred, plain dark backdrop, lit softly from the front, no floor, no shadow.",
+                Walk: "Armored Stag Behemoth: the same huge horned beast charging heavily on its four thick legs, staying in place in the middle of the frame and fully visible.",
+                Attack: "Armored Stag Behemoth: the same huge horned beast swings its great scythe horns in a sweeping cleave.",
             },
         ),
         (
@@ -4229,9 +4229,9 @@
                 ],
             ),
             veo_prompts: {
-                Idle: "Hive Matron: Regal multi-legged bio-matron standing vigilant with defensive talons.",
-                Walk: "Hive Matron: Measured scuttling gait maintaining balance across uneven terrain.",
-                Attack: "Hive Matron: Slashing ground talons followed by spitting anti-air bio-acid spines.",
+                Idle: "Hive Matron: a single tall regal swarm creature on six thin legs, an upright dark green chitin body, a crowned head, two long talon arms folded in front, amber sacs on its back, seen from above at a three-quarter angle, front toward the lower right, whole and centred, plain dark backdrop, lit softly from the front, no floor, no shadow.",
+                Walk: "Hive Matron: the same tall crowned swarm creature walking on its six thin legs, staying in place in the middle of the frame and fully visible.",
+                Attack: "Hive Matron: the same tall crowned swarm creature slashes forward with its long talon arms.",
             },
         ),
         (
@@ -4303,9 +4303,8 @@
                 abilities: { "Fungal Growth": "fungal_missile" },
             ),
             veo_prompts: {
-                Idle: "Mycelium Shaman: Bulbous multi-eyed fungal insect with pulsating bioluminescent spore sacs.",
-                Walk: "Mycelium Shaman: Low scuttling creep leaving subtle bioluminescent spore traces.",
-                Attack: "Mycelium Shaman: Projecting thick emerald fungal root tendrils entangling enemy squads.",
+                Idle: "Mycelium Shaman: a single bulbous fungal creature, a round swollen body of mottled brown and green skin dotted with amber spore sacs, small dark eyes at its front, stubby legs, crouched low, seen from above at a three-quarter angle, front toward the lower right, whole and centred, plain dark backdrop, lit softly from the front, no floor, no shadow.",
+                Walk: "Mycelium Shaman: the same bulbous fungal creature creeping forward on its stubby legs, staying in place in the middle of the frame and fully visible.",
             },
         ),
         (
@@ -4405,9 +4404,8 @@
                 abilities: { "Abduct": "abduct_tether", "Blinding Cloud": "blinding_cloud" },
             ),
             veo_prompts: {
-                Idle: "Tongue Chameleon: Winged serpentine flyer with iridescent scales and coiled elastic bio-tongue.",
-                Walk: "Tongue Chameleon: Sinister aerial gliding banking through cloud cover.",
-                Attack: "Tongue Chameleon: Whipping long prehensile tongue forward to snatch enemy heavy units.",
+                Idle: "Tongue Chameleon: a single flying serpent creature of iridescent green scales, two narrow membrane wings spread wide, a long curled tail, a chameleon-like head with bulging amber eyes, its long tongue rolled in its mouth, seen from above at a three-quarter angle, head toward the lower right, the whole creature in the middle of the frame with wide margins, plain dark backdrop, lit softly from the front.",
+                Walk: "Tongue Chameleon: the same winged green serpent gliding forward in place, its wings rippling, fully visible in the middle of the frame, no other creatures.",
             },
         ),
         (
@@ -4458,9 +4456,8 @@
                 is_resource_dropoff: false,
             ),
             veo_prompts: {
-                Idle: "Amber Spore Balloon: Huge buoyant jellyfish-like biological gas sac drifting lazily with trailing tentacles.",
-                Walk: "Amber Spore Balloon: Slow rhythmic gaseous pulsation gently wafting forward.",
-                Attack: "Amber Spore Balloon: Venting harmless glowing spores into the surrounding breeze.",
+                Idle: "Amber Spore Balloon: a single huge gas-sac creature, a round translucent amber balloon body with glowing veins, a small dark chitin head plate at its front and a fringe of short tentacles hanging below it, seen from above at a three-quarter angle, head toward the lower right, the whole creature in the middle of the frame with wide margins, plain dark backdrop, lit softly from the front.",
+                Walk: "Amber Spore Balloon: the same amber balloon creature drifting slowly forward in place, fully visible in the middle of the frame, no other creatures.",
             },
         ),
         // The Brood Lord's Broodling (plan 2026-11-28-broodlings D-6, B-21): 5.0.14 Broodling, liberty

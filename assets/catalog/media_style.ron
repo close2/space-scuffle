@@ -228,6 +228,137 @@
                 Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the subject keeps the same size and place in frame from start to end. The aircraft hovers in place with a gentle steady bob, thrusters glowing, nanite emitters shimmering softly. Seamless loop: the last frame matches the first.",
                 Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the aircraft flies in place, keeping the same size, pose and place in frame. Thrusters flare in steady bursts, exhaust streams backward, a slight rhythmic bob, no ground contact. Seamless loop: the last frame matches the first.",
             },
+        // Batch 2 for an outside generator (docs/media/veo-video-requests-batch-2.md, 2026-11-28):
+        // the 24 Cosmic Enclave and Sylvan Swarm units without media. Their authored texts named
+        // turning parts ("rotating crystalline rings", "spinning" glaives and prongs), the ground
+        // ("over terrain", "uneven ground", "across the battlefield"), scenery ("cloud cover",
+        // "airspace", "breeze"), travel and turns ("banking", "sprint leaping", "tumbling") and a
+        // see-through body ("Transparent", "Shimmering translucent"), and were rewritten on the
+        // patterns earlier batches proved: aircraft and drones as the Carrier (a still hover seen
+        // from above, flight in place shown by light trails toward the upper left, fire toward
+        // the lower right and return to the hover); winged creatures as the Brood Lord analogue
+        // (still wings, a glide in place with rippling wings); ground creatures as the scorpion
+        // and the Broodling (a still crouch, a scuttle on a treadmill, a strike that settles
+        // back); the Greys and the walkers as the golem and the mech (stand still, march on the
+        // spot, fire and settle back). Enclave units are silver and gold with violet and cyan
+        // lights; Swarm units are dark green and brown chitin with amber glow.
+            "flying_saucer": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the saucer keeps the same size and place in frame. The saucer hangs still in the air: it never turns, tilts or bobs, and only its violet rim lights and emitter lens glow and blink softly. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the saucer flies forward in place, as if held in a wind tunnel, keeping the same size, pose and place in frame. From the first frame to the last its rim lights blaze and long thin violet light trails stream back from it toward the upper left, flickering at an even pace; no ground contact. Seamless loop: the last frame matches the first.",
+                Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the saucer keeps its place in frame, hovering. A thin steady violet beam streams from the emitter at its front edge straight toward the lower right and out of the frame, then the beam fades and it hovers in its starting pose.",
+            },
+            "grav_harvester": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the drone keeps the same size and place in frame. The drone hangs still in the air: it never turns, tilts or bobs, and only its crystal eye and small golden lights glow and blink softly. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the drone flies forward in place, as if held in a wind tunnel, keeping the same size, pose and place in frame. From the first frame to the last the glow under it brightens and thin pale cyan light trails stream back from it toward the upper left, flickering at an even pace; no ground contact. Seamless loop: the last frame matches the first.",
+                Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the drone keeps its place in frame, hovering. A short bright cyan electric spark leaps from its crystal eye straight toward the lower right and out of the frame, then the spark fades and it hovers in its starting pose.",
+                Cast: "Cast animation, one static tripod shot: the camera never moves, zooms or pans, and the drone keeps the same size, pose and place in frame. Its crystal eye holds a steady thin green extraction beam toward a point just outside the frame at the lower right, with small showering sparks, while its body and grippers hold still. Seamless loop: the last frame matches the first.",
+            },
+            "warp_strider": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the walker keeps the same size, pose and place in frame. It stands still, keeping its three-quarter view: it never turns toward the camera, sways or shifts, and its head never turns or nods; only its cyan eye and small violet lights glow steadily. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the walker never turns, leans or steps toward the camera. It strides briskly on the spot as if on a treadmill: its three long legs lift and step in turn at an even pace from the first frame to the last, while its body keeps the same place, size and three-quarter facing in frame. Nothing else appears in the frame. Seamless loop: the last frame matches the first.",
+                Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the walker keeps its place in frame. It fires one bright cyan particle bolt from the cannon under its front straight toward the lower right and out of the frame with a short recoil, then settles smoothly back to its starting pose. The plain dark backdrop stays unchanged throughout.",
+            },
+            "prism_weaver": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the drone keeps the same size and place in frame. The drone hangs still in the air: it never turns, tilts or bobs, and only its cyan eye and the violet crystals on its fixed rings glow and blink softly. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the drone flies forward in place, as if held in a wind tunnel, keeping the same size, pose and place in frame. From the first frame to the last its eye glows bright and thin pale cyan light trails stream back from it toward the upper left, flickering at an even pace; no ground contact. Seamless loop: the last frame matches the first.",
+                Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the drone keeps its place in frame, hovering. A thin steady azure beam streams from its eye straight toward the lower right and out of the frame, then the beam fades and it hovers in its starting pose.",
+            },
+            "astral_vagrant": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the warrior keeps the same size, pose and place in frame. It stands still, keeping its three-quarter view: it never turns toward the camera, sways or shifts, and its head never turns or nods; only its eyes and the glaive glow steadily. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the warrior never turns, leans or steps toward the camera. It runs lightly on the spot as if on a treadmill: its legs lift and step in turn at an even pace from the first frame to the last, while its body keeps the same place, size and three-quarter facing in frame. Nothing else appears in the frame. Seamless loop: the last frame matches the first.",
+                Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the warrior keeps its place in frame. It swings its arm and throws a glowing violet glaive blade straight toward the lower right and out of the frame; a new glaive glows in its hand, then settles smoothly back to its starting pose. The plain dark backdrop stays unchanged throughout.",
+            },
+            "cerebral_elder": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the elder keeps the same size, pose and place in frame from start to end. It sits on its disc as still as a statue: its head, hands and robes never move, turn or nod, and the disc never bobs; only its eyes glow softly. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the elder glides forward in place on its disc, as if held in a wind tunnel, keeping the same size, pose, place and three-quarter facing in frame. From the first frame to the last its robes ripple back toward the upper left at an even pace and a faint violet glow streams back under the disc. Seamless loop: the last frame matches the first.",
+                Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the elder keeps its place in frame. It raises both hands and a short crackling violet psionic bolt leaps from its palms straight toward the lower right and out of the frame, then it lowers its hands smoothly back to its starting pose. The plain dark backdrop stays unchanged throughout.",
+            },
+            "shadow_visitor": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the assassin keeps the same size, pose and place in frame. It stands still, keeping its three-quarter view: it never turns toward the camera, sways or shifts, and its head never turns or nods; only its eyes and the scythe glow steadily. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the assassin never turns, leans or steps toward the camera. It stalks with long quiet strides on the spot as if on a treadmill: its legs lift and step in turn at an even pace from the first frame to the last, while its body keeps the same place, size and three-quarter facing in frame. Nothing else appears in the frame. Seamless loop: the last frame matches the first.",
+                Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the assassin keeps its place in frame. It sweeps its long green scythe in one fast cleave toward the lower right, leaving a short green arc of light, then settles smoothly back to its starting pose. The plain dark backdrop stays unchanged throughout.",
+            },
+            "void_goliath": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the walker keeps the same size, pose and place in frame. It stands still, keeping its three-quarter view: it never turns toward the camera, sways or shifts, and its head never turns or nods; only its cannon muzzles and small lights glow steadily. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the walker never turns, leans or steps toward the camera. It marches heavily on the spot as if on a treadmill: its four legs lift and step in turn at an even pace from the first frame to the last, while its body keeps the same place, size and three-quarter facing in frame. Nothing else appears in the frame. Seamless loop: the last frame matches the first.",
+                Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the walker keeps its place in frame. It fires both disruptor cannons: a short heavy recoil and two bright blue plasma bolts streaking straight toward the lower right and out of the frame, then settles smoothly back to its starting pose. The plain dark backdrop stays unchanged throughout.",
+            },
+            "tripod_annihilator": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the walker keeps the same size, pose and place in frame. It stands still, keeping its three-quarter view: it never turns toward the camera, sways or shifts, and its head never turns or nods; only its orange lenses glow steadily. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the walker never turns, leans or steps toward the camera. It strides slowly on the spot as if on a treadmill: its three long legs lift and step in turn at an even pace from the first frame to the last, while its body keeps the same place, size and three-quarter facing in frame. Nothing else appears in the frame. Seamless loop: the last frame matches the first.",
+                Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the walker keeps its place in frame. It fires two thin straight orange heat beams from the lances under its body toward the lower right and out of the frame, the beams fading after a moment, then settles smoothly back to its starting pose. The plain dark backdrop stays unchanged throughout.",
+            },
+            "stealth_eye_orb": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the probe keeps the same size and place in frame. The probe hangs still in the air: it never turns, tilts or bobs, and only its cyan lens and small lights glow and blink softly. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the probe flies forward in place, as if held in a wind tunnel, keeping the same size, pose and place in frame. From the first frame to the last its lens glows bright and thin pale cyan light trails stream back from it toward the upper left, flickering at an even pace; no ground contact. Seamless loop: the last frame matches the first.",
+            },
+            "phase_prism_saucer": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the craft keeps the same size and place in frame. The craft hangs still in the air: it never turns, tilts or bobs, and only its cyan core and small golden lights glow and blink softly. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the craft flies forward in place, as if held in a wind tunnel, keeping the same size, pose and place in frame. From the first frame to the last its core glows bright and long thin violet light trails stream back from it toward the upper left, flickering at an even pace; no ground contact. Seamless loop: the last frame matches the first.",
+            },
+            "prismatic_saucer": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the warship keeps the same size and place in frame. The warship hangs still in the air: it never turns, tilts or bobs, and only its prism core and small lights glow and blink softly. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the warship flies forward in place, as if held in a wind tunnel, keeping the same size, pose and place in frame. From the first frame to the last its drive glows bright cyan and long thin cyan light trails stream back from it toward the upper left, flickering at an even pace; no ground contact. Seamless loop: the last frame matches the first.",
+                Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the warship keeps its place in frame, hovering. A violet beam streams from its prism core, growing from a thin thread to a thick bright beam, straight toward the lower right and out of the frame, then the beam fades and it hovers in its starting pose.",
+            },
+            "nectar_worker": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the ant keeps the same size, pose and place in frame. It stands as still as a statue: its body, head, antennae, legs and mandibles never move, turn or nod; only the amber tips of its antennae glow, and its colours never change. The plain dark backdrop stays unchanged. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans. The ant scuttles on a treadmill that holds it in place: its six legs clearly lift and step in turn at an even pace from the first frame to the last, while its body stays at exactly the same place, size and three-quarter facing in frame; it never moves forward, back or toward the camera. The plain dark backdrop stays unchanged. Seamless loop: the last frame matches the first.",
+                Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the ant keeps its place in frame. It lunges and snaps its broad mandibles shut twice toward the lower right, then settles smoothly back to its starting pose. The plain dark backdrop stays unchanged throughout.",
+                Cast: "Cast animation, one static tripod shot: the camera never moves, zooms or pans, and the ant keeps the same size, pose and place in frame. Its mandibles open and close in a quick even rhythm at a point just outside the frame at the lower right, a soft amber glow between them, while its body, head and legs hold still. Seamless loop: the last frame matches the first.",
+            },
+            "razor_mantis": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the mantis keeps the same size, pose and place in frame. It crouches as still as a statue: its body, head, scythes and legs never move, turn or nod; only its amber eyes glow, and its colours never change. The plain dark backdrop stays unchanged. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans. The mantis sprints on a treadmill that holds it in place: its four thin legs clearly lift and step in turn at an even pace from the first frame to the last, while its body stays at exactly the same place, size and three-quarter facing in frame; it never moves forward, back or toward the camera. The plain dark backdrop stays unchanged. Seamless loop: the last frame matches the first.",
+                Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the mantis keeps its place in frame. It slashes twice with both serrated scythe forelegs toward the lower right, then settles smoothly back to its starting pose. The plain dark backdrop stays unchanged throughout.",
+            },
+            "volatile_tick": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the tick keeps the same size, pose and place in frame. It crouches as still as a statue: its body, head, acid sac and legs never move, turn or nod; only the acid sac glows, and its colours never change. The plain dark backdrop stays unchanged. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans. The tick scuttles on a treadmill that holds it in place: its six short legs clearly lift and step in turn at an even pace from the first frame to the last, while its body stays at exactly the same place, size and three-quarter facing in frame; it never moves forward, back or toward the camera. The plain dark backdrop stays unchanged. Seamless loop: the last frame matches the first.",
+                Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the tick keeps its place in frame. Its acid sac swells and flares bright and a burst of glowing green acid sprays straight toward the lower right and out of the frame, then settles smoothly back to its starting pose. The plain dark backdrop stays unchanged throughout.",
+            },
+            "mortar_stag": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the beetle keeps the same size, pose and place in frame. It stands as still as a statue: its body, head, horns, cannon and legs never move, turn or nod; only the cannon's mouth glows, and its colours never change. The plain dark backdrop stays unchanged. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans. The beetle scuttles on a treadmill that holds it in place: its six long legs clearly lift and step in turn at an even pace from the first frame to the last, while its body stays at exactly the same place, size and three-quarter facing in frame; it never moves forward, back or toward the camera. The plain dark backdrop stays unchanged. Seamless loop: the last frame matches the first.",
+                Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the beetle keeps its place in frame. It braces and the cannon on its back lobs a glowing orange glob of bile in a high arc forward and out of the frame at the upper right, then settles smoothly back to its starting pose. The plain dark backdrop stays unchanged throughout.",
+            },
+            "thorn_viper": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the serpent keeps the same size, pose and place in frame. It rears as still as a statue: its body, head, hood, arms and coils never move, turn or nod; only its amber eyes glow, and its colours never change. The plain dark backdrop stays unchanged. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans. The serpent slithers on a treadmill that holds it in place: its long coiled body ripples in even S-shaped waves from the first frame to the last, while its raised head and hood stay at exactly the same place, size and three-quarter facing in frame; it never moves forward, back or toward the camera. The plain dark backdrop stays unchanged. Seamless loop: the last frame matches the first.",
+                Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the serpent keeps its place in frame. It flares its hood and spits a quick volley of bone spines straight toward the lower right and out of the frame, then settles smoothly back to its starting pose. The plain dark backdrop stays unchanged throughout.",
+            },
+            "stag_behemoth": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the beast keeps the same size, pose and place in frame. It stands as still as a statue: its body, head, horns and legs never move, turn or nod; only the amber light between its plates glows, and its colours never change. The plain dark backdrop stays unchanged. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans. The beast charges heavily on a treadmill that holds it in place: its four thick legs clearly lift and step in turn at an even pace from the first frame to the last, while its body stays at exactly the same place, size and three-quarter facing in frame; it never moves forward, back or toward the camera. The plain dark backdrop stays unchanged. Seamless loop: the last frame matches the first.",
+                Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the beast keeps its place in frame. It swings its great scythe horns in one sweeping sideways cleave toward the lower right, then settles smoothly back to its starting pose. The plain dark backdrop stays unchanged throughout.",
+            },
+            "hive_matron": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the creature keeps the same size, pose and place in frame. It stands as still as a statue: its body, head, crown, talons and legs never move, turn or nod; only the amber sacs on its back glow, and its colours never change. The plain dark backdrop stays unchanged. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans. The creature walks on a treadmill that holds it in place: its six thin legs clearly lift and step in turn at an even pace from the first frame to the last, while its body stays at exactly the same place, size and three-quarter facing in frame; it never moves forward, back or toward the camera. The plain dark backdrop stays unchanged. Seamless loop: the last frame matches the first.",
+                Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the creature keeps its place in frame. It slashes forward twice with its long talon arms toward the lower right, then settles smoothly back to its starting pose. The plain dark backdrop stays unchanged throughout.",
+            },
+            "mycelium_shaman": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the creature keeps the same size, pose and place in frame. It crouches as still as a statue: its body, head, eyes and legs never move, turn or nod; only its spore sacs glow, and its colours never change. The plain dark backdrop stays unchanged. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans. The creature creeps on a treadmill that holds it in place: its short stubby legs clearly lift and step in turn at an even pace from the first frame to the last, while its body stays at exactly the same place, size and three-quarter facing in frame; it never moves forward, back or toward the camera. The plain dark backdrop stays unchanged. Seamless loop: the last frame matches the first.",
+            },
+            "sonic_bat": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the wasp keeps the same size and place in frame. It holds still, wings spread: it never turns, tilts or bobs; only its amber eyes and wing veins glow softly. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the wasp glides forward in place, as if held in a wind tunnel, keeping the same size, place and three-quarter facing in frame: its translucent wings beat in a fast even blur from the first frame to the last. The plain dark backdrop stays unchanged. Seamless loop: the last frame matches the first.",
+                Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the wasp keeps its place in frame. It flicks its tail and a glowing amber barbed glaive shoots from its stinger straight toward the lower right and out of the frame, then holds still in its starting pose. The plain dark backdrop stays unchanged throughout.",
+            },
+            "sky_leviathan": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the beast keeps the same size and place in frame. It holds still: it never turns, tilts or bobs and its tentacles stay still; only its spore vents glow softly. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the beast glides forward in place, as if held in a wind tunnel, keeping the same size, place and three-quarter facing in frame: its trailing tentacles ripple in slow even waves from the first frame to the last. The plain dark backdrop stays unchanged. Seamless loop: the last frame matches the first.",
+                Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the beast keeps its place in frame. It spews a stream of glowing amber spores from its front straight toward the lower right and out of the frame, then holds still in its starting pose. The plain dark backdrop stays unchanged throughout.",
+            },
+            "tongue_chameleon": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the creature keeps the same size and place in frame. It holds still, wings spread: it never turns, tilts or bobs; only its amber eyes glow softly. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the creature glides forward in place, as if held in a wind tunnel, keeping the same size, place and three-quarter facing in frame: its membrane wings ripple in slow even waves from the first frame to the last. The plain dark backdrop stays unchanged. Seamless loop: the last frame matches the first.",
+            },
+            "amber_pollen_dome": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the creature keeps the same size and place in frame. It holds still: it never turns, tilts or bobs and its tentacles hang still; only its veins glow softly. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the creature glides forward in place, as if held in a wind tunnel, keeping the same size, place and three-quarter facing in frame: its hanging tentacles sway back in slow even waves from the first frame to the last. The plain dark backdrop stays unchanged. Seamless loop: the last frame matches the first.",
+            },
         },
         // Exact catalog slug -> plain nouns appended after its kind's negative terms, for one
         // identity whose clips keep drawing something its kind's clips need not avoid (owner
@@ -242,6 +373,70 @@
             "saucer_interceptor": "light shafts, tractor beam, beam of light from above, volumetric light, haze, light streaks",
             "spore_matriarch": "light shafts, tractor beam, beam of light from above, volumetric light, haze, flapping wings",
             "brood_mite": "head turning, nodding, twitching, colour change",
+        // Batch 2 (docs/media/veo-video-requests-batch-2.md): every aircraft, drone and flyer
+        // takes the light-shaft terms of the Carrier and the interceptor (a beam-casting drone
+        // keeps its own beam: no "tractor beam" or "light streaks"); every Swarm creature the
+        // Broodling's terms plus "floor, cast shadow"; the Greys "head turning, nodding, floor,
+        // cast shadow"; the walkers "floor, cast shadow, turning toward the camera" (the mech's
+        // Walks turned); the sphere drone in fixed rings "rotating rings, spinning rings"; every
+        // structure "floor, ground plane, cast shadow, horizon" (batch 1 to 4 seeds drew lit
+        // floors, horizons and hard shadows).
+            "flying_saucer": "light shafts, tractor beam, beam of light from above, volumetric light, haze, light streaks",
+            "grav_harvester": "light shafts, beam of light from above, volumetric light, haze",
+            "warp_strider": "floor, cast shadow, turning toward the camera",
+            "prism_weaver": "light shafts, beam of light from above, volumetric light, haze, rotating rings, spinning rings",
+            "astral_vagrant": "head turning, nodding, floor, cast shadow",
+            "cerebral_elder": "head turning, nodding, floor, cast shadow",
+            "shadow_visitor": "head turning, nodding, floor, cast shadow",
+            "void_goliath": "floor, cast shadow, turning toward the camera",
+            "tripod_annihilator": "floor, cast shadow, turning toward the camera",
+            "stealth_eye_orb": "light shafts, tractor beam, beam of light from above, volumetric light, haze, light streaks",
+            "phase_prism_saucer": "light shafts, tractor beam, beam of light from above, volumetric light, haze, light streaks",
+            "prismatic_saucer": "light shafts, tractor beam, beam of light from above, volumetric light, haze, light streaks",
+            "nectar_worker": "head turning, nodding, twitching, colour change, floor, cast shadow",
+            "razor_mantis": "head turning, nodding, twitching, colour change, floor, cast shadow",
+            "volatile_tick": "head turning, nodding, twitching, colour change, floor, cast shadow",
+            "mortar_stag": "head turning, nodding, twitching, colour change, floor, cast shadow",
+            "thorn_viper": "head turning, nodding, twitching, colour change, floor, cast shadow",
+            "stag_behemoth": "head turning, nodding, twitching, colour change, floor, cast shadow",
+            "hive_matron": "head turning, nodding, twitching, colour change, floor, cast shadow",
+            "mycelium_shaman": "head turning, nodding, twitching, colour change, floor, cast shadow",
+            "sonic_bat": "light shafts, tractor beam, beam of light from above, volumetric light, haze, light streaks, head turning, nodding, twitching, colour change, floor, cast shadow",
+            "sky_leviathan": "light shafts, tractor beam, beam of light from above, volumetric light, haze, light streaks, head turning, nodding, twitching, colour change, floor, cast shadow",
+            "tongue_chameleon": "light shafts, tractor beam, beam of light from above, volumetric light, haze, light streaks, flapping wings, head turning, nodding, twitching, colour change, floor, cast shadow",
+            "amber_pollen_dome": "light shafts, tractor beam, beam of light from above, volumetric light, haze, light streaks, head turning, nodding, twitching, colour change, floor, cast shadow",
+            "citadel_nexus_dome": "floor, ground plane, cast shadow, horizon",
+            "psi_pylon_dome": "floor, ground plane, cast shadow, horizon",
+            "rift_siphon_dome": "floor, ground plane, cast shadow, horizon",
+            "warp_gate_dome": "floor, ground plane, cast shadow, horizon",
+            "crystalline_forge_dome": "floor, ground plane, cast shadow, horizon",
+            "tesla_sentinel_dome": "floor, ground plane, cast shadow, horizon",
+            "harmonic_recharge_dome": "floor, ground plane, cast shadow, horizon",
+            "cybernetics_conduit_dome": "floor, ground plane, cast shadow, horizon",
+            "templar_conclave_dome": "floor, ground plane, cast shadow, horizon",
+            "stellar_portal_dome": "floor, ground plane, cast shadow, horizon",
+            "robotic_foundry_dome": "floor, ground plane, cast shadow, horizon",
+            "psionic_archives_dome": "floor, ground plane, cast shadow, horizon",
+            "void_sanctuary_dome": "floor, ground plane, cast shadow, horizon",
+            "robotic_assembly_bay_dome": "floor, ground plane, cast shadow, horizon",
+            "celestial_beacon_dome": "floor, ground plane, cast shadow, horizon",
+            "ancient_tree_dome": "floor, ground plane, cast shadow, horizon",
+            "canopy_grove_dome": "floor, ground plane, cast shadow, horizon",
+            "primal_world_tree_dome": "floor, ground plane, cast shadow, horizon",
+            "spore_vent_dome": "floor, ground plane, cast shadow, horizon",
+            "spawning_hollow_dome": "floor, ground plane, cast shadow, horizon",
+            "metamorphic_chamber_dome": "floor, ground plane, cast shadow, horizon",
+            "thorn_lasher_dome": "floor, ground plane, cast shadow, horizon",
+            "spore_spire_dome": "floor, ground plane, cast shadow, horizon",
+            "carapace_mound_dome": "floor, ground plane, cast shadow, horizon",
+            "caustic_nursery_dome": "floor, ground plane, cast shadow, horizon",
+            "spine_den_dome": "floor, ground plane, cast shadow, horizon",
+            "burrow_spire_dome": "floor, ground plane, cast shadow, horizon",
+            "chitin_spire_dome": "floor, ground plane, cast shadow, horizon",
+            "apex_spire_dome": "floor, ground plane, cast shadow, horizon",
+            "infestation_nursery_dome": "floor, ground plane, cast shadow, horizon",
+            "subterranean_network_dome": "floor, ground plane, cast shadow, horizon",
+            "behemoth_den_dome": "floor, ground plane, cast shadow, horizon",
         },
     ),
 
@@ -336,6 +531,34 @@
             "sky_bastion": Letterbox(feather_permille: 30),
             "cloak_gunship": Letterbox(feather_permille: 30),
             "omni_probe_drone": Letterbox(feather_permille: 30),
+        //
+        // Batch 2 (docs/media/veo-video-requests-batch-2.md): the 24 Enclave and Swarm units seen
+        // at 3/4 with legs, wings, scythes or weapons held out, letterboxed from the first clip as
+        // every unit since batch 5.
+            "flying_saucer": Letterbox(feather_permille: 30),
+            "grav_harvester": Letterbox(feather_permille: 30),
+            "warp_strider": Letterbox(feather_permille: 30),
+            "prism_weaver": Letterbox(feather_permille: 30),
+            "astral_vagrant": Letterbox(feather_permille: 30),
+            "cerebral_elder": Letterbox(feather_permille: 30),
+            "shadow_visitor": Letterbox(feather_permille: 30),
+            "void_goliath": Letterbox(feather_permille: 30),
+            "tripod_annihilator": Letterbox(feather_permille: 30),
+            "stealth_eye_orb": Letterbox(feather_permille: 30),
+            "phase_prism_saucer": Letterbox(feather_permille: 30),
+            "prismatic_saucer": Letterbox(feather_permille: 30),
+            "nectar_worker": Letterbox(feather_permille: 30),
+            "razor_mantis": Letterbox(feather_permille: 30),
+            "volatile_tick": Letterbox(feather_permille: 30),
+            "mortar_stag": Letterbox(feather_permille: 30),
+            "thorn_viper": Letterbox(feather_permille: 30),
+            "stag_behemoth": Letterbox(feather_permille: 30),
+            "hive_matron": Letterbox(feather_permille: 30),
+            "mycelium_shaman": Letterbox(feather_permille: 30),
+            "sonic_bat": Letterbox(feather_permille: 30),
+            "sky_leviathan": Letterbox(feather_permille: 30),
+            "tongue_chameleon": Letterbox(feather_permille: 30),
+            "amber_pollen_dome": Letterbox(feather_permille: 30),
         },
     ),
 
@@ -495,6 +718,103 @@
             "repair_shuttle": {
                 Idle: (pin_end: true, seam: Some((scale_lock: true, crossfade_frames: 0))),
                 Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 0))),
+            },
+        // Batch 2 (docs/media/veo-video-requests-batch-2.md): every Attack pinned at its end to the
+        // Idle picture; every stride (walkers, Greys, creatures) keeps no scale lock and no
+        // cross-fade, as the scorpion, the Broodling and the specter; every flight in place
+        // (aircraft, drones, winged creatures, the gliding elder) keeps no scale lock with the
+        // default cross-fade, as the interceptor, because its trails or wing motion read as an
+        // uneven zoom.
+            "flying_saucer": {
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 2))),
+                Attack: (pin_end: true, seam: None),
+            },
+            "grav_harvester": {
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 2))),
+                Attack: (pin_end: true, seam: None),
+            },
+            "warp_strider": {
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 0))),
+                Attack: (pin_end: true, seam: None),
+            },
+            "prism_weaver": {
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 2))),
+                Attack: (pin_end: true, seam: None),
+            },
+            "astral_vagrant": {
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 0))),
+                Attack: (pin_end: true, seam: None),
+            },
+            "cerebral_elder": {
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 2))),
+                Attack: (pin_end: true, seam: None),
+            },
+            "shadow_visitor": {
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 0))),
+                Attack: (pin_end: true, seam: None),
+            },
+            "void_goliath": {
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 0))),
+                Attack: (pin_end: true, seam: None),
+            },
+            "tripod_annihilator": {
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 0))),
+                Attack: (pin_end: true, seam: None),
+            },
+            "stealth_eye_orb": {
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 2))),
+            },
+            "phase_prism_saucer": {
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 2))),
+            },
+            "prismatic_saucer": {
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 2))),
+                Attack: (pin_end: true, seam: None),
+            },
+            "nectar_worker": {
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 0))),
+                Attack: (pin_end: true, seam: None),
+            },
+            "razor_mantis": {
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 0))),
+                Attack: (pin_end: true, seam: None),
+            },
+            "volatile_tick": {
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 0))),
+                Attack: (pin_end: true, seam: None),
+            },
+            "mortar_stag": {
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 0))),
+                Attack: (pin_end: true, seam: None),
+            },
+            "thorn_viper": {
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 0))),
+                Attack: (pin_end: true, seam: None),
+            },
+            "stag_behemoth": {
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 0))),
+                Attack: (pin_end: true, seam: None),
+            },
+            "hive_matron": {
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 0))),
+                Attack: (pin_end: true, seam: None),
+            },
+            "mycelium_shaman": {
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 0))),
+            },
+            "sonic_bat": {
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 2))),
+                Attack: (pin_end: true, seam: None),
+            },
+            "sky_leviathan": {
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 2))),
+                Attack: (pin_end: true, seam: None),
+            },
+            "tongue_chameleon": {
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 2))),
+            },
+            "amber_pollen_dome": {
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 2))),
             },
         },
     ),

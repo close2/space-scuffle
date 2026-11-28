@@ -922,7 +922,10 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Citadel Nexus Dome: a single large golden alien pyramid hub on a broad octagonal base, curved gold plates with violet seams, a huge cyan crystal in its apex, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The crystal glows steadily and small violet lights flicker along the seams.",
+                "Constructing": "Citadel Nexus Dome: a single large golden alien pyramid hub on a broad octagonal base, curved gold plates with violet seams, a huge cyan crystal in its apex, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 116,
@@ -964,7 +967,10 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Psi Pylon Dome: a single small alien power pylon, one large upright cyan crystal shard held in a squat round golden base by four short curved golden prongs, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The crystal glows steadily and faint cyan motes drift up from it.",
+                "Constructing": "Psi Pylon Dome: a single small alien power pylon, one large upright cyan crystal shard held in a squat round golden base by four short curved golden prongs, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 117,
@@ -1009,7 +1015,10 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Rift Siphon Dome: a single squat golden alien extractor dome capping a gas vent, curved gold plates around a violet opening on its top, small cyan crystals, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The opening glows steadily and a thin wisp of green vapour rises from it.",
+                "Constructing": "Rift Siphon Dome: a single squat golden alien extractor dome capping a gas vent, curved gold plates around a violet opening on its top, small cyan crystals, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 118,
@@ -1054,7 +1063,10 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Warp Gate Dome: a single golden alien gateway, a thick round golden arch on a low curved base, a sheet of blue-violet energy filling the arch, a cyan crystal on each side, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The energy in the arch glows steadily and shimmers faintly.",
+                "Constructing": "Warp Gate Dome: a single golden alien gateway, a thick round golden arch on a low curved base, a sheet of blue-violet energy filling the arch, a cyan crystal on each side, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 119,
@@ -1100,7 +1112,10 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Crystalline Forge Dome: a single low wide golden alien forge dome of curved gold plates, three short cyan crystal spikes on top, orange heat vents at its base, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The crystals glow steadily and thin vapour rises gently from the vents.",
+                "Constructing": "Crystalline Forge Dome: a single low wide golden alien forge dome of curved gold plates, three short cyan crystal spikes on top, orange heat vents at its base, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 10,
@@ -1200,7 +1215,10 @@
                     (weapon: Air, travel: Some("plasma_bolt"), impact: Some("plasma_hit")),
                 ],
             ),
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Tesla Sentinel Dome: a single small alien defence turret, a violet energy orb held in a cradle of four curved golden claws on a squat round golden base, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The orb glows steadily and tiny violet sparks crackle on its surface.",
+                "Constructing": "Tesla Sentinel Dome: a single small alien defence turret, a violet energy orb held in a cradle of four curved golden claws on a squat round golden base, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 120,
@@ -1243,7 +1261,10 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Harmonic Recharge Dome: a single small golden alien battery, a rounded golden drum ringed with cyan crystal panels, a shallow bowl of pale blue light on top, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The panels and the bowl glow steadily and small lights flicker.",
+                "Constructing": "Harmonic Recharge Dome: a single small golden alien battery, a rounded golden drum ringed with cyan crystal panels, a shallow bowl of pale blue light on top, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 121,
@@ -1289,7 +1310,10 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Cybernetics Conduit Dome: a single golden alien research core, a rounded hexagonal golden block, a large cyan crystal sphere in its front, thick conduits arching over it, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The crystal sphere glows steadily and small lights flicker along the conduits.",
+                "Constructing": "Cybernetics Conduit Dome: a single golden alien research core, a rounded hexagonal golden block, a large cyan crystal sphere in its front, thick conduits arching over it, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 122,
@@ -1331,7 +1355,10 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Templar Conclave Dome: a single elegant golden alien council hall, round and tiered, violet windows, three short golden spires around a violet crystal on top, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The crystal glows steadily and soft violet lights flicker in the windows.",
+                "Constructing": "Templar Conclave Dome: a single elegant golden alien council hall, round and tiered, violet windows, three short golden spires around a violet crystal on top, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 123,
@@ -1376,7 +1403,10 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Stellar Portal Dome: a single large golden alien stargate, a wide flat golden ring standing upright on a low curved base, a veil of deep blue energy filling the ring, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The energy veil glows steadily and shimmers faintly.",
+                "Constructing": "Stellar Portal Dome: a single large golden alien stargate, a wide flat golden ring standing upright on a low curved base, a veil of deep blue energy filling the ring, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 124,
@@ -1421,7 +1451,10 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Robotic Foundry Dome: a single heavy golden alien robotics factory, a broad squat block of gold and silver plates, a large round sealed hatch in front, cyan crystals, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The crystals glow steadily and small lights flicker around the hatch.",
+                "Constructing": "Robotic Foundry Dome: a single heavy golden alien robotics factory, a broad squat block of gold and silver plates, a large round sealed hatch in front, cyan crystals, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 125,
@@ -1463,7 +1496,10 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Psionic Archives Dome: a single golden alien archive temple, a stepped round tower with violet glass panels, a violet crystal on top, cyan crystals at its base, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The crystal glows steadily and soft violet light flickers behind the glass.",
+                "Constructing": "Psionic Archives Dome: a single golden alien archive temple, a stepped round tower with violet glass panels, a violet crystal on top, cyan crystals at its base, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 126,
@@ -1505,7 +1541,10 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Void Sanctuary Dome: a single dark alien shrine, a low ring of tall pointed black-and-silver stone blades around a dark violet crystal orb fixed at its centre, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The orb glows steadily and faint violet mist curls gently around it.",
+                "Constructing": "Void Sanctuary Dome: a single dark alien shrine, a low ring of tall pointed black-and-silver stone blades around a dark violet crystal orb fixed at its centre, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 127,
@@ -1547,7 +1586,10 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Robotic Assembly Bay Dome: a single low wide golden alien engineering bay with two fixed curved crane arms folded over its roof and a cyan crystal panel on its front, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The panel glows steadily and small cyan lights flicker.",
+                "Constructing": "Robotic Assembly Bay Dome: a single low wide golden alien engineering bay with two fixed curved crane arms folded over its roof and a cyan crystal panel on its front, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 128,
@@ -1589,7 +1631,10 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Celestial Beacon Dome: a single golden alien beacon, a broad round base with three curved golden arms rising to hold a large white-blue star crystal between their tips, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The crystal glows steadily and tiny sparks of light drift around it.",
+                "Constructing": "Celestial Beacon Dome: a single golden alien beacon, a broad round base with three curved golden arms rising to hold a large white-blue star crystal between their tips, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
 
         // =====================================================================
@@ -1657,7 +1702,10 @@
             death_spawn: Some((unit: "brood_mite", count: 9, delay_ticks: 9, search_range: 0.0,
                 timed_life: Some((ticks: 143, random_extra_ticks: 5)),
                 disabled_while_constructing: true)),
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Ancient Tree Dome: a single large living hive mound like a squat hollow tree stump of ridged bark and dark brown chitin, amber egg sacs around its wide top, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The egg sacs glow steadily and thin amber vapour rises gently.",
+                "Constructing": "Ancient Tree Dome: a single large living hive mound like a squat hollow tree stump of ridged bark and dark brown chitin, amber egg sacs around its wide top, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 130,
@@ -1721,7 +1769,10 @@
             death_spawn: Some((unit: "brood_mite", count: 9, delay_ticks: 9, search_range: 0.0,
                 timed_life: Some((ticks: 143, random_extra_ticks: 5)),
                 disabled_while_constructing: true)),
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Canopy Grove Dome: a single large living hive mound of ridged bark and brown chitin under a low spreading canopy of dark green leathery leaf plates hung with glowing amber pods, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The pods glow steadily and thin amber vapour rises gently.",
+                "Constructing": "Canopy Grove Dome: a single large living hive mound of ridged bark and brown chitin under a low spreading canopy of dark green leathery leaf plates hung with glowing amber pods, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 131,
@@ -1785,7 +1836,10 @@
             death_spawn: Some((unit: "brood_mite", count: 9, delay_ticks: 9, search_range: 0.0,
                 timed_life: Some((ticks: 143, random_extra_ticks: 5)),
                 disabled_while_constructing: true)),
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Primal World Tree Dome: a single huge gnarled living tree hive, a thick twisted trunk of bark and chitin under a broad dome of dark green leaves with amber pods, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The pods glow steadily and thin amber vapour rises gently.",
+                "Constructing": "Primal World Tree Dome: a single huge gnarled living tree hive, a thick twisted trunk of bark and chitin under a broad dome of dark green leaves with amber pods, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 132,
@@ -1829,7 +1883,10 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Spore Vent Dome: a single squat living extractor capping a gas vent, a bulbous funnel of dark brown chitin and bark with a wide green mouth, amber pores, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. A thin wisp of green vapour rises from the mouth and the pores glow steadily.",
+                "Constructing": "Spore Vent Dome: a single squat living extractor capping a gas vent, a bulbous funnel of dark brown chitin and bark with a wide green mouth, amber pores, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 133,
@@ -1882,7 +1939,10 @@
             death_spawn: Some((unit: "brood_mite", count: 6, delay_ticks: 9, search_range: 0.0,
                 timed_life: Some((ticks: 143, random_extra_ticks: 5)),
                 disabled_while_constructing: true)),
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Spawning Hollow Dome: a single living nest, a low round basin of curved bark ribs and brown chitin holding a pool of glowing amber fluid, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The fluid glows steadily and small bubbles rise slowly in it.",
+                "Constructing": "Spawning Hollow Dome: a single living nest, a low round basin of curved bark ribs and brown chitin holding a pool of glowing amber fluid, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 134,
@@ -1936,7 +1996,10 @@
             death_spawn: Some((unit: "brood_mite", count: 6, delay_ticks: 9, search_range: 0.0,
                 timed_life: Some((ticks: 143, random_extra_ticks: 5)),
                 disabled_while_constructing: true)),
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Metamorphic Chamber Dome: a single living gestation organ, a round swollen pod of dark green hide in brown chitin ribs, amber veins over it, a slit on its top, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The veins and the slit glow steadily and thin vapour rises gently.",
+                "Constructing": "Metamorphic Chamber Dome: a single living gestation organ, a round swollen pod of dark green hide in brown chitin ribs, amber veins over it, a slit on its top, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 135,
@@ -2023,7 +2086,10 @@
                 // The tentacle reaches out over its flight, then strikes (plan 2026-11-27-weapon-delivery D-8).
                 weapons: [(weapon: Ground, travel: Some("impaler_tentacle"), impact: Some("impaler_strike"))],
             ),
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Thorn Lasher Dome: a single living defence growth, a low mound of dark brown chitin with a thick spiked tentacle coiled on top, a long bone spike tip, amber eyes, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The eyes glow steadily and the tentacle stays coiled and still.",
+                "Constructing": "Thorn Lasher Dome: a single living defence growth, a low mound of dark brown chitin with a thick spiked tentacle coiled on top, a long bone spike tip, amber eyes, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 136,
@@ -2095,7 +2161,10 @@
             effects: (
                 weapons: [(weapon: Air, travel: Some("spore_bolt"), impact: Some("acid_hit"))],
             ),
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Spore Spire Dome: a single living anti-air growth, a short thick stalk of dark green chitin on a low round base, topped by a swollen bulb ringed with amber pores, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The pores glow steadily and faint amber spores drift up gently.",
+                "Constructing": "Spore Spire Dome: a single living anti-air growth, a short thick stalk of dark green chitin on a low round base, topped by a swollen bulb ringed with amber pores, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 137,
@@ -2148,7 +2217,10 @@
             death_spawn: Some((unit: "brood_mite", count: 6, delay_ticks: 9, search_range: 0.0,
                 timed_life: Some((ticks: 143, random_extra_ticks: 5)),
                 disabled_while_constructing: true)),
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Carapace Mound Dome: a single low armoured burrow mound of overlapping thick brown carapace plates like a beetle shell, a dark round tunnel mouth at its front lit amber inside, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The tunnel mouth glows steadily and thin vapour rises gently.",
+                "Constructing": "Carapace Mound Dome: a single low armoured burrow mound of overlapping thick brown carapace plates like a beetle shell, a dark round tunnel mouth at its front lit amber inside, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 138,
@@ -2201,7 +2273,10 @@
             death_spawn: Some((unit: "brood_mite", count: 6, delay_ticks: 9, search_range: 0.0,
                 timed_life: Some((ticks: 143, random_extra_ticks: 5)),
                 disabled_while_constructing: true)),
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Caustic Nursery Dome: a single living nursery, a cluster of round translucent bright green acid sacs nested in curved dark brown chitin ribs, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The acid sacs glow steadily and small bubbles drift inside them.",
+                "Constructing": "Caustic Nursery Dome: a single living nursery, a cluster of round translucent bright green acid sacs nested in curved dark brown chitin ribs, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 139,
@@ -2254,7 +2329,10 @@
             death_spawn: Some((unit: "brood_mite", count: 6, delay_ticks: 9, search_range: 0.0,
                 timed_life: Some((ticks: 143, random_extra_ticks: 5)),
                 disabled_while_constructing: true)),
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Spine Den Dome: a single living den, a hunched dome of dark green scaled hide bristling with long bone spines along its back, a dark arched opening at its front lit amber inside, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The opening glows steadily and thin vapour rises gently.",
+                "Constructing": "Spine Den Dome: a single living den, a hunched dome of dark green scaled hide bristling with long bone spines along its back, a dark arched opening at its front lit amber inside, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 140,
@@ -2307,7 +2385,10 @@
             death_spawn: Some((unit: "brood_mite", count: 6, delay_ticks: 9, search_range: 0.0,
                 timed_life: Some((ticks: 143, random_extra_ticks: 5)),
                 disabled_while_constructing: true)),
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Burrow Spire Dome: a single living den, a low spiral shell of dark brown chitin coiled like a snail shell, jagged bone spikes along its ridge and amber light in its opening, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The opening glows steadily and thin vapour rises gently.",
+                "Constructing": "Burrow Spire Dome: a single living den, a low spiral shell of dark brown chitin coiled like a snail shell, jagged bone spikes along its ridge and amber light in its opening, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 141,
@@ -2364,7 +2445,10 @@
             death_spawn: Some((unit: "brood_mite", count: 6, delay_ticks: 9, search_range: 0.0,
                 timed_life: Some((ticks: 143, random_extra_ticks: 5)),
                 disabled_while_constructing: true)),
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Chitin Spire Dome: a single slender living spire of twisted dark green and brown chitin, ridged like a horn and curving up to a point, glowing amber pores along it, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The pores glow steadily and thin amber vapour rises gently.",
+                "Constructing": "Chitin Spire Dome: a single slender living spire of twisted dark green and brown chitin, ridged like a horn and curving up to a point, glowing amber pores along it, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 142,
@@ -2418,7 +2502,10 @@
             death_spawn: Some((unit: "brood_mite", count: 6, delay_ticks: 9, search_range: 0.0,
                 timed_life: Some((ticks: 143, random_extra_ticks: 5)),
                 disabled_while_constructing: true)),
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Apex Spire Dome: a single tall twisted living spire of dark chitin with three curving horn branches at its top and large glowing amber pods along it, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The pods glow steadily and thin amber vapour rises gently.",
+                "Constructing": "Apex Spire Dome: a single tall twisted living spire of dark chitin with three curving horn branches at its top and large glowing amber pods along it, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 143,
@@ -2471,7 +2558,10 @@
             death_spawn: Some((unit: "brood_mite", count: 6, delay_ticks: 9, search_range: 0.0,
                 timed_life: Some((ticks: 143, random_extra_ticks: 5)),
                 disabled_while_constructing: true)),
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Infestation Nursery Dome: a single living nursery, a wide round fleshy mound, thick chitin lips around a green opening on top, small spore sacs on its sides, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The opening glows steadily and thin green vapour rises gently.",
+                "Constructing": "Infestation Nursery Dome: a single living nursery, a wide round fleshy mound, thick chitin lips around a green opening on top, small spore sacs on its sides, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 144,
@@ -2521,7 +2611,10 @@
             death_spawn: Some((unit: "brood_mite", count: 6, delay_ticks: 9, search_range: 0.0,
                 timed_life: Some((ticks: 143, random_extra_ticks: 5)),
                 disabled_while_constructing: true)),
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Subterranean Network Dome: a single living tunnel hub, a large hunched mound of dark brown chitin with a huge round toothed maw at its front, held open and glowing amber inside, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The maw glows steadily and thin vapour rises gently.",
+                "Constructing": "Subterranean Network Dome: a single living tunnel hub, a large hunched mound of dark brown chitin with a huge round toothed maw at its front, held open and glowing amber inside, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 145,
@@ -2574,7 +2667,10 @@
             death_spawn: Some((unit: "brood_mite", count: 6, delay_ticks: 9, search_range: 0.0,
                 timed_life: Some((ticks: 143, random_extra_ticks: 5)),
                 disabled_while_constructing: true)),
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Behemoth Den Dome: a single large living cavern mound of massive brown chitin plates, two huge curved tusks framing a dark cave mouth at its front lit amber inside, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The cave mouth glows steadily and thin vapour rises gently.",
+                "Constructing": "Behemoth Den Dome: a single large living cavern mound of massive brown chitin plates, two huge curved tusks framing a dark cave mouth at its front lit amber inside, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
     ]
 )

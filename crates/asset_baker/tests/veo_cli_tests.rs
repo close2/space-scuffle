@@ -37,6 +37,7 @@ use common::cli::{
     state_of_body, text, trapped_credentials, write_picture, RunDirs, FAKE_KEY, FAKE_VERTEX_KEY,
 };
 use common::style_text::with_section_overrides;
+use common::unauthored::bundle_without_prompts;
 use common::{CurlShim, FakeServer, Reply};
 use serde_json::{json, Value};
 use sim_types::enums::AnimState;
@@ -61,20 +62,6 @@ fn structure(catalog: &sim_core::UnitCatalog) -> String {
         &[AnimState::Idle, AnimState::Constructing],
         false,
         |_| true,
-    )
-}
-
-/// A structure some builder raises with no authored prompt for either of its states, so that
-/// prompt validation refuses it (the display-name fallback is refused for a paid run).
-fn unauthored_structure(catalog: &sim_core::UnitCatalog) -> String {
-    identity_with_actions(
-        catalog,
-        &[AnimState::Idle, AnimState::Constructing],
-        false,
-        |archetype| {
-            archetype.veo_prompt(AnimState::Idle).is_none()
-                && archetype.veo_prompt(AnimState::Constructing).is_none()
-        },
     )
 }
 
@@ -304,14 +291,15 @@ fn d1_bake_unit_videos_refuses_a_state_the_identity_does_not_publish() {
 
 #[test]
 fn d2_a_missing_prompt_is_refused_before_credentials_are_read() {
-    let catalog = shipped_catalog();
-    let slug = unauthored_structure(&catalog);
+    // Every shipped structure is authored, so one loses its prompts in a copy of the data.
+    let slug = authored_structure(&shipped_catalog());
+    let bundle = bundle_without_prompts(&slug);
     let dirs = RunDirs::new();
     let trap = trapped_credentials(dirs.root.path());
     let server = silent_server();
     let shim = CurlShim::new(&server);
 
-    let validate = baker()
+    let validate = baker_with_assets(bundle.path())
         .args(["validate-prompts", "--unit", &slug])
         .arg("--keyframes-dir")
         .arg(&dirs.keyframes)
@@ -325,7 +313,7 @@ fn d2_a_missing_prompt_is_refused_before_credentials_are_read() {
     assert!(report.contains(&format!("{slug} constructing")), "{report}");
     assert!(report.contains("no authored prompt"), "{report}");
 
-    let paid = baker()
+    let paid = baker_with_assets(bundle.path())
         .args(["generate-veo", "--unit", &slug, "--max-generations", "2"])
         .arg("--keyframes-dir")
         .arg(&dirs.keyframes)

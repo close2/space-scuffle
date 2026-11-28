@@ -30,6 +30,7 @@ use asset_baker::{
     VeoRequestSettings,
 };
 use common::style_text::with_section_overrides;
+use common::unauthored::{bundle_without_prompts, catalog_of};
 use sim_types::enums::{AnimState, ShapeKind};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -63,7 +64,9 @@ fn dirs(root: &Path) -> VeoDirs {
     }
 }
 
-/// An identity with authored prompts for every state it publishes, and one without any.
+/// An identity with authored prompts for every state it publishes, and a structure other than
+/// it. Every shipped identity is authored, so a test that needs the second one without prompts
+/// loads the catalog of [`bundle_without_prompts`] for it.
 fn authored_and_unauthored(catalog: &sim_core::UnitCatalog) -> (String, String) {
     let all_authored = |a: &sim_core::UnitArchetype| {
         catalog
@@ -77,16 +80,17 @@ fn authored_and_unauthored(catalog: &sim_core::UnitCatalog) -> (String, String) 
         .expect("an authored identity");
     let unauthored = catalog
         .archetypes()
-        .find(|a| a.veo_prompts.is_empty())
-        .expect("an identity without prompts");
+        .find(|a| is_dome(a) && a.slug != authored.slug)
+        .expect("a structure");
     (authored.slug.clone(), unauthored.slug.clone())
 }
 
 #[test]
 fn prompts_are_composed_from_the_catalog_and_the_style_file() {
-    let catalog = catalog();
+    let (authored, unauthored) = authored_and_unauthored(&catalog());
+    let bundle = bundle_without_prompts(&unauthored);
+    let catalog = catalog_of(bundle.path());
     let style = style();
-    let (authored, unauthored) = authored_and_unauthored(&catalog);
     let archetype = catalog.get_by_slug(&authored).expect("archetype");
 
     let prompt = build_action_prompt(&catalog, &style, &authored, AnimState::Idle).expect("prompt");
@@ -150,9 +154,10 @@ fn published_states_put_idle_first_and_refuse_unpublished_filters() {
 
 #[test]
 fn validation_reports_every_problem_of_paid_clips_only() {
-    let catalog = catalog();
+    let (authored, unauthored) = authored_and_unauthored(&catalog());
+    let bundle = bundle_without_prompts(&unauthored);
+    let catalog = catalog_of(bundle.path());
     let style = style();
-    let (authored, unauthored) = authored_and_unauthored(&catalog);
     let root = tempfile::tempdir().expect("tempdir");
     let dirs = dirs(root.path());
     std::fs::create_dir_all(&dirs.videos).expect("videos");
