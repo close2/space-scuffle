@@ -168,7 +168,11 @@ use std::path::PathBuf;
 /// 62): the world encodes its pending death spawns; with the section left out at schema 61 a copy
 /// of the WPA1 tree reproduces `15_139_787_397_984_595_262` on all four builds. Behaviour: none
 /// (no Swarm structure appears). (62 is provisional, the next free at merge.)
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 2_323_604_560_490_998_891;
+/// Re-recorded for plan 2026-12-01-death-spawns-and-hangar-commands WPB1 (checksum schema 62 ->
+/// 63): each hangar encodes its auto-build switch; with the field left out at schema 62 a copy of
+/// the WPB1 tree reproduces `2_323_604_560_490_998_891` on all four builds. Behaviour: none (no
+/// hangar command is given). (63 is provisional, the next free at merge.)
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 7_726_200_156_173_230_158;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

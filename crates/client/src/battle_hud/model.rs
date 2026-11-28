@@ -20,7 +20,7 @@ use std::fmt::Write;
 
 use bevy::prelude::*;
 use sim_types::snapshot::{BubbleRenderInstance, PlayerStatusView};
-use sim_types::{AnimState, EntityId, PlayerId, PlayerView, Tick, UnitTypeId};
+use sim_types::{AnimState, EntityId, HangarView, PlayerId, PlayerView, Tick, UnitTypeId};
 
 use super::catalog::CommandCatalog;
 use super::feed::BattleFeed;
@@ -67,6 +67,10 @@ pub struct FocusedUnit {
     /// Shield as a ratio of its maximum, from 0.0 to 1.0. `None` for a unit of another player,
     /// and for a type with no shield.
     pub shield: Option<f32>,
+    /// Its hangar's numbers, for one of the viewer's own hangar units only (plan
+    /// `2026-12-01-death-spawns-and-hangar-commands` D-10): `PlayerView` holds no other
+    /// player's hangar.
+    pub hangar: Option<HangarView>,
 }
 
 /// What the HUD draws, as of the latest refresh.
@@ -86,6 +90,12 @@ pub struct HudModel {
     pub resource_line: String,
     /// Cached match clock, rewritten only when its seconds change.
     pub clock_line: String,
+    /// Cached members line of the focused hangar unit (plan
+    /// `2026-12-01-death-spawns-and-hangar-commands` D-10), rewritten only when one of its
+    /// numbers changes; empty when the focus has no hangar of the viewer's.
+    pub hangar_line: String,
+    /// The focused hangar's type and numbers `hangar_line` was written for.
+    shown_hangar: Option<(UnitTypeId, HangarView)>,
     generation: Option<SessionGeneration>,
     /// Viewer and tick `view` was written for.
     written: Option<(PlayerId, u32)>,
@@ -146,10 +156,12 @@ impl HudModel {
         [
             buffer!("hud.resource_line", self.resource_line),
             buffer!("hud.clock_line", self.clock_line),
+            buffer!("hud.hangar_line", self.hangar_line),
             buffer!("hud.view.visibility", view.visibility),
             buffer!("hud.view.queues", view.queues),
             buffer!("hud.view.jobs", view.jobs),
             buffer!("hud.view.carriers", view.carriers),
+            buffer!("hud.view.hangars", view.hangars),
             buffer!("hud.view.laden", view.laden),
             buffer!("hud.view.completed_types", view.completed_types),
             buffer!("hud.view.options", view.options),
@@ -280,12 +292,61 @@ impl HudModel {
                 .catalog
                 .archetype(bubble.unit_type)
                 .is_some_and(|archetype| archetype.shielded);
+            let hangar = (!foreign)
+                .then(|| {
+                    let hangars = &self.view.hangars;
+                    hangars
+                        .binary_search_by_key(&id, |hangar| hangar.entity)
+                        .ok()
+                        .map(|index| hangars[index])
+                })
+                .flatten();
             Some(FocusedUnit {
                 unit_type: bubble.unit_type,
                 health: bubble.hp_ratio,
                 shield: (shielded && !foreign).then_some(bubble.shield_ratio),
+                hangar,
             })
         });
+        self.rewrite_hangar_line();
+    }
+
+    /// Rewrites `hangar_line` when the focused hangar or one of its numbers changed (plan
+    /// `2026-12-01-death-spawns-and-hangar-commands` D-10): "<member>s: 6 docked, 2 out, building
+    /// 1 (40 %) · auto-build on". The member is named by the catalog.
+    fn rewrite_hangar_line(&mut self) {
+        let shown = self
+            .focus
+            .and_then(|focus| focus.hangar.map(|hangar| (focus.unit_type, hangar)));
+        if shown == self.shown_hangar {
+            return;
+        }
+        self.shown_hangar = shown;
+        self.hangar_line.clear();
+        let Some((unit_type, hangar)) = shown else {
+            return;
+        };
+        let member = self
+            .catalog
+            .archetype(unit_type)
+            .and_then(|archetype| archetype.hangar)
+            .map_or("", |commands| self.catalog.label(commands.member));
+        let _ = write!(
+            self.hangar_line,
+            "{member}s: {} docked, {} out",
+            hangar.docked, hangar.launched
+        );
+        if hangar.queued > 0 {
+            let percent =
+                u32::from(hangar.build_progress) * 100 / u32::from(hangar.build_ticks.max(1));
+            let _ = write!(
+                self.hangar_line,
+                ", building {} ({percent} %)",
+                hangar.queued
+            );
+        }
+        let switch = if hangar.auto_build { "on" } else { "off" };
+        let _ = write!(self.hangar_line, " · auto-build {switch}");
     }
 }
 

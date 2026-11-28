@@ -2026,8 +2026,52 @@ const HANGAR_WINDOW_TICKS: u32 = 600;
 fn hangar_members_cycling_create_and_remove_nothing() {
     let mut harness = Harness::battle();
     settle(&mut harness, true);
+    assert_hangar_cycling_is_steady(&mut harness, "H-20", |_, _| {});
+}
+
+/// HC-16 (plan `2026-12-01-death-spawns-and-hangar-commands` §6.5): H-20 under the player's
+/// profile, so the HUD runs, with one hangar unit selected and focused: its card entries and
+/// members line are derived on every refresh while the members cycle, and the window still
+/// creates and removes nothing and grows no retained buffer, the HUD model's included.
+#[test]
+fn hangar_cycling_with_the_card_focused_creates_and_removes_nothing() {
+    let mut harness = Harness::boot(ClientMode::Skirmish);
+    harness.frame_army();
+    settle(&mut harness, true);
+    assert_hangar_cycling_is_steady(&mut harness, "HC-16", |harness, host| {
+        harness
+            .app
+            .world_mut()
+            .resource_mut::<BattleSelection>()
+            .select_only(host);
+    });
+    let model = harness.app.world().resource::<HudModel>();
+    assert!(
+        model.focus.is_some_and(|focus| focus.hangar.is_some()),
+        "the hangar unit stayed focused"
+    );
+    assert!(!model.hangar_line.is_empty(), "its members line is shown");
+    let card = harness.app.world().resource::<CommandCard>();
+    assert!(
+        card.slots.iter().flatten().any(|slot| matches!(
+            slot.label,
+            client::battle_hud::card::CardLabel::HangarBuild(_)
+        )),
+        "its card shows the hangar entries"
+    );
+}
+
+/// Stages H-20 on `harness`, lets `focus` act on the first hangar unit, and asserts the cycling
+/// window steady (see [`hangar_members_cycling_create_and_remove_nothing`]); `name` labels the
+/// report.
+fn assert_hangar_cycling_is_steady(
+    harness: &mut Harness,
+    name: &str,
+    focus: impl FnOnce(&mut Harness, EntityId),
+) {
     let assets = battle_harness::assets();
     let stage = unit_cycling::stage_hangars(harness.world_mut(), &assets);
+    focus(harness, stage.hosts[0]);
     let cycle = std::cell::Cell::new(stage);
     harness.resume();
     let mut drive = |harness: &mut Harness| {
@@ -2046,7 +2090,7 @@ fn hangar_members_cycling_create_and_remove_nothing() {
     };
     let start = harness.world().current_tick;
     while cycle.get().cycles < 2 {
-        drive(&mut harness);
+        drive(harness);
         harness.step(1);
         assert!(
             harness.world().current_tick - start < HANGAR_CYCLE_LIMIT_TICKS,
@@ -2056,10 +2100,10 @@ fn hangar_members_cycling_create_and_remove_nothing() {
     }
     let period = cycle.get().last_cycle_ticks;
     assert!(period > 0, "a cycle takes time");
-    warm_to_regime(&mut harness, period, &mut drive);
+    warm_to_regime(harness, period, &mut drive);
     let (member, target) = (stage.member, stage.target_kind);
     let window = period.max(HANGAR_WINDOW_TICKS.div_ceil(3));
-    assert_cycling_window_is_steady(&mut harness, window, &mut drive, &|bubble| {
+    assert_cycling_window_is_steady(harness, window, &mut drive, &|bubble| {
         bubble.unit_type == member || bubble.unit_type == target
     });
     assert!(
@@ -2068,11 +2112,11 @@ fn hangar_members_cycling_create_and_remove_nothing() {
         cycle.get()
     );
     eprintln!(
-        "H-20: one cycle took {period} ticks at warm-up; window {} ticks; {} cycles in all; \
+        "{name}: one cycle took {period} ticks at warm-up; window {} ticks; {} cycles in all; \
          pool {:?}",
         3 * window,
         cycle.get().cycles,
-        pool_stats(&harness)
+        pool_stats(harness)
     );
 }
 

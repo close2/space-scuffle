@@ -30,10 +30,10 @@ use crate::{Entity, SimWorld};
 use sim_map::PlacementFailureReason;
 use sim_types::{
     AbilityEffectSpec, AbilityLockView, AttackSnapshotView, CarrierView, CastStateView,
-    CommandOptionView, CommandSubject, ModeStateView, PlacementFlag, PlayerId, PlayerStatusView,
-    PlayerView, QueuedItem, QueuedJobView, RallyTarget, RallyView, RememberedStructureView,
-    ResourceNodeId, ShapeKind, SiteRefusal, StructureQueueView, Tick, UnitTypeId, VisibilityState,
-    VisibleNodeView,
+    CommandOptionView, CommandSubject, HangarView, ModeStateView, PlacementFlag, PlayerId,
+    PlayerStatusView, PlayerView, QueuedItem, QueuedJobView, RallyTarget, RallyView,
+    RememberedStructureView, ResourceNodeId, ShapeKind, SiteRefusal, StructureQueueView, Tick,
+    UnitTypeId, VisibilityState, VisibleNodeView,
 };
 
 impl SimWorld {
@@ -233,6 +233,9 @@ impl SimWorld {
                     slots_used: self.carrier_slots_used(entity.id),
                     capacity,
                 });
+            }
+            if let (Some(state), Some(spec)) = (entity.hangar(), arch.capabilities.hangar) {
+                out.hangars.push(hangar_view(entity.id, state, &spec));
             }
             if !arch.modes.is_empty() {
                 let settled = entity.settled_mode(arch);
@@ -434,5 +437,27 @@ fn site_refusal(rejection: &BuildRejection) -> SiteRefusal {
         | BuildRejection::Minerals { .. }
         | BuildRejection::Gas { .. }
         | BuildRejection::Invariant(_) => SiteRefusal::InvalidRequest,
+    }
+}
+
+/// The view of one hangar unit `entity` with state `state` and hangar `spec` (plan
+/// `2026-12-01-death-spawns-and-hangar-commands` D-10). A docked count beyond `u8` cannot occur
+/// (it is bounded by `max_count`) and saturates.
+fn hangar_view(
+    entity: sim_types::EntityId,
+    state: &crate::hangar::HangarState,
+    spec: &sim_types::HangarSpec,
+) -> HangarView {
+    HangarView {
+        entity,
+        docked: u8::try_from(state.docked.len()).unwrap_or(u8::MAX),
+        launched: state.launched,
+        queued: state.queued,
+        max_count: spec.max_count,
+        queue_size: spec.queue_size,
+        build_progress: state.build_progress,
+        build_ticks: spec.build_ticks,
+        auto_build: state.auto_build,
+        auto_build_toggle: spec.auto_build_toggle,
     }
 }

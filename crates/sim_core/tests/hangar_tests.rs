@@ -11,6 +11,7 @@ use std::error::Error;
 
 use sim_core::catalog::UnitArchetype;
 use sim_core::economy::GameCommandError;
+use sim_core::hangar::HangarRejection;
 use sim_core::SimWorld;
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
@@ -166,6 +167,7 @@ fn carrier_spec(member: UnitTypeId) -> HangarSpec {
         build_ticks: 214,
         queue_size: 5,
         auto_build: true,
+        auto_build_toggle: true,
         leash: SimScalar::from_i32(12),
         on_death: HangarDeath::KillMembers,
     }
@@ -814,5 +816,653 @@ fn the_hangar_is_data_changed_without_recompiling() -> TestResult {
         "a launch weapon without a hangar is refused"
     );
     std::fs::remove_dir_all(&copy)?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------------------------
+// Plan `2026-12-01-death-spawns-and-hangar-commands` §6.4, HC-1 to HC-10: the hangar's player
+// commands on the shipped Carrier analogue, found by property (an archetype with a hangar and a
+// launch weapon), through `SimWorld::step_into` and `PlayerCommand`.
+// ---------------------------------------------------------------------------------------------
+
+/// A shipped world for the hangar commands: the hangar unit's type, its hangar and the
+/// member's cost; every player starts with nothing.
+struct Deck {
+    world: SimWorld,
+    host: UnitTypeId,
+    spec: HangarSpec,
+    cost: u32,
+    tick: u32,
+}
+
+/// The shipped hangar unit with a launch weapon, found by property.
+fn shipped_launcher(world: &SimWorld) -> Result<(UnitTypeId, HangarSpec), Box<dyn Error>> {
+    world
+        .catalog
+        .archetypes()
+        .filter(|arch| arch.launch_weapon().is_some())
+        .find_map(|arch| {
+            arch.capabilities
+                .hangar
+                .map(|spec| (arch.unit_type_id, spec))
+        })
+        .ok_or_else(|| "the shipped catalog has a hangar unit with a launch weapon".into())
+}
+
+fn deck_from(world: SimWorld) -> Result<Deck, Box<dyn Error>> {
+    let mut world = world;
+    let (host, spec) = shipped_launcher(&world)?;
+    let cost = world.catalog.get(spec.member)?.mineral_cost;
+    for slot in PlayerSlot::ALL {
+        world.player_resources[slot].minerals = 0;
+        world.player_resources[slot].gas = 0;
+    }
+    Ok(Deck {
+        world,
+        host,
+        spec,
+        cost,
+        tick: 0,
+    })
+}
+
+fn new_deck() -> Result<Deck, Box<dyn Error>> {
+    let map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0)))?;
+    deck_from(sim_fixtures::world(map, 0x0B_A8))
+}
+
+impl Deck {
+    fn minerals(&self, player: PlayerId) -> Result<u32, Box<dyn Error>> {
+        Ok(self.world.player_resources[player.slot().ok_or("slot")?].minerals)
+    }
+
+    fn set_minerals(&mut self, player: PlayerId, minerals: u32) -> TestResult {
+        self.world.player_resources[player.slot().ok_or("slot")?].minerals = minerals;
+        Ok(())
+    }
+
+    fn carrier(&mut self, owner: PlayerId, x: i32) -> Result<EntityId, Box<dyn Error>> {
+        Ok(self.world.spawn_unit(self.host, owner, at(x, 32))?)
+    }
+
+    fn state(&self, id: EntityId) -> Result<sim_core::hangar::HangarState, Box<dyn Error>> {
+        Ok(self.world.entities[&id].hangar().ok_or("a hangar")?.clone())
+    }
+
+    /// Steps one tick with `commands` and returns their game-command outcomes.
+    fn step(
+        &mut self,
+        commands: Vec<PlayerCommand>,
+    ) -> Vec<Result<sim_core::economy::GameCommandReceipt, GameCommandError>> {
+        self.tick += 1;
+        let mut out = RenderSnapshot::default();
+        self.world.step_into(
+            &TickBundle {
+                tick: Tick(self.tick),
+                commands,
+                state_checksum: None,
+            },
+            &mut out,
+        );
+        self.world
+            .game_command_outcomes()
+            .iter()
+            .map(|outcome| outcome.result.clone())
+            .collect()
+    }
+
+    fn order(
+        &mut self,
+        entities: Vec<EntityId>,
+        order: UnitOrder,
+    ) -> Result<sim_core::economy::GameCommandReceipt, GameCommandError> {
+        let mut outcomes = self.step(vec![command(ME, entities, order)]);
+        assert_eq!(outcomes.len(), 1, "one outcome per command");
+        outcomes.remove(0)
+    }
+
+    fn auto_off(&mut self, entities: Vec<EntityId>) -> TestResult {
+        self.order(entities, UnitOrder::SetHangarAutoBuild { enabled: false })?;
+        Ok(())
+    }
+}
+
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "compared with a command's outcome, which is a `Result`"
+)]
+fn accepted(recipients: usize) -> Result<sim_core::economy::GameCommandReceipt, GameCommandError> {
+    Ok(sim_core::economy::GameCommandReceipt::Accepted { recipients })
+}
+
+fn refused(
+    reason: HangarRejection,
+) -> Result<sim_core::economy::GameCommandReceipt, GameCommandError> {
+    Err(GameCommandError::Hangar(reason))
+}
+
+/// HC-1: a build with 4 docked queues one and charges the member's cost; the member docks
+/// `build_ticks` hangar phases later, counting the tick it was queued in; with auto-build off,
+/// repeated builds queue to `min(queue_size, max_count - total)`, then `Full`, and, with no
+/// start members (a scratch value), to `queue_size`, then `QueueFull`.
+#[test]
+fn hc1_a_build_queues_one_paid_member_until_the_hangar_or_queue_is_full() -> TestResult {
+    let mut deck = new_deck()?;
+    deck.set_minerals(ME, 1000)?;
+    let carrier = deck.carrier(ME, 20)?;
+    deck.auto_off(vec![carrier])?;
+    assert_eq!(deck.state(carrier)?.docked.len(), 4);
+    assert_eq!(
+        deck.order(vec![carrier], UnitOrder::HangarBuild),
+        accepted(1)
+    );
+    let queued_on = deck.tick;
+    assert_eq!(deck.state(carrier)?.queued, 1);
+    assert_eq!(deck.minerals(ME)?, 1000 - deck.cost);
+    while deck.state(carrier)?.docked.len() == 4 {
+        assert!(deck.tick < queued_on + 400, "the build completes");
+        deck.step(Vec::new());
+    }
+    assert_eq!(
+        deck.tick,
+        queued_on + u32::from(deck.spec.build_ticks) - 1,
+        "built after build_ticks hangar phases, the queueing tick's included"
+    );
+    assert_eq!(deck.state(carrier)?.queued, 0);
+
+    let room = usize::from(deck.spec.max_count) - deck.state(carrier)?.total();
+    let expected = room.min(usize::from(deck.spec.queue_size));
+    for _ in 0..expected {
+        assert_eq!(
+            deck.order(vec![carrier], UnitOrder::HangarBuild),
+            accepted(1)
+        );
+    }
+    assert_eq!(usize::from(deck.state(carrier)?.queued), expected);
+    assert_eq!(
+        deck.order(vec![carrier], UnitOrder::HangarBuild),
+        refused(HangarRejection::Full)
+    );
+
+    let mut bare = new_deck()?;
+    bare.world
+        .catalog
+        .get_mut(bare.host)?
+        .capabilities
+        .hangar
+        .as_mut()
+        .ok_or("a hangar")?
+        .start_count = 0;
+    bare.set_minerals(ME, 1000)?;
+    let empty = bare.carrier(ME, 20)?;
+    bare.auto_off(vec![empty])?;
+    for _ in 0..bare.spec.queue_size {
+        assert_eq!(bare.order(vec![empty], UnitOrder::HangarBuild), accepted(1));
+    }
+    assert_eq!(
+        bare.order(vec![empty], UnitOrder::HangarBuild),
+        refused(HangarRejection::QueueFull)
+    );
+    assert_eq!(
+        bare.minerals(ME)?,
+        1000 - u32::from(bare.spec.queue_size) * bare.cost
+    );
+    Ok(())
+}
+
+/// HC-2: a build goes to every selected hangar unit: with one full, the other queues and the
+/// receipt counts 1; with both full it is refused `Full`; with money for one, the lower id
+/// queues and the receipt counts 1.
+#[test]
+fn hc2_a_build_goes_to_every_selected_hangar_unit() -> TestResult {
+    let mut deck = new_deck()?;
+    deck.set_minerals(ME, 1000)?;
+    let a = deck.carrier(ME, 16)?;
+    let b = deck.carrier(ME, 28)?;
+    deck.auto_off(vec![a, b])?;
+    while deck.state(a)?.total() < usize::from(deck.spec.max_count) {
+        assert_eq!(deck.order(vec![a], UnitOrder::HangarBuild), accepted(1));
+    }
+    let before = deck.state(b)?.queued;
+    assert_eq!(deck.order(vec![b, a], UnitOrder::HangarBuild), accepted(1));
+    assert_eq!(deck.state(b)?.queued, before + 1);
+    while deck.state(b)?.total() < usize::from(deck.spec.max_count) {
+        assert_eq!(deck.order(vec![b], UnitOrder::HangarBuild), accepted(1));
+    }
+    assert_eq!(
+        deck.order(vec![a, b], UnitOrder::HangarBuild),
+        refused(HangarRejection::Full)
+    );
+
+    let mut poor = new_deck()?;
+    let a = poor.carrier(ME, 16)?;
+    let b = poor.carrier(ME, 28)?;
+    poor.auto_off(vec![a, b])?;
+    poor.set_minerals(ME, poor.cost)?;
+    assert_eq!(poor.order(vec![b, a], UnitOrder::HangarBuild), accepted(1));
+    assert_eq!((poor.state(a)?.queued, poor.state(b)?.queued), (1, 0));
+    assert_eq!(poor.minerals(ME)?, 0);
+    assert_eq!(
+        poor.order(vec![a, b], UnitOrder::HangarBuild),
+        refused(HangarRejection::Minerals),
+        "the first hangar in id order names the reason"
+    );
+    Ok(())
+}
+
+/// HC-3: a cancel removes the newest build and refunds its cost in full; the build in progress
+/// keeps its progress while builds remain, and loses it with the last; with nothing queued it
+/// is refused `NothingQueued`.
+#[test]
+fn hc3_a_cancel_refunds_the_newest_build() -> TestResult {
+    let mut deck = new_deck()?;
+    deck.set_minerals(ME, 1000)?;
+    let carrier = deck.carrier(ME, 20)?;
+    deck.auto_off(vec![carrier])?;
+    for _ in 0..3 {
+        deck.order(vec![carrier], UnitOrder::HangarBuild)?;
+    }
+    for _ in 0..20 {
+        deck.step(Vec::new());
+    }
+    let progress = deck.state(carrier)?.build_progress;
+    assert!(progress > 0, "premise: the first build runs");
+    let minerals = deck.minerals(ME)?;
+    assert_eq!(
+        deck.order(vec![carrier], UnitOrder::HangarCancelLast),
+        accepted(1)
+    );
+    let state = deck.state(carrier)?;
+    assert_eq!(state.queued, 2);
+    assert_eq!(
+        state.build_progress,
+        progress + 1,
+        "the build in progress kept its progress and ran this tick"
+    );
+    assert_eq!(deck.minerals(ME)?, minerals + deck.cost);
+    deck.order(vec![carrier], UnitOrder::HangarCancelLast)?;
+    let minerals = deck.minerals(ME)?;
+    assert_eq!(
+        deck.order(vec![carrier], UnitOrder::HangarCancelLast),
+        accepted(1)
+    );
+    let state = deck.state(carrier)?;
+    assert_eq!((state.queued, state.build_progress), (0, 0));
+    assert_eq!(deck.minerals(ME)?, minerals + deck.cost);
+    assert_eq!(
+        deck.order(vec![carrier], UnitOrder::HangarCancelLast),
+        refused(HangarRejection::NothingQueued)
+    );
+    assert_eq!(deck.minerals(ME)?, minerals + deck.cost);
+    Ok(())
+}
+
+/// HC-4: with auto-build off nothing is queued by itself, whatever the owner holds; switched
+/// on again it queues on that tick's hangar phase. A hangar that may not be switched (a scratch
+/// `auto_build_toggle: false`) refuses `NoAutoBuildSwitch` and keeps building by itself.
+#[test]
+fn hc4_the_switch_stops_and_restarts_automatic_builds() -> TestResult {
+    let mut deck = new_deck()?;
+    deck.set_minerals(ME, 1000)?;
+    let carrier = deck.carrier(ME, 20)?;
+    assert_eq!(
+        deck.order(
+            vec![carrier],
+            UnitOrder::SetHangarAutoBuild { enabled: false }
+        ),
+        accepted(1)
+    );
+    for _ in 0..300 {
+        deck.step(Vec::new());
+    }
+    let state = deck.state(carrier)?;
+    assert!(!state.auto_build);
+    assert_eq!((state.queued, state.docked.len()), (0, 4));
+    assert_eq!(deck.minerals(ME)?, 1000);
+    assert_eq!(
+        deck.order(
+            vec![carrier],
+            UnitOrder::SetHangarAutoBuild { enabled: true }
+        ),
+        accepted(1)
+    );
+    let state = deck.state(carrier)?;
+    assert!(state.auto_build);
+    assert_eq!(
+        state.queued, 4,
+        "queued on the switching tick's hangar phase"
+    );
+    assert_eq!(deck.minerals(ME)?, 1000 - 4 * deck.cost);
+
+    let mut fixed = new_deck()?;
+    fixed
+        .world
+        .catalog
+        .get_mut(fixed.host)?
+        .capabilities
+        .hangar
+        .as_mut()
+        .ok_or("a hangar")?
+        .auto_build_toggle = false;
+    fixed.set_minerals(ME, 1000)?;
+    let carrier = fixed.carrier(ME, 20)?;
+    assert_eq!(
+        fixed.order(
+            vec![carrier],
+            UnitOrder::SetHangarAutoBuild { enabled: false }
+        ),
+        refused(HangarRejection::NoAutoBuildSwitch)
+    );
+    assert!(fixed.state(carrier)?.auto_build);
+    assert_eq!(fixed.state(carrier)?.queued, 4);
+    Ok(())
+}
+
+/// HC-5: a hangar unit's switch starts at its spec's `auto_build` (`true` shipped), and at
+/// `false` for a scratch spec authoring it off.
+#[test]
+fn hc5_a_new_hangar_units_switch_is_its_specs() -> TestResult {
+    let mut deck = new_deck()?;
+    assert!(deck.spec.auto_build, "the shipped Carrier builds by itself");
+    assert!(deck.spec.auto_build_toggle, "and may be switched");
+    let carrier = deck.carrier(ME, 20)?;
+    assert!(deck.state(carrier)?.auto_build);
+    deck.world
+        .catalog
+        .get_mut(deck.host)?
+        .capabilities
+        .hangar
+        .as_mut()
+        .ok_or("a hangar")?
+        .auto_build = false;
+    let off = deck.carrier(ME, 30)?;
+    assert!(!deck.state(off)?.auto_build);
+    Ok(())
+}
+
+/// HC-6 (Q0138's default (a)): with auto-build on, a cancelled build is refunded and queued
+/// again, and charged, on the same tick's hangar phase, which runs after the commands; the new
+/// build starts from nothing.
+#[test]
+fn hc6_a_cancel_under_auto_build_is_queued_again() -> TestResult {
+    let mut deck = new_deck()?;
+    let carrier = deck.carrier(ME, 20)?;
+    deck.set_minerals(ME, deck.cost)?;
+    deck.step(Vec::new());
+    assert_eq!(
+        deck.state(carrier)?.queued,
+        1,
+        "premise: auto-build queued one"
+    );
+    assert_eq!(deck.minerals(ME)?, 0);
+    deck.step(Vec::new());
+    assert_eq!(
+        deck.order(vec![carrier], UnitOrder::HangarCancelLast),
+        accepted(1)
+    );
+    let state = deck.state(carrier)?;
+    assert_eq!(state.queued, 1, "auto-build queued it again");
+    assert_eq!(
+        state.build_progress, 0,
+        "a new build, queued after this tick's progress step: the cancelled one's was lost"
+    );
+    assert_eq!(deck.minerals(ME)?, 0, "refunded, then charged again");
+    Ok(())
+}
+
+/// HC-7: the usual admission: a command naming only units without a hangar is refused
+/// `NoHangar`; a foreign or dead recipient and one naming only a member (unselectable) get the
+/// existing errors; Shift changes nothing (no order is queued); a defeated player's and a closed
+/// match's commands are refused as every command is.
+#[test]
+fn hc7_hangar_commands_are_admitted_like_every_game_command() -> TestResult {
+    let mut deck = new_deck()?;
+    deck.set_minerals(ME, 1000)?;
+    let carrier = deck.carrier(ME, 20)?;
+    deck.auto_off(vec![carrier])?;
+    let [_, _, plain, _] = pick(&deck.world)?;
+    let soldier = deck.world.spawn_unit(plain, ME, at(10, 10))?;
+    assert_eq!(
+        deck.order(vec![soldier], UnitOrder::HangarBuild),
+        refused(HangarRejection::NoHangar)
+    );
+    let theirs = deck.carrier(FOE, 40)?;
+    assert_eq!(
+        deck.order(vec![carrier, theirs], UnitOrder::HangarBuild),
+        Err(GameCommandError::ForeignRecipient(theirs))
+    );
+    let dead = deck.carrier(ME, 50)?;
+    deck.world.entities.get_mut(&dead).ok_or("dead")?.hp = SimScalar::ZERO;
+    assert_eq!(
+        deck.order(vec![dead], UnitOrder::HangarCancelLast),
+        Err(GameCommandError::DeadRecipient(dead))
+    );
+    assert_eq!(
+        deck.order(vec![carrier, soldier], UnitOrder::HangarBuild),
+        accepted(1),
+        "a mixed selection reaches its hangar unit"
+    );
+    let queued = deck.state(carrier)?.queued;
+    let outcomes = deck.step(vec![PlayerCommand {
+        player_id: ME,
+        entities: vec![carrier],
+        order: UnitOrder::HangarCancelLast,
+        queue: true,
+    }]);
+    assert_eq!(outcomes, vec![accepted(1)]);
+    assert_eq!(
+        deck.state(carrier)?.queued + 1,
+        queued,
+        "Shift acts at once"
+    );
+    assert!(deck.world.entities[&carrier].order_queue.is_empty());
+
+    // A member, launched at an enemy in range, is unselectable.
+    let target = deck.world.spawn_unit(plain, FOE, at(26, 32))?;
+    deck.world
+        .entities
+        .get_mut(&carrier)
+        .ok_or("carrier")?
+        .issue_order(UnitOrder::attack(target), false)?;
+    while linked(&deck.world, carrier).is_empty() {
+        assert!(deck.tick < 200, "a member is launched");
+        deck.step(Vec::new());
+    }
+    let member = linked(&deck.world, carrier)[0];
+    assert_eq!(
+        deck.order(vec![member], UnitOrder::HangarBuild),
+        Err(GameCommandError::UnselectableRecipient(member))
+    );
+    Ok(())
+}
+
+/// HC-7 (closed commands): a defeated player's hangar command is refused `PlayerDefeated`, and
+/// every hangar command after the match's end `MatchOver`.
+#[test]
+fn hc7_a_defeated_player_or_ended_match_takes_no_hangar_command() -> TestResult {
+    let mut deck = new_deck()?;
+    let mut domes: Vec<&UnitArchetype> = deck
+        .world
+        .catalog
+        .archetypes()
+        .filter(|a| {
+            a.attributes.contains(AttributeFlags::STRUCTURE)
+                && a.capabilities.is_resource_dropoff
+                && a.capabilities.death_spawn.is_none()
+        })
+        .collect();
+    domes.sort_by_key(|a| a.unit_type_id);
+    let dome = domes.first().ok_or("a shipped town hall")?.unit_type_id;
+    let third = PlayerId(2);
+    let mine = deck.world.spawn_structure(dome, ME, 2, 2)?;
+    deck.world.spawn_structure(dome, FOE, 50, 2)?;
+    let last = deck.world.spawn_structure(dome, third, 50, 50)?;
+    let carrier = deck.carrier(ME, 20)?;
+    deck.step(Vec::new());
+    deck.world.entities.get_mut(&mine).ok_or("mine")?.hp = SimScalar::ZERO;
+    deck.step(Vec::new());
+    assert!(deck.world.match_state.is_defeated(ME));
+    assert!(!deck.world.match_state.result.is_over());
+    assert_eq!(
+        deck.order(vec![carrier], UnitOrder::HangarBuild),
+        Err(GameCommandError::PlayerDefeated(ME))
+    );
+    deck.world.entities.get_mut(&last).ok_or("last")?.hp = SimScalar::ZERO;
+    deck.step(Vec::new());
+    assert!(deck.world.match_state.result.is_over());
+    let theirs = deck.carrier(FOE, 40)?;
+    let outcomes = deck.step(vec![command(
+        FOE,
+        vec![theirs],
+        UnitOrder::SetHangarAutoBuild { enabled: false },
+    )]);
+    assert_eq!(outcomes, vec![Err(GameCommandError::MatchOver)]);
+    Ok(())
+}
+
+/// HC-8: the player view lists each of the viewer's hangar units, sorted, with its numbers,
+/// and none of another player's.
+#[test]
+fn hc8_the_view_lists_the_viewers_hangar_units() -> TestResult {
+    let mut deck = new_deck()?;
+    deck.set_minerals(ME, 1000)?;
+    let b = deck.carrier(ME, 30)?;
+    let a = deck.carrier(ME, 20)?;
+    let theirs = deck.carrier(FOE, 40)?;
+    deck.order(vec![b], UnitOrder::SetHangarAutoBuild { enabled: false })?;
+    deck.order(vec![b], UnitOrder::HangarBuild)?;
+    let mut view = sim_types::PlayerView::default();
+    deck.world.write_player_view(ME, &mut view);
+    let listed: Vec<EntityId> = view.hangars.iter().map(|h| h.entity).collect();
+    let mut mine = vec![a, b];
+    mine.sort();
+    assert_eq!(listed, mine);
+    let of_b = view
+        .hangars
+        .iter()
+        .find(|h| h.entity == b)
+        .ok_or("b listed")?;
+    let state = deck.state(b)?;
+    assert_eq!(
+        (
+            usize::from(of_b.docked),
+            of_b.launched,
+            of_b.queued,
+            of_b.build_progress
+        ),
+        (
+            state.docked.len(),
+            state.launched,
+            state.queued,
+            state.build_progress
+        )
+    );
+    assert_eq!(
+        (of_b.max_count, of_b.queue_size, of_b.build_ticks),
+        (
+            deck.spec.max_count,
+            deck.spec.queue_size,
+            deck.spec.build_ticks
+        )
+    );
+    assert!(!of_b.auto_build && of_b.auto_build_toggle);
+    let of_a = view
+        .hangars
+        .iter()
+        .find(|h| h.entity == a)
+        .ok_or("a listed")?;
+    assert!(of_a.auto_build);
+    deck.world.write_player_view(FOE, &mut view);
+    assert_eq!(
+        view.hangars.iter().map(|h| h.entity).collect::<Vec<_>>(),
+        vec![theirs]
+    );
+    Ok(())
+}
+
+/// HC-9 (the catalog half; the hash half is `hangar::tests::every_hangar_field_is_hashed`): the
+/// shipped catalog files validate with the switch authored, and the shipped hangar unit may be
+/// switched and starts on.
+#[test]
+fn hc9_the_shipped_catalog_authors_the_switch() -> TestResult {
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog");
+    let catalogs = sim_core::catalog::RuntimeCatalogs::load_from_directory(&source)?;
+    let map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?;
+    let world = SimWorld::with_catalogs(map, 9, catalogs.units, catalogs.upgrades)?;
+    let (_, spec) = shipped_launcher(&world)?;
+    assert!(spec.auto_build && spec.auto_build_toggle);
+    Ok(())
+}
+
+/// The per-tick checksums of a constructed hangar fight driven by `bundles`.
+fn hangar_fight_checksums(bundles: &[TickBundle]) -> Result<Vec<u64>, Box<dyn Error>> {
+    let mut deck = new_deck()?;
+    deck.set_minerals(ME, 400)?;
+    let a = deck.carrier(ME, 16)?;
+    let b = deck.carrier(ME, 24)?;
+    let [_, _, plain, _] = pick(&deck.world)?;
+    let target = deck.world.spawn_unit(plain, FOE, at(30, 32))?;
+    assert_eq!((a, b, target), fight_ids(&deck.world)?, "premise: ids");
+    let mut sums = Vec::with_capacity(bundles.len());
+    let mut out = RenderSnapshot::default();
+    for bundle in bundles {
+        deck.world.step_into(bundle, &mut out);
+        sums.push(deck.world.last_checksum());
+    }
+    Ok(sums)
+}
+
+/// The ids `hangar_fight_checksums` creates: two hangar units, then the target.
+fn fight_ids(world: &SimWorld) -> Result<(EntityId, EntityId, EntityId), Box<dyn Error>> {
+    let first = world
+        .entities
+        .values()
+        .find(|e| e.hangar().is_some())
+        .ok_or("a hangar unit")?
+        .id;
+    Ok((first, EntityId(first.0 + 1), EntityId(first.0 + 2)))
+}
+
+/// HC-10: a constructed fight using every hangar command, recorded, serialized to RON, read
+/// back and replayed, gives the same checksum on every tick. (That a replay written before the
+/// commands reads unchanged is `golden_replay_tests.rs`' `golden_replay_orders`, which loads
+/// the recorded orders script.)
+#[test]
+fn hc10_a_recorded_hangar_fight_replays_to_the_same_checksums() -> TestResult {
+    let probe = {
+        let map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0)))?;
+        sim_fixtures::world(map, 0x0B_A8).next_entity_id
+    };
+    let (a, b, target) = (EntityId(probe), EntityId(probe + 1), EntityId(probe + 2));
+    let mut bundles = Vec::new();
+    for tick in 1..=500_u32 {
+        let commands = match tick {
+            1 => vec![command(
+                ME,
+                vec![a, b],
+                UnitOrder::SetHangarAutoBuild { enabled: false },
+            )],
+            3 => vec![command(ME, vec![b, a], UnitOrder::HangarBuild)],
+            5 => vec![command(ME, vec![a], UnitOrder::HangarBuild)],
+            8 => vec![command(ME, vec![a, b], UnitOrder::attack(target))],
+            40 => vec![command(ME, vec![a], UnitOrder::HangarCancelLast)],
+            90 => vec![command(
+                ME,
+                vec![b],
+                UnitOrder::SetHangarAutoBuild { enabled: true },
+            )],
+            _ => Vec::new(),
+        };
+        bundles.push(TickBundle {
+            tick: Tick(tick),
+            commands,
+            state_checksum: None,
+        });
+    }
+    let recorded = hangar_fight_checksums(&bundles)?;
+    let text = ron::to_string(&bundles)?;
+    let read: Vec<TickBundle> = ron::from_str(&text)?;
+    assert_eq!(read, bundles);
+    assert_eq!(hangar_fight_checksums(&read)?, recorded);
     Ok(())
 }

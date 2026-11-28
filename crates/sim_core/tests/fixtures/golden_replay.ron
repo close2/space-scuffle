@@ -550,8 +550,12 @@
 // schema-62 world. First changed checkpoint against main's list: index 3 (ticks 151 to 200), WP1's tick-151
 // hand-off. Proof: the merged tree with main's locomotion (the rule off) reproduces main's list at every
 // checkpoint.
+// Re-recorded for plan 2026-12-01-death-spawns-and-hangar-commands WPB1 (checksum schema 62 -> 63): each
+// hangar's auto-build switch encoded; with the schema at 62 and the field unhashed every checkpoint
+// reproduced. Behaviour: none in these worlds (no hangar command). Proved on native debug and release
+// and wasm32-wasip1 release and debug, each in a fresh target directory.
 (
-    checksum_schema: 62,
+    checksum_schema: 63,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -577,25 +581,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0xac8332ef211f920e,
-        0xf500eedaa1c51556,
-        0x44ee41262f611503,
-        0xd9d885c9a2b61a88,
-        0xba83dec1e9084ac2,
-        0xc96812e4714fe1e3,
-        0x596b0eecdfee3c96,
-        0xe48941198c9e17f2,
-        0xbbd7bd819ac834ca,
-        0x0e44e93ed57686d5,
-        0xc54cc4d923831e8e,
-        0xe09d5db99233b8f3,
-        0x1f82419e12c3ae88,
-        0x84e52f0b0baa80d2,
-        0x43ed5c4a199e57b1,
-        0xa6ba4de8040f3b06,
-        0x497d188881f5e21e,
-        0x4c81d0f4dc67658b,
-        0x321f5619535ad9f4,
-        0x3510e44c629058cd,
+        0x0dac09d6a9fce03a,
+        0x7c4d8b98ab3dc367,
+        0xd3e14e3f19674c94,
+        0x9c64b15a7756ac71,
+        0xe4eeded0bc03cd79,
+        0x7a1f7e34d6d14236,
+        0x4bb0a513e697e4ad,
+        0xd047050aa3c0411f,
+        0x1c7763848e1ed755,
+        0x631ac310166254fd,
+        0xba21ae866fa87041,
+        0x6a9a24fb7025eac2,
+        0xaea8bdc4c2e6c8ff,
+        0x63bf70f773972e1a,
+        0xfcaed850c5750c49,
+        0x4061e2a3ff5be7c8,
+        0x3df1cb1a87e78023,
+        0xf1a902df2d85857d,
+        0x898608d88fddd30e,
+        0x488abb1ab3e516e3,
     ],
 )

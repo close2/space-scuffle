@@ -22,14 +22,15 @@
 //!   this one opened.
 //! - A disabled slot issues nothing, by mouse or by key. A key says why through the feed, and the
 //!   mouse through the tooltip, and both use the same sentence.
-//! - Which structure trains is decided here, as UI policy: the simulation would take the first.
+//! - Which structure trains, and which hangar unit cancels a build, is decided here, as UI
+//!   policy: the simulation would take every selected one.
 //! - Nothing here allocates on a frame without a press.
 
 use bevy::input::keyboard::KeyboardInput;
 use bevy::prelude::*;
 use sim_types::{EntityId, PlayerCommand, PlayerId, UnitOrder};
 
-use super::card::{derive_card, CardAction, CardPage, CommandCard};
+use super::card::{derive_card, hangar_cancel_recipient, CardAction, CardPage, CommandCard};
 use super::catalog::ArchetypeCommands;
 use super::model::HudModel;
 use crate::battle_input::command_mode::CommandMode;
@@ -181,6 +182,11 @@ pub fn apply_card_action(action: &CardAction, queued: bool, ctx: &mut CardContex
             let upgrade = *upgrade;
             let structure = ctx.shortest_queue(|structure| structure.researches.contains(&upgrade));
             ctx.submit_to(structure, UnitOrder::Research { upgrade });
+        }
+        CardAction::CancelHangarBuild => {
+            let model = ctx.model;
+            let hangar = hangar_cancel_recipient(model, model.selected_facts());
+            ctx.submit_to(hangar.map(|view| view.entity), UnitOrder::HangarCancelLast);
         }
         CardAction::OpenBuildMenu => ctx.turn_page(CardPage::Build { page: 0 }),
         CardAction::NextPage => ctx.turn_page(ctx.card.page.next()),

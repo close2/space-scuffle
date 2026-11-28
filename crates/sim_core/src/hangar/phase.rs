@@ -6,7 +6,7 @@
 //! Both passes visit entities in ascending id. The id lists live in [`HangarScratch`], which
 //! keeps its capacity between ticks, so the phase allocates nothing in steady state.
 
-use super::{DockedMember, HangarInvariant, HangarLink};
+use super::{try_queue_build, DockedMember, HangarInvariant, HangarLink};
 use crate::catalog::UnitArchetype;
 use crate::movement::tuning::ARRIVAL_TOUCH_MARGIN;
 use crate::movement::MovementInvariant;
@@ -361,32 +361,22 @@ impl SimWorld {
         }
     }
 
-    /// Queues builds while the hangar builds by itself, its queue and capacity have room, and
-    /// the owner can pay the member's cost now, charging each build as it is queued (D-5).
+    /// Queues builds while the hangar's switch is on (`HangarState::auto_build`, plan
+    /// `2026-12-01-death-spawns-and-hangar-commands` D-7), its queue and capacity have room, and
+    /// the owner can pay the member's cost now, charging each build as it is queued (D-5,
+    /// [`try_queue_build`]).
     fn auto_build(&mut self, id: EntityId, owner: PlayerId, rules: &HangarRules) {
-        if !rules.spec.auto_build {
-            return;
-        }
         let Some(slot) = owner.slot() else {
             return;
         };
-        let (minerals, gas) = rules.cost;
-        loop {
-            let Some(state) = self.entities.get_mut(&id).and_then(|e| e.hangar.as_mut()) else {
-                return;
-            };
-            let resources = &mut self.player_resources[slot];
-            if state.queued >= rules.spec.queue_size
-                || state.total() >= usize::from(rules.spec.max_count)
-                || resources.minerals < minerals
-                || resources.gas < gas
-            {
-                return;
-            }
-            resources.minerals -= minerals;
-            resources.gas -= gas;
-            state.queued += 1;
+        let Some(state) = self.entities.get_mut(&id).and_then(|e| e.hangar.as_mut()) else {
+            return;
+        };
+        if !state.auto_build {
+            return;
         }
+        let resources = &mut self.player_resources[slot];
+        while try_queue_build(state, &rules.spec, resources, rules.cost).is_ok() {}
     }
 }
 
