@@ -228,8 +228,31 @@ the sandbox's `7_726_200_156_173_230_158` on native debug and release and `wasm3
 plus the sandbox on four builds (`golden-latent63/summary.txt`). `132d2489` then takes schema **66** (provisional:
 64 and 65 are the missiles and diagonal-walkability branches'), encodes tag 23 and the passenger, and re-records.
 
-WORLDS_AND_SKIRMISH
+### 7.4 Worlds and the skirmish
 
-THROUGHPUT
+- **Worlds** (`scripts/world.sh`, this plan's `measure.sh` and `compare.sh`): `main` `1c0f922c` (`world-base/`) and
+  `6efa92df` at schema 63 (`world-head/`), 555 files each (the matrix with every battle on its seeds of record and 16
+  seeds, battles 31 and 33 on 100 and 64 seeds, both showcases on their default seed and seeds 1 to 8 for 6,000
+  ticks): **0 differing**. The matrix log reads "1220 runs: expectation failures 2 on the seeds of record, 26 over
+  all seeds" on both. No scenario issues `LoadUnit`, and `step_load`'s refactor into the shared `pursue_unit` and
+  `within_boarding_reach` keeps the passenger's walk byte for byte.
+- **The skirmish** (`a_match_is_won_through_real_input_alone`, release, radv): won in 1,644 frames at tick 6,338 on
+  both trees, every stage line identical (`client-base/`, `client-head/`); only the wall-clock seconds differ. The
+  pilot never right-clicks an own unit with a transport selected.
 
-VALGRIND
+### 7.5 Throughput
+
+Callgrind on the 64×64, 400-unit row (release bench binaries, instructions at 300 measured ticks less those at 0,
+over 300), both trees in one session under one hold of the gate lock (`throughput/`; load average 54 to 79, which
+does not move instruction counts): `main` `1c0f922c` 54.455 M per tick, branch `89613e32` 54.453 M per tick
+(**−0.002 %**), within the 3 % of rallies plan P-8. Nothing new runs per tick unless a carrier holds `LoadUnit`.
+
+### 7.6 Client checks
+
+- `context_order` and `battle_pipeline` unit tests 167, `battle_context_order_tests` 35, `battle_input_tests` 41.
+- `sync_steady_state_tests::frames_after_a_mixed_right_click_create_modify_and_remove_nothing`, now with a second
+  transport's pickup of a lone soldier in flight through the window: passes.
+- `sync_allocation_count_tests::smart_mixed_frames_allocate_nothing` (valgrind, alone under the gate lock), the pair
+  with the same pickup in flight: live 6 and 10 blocks in the windows of 64 and 128 frames, baseline 6 and 10; the
+  live sync adds no allocation.
+- `cargo gate quick` green on `89613e32`.
