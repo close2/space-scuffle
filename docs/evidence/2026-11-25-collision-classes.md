@@ -180,3 +180,138 @@ and on `wasm32-wasip1` release and debug (`wasmtime --dir=<copy>`). No checkpoin
 hashed state is added, so the schema stays at main's 48.
 
 **Not run (the package stopped at WP3):** the held-out seeds (§7.4) and WP4's client capture (§9).
+
+## 5. On `Solver` after the redesign (WP-C1, 2026-11-28)
+
+Plan [`2026-12-03-movement-work-on-solver`](../plans/2026-12-03-movement-work-on-solver.md) WP-C1 (this plan's
+Amendment 1): the data line re-measured on today's movement, with §7.2's checks unchanged, the owner's contact rules
+H-S1 to H-S3 (that plan §4.2) and the held-out set HD. Only the shipped pipeline `Solver` is judged; Legacy is
+reported. Owner question [Q0149](../questions/open/0149-colossus-walk-under-without-crowd-fix.md) is unanswered, so
+its default (b) applies: the line merges only if every check holds.
+
+### 5.1 Base, candidate and method
+
+- **Base:** `main` `c0d17532` (schema 62), a `git archive` copy built in the fresh target directory
+  `/home/spacescuffle/cargo-target/colossus-c1-base`.
+- **Candidate:** the base with the data line, branch `colossus-c1-wip` `c43acf19`: `d0c67ceb` re-applied without
+  conflict (`tripod_annihilator`'s `collision_class: Some("tall_walker")`, A-11 and A-12), built in
+  `colossus-c1-cand`.
+- **A-11 and A-12 re-pinned.** Since WP3 parked, the hangar's interceptor authors the air class `flying_escorts` (plan
+  `2026-11-28-carrier-interceptors`). "The archetype that authors a class" found it, so A-11 and A-12 passed on the base
+  without the line. They now look for a non-air archetype that authors a class (still by property, no slug). With
+  that they are red on the base ("a shipped ground archetype authors a collision class") and green on the candidate.
+  The other nine tests of `collision_class_tests.rs` pass on both trees.
+- **Scripts.** §10.2's scripts are reused by path from `~/scratch/collision-classes/scripts/`, with arms tagged
+  `c1base` and `c1cand`.
+  - Today's meter carries probe (a) itself: B8 reads the `standing_able` and `standing_able_cross` columns. So the
+    probe copy adds only probe (b), B9 (`~/scratch/movement-on-solver/scripts/probe_c1.py`). It prints the line
+    `checks.py` reads.
+  - Each arm's `measure.sh` ran whole under one hold of `~/scratch/gate.lock` (§10.2), through a copy without its
+    inner per-command lock (`c1_measure_nolock.sh`). The worlds and seeds are unchanged.
+- **H-S1 to H-S3** come from the matrix columns `*_hold_moved_clean_ticks`, `*_attack_left_band_ticks` and
+  `*_shove_e_pair` (`~/scratch/movement-on-solver/scripts/hs.py`), with the same bootstrap as §7.2.
+- **HD** is the matrix tool's 141st to 164th non-record seeds (144 to 167), every battle, both pipelines. It was run
+  once, after the development seeds.
+- Scratch material is under `~/scratch/movement-on-solver/c1/` and `~/scratch/collision-classes/{bin,worlds}/c1*`.
+
+### 5.2 What moves
+
+- **Matrix, 24 seeds.** Only battle 26 moves, under both pipelines. Battles 12a, 12b, 12c and 35, battle 28 (B-192;
+  stop rule 5 holds) and every other battle are byte-identical, CSV and probe lines alike. The HD seeds give the same
+  result.
+- **Other worlds.** Battles 31 and 33, the showcases (default seed and 1 to 8, both pipelines) and the harness
+  families (both pipelines, original and relabelled) are byte-identical (`compare.sh c1base c1cand`).
+- **Probe (b).** No pair of different classes is corrected anywhere: B9 = 0 under both pipelines, on the development
+  seeds and on HD.
+- **First difference** (`firstdiff.py`, Solver). Seed 33 (of record) first differs at tick 43, where 45 zerglings
+  change, and seed 1 at tick 41, where 20 change, as on 2026-11-25.
+  - At the tick's start the nearest of them stands 1.955 (seed 33) and 2.013 (seed 1) from a colossus centre. Both are
+    beyond the radius sum 1.375, so no contact pair was removed there.
+  - The change is therefore in steering neighbours or the attack rings. Both are causes stop rule 4 names: one cause.
+- **Goldens and sandbox.** `golden_replay_tests` and `fixture_tests` pass unchanged on the candidate in `cargo gate
+  quick` (native debug). No hashed state is added, so the schema stays at main's 62. The release and `wasm32-wasip1`
+  replays belong to the package gate, which this package does not reach.
+
+| Battle 26, Solver | Lings / colossi wins (24) | Mean end tick | Mean lings left | Expectation failures (record / all) |
+|---|---|---|---|---|
+| Base `c0d17532` | 20 / 4 | 439 | 14.9 | 0 / 1 |
+| Candidate | 24 / 0 | 322 | 33.2 | 2 / 13 |
+| Base, HD | 16 / 8 | 432 | 16.0 | — |
+| Candidate, HD | 24 / 0 | 319 | 32.5 | — |
+
+On the seeds of record the candidate gives:
+
+| Seed | Base | Candidate | Inside the range 0 to 31? |
+|---|---|---|---|
+| 3203386110 | colossi, 2 left | lings, 29 left | yes |
+| 11 | lings, 19 left | lings, 27 left | yes |
+| 22 | lings, 12 left | lings, 40 left | **no** |
+| 33 | colossi, 2 left | lings, 45 left | **no** |
+
+On HD, 14 of 24 candidate runs leave more than 31 zerglings (base: 5).
+
+### 5.3 Checks, battle 26, Solver against the base
+
+| Check | Development seeds (candidate; base 95 % interval) | HD (candidate; base interval) | Result |
+|---|---|---|---|
+| B1 | R10 free 710.5 (2,529.2 to 3,341.0); blocked 2,621.1 (3,759.0 to 4,600.2) | 677.8 (2,364.5 to 3,505.5); 2,499.6 (3,751.7 to 4,820.5) | ok |
+| B2 | D-SHOVE-E 0.000 both sides (blue 1.817 to 2.413, red 3.870 to 4.668) | 0.000 (1.479 to 2.306; 3.632 to 4.781) | ok |
+| B3 | largest one-class enemy overlap 0.00 % (base 1.96 %, ling–colossus pairs); ticks 0.0 | 0.00 % (base 1.91 %) | ok |
+| **B4** | D-CHURN unexplained 3.58 / seed (1.50 to 3.04) | 4.04 (1.00 to 2.50) | **fails** |
+| B5 | give-ups 0 | 0 | ok |
+| **B6** | friend pair-ticks above 5 % 2,261.0 / seed (852.3 to 1,177.7); largest 40.20 % (base 43.63 %) | 2,304.2 (811.3 to 1,398.0) | **fails** |
+| **B7′** | zerglings 2.113 shots per engaged second (2.122 to 2.138); colossi 1.030 (1.006 to 1.030) | zerglings 2.111 (2.127 to 2.145) | **fails** |
+| B8 | standing while able 0.0 / seed (0.0 to 0.0); none beside a body of another class | 0.0; none | ok |
+| B9 | 0 cross-class corrections | 0 | ok |
+| H-S1 | Hold Position units moved: 0 (base 0) | 0 (base 0) | ok |
+| **H-S2** | zerglings moved by allies out of their band (B-225's count): 43.79 unit-ticks / seed (18.96 to 23.17) | 43.96 (19.79 to 25.46) | **fails** |
+| H-S3 | engaged units moved by enemy contact: 0.000 (0.000 to 0.000) | 0.000 (0.000 to 0.000) | ok |
+
+**Legacy (reported).** Only battle 26 moves: the zerglings win 2 of 24 on the base and 0 of 24 on the candidate, and
+0 of 24 on HD on both trees.
+- B1 fails: R10 free 367.3 (310.3 to 349.6), blocked 1,104.2 (932.4 to 1,054.4).
+- H-S2 reads 0.21 against 0.
+- Every other check passes.
+
+**HD** confirms each direction of the development seeds and contradicts none (stop rule 7 does not apply). It moves no
+Class D battle.
+
+### 5.4 Throughput (§11)
+
+Instructions are from `perf stat -e instructions:u`, three runs per arm, on the single-scenario binaries of
+`build.sh` (400 units, 300 ticks).
+
+| Scenario | Solver base → candidate | Legacy base → candidate (reported) | Ticks/s, candidate, Solver (under load) |
+|---|---|---|---|
+| 64 × 64 | 16.452 G → 16.455 G (+0.016 %) | 9.741 G → 9.744 G (+0.027 %) | 81 to 94 |
+| 128 × 128 | 10.952 G → 10.962 G (+0.092 %) | 10.162 G → 10.172 G (+0.099 %) | 98 to 148 |
+| canyon | 27.147 G → 27.150 G (+0.009 %) | 17.487 G → 17.489 G (+0.014 %) | 78 to 80 |
+
+- **The whole bench** (`cargo bench -p sim_core --bench throughput`, every scenario, once per arm) uses 434.151 G
+  instructions on the base and 434.387 G on the candidate (+0.054 %).
+- **Every scenario stays above 50 ticks per second on both arms.** The slowest are the canyon at 64 (base) and 75
+  (candidate) and the 400-unit 64 × 64 row at 71 (base) and 104 (candidate).
+- **The wall-clock figures are not of record.** They were measured at load average 30 to 115 (§4.7 of the
+  movement-on-Solver plan).
+- No bench scenario has a colossus. The change is within +1.0 % on every scenario, and the floor holds.
+
+### 5.5 Decision: parked (Q0149 default (b))
+
+B4, B6 and B7′ fail again, as predicted (plan `2026-12-03-movement-work-on-solver` §5), on the development seeds and
+on HD. B1 to B3, B5, B8 and B9 hold, and every world without a colossus is byte-identical.
+
+- **H-S2 is new.** It was not measured on 2026-11-25: zerglings that attack beneath and round the colossi are moved by
+  allies out of their weapon band about twice as often as on the base. This is the owner's rule "attackers are pushed
+  only within their weapon band" (B-225 under `Solver`), and it is a hard check under every answer (stop rule G-2).
+- **Not restated.** Battle 26 is Class R and its outcome moves (seeds of record 22 and 33 leave the range), but a check
+  fails, so it is not restated. The matrix fixture is unchanged.
+- **Where the line stays.** The data line stays parked on `colossus-c1-wip` `c43acf19`, and B-209 stays open with these
+  figures.
+- **No change was attempted.** No amendment was attempted, no tolerance was changed, and no movement file was
+  touched.
+- **What Q0149 (a) would need.** Under Q0149 (a), B4, B6 and B7′ would be traced to friend packing (B-219). But H-S2
+  binds under (a) too, so the line could merge only once B-225's count beneath a colossus is back within the base, or
+  the owner answers [Q0152](../questions/open/0152-colossus-walk-under-attackers-pushed-out-of-band.md).
+- **Re-base owed.** While this ran, `main` moved to `08d3d808` (minimap WP6: remembered structures in the player view,
+  `world/vision.rs` and `player_view.rs`; wp-i0's docs). The worlds above were not re-measured on it. If an answer lets
+  the line merge, §4.4 of the movement-on-Solver plan's single base re-measure comes first.
