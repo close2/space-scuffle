@@ -16,15 +16,24 @@ env:
   SPACE_SCUFFLE_GPU_TEST_DRIVER: lavapipe
 
 jobs:
+  # The complete suite runs as three shards on three runners. `cargo gate full` with
+  # SPACE_SCUFFLE_GATE_SHARD=<k>/3 runs the targets crates/gate/suites.ron assigns to shard k
+  # (`shard: Some(k)`); shard 3 runs every unassigned target, clippy, the doc tests and the golden
+  # replays (crates/gate/src/shard.rs). On one 4-CPU runner the suite outgrew the 150-minute limit
+  # by 2026-11-27: about 100 min of tests on a typical runner, 1.6 times that on the slower ones
+  # this job is also served, and twice that when a flake repeats the run. Each shard holds about
+  # 35 min of tests on a typical runner.
   check-and-test:
-    name: Format, Clippy & Workspace Tests (Headless + Virtual GPU)
+    name: Format, Clippy & Workspace Tests (Headless + Virtual GPU) (shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
-    # `cargo gate full` runs each test executable with its thread cap from crates/gate/suites.ron,
-    # which keeps it inside the runner's 16 GB (docs/plans/2026-11-04-tiered-test-gates.md,
-    # Amendment 5). At libtest's default of one thread per CPU the job would take about 67 min
-    # (2026-11-09); the caps add about 30 min and the release and wasm32 replays about 4, so a green
-    # run takes about 100 min. 150 leaves room without hiding a real hang: each GPU run has its own
-    # 300 s limit on lavapipe in crates/client/tests/support/gpu_run.rs.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ["1/3", "2/3", "3/3"]
+    # A shard's tests take about 35 min on a typical runner and about 55 on the slower class; with
+    # setup and build, and room for the one repeat of a shard red only by a flake, 150 does not
+    # hide a real hang: each GPU run has its own 300 s limit on lavapipe in
+    # crates/client/tests/support/gpu_run.rs.
     timeout-minutes: 150
 
     steps:
@@ -126,7 +135,9 @@ jobs:
       - name: Check formatting (cargo fmt)
         run: cargo fmt --all -- --check
 
+      # Once per push: shard 3 lints, the other shards only test.
       - name: Lint workspace (cargo clippy)
+        if: matrix.shard == '3/3'
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Disk budget before the test build
@@ -141,8 +152,9 @@ jobs:
           fi
           echo "Disk budget: ${avail_gib} GiB free, ${need_gib} GiB required"
 
-      # The complete suite: every test executable and doc test of the workspace, each executable with
-      # its thread cap from crates/gate/suites.ron, and the golden replays (charter §4.3). A plain
+      # The complete suite across the three shards: every test executable and doc test of the
+      # workspace, each executable with its thread cap from crates/gate/suites.ron, and the golden
+      # replays (charter §4.3); each job of the matrix runs one shard of it. A plain
       # `cargo test --workspace` runs every executable at one thread per CPU, and then
       # gpu_validation_tests alone runs four lavapipe clients at once (Amendment 5). The gate writes
       # each target's log under ~/scratch/logs/gate/ and prints the result table. A background
@@ -154,6 +166,7 @@ jobs:
         shell: bash
         env:
           SPACE_SCUFFLE_GATE_JOBS: 1
+          SPACE_SCUFFLE_GATE_SHARD: ${{ matrix.shard }}
         run: |
           # The sleep holds no descriptor of the step's output, so killing the sampler at exit
           # leaves nothing that keeps the step's log open.
@@ -190,18 +203,21 @@ jobs:
         if: failure() || cancelled()
         uses: actions/upload-artifact@v4
         with:
-          name: gate-logs
+          # One artifact per shard: artifact names are unique within a run.
+          name: gate-logs-shard-${{ strategy.job-index }}
           path: ~/scratch/logs/gate/
           if-no-files-found: ignore
           retention-days: 14
 
       # Cargo up to 1.99 put test executables in target/debug/deps/; Cargo 1.100 puts each in
       # target/debug/build/<crate>/<hash>/out/. Both steps search target/debug for either layout.
+      # Each shard builds only its own targets, so the check takes the largest test executable the
+      # shard built (a client test in every shard).
       - name: Test binaries carry compressed debug info
         run: |
-          bin=$(find target/debug -type f -executable -name 'skirmish_match_tests-*' ! -name '*.d' \
-            -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2-)
-          [ -n "$bin" ] || { echo "::error title=Disk budget::no skirmish_match_tests executable under target/debug"; exit 1; }
+          bin=$(find target/debug -type f -executable -name '*_tests-*' ! -name '*.d' \
+            -printf '%s %p\n' | sort -rn | head -1 | cut -d' ' -f2-)
+          [ -n "$bin" ] || { echo "::error title=Disk budget::no test executable under target/debug"; exit 1; }
           readelf -SW "$bin" | sed 's/^ *\[ *[0-9]*\]//' \
             | awk '$1 == ".debug_info" { found = 1; ok = ($7 ~ /C/) } END { exit !(found && ok) }' \
             || { echo "::error title=Disk budget::$bin has uncompressed .debug_info; is RUSTFLAGS overriding .cargo/config.toml?"; exit 1; }

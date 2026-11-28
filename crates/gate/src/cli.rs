@@ -10,11 +10,13 @@
 //!
 //! # Invariants
 //! - An unknown subcommand, option or extra argument is an error, never ignored.
+//! - A shard comes from `--shard`, else [`SHARD_VAR`]; only `full` takes one (`shard.rs`).
 //! - Lanes come from `--jobs`, else [`JOBS_VAR`], else [`DEFAULT_JOBS`] (3: one GPU lane and two
 //!   general lanes, accepted by the A/B of plan 2026-11-11-faster-gates §7 and §12; CI sets
 //!   [`JOBS_VAR`] to 1). The environment is read once, by
 //!   [`parse_args`]; [`parse_args_with`] takes it as a value, so parsing stays testable.
 
+use crate::shard::Shard;
 use crate::tier::Tier;
 use crate::GateError;
 use std::path::PathBuf;
@@ -54,10 +56,16 @@ options:
                       resume-<unix time>/ and the repeat of a full run's in repeat/ below it)
   --stamp-dir <dir>   stamps (default ~/scratch/gate-stamps/)
   --no-run            select and build only
+  --shard <k>/<n>     full only: run shard k of n of the complete suite and write no stamp
+                      (default $SPACE_SCUFFLE_GATE_SHARD; the catalog's `shard` fields assign
+                      targets, and the last shard runs every unassigned target and the steps)
   --from-log <file>   timings and suspects only: read a `cargo test` log";
 
 /// The environment variable that sets the lanes when `--jobs` is absent.
 pub const JOBS_VAR: &str = "SPACE_SCUFFLE_GATE_JOBS";
+
+/// The environment variable that sets the shard of `full` when `--shard` is absent.
+pub const SHARD_VAR: &str = "SPACE_SCUFFLE_GATE_SHARD";
 
 /// The lanes when neither `--jobs` nor [`JOBS_VAR`] sets them: one GPU lane and two general
 /// lanes. The A/B of 2026-11-11 measured the test phase of the complete suite at 2,842 s against
@@ -97,6 +105,8 @@ pub struct RunOptions {
     pub resume: bool,
     /// The stop request file the gate polls; set by `main.rs` once it holds the gate lock.
     pub stop_file: Option<PathBuf>,
+    /// For `full` only: the shard of the complete suite this run runs, or `None` for all of it.
+    pub shard: Option<Shard>,
 }
 
 impl Default for RunOptions {
@@ -113,6 +123,7 @@ impl Default for RunOptions {
             no_reuse: false,
             resume: false,
             stop_file: None,
+            shard: None,
         }
     }
 }
@@ -241,6 +252,7 @@ fn parse_flags(rest: &[String]) -> Result<Flags, GateError> {
             "--log-dir" => options.log_dir = Some(PathBuf::from(value("--log-dir")?)),
             "--stamp-dir" => options.stamp_dir = Some(PathBuf::from(value("--stamp-dir")?)),
             "--no-run" => options.no_run = true,
+            "--shard" => options.shard = Some(Shard::parse(&value("--shard")?)?),
             "--from-log" => from_log = Some(PathBuf::from(value("--from-log")?)),
             "--tier" => {
                 let text = value("--tier")?;
@@ -270,7 +282,36 @@ fn parse_flags(rest: &[String]) -> Result<Flags, GateError> {
 /// # Errors
 /// [`GateError::Usage`] for anything that is not one of the forms in [`USAGE`].
 pub fn parse_args(args: &[String]) -> Result<Command, GateError> {
-    parse_args_with(args, std::env::var(JOBS_VAR).ok().as_deref())
+    let command = parse_args_with(args, std::env::var(JOBS_VAR).ok().as_deref())?;
+    with_shard_var(command, std::env::var(SHARD_VAR).ok().as_deref())
+}
+
+/// Sets the shard of a `full` run from `shard_var`, the value of [`SHARD_VAR`], when `--shard`
+/// did not. Every other command ignores the variable, so a shell that exports it for CI's `full`
+/// still runs `package` whole.
+///
+/// # Errors
+/// [`GateError::Usage`] when the variable is set for `full` but is not `<k>/<n>`.
+pub fn with_shard_var(command: Command, shard_var: Option<&str>) -> Result<Command, GateError> {
+    match (command, shard_var) {
+        (
+            Command::Run {
+                tier: Tier::Full,
+                mut options,
+            },
+            Some(text),
+        ) if options.shard.is_none() => {
+            options.shard = Some(
+                Shard::parse(text.trim())
+                    .map_err(|error| GateError::Usage(format!("{SHARD_VAR}: {error}")))?,
+            );
+            Ok(Command::Run {
+                tier: Tier::Full,
+                options,
+            })
+        }
+        (command, _) => Ok(command),
+    }
 }
 
 /// Parses `args` (without the program name) with `jobs_var` as the value of [`JOBS_VAR`].
@@ -303,6 +344,9 @@ pub fn parse_args_with(args: &[String], jobs_var: Option<&str>) -> Result<Comman
         if let Some(jobs) = jobs_from_env(jobs_var)? {
             options.jobs = jobs;
         }
+    }
+    if options.shard.is_some() && word != "full" {
+        return Err(usage(format!("--shard belongs to full, not {word}")));
     }
     if from_log.is_some() && !matches!(word.as_str(), "timings" | "suspects") {
         return Err(usage(format!(
@@ -409,6 +453,32 @@ mod tests {
             assert!(parse(&format!("full --memory-budget-gib {bad}")).is_err());
             assert!(parse(&format!("full --memory-ceiling-gib {bad}")).is_err());
         }
+    }
+
+    #[test]
+    fn a_shard_comes_from_the_flag_then_the_variable_and_only_for_full() -> Result<(), GateError> {
+        let shard = |command: Result<Command, GateError>| options_of(command).and_then(|o| o.shard);
+        assert_eq!(shard(parse("full --shard 2/3")), Some(Shard::parse("2/3")?));
+        assert_eq!(shard(parse("full")), None);
+        let from_var = with_shard_var(parse("full")?, Some("1/3"))?;
+        assert_eq!(shard(Ok(from_var)), Some(Shard::parse("1/3")?));
+        let flag_wins = with_shard_var(parse("full --shard 3/3")?, Some("1/3"))?;
+        assert_eq!(shard(Ok(flag_wins)), Some(Shard::parse("3/3")?));
+        // The variable leaves every other command whole; the flag is an error there.
+        let package = with_shard_var(parse("package")?, Some("1/3"))?;
+        assert_eq!(shard(Ok(package)), None);
+        for line in [
+            "package --shard 1/2",
+            "quick --shard 1/2",
+            "merge b --shard 1/2",
+        ] {
+            assert!(matches!(parse(line), Err(GateError::Usage(_))), "{line}");
+        }
+        for bad in ["0/2", "3/2", "1/0", "x", "1/", "/2", "1/2/3"] {
+            assert!(parse(&format!("full --shard {bad}")).is_err(), "{bad}");
+            assert!(with_shard_var(parse("full")?, Some(bad)).is_err(), "{bad}");
+        }
+        Ok(())
     }
 
     #[test]

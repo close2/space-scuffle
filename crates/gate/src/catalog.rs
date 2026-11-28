@@ -16,7 +16,7 @@
 //! - A target the catalog does not list is [`TestClass::Fast`].
 //! - Keys of `targets` name single targets, never a `@class` group.
 //! - Unknown fields are rejected, so a misspelt key cannot silently select nothing.
-//! - A `test_threads` cap is at least 1, and so is a `timeout_s` limit.
+//! - A `test_threads` cap is at least 1, and so is a `timeout_s` limit and a `shard` number.
 
 use crate::glob::Glob;
 use crate::sources::SourceIndex;
@@ -193,6 +193,10 @@ pub struct TargetEntry {
     /// Its time limit in seconds, replacing the limit computed from its last wall time
     /// (`execute.rs`), or `None` for the computed limit.
     pub timeout_s: Option<u64>,
+    /// The shard of a sharded `full` run that runs it (`cargo gate full` with
+    /// `SPACE_SCUFFLE_GATE_SHARD=<k>/<n>`, `shard.rs`), or `None` for the last shard, which runs
+    /// every target the catalog assigns to no other shard.
+    pub shard: Option<u32>,
 }
 
 /// A path rule: a change under `paths` selects `targets` and the `fast`/`slow` targets of
@@ -273,6 +277,8 @@ struct RawEntry {
     exclusive: bool,
     #[serde(default)]
     timeout_s: Option<u64>,
+    #[serde(default)]
+    shard: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -336,12 +342,16 @@ impl SuiteCatalog {
                     "`{key}`: timeout_s must be at least 1"
                 )));
             }
+            if entry.shard == Some(0) {
+                return Err(GateError::Catalog(format!("`{key}`: shard counts from 1")));
+            }
             let entry = TargetEntry {
                 class: entry.class,
                 triggers: globs(&entry.triggers)?,
                 test_threads: entry.test_threads,
                 exclusive: entry.exclusive,
                 timeout_s: entry.timeout_s,
+                shard: entry.shard,
             };
             targets.insert(id, entry);
         }
@@ -438,6 +448,12 @@ impl SuiteCatalog {
             .map(std::time::Duration::from_secs)
     }
 
+    /// The shard `target` is assigned to, or `None` for the last shard.
+    #[must_use]
+    pub fn shard_of(&self, target: &TargetId) -> Option<u32> {
+        self.targets.get(target).and_then(|entry| entry.shard)
+    }
+
     /// The targets `reference` names in `workspace`, in target order.
     ///
     /// # Errors
@@ -511,7 +527,7 @@ mod tests {
         docs: ["docs/**"],
         always: ["checks/@fast"],
         targets: {
-            "app/gpu_tests": (class: Gpu, triggers: ["crates/app/src/render/**"]),
+            "app/gpu_tests": (class: Gpu, triggers: ["crates/app/src/render/**"], shard: Some(1)),
             "app/lib": (class: Slow),
             "app/heavy_tests": (class: Slow, test_threads: Some(2)),
             "app/touchy_tests": (class: Slow, exclusive: true, timeout_s: Some(600)),
@@ -547,6 +563,12 @@ mod tests {
         );
         assert_eq!(catalog.timeout_of(&lib), None);
         assert_eq!(catalog.test_threads_of(&TargetId::test("app", "x")), None);
+        assert_eq!(
+            catalog.shard_of(&TargetId::test("app", "gpu_tests")),
+            Some(1)
+        );
+        assert_eq!(catalog.shard_of(&lib), None);
+        assert_eq!(catalog.shard_of(&TargetId::test("app", "x")), None);
         Ok(())
     }
 
@@ -634,6 +656,11 @@ mod tests {
         let no_time = SAMPLE.replace("timeout_s: Some(600)", "timeout_s: Some(0)");
         assert!(matches!(
             SuiteCatalog::parse(&no_time, Path::new("s")),
+            Err(GateError::Catalog(_))
+        ));
+        let no_shard = SAMPLE.replace("shard: Some(1)", "shard: Some(0)");
+        assert!(matches!(
+            SuiteCatalog::parse(&no_shard, Path::new("s")),
             Err(GateError::Catalog(_))
         ));
         let group_key = SAMPLE.replace("\"app/lib\"", "\"app/@slow\"");

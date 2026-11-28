@@ -34,6 +34,11 @@
 // A `targets` entry may set `test_threads: Some(n)`: the gate then runs that executable with
 // `--test-threads=n` instead of libtest's one thread per CPU, to bound its peak memory.
 //
+// A `targets` entry may set `shard: Some(k)`: CI's job for shard k of its matrix runs it
+// (`cargo gate full` with SPACE_SCUFFLE_GATE_SHARD=k/n, crates/gate/src/shard.rs); the last shard
+// runs every target with no `shard`, clippy, the doc tests and the commands. Shards 1 and 2 hold
+// the long lavapipe GPU and valgrind targets, about 35 minutes of tests each on CI's 4-CPU runner.
+//
 // When `cargo gate full` or CI finds a failure that `package` did not select, the fix adds the
 // missing rule here in the same commit (blueprint section 3.5, step 4).
 SuiteCatalog(
@@ -89,6 +94,10 @@ SuiteCatalog(
         // The minimap's CPU claims (plan 2026-12-01-minimap §6): several tests each boot the
         // production client on the shipped skirmish, so they are capped like the HUD's.
         "client/minimap_tests": (class: Slow, test_threads: Some(2)),
+        // The render-entity pool headless (plan 2026-11-29-render-entity-pool): twelve tests, each
+        // an app on the shipped battle. At four threads it took 59 s and one process reached
+        // 12.5 GB on CI, 2.4 GB short of the 16 GB runner (run 46074381310); capped like the HUD's.
+        "client/render_pool_tests": (class: Slow, test_threads: Some(2)),
         "client/battle_input_tests": (class: Slow, test_threads: Some(2)),
         "client/battle_result_tests": (class: Slow, test_threads: Some(2)),
         "client/sync_steady_state_tests": (class: Slow, test_threads: Some(2)),
@@ -112,14 +121,18 @@ SuiteCatalog(
         "client/combat_fx_slot_gpu_tests": (class: Gpu),
         "client/concealment_gpu_tests": (class: Gpu),
         // The attack snapshot on real shaders (plan 2026-11-24-attacker-snapshot WP3): two children,
-        // three shots and a sandbox watch.
-        "client/attack_snapshot_gpu_tests": (class: Gpu, triggers: [
+        // three shots and a sandbox watch. Each child is a whole skirmish client; on lavapipe (CI)
+        // the two ran at once and left 2.4 GB of the 16 GB runner (run 46074381310): one thread.
+        "client/attack_snapshot_gpu_tests": (class: Gpu, test_threads: Some(1), triggers: [
             "crates/client/src/{battle_hud/**,battle_pipeline/fog.rs,bubble_shader.rs,effects/catalog/**}",
             "assets/catalog/effects.ron",
         ]),
         // The minimap on the real shader (plan 2026-12-01-minimap G-1 to G-6): children that read
-        // the minimap texture back and shoot the window.
-        "client/minimap_gpu_tests": (class: Gpu, triggers: [
+        // the minimap texture back and shoot the window. Four parents, each a whole skirmish
+        // client in its child: on lavapipe (CI) four threads ran four clients at once and lost the
+        // 16 GB runner (run 45994749351, 2.6 GB left and falling); one thread, as for the status
+        // looks.
+        "client/minimap_gpu_tests": (class: Gpu, test_threads: Some(1), triggers: [
             "crates/client/src/{minimap/**,battle_hud/**,battle_pipeline/fog.rs}",
             "assets/{shaders/minimap.wgsl,catalog/minimap.ron}",
         ]),
@@ -142,7 +155,7 @@ SuiteCatalog(
         ]),
         // A reused render entity renders as a fresh one (plan 2026-11-29-render-entity-pool R-8):
         // two offscreen children, three shots each, compared bit for bit.
-        "client/render_pool_gpu_tests": (class: Gpu, triggers: [
+        "client/render_pool_gpu_tests": (class: Gpu, shard: Some(2), triggers: [
             "crates/client/src/{scene_controller.rs,render_pool.rs,indicators.rs,bubble_shader.rs}",
         ]),
         // Mode atlases in a real battle (plan 2026-11-09-effect-visualization WP13): one child,
@@ -152,12 +165,12 @@ SuiteCatalog(
         // The low-health look (plan 2026-11-09-effect-visualization Amendment 33, B-120): one
         // child, fourteen shots of one bubble.
         "client/damage_look_gpu_tests": (class: Gpu),
-        "client/editor_app_tests": (class: Gpu, test_threads: Some(2)),
+        "client/editor_app_tests": (class: Gpu, test_threads: Some(2), shard: Some(1)),
         // The effect blocks (plan 2026-11-09-effect-visualization WP4): one child, eight shots.
         "client/effect_gpu_tests": (class: Gpu),
         // The slice's effects (WP6b): three parents, three lab children each, at 1280x720. One
         // thread: each child is a whole client, and on lavapipe they would run at once.
-        "client/effect_slice_gpu_tests": (class: Gpu, test_threads: Some(1)),
+        "client/effect_slice_gpu_tests": (class: Gpu, test_threads: Some(1), shard: Some(1)),
         // The decal identity scene (plan 2026-11-19-retained-effect-instances WP1): one child
         // renders the whole scene twice at 1280x720. The GPU renderer and shader rules select it
         // for `effects/**` and `assets/shaders/**`; the catalog rule for `effects.ron`.
@@ -171,22 +184,22 @@ SuiteCatalog(
         // serializes the children, so each test thread runs a whole client at once: four threads
         // reached 10.6 GiB of private memory (20 GiB of RSS) and lost the 16 GB CI runner; one
         // thread peaks at 4.1 GiB (Amendment 5). On radv the GPU lock serializes the children anyway.
-        "client/gpu_validation_tests": (class: Gpu, test_threads: Some(1)),
-        "client/lab_scene_tests": (class: Gpu, test_threads: Some(4)),
+        "client/gpu_validation_tests": (class: Gpu, test_threads: Some(1), shard: Some(1)),
+        "client/lab_scene_tests": (class: Gpu, test_threads: Some(4), shard: Some(1)),
         "client/round2_visual_tests": (class: Gpu),
         "client/runtime_battle_tests": (class: Gpu),
         "client/skirmish_match_tests": (class: Gpu, test_threads: Some(2)),
         "client/smog_bouncing_bubbles_tests": (class: Gpu, test_threads: Some(2)),
         // Concealment and stance looks (plan 2026-11-09-effect-visualization WP8): two parents,
         // each a whole skirmish client in its child. One thread, as for the slice's effects.
-        "client/stance_gpu_tests": (class: Gpu, test_threads: Some(1)),
+        "client/stance_gpu_tests": (class: Gpu, test_threads: Some(1), shard: Some(1)),
         // Status and death looks (plan 2026-11-09-effect-visualization WP9): two parents, each
         // a whole skirmish client in its child. One thread, as for the stance looks.
-        "client/status_gpu_tests": (class: Gpu, test_threads: Some(1)),
-        "client/weapon_battle_gpu_tests": (class: Gpu, test_threads: Some(1)),
+        "client/status_gpu_tests": (class: Gpu, test_threads: Some(1), shard: Some(1)),
+        "client/weapon_battle_gpu_tests": (class: Gpu, test_threads: Some(1), shard: Some(2)),
         // Area and tether looks (plan 2026-11-09-effect-visualization WP10): one parent, a whole
         // skirmish client in its child. One thread, as for the status looks.
-        "client/area_link_gpu_tests": (class: Gpu, test_threads: Some(1)),
+        "client/area_link_gpu_tests": (class: Gpu, test_threads: Some(1), shard: Some(1)),
         "client/terrain_tests": (class: Gpu),
         // The frame-budget smoke run renders the 400-unit scenario through the real renderer.
         "client_diagnostics/frame_budget_tests": (class: Gpu, triggers: [
@@ -197,7 +210,9 @@ SuiteCatalog(
         // smog and compares the frames byte for byte. Its effects take (plan
         // 2026-11-09-effect-visualization WP14) must show every effect its scenes ask for: the
         // effect engine, the vocabulary, the units' blocks, the loadouts and its scenario decide.
-        "client_diagnostics/showcase_tests": (class: Gpu, triggers: [
+        // Its two takes ran at once on lavapipe (CI) and left 921 MB of the 16 GB runner (run
+        // 46074381310): one thread.
+        "client_diagnostics/showcase_tests": (class: Gpu, test_threads: Some(1), triggers: [
             "crates/client/src/{bubble_shader.rs,bubble_optics.rs,render_compatibility.rs,flipbook_clock.rs,vfx.rs,vfx/**,smog/**,terrain/**,camera.rs,battle_hud/**,effects/**}",
             "assets/captures/showcase.ron",
             "assets/scenarios/{showcase.ron,showcase_effects.ron}",
@@ -214,7 +229,10 @@ SuiteCatalog(
         // Its running children also hold an attack snapshot through the snapshot pool (plan
         // 2026-11-24-attacker-snapshot P-16). The synchroniser, its render pool, the indicators
         // it spawns and the bubble material it writes are its own subject (plan
-        // 2026-11-29-render-entity-pool §1, WP1).
+        // 2026-11-29-render-entity-pool §1, WP1). Four parents, each running its valgrind children
+        // up to one per CPU: at libtest's one thread per CPU the parents ran at once, up to sixteen
+        // children on CI's four CPUs, and lost the 16 GB runner (runs 45914068772 and
+        // 45968604081, under 1 GB left). One thread runs one parent's children at a time.
         // Exclusive (plan 2026-11-11-faster-gates §3.6, R-4): its memory estimate is 56.9 GiB
         // and its peak running alone 66.4 GiB, against the slice's high of 66 GiB and maximum of
         // 70 GiB, so it cannot share the slice with any other target, the GPU lane included.
@@ -222,7 +240,7 @@ SuiteCatalog(
         // and the run hung for 26,440 s at 61.7 GiB and 0.3 CPU-seconds; alone it passed in 415 s.
         // Evidence: ~/scratch/logs/gate/e98eddc8eb7e3146b797d25045433d754cd18e74/package/lanes.tsv
         // and client__sync_allocation_count_tests.log there (estimate_mib 58293, the hang's row).
-        "client/sync_allocation_count_tests": (class: Valgrind, exclusive: true, triggers: [
+        "client/sync_allocation_count_tests": (class: Valgrind, exclusive: true, test_threads: Some(1), shard: Some(2), triggers: [
             "crates/client/src/{battle_pipeline/**,presentation.rs,runtime_battle/**,player_presentation/**,effects/**,battle_hud/attack_snapshots.rs,minimap/**}",
             "crates/client/src/{scene_controller.rs,render_pool.rs,indicators.rs,bubble_shader.rs}",
         ]),

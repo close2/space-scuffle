@@ -40,6 +40,7 @@ mod resume;
 mod runner;
 mod schedule;
 mod select;
+mod shard;
 mod sources;
 mod stamp;
 mod suspects;
@@ -54,8 +55,8 @@ pub use catalog::{
 pub use catalog_diff::{CatalogDiff, RuleChange};
 pub use changes::{capture, ChangeSpec, Git};
 pub use cli::{
-    parse_args, parse_args_with, Command, RunOptions, CEILING_MARGIN_MIB, DEFAULT_JOBS,
-    DEFAULT_MEMORY_BUDGET_MIB, JOBS_VAR, USAGE,
+    parse_args, parse_args_with, with_shard_var, Command, RunOptions, CEILING_MARGIN_MIB,
+    DEFAULT_JOBS, DEFAULT_MEMORY_BUDGET_MIB, JOBS_VAR, SHARD_VAR, USAGE,
 };
 pub use crash::{
     compiler_crashed, crash_log, incremental_dirs, run_with_crash_retry, StepRun, COMPILER_PANIC,
@@ -92,6 +93,7 @@ pub use select::{
     is_judged_by_content, select, select_change, Change, ClippyScope, CompleteCause, FileVersions,
     Inputs, PathMatch, Reason, Selected, Selection, LOCKFILE_PATH,
 };
+pub use shard::{shard_selection, Shard};
 pub use sources::{
     blank, invokes_valgrind, mentioned_path_roots, mentions_path_root, uses_gpu_harness, Blanking,
     SourceIndex,
