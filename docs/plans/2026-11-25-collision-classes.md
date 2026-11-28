@@ -657,3 +657,10 @@ schema 48). Figures in evidence [`2026-11-25-collision-classes`](../evidence/202
   explicitly on an unarmed, holding target (an unarmed unit is no automatic target), and reads "not held by its body"
   as: every unit outside its band still walks or touches a friend. A-11 and A-12 live on the parked branch.
 - The schema stays at 48: no hashed state was added.
+
+## Amendment 1 (orchestrator, 2026-11-28): WP3 and WP4 re-planned on `Solver`
+
+Q0117 (b) parked WP3 until friend crowding was fixed. That fix ended with the movement redesign (Q0143, Q0147), so WP3's
+data line (`d0c67ceb`) and WP4's confirmation are re-planned in plan [`2026-12-03-movement-work-on-solver`](2026-12-03-movement-work-on-solver.md) (WP-C1): re-measured on today's `main` with
+this plan's §7.2 checks unchanged and a fresh held-out set (HD, the matrix tool's 141st to 164th non-record seeds, in
+place of §7.4's 21st to 44th). It merges if every check holds; otherwise owner question Q0149 decides.
