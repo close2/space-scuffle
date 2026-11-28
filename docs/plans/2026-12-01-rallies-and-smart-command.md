@@ -832,3 +832,11 @@ Recorded differences from the text above (scoping, Q0002):
   now gives an empty plan and the queue's `EmptySelection` refusal, where the single-order rule moved it to the
   ground under the pointer. P-0 found no such click in the skirmish.
 - **`card.rs`** names S-rally-keys instead of the removed B-214 in two doc comments (WP1).
+
+## Amendment 2 (orchestrator, 2026-11-28): WP-D1 (B-247) re-planned with no movement file
+
+The `Gated` freeze that deferred WP-D1 ended with the redesign (Q0143, Q0147). WP-D1 is re-planned as WP-T1 of plan
+[`2026-12-03-movement-work-on-solver`](2026-12-03-movement-work-on-solver.md). A carrier-side `UnitOrder::LoadUnit { passenger }` is a task order: `Entity::has_task_order` gains it, the
+economy's dispatch calls a `step_load_unit` that mirrors `step_load` and `pursue_carrier`, and `walking_goal`'s
+existing task arm walks the carrier to `task.goal`, so no file under `movement/` changes (the "new `walking_goal`
+arm" of T13 and WP-D1 is not needed). It builds after hangar commands merges; schema next free at merge.
