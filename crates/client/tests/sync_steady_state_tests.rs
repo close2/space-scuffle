@@ -374,6 +374,9 @@ fn retained_buffers(world: &World) -> Vec<Buffer> {
     if let Some(frame) = world.get_resource::<client::minimap::MinimapFrame>() {
         found.extend(frame.retained_buffers());
     }
+    if let Some(log) = world.get_resource::<client::minimap::alerts::AlertLog>() {
+        found.extend(log.retained_buffers());
+    }
     if let Some(map) = world.get_resource::<client::RenderEntityMap>() {
         found.extend(map.retained_buffers());
     }
@@ -1572,6 +1575,99 @@ fn a_held_attack_snapshot_changes_nothing_on_running_frames() {
     );
 }
 
+/// M-S1′ (plan `2026-12-01-minimap` Amendment 1): with one remembered structure and one attack
+/// snapshot held, running frames create, modify and remove no asset, spawn nothing, and keep the
+/// fog's lists, the pool's entities and the minimap's marks in place.
+#[test]
+fn a_held_remembered_structure_and_snapshot_change_nothing_on_running_frames() {
+    let mut harness = skirmish();
+    settle(&mut harness, true);
+    harness.world_mut().catalog.set_attack_snapshot_cap(None);
+    let world = harness.world();
+    let (structure, at) = world
+        .map
+        .structures()
+        .keys()
+        .copied()
+        .find_map(|id| {
+            let unit = world.entities.get(&id)?;
+            (unit.owner == sim_types::PlayerId(1)).then(|| {
+                (
+                    id,
+                    Vec2::new(unit.position.x.to_f32(), unit.position.y.to_f32()),
+                )
+            })
+        })
+        .expect("the enemy starts with a structure");
+    let kind = harness.world().entities[&local_workers(&harness)[0]].unit_type_id;
+    let spot = harness.open_ground(at, 5.0);
+    let scout = harness
+        .world_mut()
+        .spawn_unit(kind, LOCAL_PLAYER, battle_harness::sim_position(spot))
+        .expect("open ground");
+    harness.resume();
+    run_ticks(&mut harness, 3);
+    harness
+        .world_mut()
+        .entities
+        .get_mut(&scout)
+        .expect("the scout lives")
+        .hp = sim_types::SimScalar::ZERO;
+    run_ticks(&mut harness, 3);
+    let remembered = |harness: &Harness| {
+        harness
+            .app
+            .world()
+            .resource::<HudModel>()
+            .view
+            .remembered_structures
+            .iter()
+            .map(|entry| (entry.entity, entry.seen))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(remembered(&harness).len(), 1, "premise: remembered");
+    assert_eq!(remembered(&harness)[0].0, structure);
+    let staged = hold_a_snapshot(&mut harness);
+    harness
+        .world_mut()
+        .entities
+        .get_mut(&staged.victim)
+        .expect("the victim lives")
+        .is_invulnerable = true;
+    run_ticks(&mut harness, WARM_TICKS);
+    let (held, kept) = (snapshots_listed(&harness), remembered(&harness));
+    assert_eq!((held.len(), kept.len()), (1, 1), "both images held");
+    assert_eq!(pooled(&harness), 2, "one pooled entity each");
+    let images = |harness: &Harness| {
+        harness
+            .app
+            .world()
+            .resource::<client::minimap::MinimapFrame>()
+            .subjects()
+            .iter()
+            .filter(|subject| **subject == client::minimap::marks::MarkSubject::Image)
+            .count()
+    };
+    assert_eq!(images(&harness), 2, "both on the minimap");
+    let entities = census(&harness);
+    let buffers = retained_buffers(harness.app.world());
+    reset(&mut harness);
+    run_ticks(&mut harness, MOVING_TICKS);
+    assert_eq!(
+        snapshots_listed(&harness),
+        held,
+        "the snapshot is unchanged"
+    );
+    assert_eq!(remembered(&harness), kept, "the memory is unchanged");
+    assert_eq!(tallies(&harness).others(&[]), Vec::new(), "asset events");
+    assert_eq!(census(&harness), entities, "entities spawned or despawned");
+    assert_eq!(
+        moved(&buffers, &retained_buffers(harness.app.world())),
+        Vec::new(),
+        "retained buffers that moved or grew"
+    );
+}
+
 /// P-16: a snapshot refreshed by later strikes of the same attacker spawns no snapshot entity
 /// (the strikes' own effects may spawn theirs). Under the shipped cap: each strike comes before
 /// the cap ends the image.
@@ -2207,15 +2303,34 @@ fn click_open_ground(harness: &mut Harness) {
     harness.click(MouseButton::Left, on_screen);
 }
 
-/// One pass of the minimap's moving window: ticks, a selection made and cleared, the camera
-/// panned and back, over [`MINIMAP_FRAMES`] running frames.
+/// One pass of the minimap's moving window: ticks, the base selected (its rally lines) and then
+/// a worker, the camera panned and back, a strike on the worker (an alert, its ping and the
+/// struck flash) and a player's ping, over [`MINIMAP_FRAMES`] running frames.
 fn minimap_window(harness: &mut Harness) {
     let worker = local_workers(harness)[0];
+    let base = harness.local_structure();
     harness.resume();
     for frame in 0..MINIMAP_FRAMES {
         match frame {
+            8 => {
+                harness.select(base);
+            }
             16 => {
                 harness.select(worker);
+            }
+            64 => strike_worker(harness, worker),
+            96 => {
+                let style = harness
+                    .app
+                    .world()
+                    .resource::<client::minimap::style::MinimapStyle>()
+                    .alerts
+                    .clone();
+                harness
+                    .app
+                    .world_mut()
+                    .resource_mut::<client::minimap::alerts::AlertLog>()
+                    .ping(&style, Vec2::new(20.0, 20.0), 0);
             }
             48 => click_open_ground(harness),
             80 | 104 => {
@@ -2229,6 +2344,24 @@ fn minimap_window(harness: &mut Harness) {
         harness.step(1);
     }
     harness.pause();
+}
+
+/// Sends a strike on `worker`, as the pipeline publishes one.
+fn strike_worker(harness: &mut Harness, worker: EntityId) {
+    let position = harness.simulated_position(worker);
+    let at = [position.x, position.y, 0.5];
+    harness.app.world_mut().send_event(CombatVisualEvent(
+        sim_types::CombatEventVisual::HitscanTracer {
+            from: at,
+            to: at,
+            owner: sim_types::PlayerId(1),
+            source: sim_types::EffectSource::default(),
+            ends: Some(sim_types::StrikeEnds {
+                attacker: worker,
+                target: worker,
+            }),
+        },
+    ));
 }
 
 /// Running frames of [`minimap_window`].
@@ -2250,8 +2383,20 @@ fn the_minimap_keeps_its_buffers_through_ticks_selection_and_a_pan() {
     assert!(!frame.marks().is_empty(), "the minimap lists marks");
     assert!(frame.fog_generation() > 0, "the fog bytes are built");
     let selection_rebuilds = harness.world().current_tick;
+    let alerts = |harness: &Harness| {
+        harness
+            .app
+            .world()
+            .resource::<client::minimap::alerts::AlertLog>()
+            .generation()
+    };
+    let alerts_before = alerts(&harness);
     let buffers = retained_buffers(harness.app.world());
     minimap_window(&mut harness);
+    assert!(
+        alerts(&harness) > alerts_before,
+        "the window struck, flashed and pinged"
+    );
     let frame = harness
         .app
         .world()

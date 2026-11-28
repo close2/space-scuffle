@@ -112,6 +112,8 @@ const CONCERNS: &[Concern] = &[
             "Update: client::battle_hud::actions::collect_card_keys",
             "Update: client::battle_input::collect_key_intent",
             "Update: client::battle_input::collect_pointer_intent",
+            // Orders given on the minimap (plan 2026-12-01-minimap D-7).
+            "Update: client::battle_input::minimap_orders::collect_minimap_orders",
             // The inspector's battle controls (restart, step) act on the session.
             "Update: client::lab_ui::lab_ui_system",
         ],
@@ -209,12 +211,24 @@ const CONCERNS: &[Concern] = &[
         ],
     },
     Concern {
+        name: "Minimap intent",
+        store: Store::Resource(Components::resource_id::<client::minimap::MinimapIntent>),
+        writers: &[
+            // The HUD reads the pointer on the minimap image (plan 2026-12-01-minimap D-7).
+            "Update: client::battle_hud::panels::battle_hud_system",
+        ],
+    },
+    Concern {
         name: "Camera",
         store: Store::Component(Components::component_id::<RtsCamera>),
         writers: &[
             // Bevy's animation system may write any component of an animated entity.
             "PostUpdate: bevy_animation::animate_targets",
             "Update: client::camera::camera_control_system",
+            // A minimap press centres the camera (plan 2026-12-01-minimap D-7).
+            "Update: client::minimap::apply_minimap_intent",
+            // Space jumps to the latest alert (plan 2026-12-01-minimap D-13).
+            "Update: client::minimap::collect_minimap_keys",
             // Frames a newly committed battle.
             "Update: client::runtime_battle::scene::manage_battle_scene",
             "Update: client::runtime_battle::scene::sync_scene_camera",

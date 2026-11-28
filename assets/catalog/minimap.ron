@@ -15,6 +15,25 @@
     resource_color: (0.494, 0.749, 0.945), // :688 ResourceUnitColor 126,191,241
     watchtower_color: (0.9, 0.9, 0.9),
     watchtower_half: 1.0,
+    frustum_color: (1.0, 1.0, 1.0),   // :687 FrustumColor
+    frustum_px: 1.0,
+    frustum_max_distance: 200.0,      // world units; the shipped camera never needs the cut (D-8)
     team_colors: (self: (0.0, 0.7333, 0.0), ally: (1.0, 1.0, 0.0), hostile: (1.0, 0.0, 0.0),
                   neutral: (0.4941, 0.749, 0.945), selected: (0.0, 1.0, 0.0)), // :561-590 OverrideColors
+    attacked_color: (1.0, 0.0, 0.0),  // :561-590 Attacked
+    flash_ticks: 75,                  // :654 UnitDamageFlashDuration 3000 ms
+    snapshot_alpha: 1.0,              // B-183's attacker snapshot; S12 says only "on minimap" (art, Q0020)
+    remembered_alpha: 1.0,            // B-252's remembered structure; S15 says only "on minimap" (art, Q0020)
+    rally_color: (1.0, 1.0, 1.0),     // :538 DefaultPathColor index="Minimap"
+    rally_px: 1.0,
+    alerts: (
+        // core AlertData:22-35 Attack: PingTime and Life in Normal seconds, 25 / 1.4 ticks each (plan §2.3):
+        // 6 s = 107 ticks, 15 s = 268 ticks; OverlapLocalRadius 15 world units.
+        attack: (ping_ticks: 107, life_ticks: 268, overlap_ticks: 268, overlap_global: 2, overlap_local: 1,
+                 overlap_radius: 15.0, color: (1.0, 0.0, 0.0)),
+        ping: (ping_ticks: 107, color: (1.0, 1.0, 0.0)), // AlertData:3-21 default PingTime 6, PingColor yellow
+        ring_radius_px: (4.0, 14.0), ring_px: 2.0,
+        text_town: "Your base is under attack.",
+        text_unit: "Your forces are under attack.",
+    ),
 )

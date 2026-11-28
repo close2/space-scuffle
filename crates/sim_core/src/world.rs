@@ -450,6 +450,9 @@ impl SimWorld {
         self.step_weapons_and_projectiles();
         self.count_down_cast_locks();
         self.reap_dead_and_emit_shatter();
+        // Presentation only, after the last phase that changes an entity: each player's memory
+        // of the structures it was shown (plan `2026-12-01-minimap` Amendment 1, D-16).
+        self.update_remembered_structures();
         self.last_checksum = self.compute_checksum();
         self.write_render_snapshot(output);
     }

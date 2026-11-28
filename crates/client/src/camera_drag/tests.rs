@@ -389,3 +389,20 @@ fn late_geometry_event_never_admits_an_earlier_press() {
     assert_eq!(state.diagnostics().accepted_presses, 0);
     assert!(!state.diagnostics().active);
 }
+
+#[test]
+fn a_camera_jump_interrupts_the_gesture_once() {
+    let (mut state, context) = armed();
+    state.interrupt();
+    let evidence = state.diagnostics();
+    assert!(!evidence.active);
+    assert_eq!(evidence.cancellations, 1);
+    assert_eq!(evidence.last_cancellation, DragCancellation::Jump);
+    assert_eq!(
+        apply(&mut state, context, &[cursor(context.window, 260.0)]),
+        Vec2::ZERO,
+        "a held button does not resume the gesture"
+    );
+    state.interrupt();
+    assert_eq!(state.diagnostics().cancellations, 1, "nothing to interrupt");
+}

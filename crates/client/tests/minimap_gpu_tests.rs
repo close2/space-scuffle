@@ -1,5 +1,5 @@
 //! The minimap on a real GPU: the real shader, the theme's real albedo arrays and the production
-//! client (plan `2026-12-01-minimap` §6, G-1 and G-6).
+//! client (plan `2026-12-01-minimap` §6, G-1 to G-6 and G-3′).
 //!
 //! # Responsibility
 //! Each child plays a skirmish on a real window under the GPU test harness, stops the clock once
@@ -15,6 +15,13 @@
 //!   and in team mode the same pixels are `StarCraft` II's team colours.
 //! - G-3, fog: a fogged cell is darker than a visible cell of the same ground by the fog's
 //!   darkening, and an enemy in the fog leaves no pixel of its colour.
+//! - G-3′, no structure in the terrain: the enemy's start structure, in the fog, is drawn as the
+//!   fogged walkable ground around it (Amendment 1, A1.9).
+//! - G-4, frustum: the pixels along the camera's predicted trapezoid show `frustum_color`, those
+//!   3 px inside do not, and a pan of [`FRUSTUM_PAN`] units moves it by that many units' pixels.
+//! - G-5, snapshot and alert: with the staged unseen attacker, its snapshot's square shows its
+//!   owner's colour where the image stands, the strike's alert draws a red ring round the struck
+//!   unit on its first frames, and no ring is left once its ping ticks are over.
 //! - M-S3: over [`STEADY_FRAMES`] frames with the clock running, the renderer creates no buffer,
 //!   texture or bind group.
 //! - G-6, in the HUD: a window screenshot taken after the readback shows, inside
@@ -49,6 +56,13 @@
 )]
 #[path = "support/gpu_run.rs"]
 mod gpu_run;
+
+#[allow(
+    dead_code,
+    reason = "shared by several test binaries that each use a subset"
+)]
+#[path = "support/attack_snapshot_stage.rs"]
+mod attack_snapshot_stage;
 
 use std::path::{Path, PathBuf};
 
@@ -118,6 +132,8 @@ struct MinimapShot {
     unpathable: [f32; 3],
     /// `background`, sRGB.
     background: [f32; 3],
+    /// `fog_darkening` of states 0 (unexplored), 1 (fogged) and 2 (visible).
+    darkening: [f32; 3],
     /// `HudGeometry::minimap` in egui points: `[left, top, right, bottom]`.
     hud: [f32; 4],
     /// Frames the node drew before the readback.
@@ -224,6 +240,34 @@ fn uniform(shot: &MinimapShot, x: u32, y: u32) -> bool {
     }) && clear_of_marks(shot, x as f32 + 0.5, y as f32 + 0.5)
 }
 
+/// Whether cell `(x, y)` and its 3×3 neighbourhood share one fog state, and no mark lies near
+/// it: its centre pixel is the cell's own colour darkened by that state alone.
+fn one_fog_state_and_clear(shot: &MinimapShot, x: u32, y: u32) -> bool {
+    let state = cell(shot, i64::from(x), i64::from(y)).map(|(_, _, state)| state);
+    (-1..=1).all(|dy| {
+        (-1..=1)
+            .all(|dx| cell(shot, i64::from(x) + dx, i64::from(y) + dy).map(|(_, _, s)| s) == state)
+    }) && clear_of_marks(shot, x as f32 + 0.5, y as f32 + 0.5)
+}
+
+/// sRGB channel `value` in `[0, 1]` as linear.
+fn srgb_to_linear(value: f64) -> f64 {
+    if value <= 0.04045 {
+        value / 12.92
+    } else {
+        ((value + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// Linear channel `value` in `[0, 1]` as sRGB.
+fn linear_to_srgb(value: f64) -> f64 {
+    if value <= 0.003_130_8 {
+        value * 12.92
+    } else {
+        1.055 * value.powf(1.0 / 2.4) - 0.055
+    }
+}
+
 /// Whether map point `(x, y)` lies more than a pixel clear of every mark's square.
 fn clear_of_marks(shot: &MinimapShot, x: f32, y: f32) -> bool {
     let px = shot.offset[0] + x * shot.scale;
@@ -250,21 +294,30 @@ fn assert_terrain(shot: &MinimapShot, texture: &Texture) {
         let Some((texel, kind, state)) = cell(shot, i64::from(x), i64::from(y)) else {
             continue;
         };
-        if !uniform(shot, x, y) {
-            continue;
-        }
         let pixel = cell_pixel(shot, texture, x, y);
-        if texel[1] == 0 {
-            for (channel, expected) in pixel.iter().zip(shot.unpathable) {
+        // An unwalkable cell's colour is one flat value whatever its neighbours' ground: only the
+        // fog, sampled bilinearly, and nearby marks could change its centre pixel. Since the
+        // terrain shows no structure (Amendment 1, A1.9), most unwalkable ground of the skirmish
+        // borders other cells, so it is checked wherever one fog state covers it and no mark is
+        // near, against the unwalkable colour darkened by that state.
+        if texel[1] == 0 && one_fog_state_and_clear(shot, x, y) {
+            let fog = f64::from(shot.darkening[usize::from(state)]);
+            for ((channel, colour), background) in
+                pixel.iter().zip(shot.unpathable).zip(shot.background)
+            {
+                let expected = linear_to_srgb(
+                    srgb_to_linear(f64::from(colour)) * (1.0 - fog)
+                        + srgb_to_linear(f64::from(background)) * fog,
+                );
                 let got = f64::from(*channel) / 255.0;
                 assert!(
-                    (got - f64::from(expected)).abs() <= UNPATHABLE_TOLERANCE,
+                    (got - expected).abs() <= UNPATHABLE_TOLERANCE,
                     "unwalkable cell ({x}, {y}) is {pixel:?}, not {:?}",
                     shot.unpathable
                 );
             }
             unpathable += 1;
-        } else if texel[2] == 0 && texel[0] % 85 == 0 {
+        } else if texel[1] != 0 && uniform(shot, x, y) && texel[2] == 0 && texel[0] % 85 == 0 {
             by_level.insert((texel[0] / 85, kind, state), luminance(pixel));
         }
     }
@@ -609,6 +662,11 @@ fn record(
             .collect(),
         unpathable: style.unpathable.srgb,
         background: style.background.srgb,
+        darkening: [
+            style.fog_darkening.unexplored,
+            style.fog_darkening.fogged,
+            style.fog_darkening.visible,
+        ],
         hud: [square.left(), square.top(), square.right(), square.bottom()],
         drawn: 0,
     };
@@ -766,6 +824,9 @@ struct MarksShot {
     /// The local 5×5 structure's centre and footprint side in cells.
     dome: [f32; 2],
     dome_side: f32,
+    /// The enemy's start structure (in the fog): centre and footprint `(w, h)` in cells (G-3′).
+    enemy_dome: [f32; 2],
+    enemy_dome_size: [f32; 2],
     /// sRGB colours.
     local_color: [f32; 3],
     enemy_color: [f32; 3],
@@ -774,6 +835,12 @@ struct MarksShot {
     border: [f32; 3],
     /// Every mark's centre and half-width, pixels, of the player-mode shot.
     marks: Vec<[f32; 3]>,
+    /// The camera frustum's corners in pixels at the player shot, and at the team shot after a
+    /// pan of [`FRUSTUM_PAN`] world units along +x (G-4).
+    frustum: [[f32; 2]; 4],
+    frustum_panned: [[f32; 2]; 4],
+    /// `frustum_color`, sRGB.
+    frustum_color: [f32; 3],
     /// GPU resources created before and after the steady window (M-S3).
     created_before: [u64; 5],
     created_after: [u64; 5],
@@ -784,6 +851,70 @@ struct MarksShot {
     pass_gpu_ms: Vec<f64>,
     /// Marks drawn by the pass in the steady window.
     marks_drawn: u64,
+}
+
+/// How far the marks child pans the camera between its two shots, world units (G-4).
+const FRUSTUM_PAN: f32 = 10.0;
+
+/// Share of the sampled points along the frustum's edges that must show its colour (G-4).
+const FRUSTUM_HIT_SHARE: f64 = 0.9;
+
+/// The frame's frustum corners in pixels.
+fn frustum_pixels(frame: &MinimapFrame) -> [[f32; 2]; 4] {
+    let layout = frame.layout().expect("a layout");
+    frame
+        .frustum()
+        .expect("the frustum is cast")
+        .map(|corner| layout.to_minimap(corner).to_array())
+}
+
+/// G-4: the pixels along the four edges of `corners` show `colour` at
+/// [`FRUSTUM_HIT_SHARE`] of the points sampled on the map, and pixels 3 px inside the
+/// trapezoid do not.
+fn assert_frustum(shot: &MarksShot, texture: &Texture, corners: [[f32; 2]; 4], what: &str) {
+    let corners = corners.map(Vec2::from_array);
+    let map_min = Vec2::from_array(shot.offset) + Vec2::splat(2.0);
+    let map_max = Vec2::from_array(shot.offset)
+        + Vec2::new(shot.map[0] as f32, shot.map[1] as f32) * shot.scale
+        - Vec2::splat(2.0);
+    let on_map = |p: Vec2| p.cmpge(map_min).all() && p.cmple(map_max).all();
+    let centroid = corners.iter().copied().sum::<Vec2>() / 4.0;
+    let (mut sampled, mut hits, mut inside_hits, mut inside) = (0_u32, 0_u32, 0_u32, 0_u32);
+    for edge in 0..4 {
+        let (a, b) = (corners[edge], corners[(edge + 1) % 4]);
+        for step in 1..40 {
+            let point = a.lerp(b, step as f32 / 40.0);
+            if !on_map(point) {
+                continue;
+            }
+            sampled += 1;
+            hits += u32::from(is_color(
+                texture.at(point.x as u32, point.y as u32),
+                shot.frustum_color,
+            ));
+            let within = point + (centroid - point).normalize_or_zero() * 3.0;
+            if on_map(within) {
+                inside += 1;
+                inside_hits += u32::from(is_color(
+                    texture.at(within.x as u32, within.y as u32),
+                    shot.frustum_color,
+                ));
+            }
+        }
+    }
+    eprintln!("G-4 {what}: {hits} of {sampled} edge points, {inside_hits} of {inside} inside");
+    assert!(
+        sampled >= 20,
+        "{what}: enough of the frustum lies on the map"
+    );
+    assert!(
+        f64::from(hits) >= FRUSTUM_HIT_SHARE * f64::from(sampled),
+        "{what}: {hits} of {sampled} edge points show the frustum's colour"
+    );
+    assert!(
+        f64::from(inside_hits) < 0.1 * f64::from(inside.max(1)),
+        "{what}: {inside_hits} of {inside} points 3 px inside show it"
+    );
 }
 
 /// Bevy's render diagnostic of the minimap pass's GPU time (the node's `pass_span`).
@@ -929,6 +1060,18 @@ fn g2_g3_dots_fog_and_a_steady_gpu_state_on_the_real_shader() -> TestResult {
         }
     }
     assert_fog_darkens(&shot, &player);
+    assert_no_structure_in_terrain(&shot, &player);
+    // G-4: the frustum at both shots; the pan moved it by the pan times the scale.
+    assert_frustum(&shot, &player, shot.frustum, "before the pan");
+    assert_frustum(&shot, &team, shot.frustum_panned, "after the pan");
+    for (before, after) in shot.frustum.iter().zip(shot.frustum_panned) {
+        let moved = Vec2::from_array(after) - Vec2::from_array(*before);
+        assert!(
+            (moved - Vec2::new(FRUSTUM_PAN * shot.scale, 0.0)).length() < 0.5,
+            "a corner moved by {moved}, not {} px along x",
+            FRUSTUM_PAN * shot.scale
+        );
+    }
     // M-S3: the running steady window created nothing on the GPU.
     eprintln!(
         "GPU resources created: {:?} before, {:?} after {} drawn frames",
@@ -1018,6 +1161,72 @@ fn assert_fog_darkens(shot: &MarksShot, texture: &Texture) {
             shot.fogged
         );
     }
+}
+
+/// G-3′ (Amendment 1, A1.9): the enemy's start structure, in the fog, leaves no trace in the
+/// terrain. The pixel at its mapped centre is within [`FOG_TOLERANCE`] linear luminance of the
+/// nearest fogged walkable cell of the same level and ground kind outside its footprint, not the
+/// unwalkable colour darkened.
+fn assert_no_structure_in_terrain(shot: &MarksShot, texture: &Texture) {
+    let [w, h] = shot.map;
+    let index = |x: u32, y: u32| (y * w + x) as usize;
+    let [cx, cy] = shot.enemy_dome;
+    let (centre_x, centre_y) = (cx.floor() as u32, cy.floor() as u32);
+    let centre = index(centre_x, centre_y);
+    assert_eq!(
+        shot.states[centre], 1,
+        "the enemy's start structure is in the fog"
+    );
+    let [fw, fh] = shot.enemy_dome_size;
+    let inside = |x: u32, y: u32| {
+        (x as f32 + 0.5 - cx).abs() < fw * 0.5 + 1.0 && (y as f32 + 0.5 - cy).abs() < fh * 0.5 + 1.0
+    };
+    let clear_of_marks = |x: u32, y: u32| {
+        let px = shot.offset[0] + (x as f32 + 0.5) * shot.scale;
+        let py = shot.offset[1] + (y as f32 + 0.5) * shot.scale;
+        shot.marks.iter().all(|[mx, my, half]| {
+            (px - mx).abs() > half + 2.0 * shot.scale || (py - my).abs() > half + 2.0 * shot.scale
+        })
+    };
+    let level = shot.cells[centre * 4];
+    let kind = shot.kinds[centre];
+    let reference = (0..h)
+        .flat_map(|y| (0..w).map(move |x| (x, y)))
+        .filter(|&(x, y)| {
+            let i = index(x, y);
+            !inside(x, y)
+                && shot.states[i] == 1
+                && shot.cells[i * 4] == level
+                && shot.cells[i * 4 + 1] == u8::MAX
+                && shot.cells[i * 4 + 2] == 0
+                && shot.kinds[i] == kind
+                && clear_of_marks(x, y)
+        })
+        .min_by_key(|&(x, y)| {
+            let (dx, dy) = (
+                i64::from(x) - i64::from(centre_x),
+                i64::from(y) - i64::from(centre_y),
+            );
+            dx * dx + dy * dy
+        })
+        .expect("fogged walkable ground of the structure's level lies near it");
+    let pixel = |x: f32, y: f32| {
+        luminance(texture.at(
+            (shot.offset[0] + x * shot.scale) as u32,
+            (shot.offset[1] + y * shot.scale) as u32,
+        ))
+    };
+    let under = pixel(cx, cy);
+    let ground = pixel(reference.0 as f32 + 0.5, reference.1 as f32 + 0.5);
+    eprintln!(
+        "G-3′: the enemy's start structure's centre {under:.4}, fogged ground at {reference:?} \
+         {ground:.4}"
+    );
+    assert!(
+        (under - ground).abs() <= FOG_TOLERANCE,
+        "the enemy's start structure shows in the terrain: {under:.4} against fogged ground \
+         {ground:.4} ± {FOG_TOLERANCE}"
+    );
 }
 
 /// Name of the libtest entry of the marks child.
@@ -1181,6 +1390,14 @@ fn record_marks(
         .iter()
         .find(|bubble| bubble.owner == viewer && bubble.shape.footprint() == Some((5, 5)))
         .expect("the local player has a 5×5 structure");
+    let enemy_dome = session
+        .frames
+        .presented()
+        .bubbles
+        .iter()
+        .find(|bubble| bubble.owner == enemy && bubble.shape.footprint().is_some())
+        .expect("the enemy has a start structure");
+    let (enemy_w, enemy_h) = enemy_dome.shape.footprint().expect("a footprint");
     let srgb = |owner| palette.resolve(owner).expect("a palette owner").srgb;
     *shot = MarksShot {
         side: frame.side_px(),
@@ -1205,11 +1422,15 @@ fn record_marks(
         hidden: presented_at(session, staged[2]),
         dome: [dome.world_pos[0], dome.world_pos[1]],
         dome_side: 5.0,
+        enemy_dome: [enemy_dome.world_pos[0], enemy_dome.world_pos[1]],
+        enemy_dome_size: [f32::from(enemy_w), f32::from(enemy_h)],
         local_color: srgb(viewer),
         enemy_color: srgb(enemy),
         team_own: style.team.own.srgb,
         team_hostile: style.team.hostile.srgb,
         border: style.border.srgb,
+        frustum: frustum_pixels(frame),
+        frustum_color: style.frustum.srgb,
         marks: frame
             .marks()
             .iter()
@@ -1279,6 +1500,9 @@ fn stage_marks(
         }
         MarksPhase::Drawing { shot, .. } => {
             let frame = frame.expect("the minimap exists");
+            if shot == 1 {
+                staging.shot.frustum_panned = frustum_pixels(&frame);
+            }
             if shot == 0 {
                 record_marks(
                     &mut staging.shot,
@@ -1336,6 +1560,7 @@ fn read_shot(commands: &mut Commands<'_, '_>, directory: &Path, frame: &MinimapF
               mut staging: ResMut<'_, MarksStaging>,
               mut settings: ResMut<'_, MinimapSettings>,
               mut lab: ResMut<'_, LabState>,
+              mut cameras: Query<'_, '_, &mut client::RtsCamera>,
               evidence: Res<'_, MinimapRenderEvidence>| {
             if staging.phase != (MarksPhase::Reading { shot }) {
                 return;
@@ -1344,6 +1569,9 @@ fn read_shot(commands: &mut Commands<'_, '_>, directory: &Path, frame: &MinimapF
             commands.entity(trigger.entity()).despawn();
             staging.phase = if shot == 0 {
                 settings.color_mode = ColorMode::Team;
+                for mut camera in &mut cameras {
+                    camera.target.x += FRUSTUM_PAN;
+                }
                 MarksPhase::Drawing {
                     shot: 1,
                     since: evidence.frames(),
@@ -1391,5 +1619,689 @@ fn minimap_marks_child() {
         ..MarksStaging::default()
     })
     .add_systems(Update, stage_marks.in_set(BattleSet::Present));
+    assert!(client::render_compatibility::run_render_app(&mut app).is_success());
+}
+
+// ---------------------------------------------------------------------------------------------
+// G-5: the attacker snapshot's square and the alert's ring on the real shader.
+// ---------------------------------------------------------------------------------------------
+
+/// Name of the libtest entry of the alert child.
+const ALERT_CHILD_TEST: &str = "minimap_alert_child";
+
+/// Angles sampled round a ring.
+const RING_SAMPLES: u32 = 24;
+
+/// What the alert child saw.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct AlertShot {
+    offset: [f32; 2],
+    scale: f32,
+    /// The snapshot image's map position and its owner's sRGB colour.
+    snapshot: [f32; 2],
+    snapshot_color: [f32; 3],
+    /// The alert ping's centre in pixels, its start tick and the presented tick of each shot.
+    ping_px: [f32; 2],
+    ping_tick: u32,
+    ping_ticks: u32,
+    shot_ticks: [u32; 2],
+    /// Ring radius at start and end, ring width, in pixels; the ping's sRGB colour.
+    ring_radius: [f32; 2],
+    ring_px: f32,
+    ping_color: [f32; 3],
+}
+
+/// The ring's radius in pixels at `tick`, as the shader grows it.
+fn ring_radius_at(shot: &AlertShot, tick: u32) -> f32 {
+    let t = (tick.saturating_sub(shot.ping_tick) as f32 / shot.ping_ticks as f32).clamp(0.0, 1.0);
+    shot.ring_radius[0] + (shot.ring_radius[1] - shot.ring_radius[0]) * t
+}
+
+/// How many of the [`RING_SAMPLES`] points on the circle of `radius` round the ping show its
+/// colour.
+fn ring_hits(shot: &AlertShot, texture: &Texture, radius: f32) -> u32 {
+    (0..RING_SAMPLES)
+        .filter(|step| {
+            let angle = *step as f32 / RING_SAMPLES as f32 * std::f32::consts::TAU;
+            let x = shot.ping_px[0] + radius * angle.cos();
+            let y = shot.ping_px[1] + radius * angle.sin();
+            let side = texture.side as f32;
+            (0.0..side).contains(&x)
+                && (0.0..side).contains(&y)
+                && is_color(texture.at(x as u32, y as u32), shot.ping_color)
+        })
+        .count() as u32
+}
+
+/// G-5: with the staged unseen attacker, its snapshot's square shows its owner's colour where the
+/// image stands; the strike's alert draws a red ring round the struck unit on its first frames,
+/// and no ring once its ping ticks are over.
+#[test]
+fn g5_the_snapshot_and_the_alert_ring_on_the_real_shader() -> TestResult {
+    if gpu_run::gpu_tests_opted_out() {
+        return Ok(());
+    }
+    let directory = tempfile::tempdir()?;
+    let mut command = gpu_run::virtual_gpu_command(&std::env::current_exe()?);
+    command.args(["--ignored", "--exact", "--nocapture", ALERT_CHILD_TEST]);
+    command.env(CHILD_OUT_VAR, directory.path());
+    command.allow_for_hex_tiling_driver_defect();
+    command.assert_passes_validation("minimap alert");
+    let shot: AlertShot = ron::from_str(&std::fs::read_to_string(
+        directory.path().join(REPORT_FILE),
+    )?)?;
+    let read = |name: &str| -> TestResult<Texture> {
+        let image = image::open(directory.path().join(name))?.to_rgba8();
+        Ok(Texture {
+            side: image.width(),
+            pixels: image.into_raw(),
+        })
+    };
+    let (first, late) = (read("ring.png")?, read("faded.png")?);
+    if let Some(keep) = std::env::var_os(KEEP_VAR) {
+        let keep = Path::new(&keep).join("minimap_alert");
+        std::fs::create_dir_all(&keep)?;
+        for file in ["ring.png", "faded.png", REPORT_FILE] {
+            std::fs::copy(directory.path().join(file), keep.join(file))?;
+        }
+    }
+    let x = (shot.offset[0] + shot.snapshot[0] * shot.scale).floor() as u32;
+    let y = (shot.offset[1] + shot.snapshot[1] * shot.scale).floor() as u32;
+    let seen = first.at(x, y);
+    assert!(
+        is_color(seen, shot.snapshot_color),
+        "the snapshot's square at ({x}, {y}) is {seen:?}, not {:?}",
+        shot.snapshot_color
+    );
+    let radius = ring_radius_at(&shot, shot.shot_ticks[0]);
+    let hits = ring_hits(&shot, &first, radius);
+    eprintln!("G-5: {hits} of {RING_SAMPLES} ring points at radius {radius:.2} px");
+    assert!(
+        hits >= RING_SAMPLES * 3 / 4,
+        "the ring shows on its first frames: {hits} of {RING_SAMPLES}"
+    );
+    assert!(
+        shot.shot_ticks[1] >= shot.ping_tick + shot.ping_ticks,
+        "the late shot is after the ping"
+    );
+    let mut late_hits = 0;
+    for step in 0..=20 {
+        let radius =
+            shot.ring_radius[0] + (shot.ring_radius[1] - shot.ring_radius[0]) * step as f32 / 20.0;
+        late_hits += ring_hits(&shot, &late, radius);
+    }
+    assert_eq!(late_hits, 0, "no ring after {} ticks", shot.ping_ticks);
+    Ok(())
+}
+
+/// What the alert child is waiting for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum AlertPhase {
+    #[default]
+    Boot,
+    /// The staged fight runs until the snapshot and the alert's ping exist.
+    Fighting,
+    /// The clock is stopped; shot `shot` waits for the node to draw.
+    Drawing {
+        shot: usize,
+        since: u64,
+    },
+    /// Shot `shot` was requested.
+    Reading {
+        shot: usize,
+    },
+    /// The clock runs until tick `until`, past the ping.
+    Fading {
+        until: u32,
+    },
+    Done,
+}
+
+/// The alert child's staging.
+#[derive(Resource, Default)]
+struct AlertStaging {
+    directory: PathBuf,
+    phase: AlertPhase,
+    shot: AlertShot,
+}
+
+/// What the alert child reads.
+type AlertChildSources<'w> = (
+    Option<Res<'w, MinimapFrame>>,
+    Option<Res<'w, MinimapStyle>>,
+    Option<Res<'w, BattleFog>>,
+    Option<Res<'w, client::minimap::alerts::AlertLog>>,
+    Option<Res<'w, client::player_presentation::PlayerPalette>>,
+);
+
+/// Fills the alert report's first part once the snapshot and the ping exist.
+fn record_alert(
+    shot: &mut AlertShot,
+    frame: &MinimapFrame,
+    style: &MinimapStyle,
+    fog: &BattleFog,
+    log: &client::minimap::alerts::AlertLog,
+    palette: &client::player_presentation::PlayerPalette,
+    tick: u32,
+) {
+    let layout = frame.layout().expect("a layout");
+    let image = &fog.attack_snapshots()[0].bubble;
+    let ping = log.pings()[0];
+    *shot = AlertShot {
+        offset: layout.offset.to_array(),
+        scale: layout.scale,
+        snapshot: [image.world_pos[0], image.world_pos[1]],
+        snapshot_color: palette.resolve(image.owner).expect("a palette owner").srgb,
+        ping_px: layout.to_minimap(ping.at).to_array(),
+        ping_tick: ping.tick,
+        ping_ticks: ping.ticks,
+        shot_ticks: [tick, 0],
+        ring_radius: [style.alerts.ring_radius_px.0, style.alerts.ring_radius_px.1],
+        ring_px: style.alerts.ring_px,
+        ping_color: style.alerts.attack.color.srgb,
+    };
+}
+
+/// Advances the alert child by one frame.
+#[allow(
+    clippy::needless_pass_by_value,
+    clippy::too_many_arguments,
+    reason = "a Bevy system with one declared parameter per dependency"
+)]
+fn stage_alert(
+    mut commands: Commands<'_, '_>,
+    mut staging: ResMut<'_, AlertStaging>,
+    mut session: ResMut<'_, BattleSession>,
+    mut lab: ResMut<'_, LabState>,
+    mut exit: EventWriter<'_, AppExit>,
+    sources: AlertChildSources<'_>,
+    evidence: Res<'_, MinimapRenderEvidence>,
+) {
+    let (frame, style, fog, log, palette) = sources;
+    let tick = session.published().map_or(0, |published| published.tick);
+    let staging = staging.as_mut();
+    staging.phase = match staging.phase {
+        AlertPhase::Boot => {
+            let ready = session.is_ready()
+                && tick >= 2
+                && frame.as_ref().is_some_and(|frame| frame.layout().is_some());
+            if ready {
+                let world = session.world_mut().expect("a live world");
+                attack_snapshot_stage::stage(world);
+                lab.battle_paused = false;
+                AlertPhase::Fighting
+            } else {
+                AlertPhase::Boot
+            }
+        }
+        AlertPhase::Fighting => {
+            let (Some(frame), Some(style), Some(fog), Some(log), Some(palette)) =
+                (frame, style, fog, log, palette)
+            else {
+                return;
+            };
+            if fog.attack_snapshots().is_empty() || log.pings().is_empty() {
+                AlertPhase::Fighting
+            } else {
+                lab.battle_paused = true;
+                let presented = session.frames.presented().tick.0;
+                record_alert(
+                    &mut staging.shot,
+                    &frame,
+                    &style,
+                    &fog,
+                    &log,
+                    &palette,
+                    presented,
+                );
+                AlertPhase::Drawing {
+                    shot: 0,
+                    since: evidence.frames(),
+                }
+            }
+        }
+        AlertPhase::Drawing { shot, since } if evidence.frames() < since + DRAWN_FRAMES => {
+            AlertPhase::Drawing { shot, since }
+        }
+        AlertPhase::Drawing { shot, .. } => {
+            let frame = frame.expect("the minimap exists");
+            if shot == 1 {
+                staging.shot.shot_ticks[1] = session.frames.presented().tick.0;
+            }
+            read_alert_shot(&mut commands, &staging.directory, &frame, shot);
+            AlertPhase::Reading { shot }
+        }
+        AlertPhase::Reading { shot } => AlertPhase::Reading { shot },
+        AlertPhase::Fading { until } if session.frames.presented().tick.0 < until => {
+            AlertPhase::Fading { until }
+        }
+        AlertPhase::Fading { .. } => {
+            lab.battle_paused = true;
+            AlertPhase::Drawing {
+                shot: 1,
+                since: evidence.frames(),
+            }
+        }
+        AlertPhase::Done => {
+            exit.send(AppExit::Success);
+            AlertPhase::Done
+        }
+    };
+}
+
+/// Requests shot `shot` of the minimap texture; the observer writes it and moves on: after the
+/// ring shot to the fading clock, after the faded shot to the report.
+fn read_alert_shot(
+    commands: &mut Commands<'_, '_>,
+    directory: &Path,
+    frame: &MinimapFrame,
+    shot: usize,
+) {
+    let side = frame.side_px();
+    let image = frame.image().expect("the minimap image").clone();
+    let directory = directory.to_path_buf();
+    let path = directory.join(if shot == 0 { "ring.png" } else { "faded.png" });
+    commands.spawn(Readback::texture(image)).observe(
+        move |trigger: Trigger<'_, ReadbackComplete>,
+              mut commands: Commands<'_, '_>,
+              mut staging: ResMut<'_, AlertStaging>,
+              mut lab: ResMut<'_, LabState>| {
+            if staging.phase != (AlertPhase::Reading { shot }) {
+                return;
+            }
+            save_unpadded(&trigger.event().0, side, &path);
+            commands.entity(trigger.entity()).despawn();
+            staging.phase = if shot == 0 {
+                lab.battle_paused = false;
+                AlertPhase::Fading {
+                    until: staging.shot.ping_tick + staging.shot.ping_ticks + 2,
+                }
+            } else {
+                let text = ron::to_string(&staging.shot).expect("plain data");
+                std::fs::write(directory.join(REPORT_FILE), text).expect("the report is written");
+                AlertPhase::Done
+            };
+        },
+    );
+}
+
+/// The child of [`g5_the_snapshot_and_the_alert_ring_on_the_real_shader`].
+#[test]
+#[ignore = "launched by the test above on a virtual display"]
+fn minimap_alert_child() {
+    let directory = std::env::var_os(CHILD_OUT_VAR).expect("the parent names a directory");
+    let mut app = client::build_graphical_app_off_main_thread(
+        ClientMode::Skirmish,
+        Some(CHILD_FRAME_LIMIT),
+        SKIRMISH_SCENARIO.as_ref(),
+    )
+    .expect("the shipped assets must start the client");
+    app.insert_resource(AlertStaging {
+        directory: Path::new(&directory).to_path_buf(),
+        ..AlertStaging::default()
+    })
+    .add_systems(Update, stage_alert.in_set(BattleSet::Present));
+    assert!(client::render_compatibility::run_render_app(&mut app).is_success());
+}
+
+// ---------------------------------------------------------------------------------------------
+// G-7 (Amendment 1): a remembered enemy structure on the minimap, on the real shader.
+// ---------------------------------------------------------------------------------------------
+
+/// Name of the libtest entry of the remembered-structure child.
+const REMEMBERED_CHILD_TEST: &str = "minimap_remembered_child";
+
+/// The remembered-structure child's three texture shots, in order.
+const REMEMBERED_SHOTS: [&str; 3] = ["remembered.png", "dead.png", "seen.png"];
+
+/// What the remembered-structure child saw.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct RememberedShot {
+    offset: [f32; 2],
+    scale: f32,
+    /// The structure's map centre and footprint `(w, h)` in cells.
+    centre: [f32; 2],
+    footprint: [f32; 2],
+    /// sRGB colours: the owner's and the border's.
+    owner_color: [f32; 3],
+    border: [f32; 3],
+    /// Whether the structure's centre cell was fogged at the first shot.
+    fogged: bool,
+}
+
+/// G-7: after the scout leaves, the enemy's start structure's mapped footprint shows its owner's
+/// colour with a black border on fogged terrain; after the structure dies in the fog the square
+/// is still there; after the spot is seen it is gone.
+#[test]
+fn g7_a_remembered_structure_is_a_square_on_the_real_shader() -> TestResult {
+    if gpu_run::gpu_tests_opted_out() {
+        return Ok(());
+    }
+    let directory = tempfile::tempdir()?;
+    let mut command = gpu_run::virtual_gpu_command(&std::env::current_exe()?);
+    command.args(["--ignored", "--exact", "--nocapture", REMEMBERED_CHILD_TEST]);
+    command.env(CHILD_OUT_VAR, directory.path());
+    command.allow_for_hex_tiling_driver_defect();
+    command.assert_passes_validation("minimap remembered structure");
+    let shot: RememberedShot = ron::from_str(&std::fs::read_to_string(
+        directory.path().join(REPORT_FILE),
+    )?)?;
+    let read = |name: &str| -> TestResult<Texture> {
+        let image = image::open(directory.path().join(name))?.to_rgba8();
+        Ok(Texture {
+            side: image.width(),
+            pixels: image.into_raw(),
+        })
+    };
+    let [remembered, dead, seen] = [
+        read(REMEMBERED_SHOTS[0])?,
+        read(REMEMBERED_SHOTS[1])?,
+        read(REMEMBERED_SHOTS[2])?,
+    ];
+    if let Some(keep) = std::env::var_os(KEEP_VAR) {
+        let keep = Path::new(&keep).join("minimap_remembered");
+        std::fs::create_dir_all(&keep)?;
+        for file in REMEMBERED_SHOTS.iter().chain(&[REPORT_FILE]) {
+            std::fs::copy(directory.path().join(file), keep.join(file))?;
+        }
+    }
+    assert!(shot.fogged, "premise: the structure's spot is fogged");
+    let x = (shot.offset[0] + shot.centre[0] * shot.scale).floor() as u32;
+    let y = (shot.offset[1] + shot.centre[1] * shot.scale).floor() as u32;
+    let half = shot.footprint[0].max(shot.footprint[1]) * 0.5 * shot.scale;
+    let edge = (half - 0.5).floor() as u32;
+    for (texture, what) in [(&remembered, "remembered"), (&dead, "dead in the fog")] {
+        let centre = texture.at(x, y);
+        assert!(
+            is_color(centre, shot.owner_color),
+            "{what}: the square's centre ({x}, {y}) is {centre:?}, not {:?}",
+            shot.owner_color
+        );
+        let border = texture.at(x + edge, y);
+        assert!(
+            is_color(border, shot.border),
+            "{what}: the square's edge ({}, {y}) is {border:?}",
+            x + edge
+        );
+    }
+    let gone = seen.at(x, y);
+    assert!(
+        !is_color(gone, shot.owner_color),
+        "the seen spot still shows the square: {gone:?}"
+    );
+    Ok(())
+}
+
+/// What the remembered child is waiting for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum RememberedPhase {
+    #[default]
+    Boot,
+    /// The scout shows the structure until tick `until`.
+    Scouting {
+        until: u32,
+    },
+    /// The scout is dead; the clock runs until the view remembers the structure.
+    Forgetting,
+    /// The clock is stopped; shot `shot` waits for the node to draw.
+    Drawing {
+        shot: usize,
+        since: u64,
+    },
+    /// Shot `shot` was requested.
+    Reading {
+        shot: usize,
+    },
+    /// The structure is dead; the clock runs until tick `until`.
+    Dying {
+        until: u32,
+    },
+    /// A second scout sees the spot; the clock runs until the view drops the image.
+    Seeing,
+    Done,
+}
+
+/// The remembered child's staging.
+#[derive(Resource, Default)]
+struct RememberedStaging {
+    directory: PathBuf,
+    phase: RememberedPhase,
+    structure: Option<(sim_types::EntityId, Vec2)>,
+    scout: Option<sim_types::EntityId>,
+    shot: RememberedShot,
+}
+
+/// Spawns a local scout of the local workers' type on open ground about five units from `at`.
+fn scout_near(world: &mut sim_core::SimWorld, at: Vec2) -> sim_types::EntityId {
+    let viewer = sim_types::PlayerId(0);
+    let kind = world
+        .entities
+        .values()
+        .find(|unit| unit.owner == viewer && !unit.is_immobile)
+        .expect("a local unit")
+        .unit_type_id;
+    let sim = |point: Vec2| {
+        sim_types::SimVec2::new(
+            sim_types::SimScalar::from_num(point.x),
+            sim_types::SimScalar::from_num(point.y),
+        )
+    };
+    let spot = (0..16)
+        .map(|step| at + Vec2::from_angle(step as f32 * std::f32::consts::TAU / 16.0) * 5.0)
+        .find(|point| {
+            world
+                .map
+                .world_to_cell(sim(*point))
+                .ok()
+                .and_then(|(x, y)| world.map.cell(x, y).ok())
+                .is_some_and(|cell| {
+                    cell.flags.contains(sim_map::CellFlags::GROUND_PATHABLE)
+                        && !cell
+                            .flags
+                            .contains(sim_map::CellFlags::OCCUPIED_BY_STRUCTURE)
+                })
+        })
+        .expect("open ground beside the structure");
+    world
+        .spawn_unit(kind, viewer, sim(spot))
+        .expect("open ground")
+}
+
+/// Whether the fog remembers `structure`.
+fn fog_remembers(fog: &BattleFog, structure: sim_types::EntityId) -> bool {
+    fog.remembered_structures()
+        .iter()
+        .any(|entry| entry.entity == structure)
+}
+
+/// Advances the remembered child by one frame.
+#[allow(
+    clippy::needless_pass_by_value,
+    clippy::too_many_arguments,
+    reason = "a Bevy system with one declared parameter per dependency"
+)]
+fn stage_remembered(
+    mut commands: Commands<'_, '_>,
+    mut staging: ResMut<'_, RememberedStaging>,
+    mut session: ResMut<'_, BattleSession>,
+    mut lab: ResMut<'_, LabState>,
+    sources: MarksChildSources<'_>,
+    evidence: Res<'_, MinimapRenderEvidence>,
+) {
+    let (frame, style, _, fog, palette) = sources;
+    let tick = session.published().map_or(0, |published| published.tick);
+    let staging = staging.as_mut();
+    staging.phase = match staging.phase {
+        RememberedPhase::Boot => {
+            let ready = session.is_ready()
+                && tick >= 2
+                && frame.as_ref().is_some_and(|frame| frame.layout().is_some());
+            if !ready {
+                return;
+            }
+            let world = session.world_mut().expect("a live world");
+            let (id, at) = world
+                .map
+                .structures()
+                .keys()
+                .find_map(|id| {
+                    let unit = world.entities.get(id)?;
+                    (unit.owner == sim_types::PlayerId(1)).then(|| {
+                        (
+                            *id,
+                            Vec2::new(unit.position.x.to_f32(), unit.position.y.to_f32()),
+                        )
+                    })
+                })
+                .expect("the enemy starts with a structure");
+            staging.scout = Some(scout_near(world, at));
+            staging.structure = Some((id, at));
+            lab.battle_paused = false;
+            RememberedPhase::Scouting { until: tick + 3 }
+        }
+        RememberedPhase::Scouting { until } if tick < until => RememberedPhase::Scouting { until },
+        RememberedPhase::Scouting { .. } => {
+            let world = session.world_mut().expect("a live world");
+            if let Some(unit) = world.entities.get_mut(&staging.scout.expect("staged")) {
+                unit.hp = sim_types::SimScalar::ZERO;
+            }
+            RememberedPhase::Forgetting
+        }
+        RememberedPhase::Forgetting => {
+            let (structure, at) = staging.structure.expect("staged");
+            let (Some(frame), Some(style), Some(fog), Some(palette)) = (frame, style, fog, palette)
+            else {
+                return;
+            };
+            if !fog_remembers(&fog, structure) {
+                return;
+            }
+            lab.battle_paused = true;
+            let layout = frame.layout().expect("a layout");
+            let image = fog
+                .remembered_structures()
+                .iter()
+                .find(|entry| entry.entity == structure)
+                .expect("remembered");
+            let (w, h) = image.bubble.shape.footprint().expect("a structure");
+            staging.shot = RememberedShot {
+                offset: layout.offset.to_array(),
+                scale: layout.scale,
+                centre: [image.bubble.world_pos[0], image.bubble.world_pos[1]],
+                footprint: [f32::from(w), f32::from(h)],
+                owner_color: palette.resolve(image.bubble.owner).expect("an owner").srgb,
+                border: style.border.srgb,
+                fogged: !fog.sees(at.x, at.y),
+            };
+            RememberedPhase::Drawing {
+                shot: 0,
+                since: evidence.frames(),
+            }
+        }
+        RememberedPhase::Drawing { shot, since } if evidence.frames() < since + DRAWN_FRAMES => {
+            RememberedPhase::Drawing { shot, since }
+        }
+        RememberedPhase::Drawing { shot, .. } => {
+            read_remembered(
+                &mut commands,
+                &staging.directory,
+                &frame.expect("a frame"),
+                shot,
+            );
+            RememberedPhase::Reading { shot }
+        }
+        RememberedPhase::Reading { shot } => RememberedPhase::Reading { shot },
+        RememberedPhase::Dying { until } if tick < until => RememberedPhase::Dying { until },
+        RememberedPhase::Dying { .. } => {
+            lab.battle_paused = true;
+            RememberedPhase::Drawing {
+                shot: 1,
+                since: evidence.frames(),
+            }
+        }
+        RememberedPhase::Seeing => {
+            let (structure, _) = staging.structure.expect("staged");
+            if fog.is_some_and(|fog| fog_remembers(&fog, structure)) {
+                RememberedPhase::Seeing
+            } else {
+                lab.battle_paused = true;
+                RememberedPhase::Drawing {
+                    shot: 2,
+                    since: evidence.frames(),
+                }
+            }
+        }
+        RememberedPhase::Done => RememberedPhase::Done,
+    };
+}
+
+/// Requests remembered shot `shot`; the observer writes it and stages what follows: the
+/// structure's death in the fog, then a second scout, then the report.
+fn read_remembered(
+    commands: &mut Commands<'_, '_>,
+    directory: &Path,
+    frame: &MinimapFrame,
+    shot: usize,
+) {
+    let side = frame.side_px();
+    let image = frame.image().expect("the minimap image").clone();
+    let directory = directory.to_path_buf();
+    let path = directory.join(REMEMBERED_SHOTS[shot]);
+    commands.spawn(Readback::texture(image)).observe(
+        move |trigger: Trigger<'_, ReadbackComplete>,
+              mut commands: Commands<'_, '_>,
+              mut staging: ResMut<'_, RememberedStaging>,
+              mut session: ResMut<'_, BattleSession>,
+              mut lab: ResMut<'_, LabState>,
+              mut exit: EventWriter<'_, AppExit>| {
+            if staging.phase != (RememberedPhase::Reading { shot }) {
+                return;
+            }
+            save_unpadded(&trigger.event().0, side, &path);
+            commands.entity(trigger.entity()).despawn();
+            let tick = session.published().map_or(0, |published| published.tick);
+            let (structure, at) = staging.structure.expect("staged");
+            staging.phase = match shot {
+                0 => {
+                    let world = session.world_mut().expect("a live world");
+                    if let Some(unit) = world.entities.get_mut(&structure) {
+                        unit.hp = sim_types::SimScalar::ZERO;
+                    }
+                    lab.battle_paused = false;
+                    RememberedPhase::Dying { until: tick + 3 }
+                }
+                1 => {
+                    scout_near(session.world_mut().expect("a live world"), at);
+                    lab.battle_paused = false;
+                    RememberedPhase::Seeing
+                }
+                _ => {
+                    let text = ron::to_string(&staging.shot).expect("plain data");
+                    std::fs::write(directory.join(REPORT_FILE), text)
+                        .expect("the report is written");
+                    exit.send(AppExit::Success);
+                    RememberedPhase::Done
+                }
+            };
+        },
+    );
+}
+
+/// The child of [`g7_a_remembered_structure_is_a_square_on_the_real_shader`].
+#[test]
+#[ignore = "launched by the test above on a virtual display"]
+fn minimap_remembered_child() {
+    let directory = std::env::var_os(CHILD_OUT_VAR).expect("the parent names a directory");
+    let mut app = client::build_graphical_app_off_main_thread(
+        ClientMode::Skirmish,
+        Some(CHILD_FRAME_LIMIT),
+        SKIRMISH_SCENARIO.as_ref(),
+    )
+    .expect("the shipped assets must start the client");
+    app.insert_resource(RememberedStaging {
+        directory: Path::new(&directory).to_path_buf(),
+        ..RememberedStaging::default()
+    })
+    .add_systems(Update, stage_remembered.in_set(BattleSet::Present));
     assert!(client::render_compatibility::run_render_app(&mut app).is_success());
 }
