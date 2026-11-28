@@ -197,3 +197,39 @@ most waypoints". `catalog_reference_values_tests::the_shipped_rallies_are_5_0_14
 Client targets reading the harness change: `battle_input_tests` 41, `battle_card_tests` 35,
 `battle_context_order_tests` 34, `rally_gpu_tests` 1 (one ignored by design), `runtime_battle_tests` 18, all passing.
 The client's source is unchanged, so the valgrind and steady-state suites are not re-run. Workspace clippy exits 0.
+
+
+## 7. WP-D1, built as WP-T1 of plan `2026-12-03-movement-work-on-solver` (`6efa92df`, `132d2489`)
+
+Built on branch `transport-load` from `main` `cd11ec75` (schema 63, hangar commands merged), under that plan's WP-T1
+and this plan's Amendment 2. Scratch material: `~/scratch/transport-load/`.
+
+### 7.1 Sources re-read
+
+- `CAbilTransport` (`core` AbilData:1192–1212): `Range 1`, `MaxUnloadRange 3`, `AllowSmartCmd 1`,
+  `AllowPassengerSmartCmd 1`. The load range is 1, as `BOARDING_REACH` (1.0, edge to edge) already is, so no bug row
+  is filed (movement plan §3.4). `MedivacTransport` (`liberty` AbilData:1359–1379) sets no range of its own, and no
+  later layer overrides it.
+- Whether the passenger keeps its orders while the transport comes is still not in the data; it stays an inference
+  [INF], and the tests pin the built rule (the passenger keeps them until it boards).
+
+### 7.2 Red runs
+
+On the stub (the variant present, its admission `UnsupportedOrder`, the client's row off), every new test failed:
+`red-sim-core-transport-pickup.log` (10 of 10 in `transport_pickup_tests`; the refusal test was split in two after
+the red run, for the function-length lint) and `red-client-smart-row.log` (`context_order`'s
+`a_carrier_picks_up_an_own_walker_and_follows_an_own_flyer` and `battle_context_order_tests`'
+`a_transport_right_clicking_an_own_soldier_picks_it_up`: the carrier was planned a `Follow`).
+
+### 7.3 Schema (movement plan §4.6, stop rule T-2)
+
+`6efa92df` with the `LoadUnit` arm encoding nothing, at schema 63, reproduces both goldens at every checkpoint and
+the sandbox's `7_726_200_156_173_230_158` on native debug and release and `wasm32-wasip1` release and debug: 8 of 8
+plus the sandbox on four builds (`golden-latent63/summary.txt`). `132d2489` then takes schema **66** (provisional:
+64 and 65 are the missiles and diagonal-walkability branches'), encodes tag 23 and the passenger, and re-records.
+
+WORLDS_AND_SKIRMISH
+
+THROUGHPUT
+
+VALGRIND
