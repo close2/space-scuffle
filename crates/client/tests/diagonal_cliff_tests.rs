@@ -29,6 +29,12 @@
 //!   cut's cliff height inside them, where it is reported (plan D-8, owner question Q0139). The
 //!   quadrants an uncut cell's convex 45° half cut draws are reported, not limited: a body at
 //!   such a corner already stands over the half cut's foot before this plan.
+//! - **T-K′** (`brink_drop_where_the_simulation_admits_a_body_*`; plan
+//!   `2026-12-02-diagonal-cliff-walkability` §6.3, B-251): T-K's measure at every centre the
+//!   simulation admits (`sim_map`'s wall contact and segment predicate for that radius report it
+//!   free), with the limit `0.2` in cut cells too, now that the simulation is clipped to the drawn
+//!   diagonal (Q0139). It replaces T-K when the clip lands (that plan's WP2); until then T-K
+//!   keeps guarding the uncut cells.
 //!
 //! Altitudes are compared exactly (`clippy::float_cmp` is allowed): the mesher writes every row
 //! at a level's height or a fixed offset from it, bit for bit.
@@ -65,7 +71,8 @@ use client::terrain::mesher::{
     RIM_DROP, RIM_WIDTH, WALL_JITTER_AMPLITUDE, WALL_ROW_SPACING,
 };
 use sim_map::grid::{GameMap, CLIFF_LEVEL_HEIGHT};
-use sim_types::{MoverType, ShapeKind};
+use sim_map::{PathRequestWithVision, Pathfinder};
+use sim_types::{MoverType, ShapeKind, SimScalar, SimVec2};
 use terrain_mesh::{
     diagonal_cuts, diagonal_fixture, diagonal_runs, load_shipped_map, void_runs, DiagonalCut,
     MapMesh,
@@ -656,10 +663,43 @@ fn quadrants_of(x: i32, y: i32, p: (f32, f32)) -> [bool; 4] {
     [left && bottom, right && bottom, right && top, left && top]
 }
 
+/// Whether the simulation admits a body of terrain radius `r` with its centre at `p` (world XZ):
+/// `sim_map`'s wall contact finds no wall within `r` and the segment predicate lets it stand.
+fn simulation_admits(map: &GameMap, pathfinder: &mut Pathfinder, p: (f32, f32), r: f32) -> bool {
+    let at = SimVec2::new(SimScalar::from_num(p.0), SimScalar::from_num(p.1));
+    let request = PathRequestWithVision {
+        start: at,
+        goal: at,
+        radius: SimScalar::from_num(r),
+        vision: None,
+        block_unexplored_ramps: false,
+        known_structures: None,
+    };
+    pathfinder.wall_contact(map, &request, at).is_none()
+        && pathfinder.segment_is_passable(map, &request, at, at)
+}
+
+/// Which body centres a brink measure samples, and the bound it holds cut cells to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Admission {
+    /// T-K: every centre that keeps its terrain radius clear of the block's cliff edges; cut
+    /// cells bounded by their cliff height.
+    CliffEdges,
+    /// T-K′: every such centre the simulation admits too; cut cells bounded by the brink limit.
+    Simulation,
+}
+
 /// T-K's measure on `map`: every walkable plateau cell near a cliff, every body centre on the
-/// `1/16` lattice that keeps its terrain radius clear of every cliff edge.
-fn brink_drops(map: &GameMap, radii: &BTreeMap<u32, usize>) -> (BrinkDrops, Vec<String>) {
+/// `1/16` lattice that `admission` admits for its terrain radius. The cliff edges of the cell's
+/// block are the first filter of both: the simulation's walls include them, so a centre within
+/// `r` of one is never admitted.
+fn brink_drops(
+    map: &GameMap,
+    radii: &BTreeMap<u32, usize>,
+    admission: Admission,
+) -> (BrinkDrops, Vec<String>) {
     let mesh = MapMesh::build(map);
+    let mut pathfinder = Pathfinder::new(map);
     let cuts: BTreeMap<(i32, i32), DiagonalCut> = diagonal_cuts(map)
         .into_iter()
         .map(|c| (c.cell, c))
@@ -690,7 +730,10 @@ fn brink_drops(map: &GameMap, radii: &BTreeMap<u32, usize>) -> (BrinkDrops, Vec<
                 for j in 0..=BRINK_LATTICE {
                     for i in 0..=BRINK_LATTICE {
                         let p = (x as f32 + i as f32 * step, y as f32 + j as f32 * step);
-                        if edges.iter().any(|&e| segment_distance(p, e) < r) {
+                        if edges.iter().any(|&e| segment_distance(p, e) < r)
+                            || (admission == Admission::Simulation
+                                && !simulation_admits(map, &mut pathfinder, p, r))
+                        {
                             continue;
                         }
                         let Some(top) = mesh.top_at(ux, uy, p.0, p.1) else {
@@ -703,6 +746,9 @@ fn brink_drops(map: &GameMap, radii: &BTreeMap<u32, usize>) -> (BrinkDrops, Vec<
                             .zip(convex)
                             .any(|(&inside, convex)| inside && convex);
                         let (bound, slot) = match cut {
+                            Some(_) if admission == Admission::Simulation => {
+                                (BRINK_LIMIT, &mut drops.cut)
+                            }
                             Some(c) => (
                                 CLIFF_LEVEL_HEIGHT as f32 * (c.la - c.lb) as f32,
                                 &mut drops.cut,
@@ -729,13 +775,14 @@ fn brink_drops(map: &GameMap, radii: &BTreeMap<u32, usize>) -> (BrinkDrops, Vec<
     (drops, failures)
 }
 
-/// T-K on `map`: prints the per-radius maxima and fails on a drop beyond its bound.
-fn assert_brink_drops(name: &str, map: &GameMap) {
+/// T-K (or T-K′, by `admission`) on `map`: prints the per-radius maxima and fails on a drop
+/// beyond its bound.
+fn assert_brink_drops(name: &str, map: &GameMap, admission: Admission) {
     let radii = ground_radii();
     let archetypes: usize = radii.values().sum();
-    let (drops, failures) = brink_drops(map, &radii);
+    let (drops, failures) = brink_drops(map, &radii, admission);
     println!(
-        "{name}: {archetypes} ground archetypes, {} radii",
+        "{name} ({admission:?}): {archetypes} ground archetypes, {} radii",
         radii.len()
     );
     for (&bits, &count) in &radii {
@@ -768,10 +815,30 @@ fn assert_brink_drops(name: &str, map: &GameMap) {
 
 #[test]
 fn brink_drop_under_a_body_is_bounded_showcase_canyon() {
-    assert_brink_drops("showcase_canyon", &showcase_canyon());
+    assert_brink_drops("showcase_canyon", &showcase_canyon(), Admission::CliffEdges);
 }
 
 #[test]
 fn brink_drop_under_a_body_is_bounded_diagonal_fixture() {
-    assert_brink_drops("diagonal_fixture", &diagonal_fixture());
+    assert_brink_drops(
+        "diagonal_fixture",
+        &diagonal_fixture(),
+        Admission::CliffEdges,
+    );
+}
+
+#[test]
+#[ignore = "diagonal-walk WP2 (B-251): red until the simulation clips each cut's outer triangle"]
+fn brink_drop_where_the_simulation_admits_a_body_showcase_canyon() {
+    assert_brink_drops("showcase_canyon", &showcase_canyon(), Admission::Simulation);
+}
+
+#[test]
+#[ignore = "diagonal-walk WP2 (B-251): red until the simulation clips each cut's outer triangle"]
+fn brink_drop_where_the_simulation_admits_a_body_diagonal_fixture() {
+    assert_brink_drops(
+        "diagonal_fixture",
+        &diagonal_fixture(),
+        Admission::Simulation,
+    );
 }

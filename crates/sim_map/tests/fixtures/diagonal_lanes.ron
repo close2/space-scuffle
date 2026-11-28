@@ -1,0 +1,35 @@
+[
+    (
+        map: "diagonal_fixture",
+        cuts: [
+            (0, 1, 0, 1, None),
+            (11, 1, 9, 34, Some(0)),
+            (5, 4, 8, 14, Some(0)),
+            (1, 11, 0, 1, None),
+            (12, 15, 29, 34, Some(5)),
+            (2, 24, 0, 1, None),
+            (7, 29, 9, 15, Some(2)),
+            (10, 29, 16, 24, Some(7)),
+            (13, 32, 32, 35, Some(10)),
+            (8, 33, 6, 15, Some(2)),
+            (9, 39, 0, 15, None),
+            (3, 40, 0, 1, None),
+            (14, 45, 21, 35, Some(9)),
+            (6, 51, 0, 14, None),
+            (4, 53, 0, 1, None),
+        ],
+        max_edge_crossings: None,
+    ),
+    (
+        map: "showcase_canyon",
+        cuts: [
+            (0, 31, 0, 23, None),
+        ],
+        max_edge_crossings: None,
+    ),
+    (
+        map: "default_arena",
+        cuts: [],
+        max_edge_crossings: Some(0),
+    ),
+]
