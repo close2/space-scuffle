@@ -1,0 +1,14 @@
+[
+    (
+        map: "diagonal_fixture",
+        pairs: 1977462,
+        connected: 983874,
+        digest: 362993131827211319,
+    ),
+    (
+        map: "showcase_canyon",
+        pairs: 475224,
+        connected: 244340,
+        digest: 10751506279492710605,
+    ),
+]

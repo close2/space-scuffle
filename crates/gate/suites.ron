@@ -271,6 +271,19 @@ SuiteCatalog(
             targets: ["client/@gpu"],
         ),
         (
+            // The terrain mesher draws diagonal cliffs from `sim_map`'s cut rule (plan
+            // 2026-12-02-diagonal-cliff-walkability D-1), so a change to the rule is a change to
+            // the drawing: its CPU terrain tests run, as a change under crates/client would run them.
+            name: "diagonal cut rule",
+            paths: ["crates/sim_map/src/diagonal.rs"],
+            targets: [
+                "client/diagonal_cliff_tests",
+                "client/terrain_tests",
+                "client/cliff_boundary_tests",
+                "client/mesher_golden_tests",
+            ],
+        ),
+        (
             name: "HUD windows",
             paths: ["crates/client/src/battle_hud/**", "crates/client/src/battle_presentation.rs"],
             targets: [
