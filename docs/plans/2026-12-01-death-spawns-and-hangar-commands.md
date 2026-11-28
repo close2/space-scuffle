@@ -971,4 +971,23 @@ Deviations and findings:
 - The `razed` row was re-designed from 200 to 100 units. It is judged on instructions per measured tick against the
   400-unit row (38.09 M against 54.44 M), not on wall-clock ticks/s on the loaded host.
 
-Part B (B-230) is not built.
+### Part B (B-230): WPB0 to WPB3
+
+| Package | Commit | What landed |
+|---|---|---|
+| WPB0 | `b64e35a5` | B-230 restated with S11–S16; baseline on `main` `cd093e03`: hangar probe (no hangar unit in any measured world, golden or the sandbox; control positive), four builds 8 of 8 at schema 62, bench |
+| WPB1 | `eaf4b968` | `UnitOrder::{HangarBuild, HangarCancelLast, SetHangarAutoBuild}` through the economy's admission (`hangar/commands.rs`, `HangarRejection`), `try_queue_build` shared with auto-build, hashed `HangarState::auto_build`, `HangarSpec::auto_build_toggle` (the Carrier authors it), `PlayerView::hangars`, tags 20 to 22, schema 63 (provisional); HC-1 to HC-10 |
+| WPB2 | `1fd8f638` | The card's hangar entries (Build <member>, Cancel last build with the re-queue tooltip, Auto-build On/Off; keys by position), the focused Carrier's members line; HC-11 to HC-16 (GPU geometry child, steady state and valgrind with the card focused) |
+| WPB3 | the records commit | Merge of `main` `edbac56b` (`a5e46785`: goldens re-recorded at 63 over main's), held-out seeds, bench; B-230 fixed; Q0138 closed (`6ada543e`) |
+
+Deviations and findings:
+- `HangarView` carries `queue_size` beside the plan's fields: the Build entry's lock needs room in both the count
+  and the queue (D-9), and the view is the card's only source.
+- `FocusedUnit::hangar` holds a `HangarView` (the same numbers) rather than a separate `HangarFocus` type.
+- The members line omits "building …" while nothing is queued.
+- The feed's hangar sentences landed in WPB1, with the commands, because the client's refusal table is exhaustive.
+- HC-10 runs natively only: `golden_replay_tests.rs` takes no replay path (§5 **verify**).
+- A command's build progresses on its own queueing tick (the command phase precedes the hangar phase), so it docks
+  `build_ticks` − 1 ticks after the command's tick; auto-build's docks `build_ticks` after its queueing tick.
+- With auto-build on, a cancelled build is re-queued in the same tick's hangar phase, progress 0 (Q0138 (a)).
+- HC-16's steady-state case runs H-20's stage under the player's profile, since the sandbox profile runs no HUD.

@@ -239,3 +239,138 @@ the broodlings §14 pointer, the plan's `## As built`.
 
 A note on commit `c82467b3`: its subject reads "docs: close B-234", but it added only the `razed` bench row at 200
 units. The closing records are in the commit that follows `3f82dd04`.
+
+# Part B: the Carrier hangar's card commands (B-230)
+
+Packages WPB0 to WPB3, built on branch `hangar-commands` from `main` `cd093e03` (schema 62, part A merged). Scratch
+material (trees, binaries, worlds, the hangar probe and its control, the red runs, the proof copies' status files,
+the bench logs) is under `~/scratch/hangar-commands/`, never committed. Q0138 is open; its default (a) is built: a
+cancel refunds, and auto-build queues again on the same tick's hangar phase if the owner can pay.
+
+## WPB0: baseline on `main` `cd093e03`
+
+Measured on `main` `cd093e03` with `~/scratch/hangar-commands/scripts/` (part A's scripts, retargeted).
+
+- **Worlds** (`world-main`): every matrix battle at its seeds of record and the 16 development seeds, battles 31 and
+  33 at 100 and 64 seeds, the showcase and showcase-effects worlds at the default seed and seeds 1 to 8, the
+  skirmish scenario for 6,000 ticks: 490 files, the base of every comparison below.
+- **Hangar probe** (`probe/apply_probe.py`, never committed: prints, every 250 ticks and on tick 1, the living hangar
+  units and their queued builds, changing no state). Its worlds equal `world-main` byte for byte, logs included
+  (490 files, 0 differing): **no measured world holds a hangar unit**, and neither golden nor the sandbox prints a
+  line. **Positive control** (`probe_control.rs`: the shipped hangar unit, found by property, on a constructed map
+  for 500 ticks): three lines (`tick=1 count=1 queued=0`, `tick=250 count=1 queued=3`, `tick=500 count=1
+  queued=2`). So the prediction holds: no measured world can move by a hangar command, and only by schema bytes.
+- **Four-build baseline** (`proofcopy.sh main cd093e03`): both goldens and `DEFAULT_SANDBOX_CHECKSUM` on native debug
+  and release and `wasm32-wasip1` release and debug, **8 of 8**, schema 62.
+- **Bench** (`bench-main-r0`, load 15.6 to 32): 64x64 0 units 2930 ticks/s, 100 units 700, 400 units 51; 128x128 400
+  units 138; 256x256 0 units 187; `showcase_canyon` 400 units 73; 67 casters 172; 12 hangar units 380; 12 spawner
+  units 382; 12 razed structures 142.
+- The close-battle list is part A's (14, 26, 31, 33, 35, 38a, 38b), reused as §6.6 says.
+
+## WPB1: commands and the switch (`eaf4b968`)
+
+**Red first** (`~/scratch/hangar-commands/red/`): the new `hangar_tests.rs` on `main`'s tree does not compile
+(`wpb1-red-on-main.log`: 51 errors, no `UnitOrder::{HangarBuild, HangarCancelLast, SetHangarAutoBuild}`,
+`HangarRejection`, `GameCommandError::Hangar`, `HangarSpec::auto_build_toggle`, `HangarState::auto_build`).
+On WPB1's tree with the commands refused before they act and the hangar phase reading the spec's `auto_build`
+(`red/neuter.py`, `wpb1-red-neutered.log`): HC-1, HC-2, HC-3, HC-4, HC-6, HC-7 (admission) and HC-8 fail; HC-5
+(the switch at creation), HC-7's closed-match case, HC-9 (the catalog) and HC-10 (determinism) pass there too, as
+they must, since none depends on a command acting.
+On WPB1's tree: `hangar_tests.rs` 26 of 26 (HC-1 to HC-10 and the carrier plan's H-tests), the `hangar::commands`
+unit tests (the queueing rule and its refusal order, the switch at creation, decoding, id order and duplicates), the
+encoding tests (tags 20, 21, 22 and its byte; the switch's byte last in a hangar's state; schema 63), every hangar
+field hashed (HC-9's hash half), and `sim_types`' RON tests (the orders round-trip, an older `Follow` reads unchanged,
+`auto_build_toggle` defaults to `false`, `PlayerView::hangars` skipped when empty).
+
+Findings while building:
+- HC-1: a build queued by a command on tick T docks on tick T + `build_ticks` − 1: the command runs before that
+  tick's hangar phase, which already advances the build. Auto-build's first build (queued in the phase after the
+  progress step) docks `build_ticks` after its queueing tick, as the carrier plan's H-3 measured.
+- HC-6: with auto-build on, the cancelled build is refunded and queued again (and charged) in the same tick's hangar
+  phase, with its progress at 0 (Q0138's default (a)).
+- HC-10: `golden_replay_tests.rs` reads only its two embedded fixtures, so it takes no replay path; HC-10 records,
+  serializes, reads back and replays its constructed fight natively. That the old orders script reads unchanged is
+  the golden replay itself.
+
+**Worlds** (`compare-wpb1.txt`): WPB1's worlds equal `main`'s byte for byte, 490 files, 0 differing; the matrix
+difference is empty. No class P either: no measured world holds a hangar unit, so no `PlayerView` gains an entry.
+
+**Latent proof and re-record on WPB1's base.** `proofcopy.sh wpb1 eaf4b968` (schema 63, goldens and the sandbox
+value re-recorded): **8 of 8**. The latent copy of `eaf4b968` (`unhash.py`: schema 62, `HangarState::auto_build`
+unhashed, `main`'s goldens and sandbox value restored) reproduced 2 of 8 (native debug) before the host's
+out-of-memory guard stopped the run; it was repeated in full after merging `main` (WPB3, below).
+
+## WPB2: the card and the count (`1fd8f638`)
+
+**Red** (`red/wpb2-red-neutered.log`; WPB2's tree with `hangar_entries` returning before it emits and the members
+line left empty, restored after): HC-11, HC-12 (both the rule and the input test), HC-13, HC-14 and HC-16's steady
+state fail, six of six. On WPB2's tree all pass:
+
+| Test | Result |
+|---|---|
+| HC-11, HC-13, HC-12's rule (`battle_hud::card` unit tests) | a Carrier alone: Attack, Build <member> (15 minerals), Cancel last build, Auto-build: On on Q, E, R, T; Cancel locked until a build is queued and warning of the re-queue while auto-build is on; Build locked `HangarFull` at 8; Off after the switch; a mixed selection shows the entries once; a cancel goes to the most queued, a tie to the lower id |
+| HC-12 (`battle_card_tests`) | the switch by key, then E sends `HangarBuild` to both selected Carriers; with no minerals the feed reads "not enough minerals"; a click on Build queues one in each; R sends `HangarCancelLast` to the Carrier with 2 queued |
+| HC-14 (`battle_hud_tests`) | "<member>s: 4 docked, 0 out, building 1 (0 %) · auto-build on"; the string's pointer, capacity and text unchanged over 100 paused frames; rewritten when progress moves; none for an inspected enemy Carrier |
+| HC-15 (`battle_hud_window_tests`, child through `gpu_run.rs` on `radv`, RX 580) | the three hangar entries and the members line lie inside the command panel and overlap nothing |
+| HC-16 steady state (`sync_steady_state_tests::hangar_cycling_with_the_card_focused_creates_and_removes_nothing`) | the H-20 stage under the player's profile with one Carrier selected: one cycle 61 ticks, window 600 ticks, 13 cycles; pool spawned 26, reused 240, `beyond_bound` 0; no asset, entity or retained buffer (the HUD model's included) moved |
+| HC-16 valgrind (`sync_allocation_count_tests::hangar_cycle_frames_allocate_nothing`, its live child now running the HUD's model, focus and card refreshes with a Carrier selected) | windows of 2 and 4 cycles: live 132 and 266 blocks, baseline 132 and 266: **0** beyond the drivers' |
+
+Finding: the GPU child must select its Carrier again after the first frames, because the selection binds to its
+session and owner then and is cleared once (`BattleSelection::bind_owner`).
+
+## WPB3: confirmation
+
+### Merging `main` `edbac56b` (`a5e46785`)
+
+`main` gained wall-clearance WP1 (a movement change; goldens re-recorded at schema 62), the minimap panel and
+documents; its schema is still 62, so **63 stays the next free**. The merge takes `main`'s goldens and re-records
+them at 63; the sandbox value is unchanged by `main`, so WPB1's schema-63 value stands. The command panel keeps
+`main`'s minimap split with the selection column's geometry argument (the members line). Re-taken on the merged
+tree (`final-all.sh edbac56b a5e46785`):
+
+- **Worlds:** the merged tree's worlds equal `main` `edbac56b`'s byte for byte (`compare-merged.txt`: 566 files, 0
+  differing; the matrix difference empty).
+- **Re-recorded proof** (`proof-merged`): both goldens and `DEFAULT_SANDBOX_CHECKSUM` (`7_726_200_156_173_230_158`)
+  on native debug and release and `wasm32-wasip1` release and debug: **8 of 8**, schema 63.
+- **Latent proof** (`proof-merged-latent`: schema 62, `HangarState::auto_build` unhashed, the tags kept, `main`'s
+  goldens and sandbox value restored): **8 of 8**; every checkpoint of `main` reproduces, so the encoding alone moved
+  them (class S). Stop rule 1 holds.
+- **Client** on the merged tree: HC-11 to HC-15 pass again (HC-15 on `radv`); HC-16's valgrind pair re-run alone
+  under the gate lock: live 132 and 266 blocks, baseline 132 and 266, **0** beyond the drivers'.
+
+### Held-out seeds (§7.3)
+
+`heldout.sh` once on `main` `edbac56b` and once on the merged tree: matrix seeds 7001 to 7016, battles 31 and 33 on
+7001 to 7064, the showcase and showcase effects on seeds 9 to 16, the skirmish scenario on seeds 9 to 12.
+**Byte-identical** (`compare-heldout.txt`: 489 files, 0 differing; `matrixdiff-heldout.txt` empty). Stop rule 3
+holds.
+
+### Throughput (§5)
+
+Release bench binaries of `main` `edbac56b` and the merged tree, interleaved, two rounds, each under the gate lock and
+`perf stat -e instructions:u`. The host was loaded (1-minute load 10 to 195), so the wall-clock figures are noisy and
+the instruction count is the measure (Amendment 1's rule). Ticks per second, medians of three repeats:
+
+| Scenario | main r1 | merged r1 | main r2 | merged r2 |
+|---|---:|---:|---:|---:|
+| 64x64, 0 | 2452 | 3097 | 2930 | 3105 |
+| 64x64, 100 | 797 | 807 | 794 | 800 |
+| 64x64, 400 | 58 | 104 | 68 | 108 |
+| 128x128, 400 | 122 | 166 | 167 | 179 |
+| 256x256, 0 | 182 | 175 | 180 | 189 |
+| showcase_canyon, 400 | 65 | 81 | 78 | 81 |
+| 67 casters | 168 | 196 | 198 | 201 |
+| 12 hangar units | 184 | 393 | 387 | 392 |
+| 12 spawner units | 222 | 390 | 397 | 406 |
+| 12 razed structures | 124 | 152 | 154 | 152 |
+
+User-space instructions of the whole run: `main` 434,114,990,761 and 434,114,955,623; merged 434,162,701,618 and
+434,162,548,386: **+0.011 %** (bar +0.5 %, holds). Every scenario runs at 58 ticks per second or more in every
+round. Stop rule 5 holds. The new per-tick work is the switch read in the hangar phase; the hangar commands are not
+on a per-tick path.
+
+### Records
+
+`DESIGN.md` §4 B-230 **fixed**, the Combat row names the hangar's commands; the carrier plan's D-12 A-2 points here;
+the plan's `## As built` (part B) and its `docs/plans/README.md` row. No bug row and no question were registered by
+part B; Q0138 was answered (a) with the cancel tooltip and closed (`6ada543e`).

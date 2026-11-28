@@ -495,7 +495,7 @@ stop WP5 and ask the owner (charter §1.2); the simulation packages still land, 
 | # | What | Ours | Game | Record |
 |---|---|---|---|---|
 | A-1 | Attack path | Hover in range 2 | Strafe (`CWeaponStrafe`) | **B-229**, Q0130 draft; after Gated WP4 |
-| A-2 | Hangar commands | None: auto-build only; no build button, no cancel, no auto-build toggle, no docked count on the card | Card buttons `CarrierHangar,Ammo1`, `HangarQueue5,CancelLast` (S14 :3521–3522) | **B-230**, deferred; data already allows `auto_build: false` |
+| A-2 | Hangar commands | None: auto-build only; no build button, no cancel, no auto-build toggle, no docked count on the card | Card buttons `CarrierHangar,Ammo1`, `HangarQueue5,CancelLast` (S14 :3521–3522) | **B-230**, deferred; data already allows `auto_build: false`. *Taken up by plan `2026-12-01-death-spawns-and-hangar-commands`* (part B, fixed) |
 | A-3 | Docked regeneration | Shields under the unit's rule; life none | Not in the data | **verify** (§2.3); no bug unless a source contradicts |
 | A-4 | Dock point | Contact with the Carrier's edge | The model's dock, inside the Carrier | Detail (≤ 1.25 units of flight); not a bug |
 | A-5 | Launch point | The Carrier's centre | The model's launch bay | Detail |
