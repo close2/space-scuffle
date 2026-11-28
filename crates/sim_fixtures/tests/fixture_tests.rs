@@ -172,7 +172,12 @@ use std::path::PathBuf;
 /// 63): each hangar encodes its auto-build switch; with the field left out at schema 62 a copy of
 /// the WPB1 tree reproduces `2_323_604_560_490_998_891` on all four builds. Behaviour: none (no
 /// hangar command is given). (63 is provisional, the next free at merge.)
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 7_726_200_156_173_230_158;
+/// Re-recorded for plan 2026-12-03-movement-work-on-solver WP-T1 (checksum schema 63 -> 66): the
+/// `LoadUnit` order encodes its tag and passenger; with its arm left unencoded at schema 63 a copy
+/// of the WP-T1 tree reproduces `7_726_200_156_173_230_158` on all four builds. Behaviour: none (no
+/// transport is told to pick a unit up). (66 is provisional, the next free at merge: 64 and 65 are
+/// held by the missiles and diagonal-walkability branches.)
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 6_404_394_736_076_898_024;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

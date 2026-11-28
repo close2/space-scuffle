@@ -167,7 +167,10 @@ use std::collections::BTreeMap;
 /// `channel`, and the `UnitOrder` tags 20 to 22 (`HangarBuild`, `HangarCancelLast`,
 /// `SetHangarAutoBuild` and its `bool`) (plan `2026-12-01-death-spawns-and-hangar-commands` D-6,
 /// D-7). The number is the next free at merge.
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 63;
+/// Schema 66 adds the `UnitOrder` tag 23, `LoadUnit`, and its passenger's id (plan
+/// `2026-12-03-movement-work-on-solver` WP-T1, B-247). The number is provisional, the next free
+/// at merge: 64 and 65 are held by the missiles and diagonal-walkability branches.
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 66;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.
