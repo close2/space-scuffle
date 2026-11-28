@@ -10,6 +10,7 @@ use std::fmt::Write;
 
 use sim_core::{
     economy::{GameCommandError, GameCommandReceipt, TaskEventKind},
+    hangar::HangarRejection,
     movement::{DisplacementAdmissionError, MovementAdmissionError},
     production::{construction::BuildRejection, ProductionAdmissionError},
     transport::TransportAdmissionError,
@@ -247,7 +248,21 @@ const fn transport_reason(error: &TransportAdmissionError) -> &'static str {
     }
 }
 
-/// Appends why the simulation refused an economy, construction or transport command.
+/// Why the simulation refused a hangar command (plan
+/// `2026-12-01-death-spawns-and-hangar-commands` D-9), in the feed's style.
+const fn hangar_reason(rejection: HangarRejection) -> &'static str {
+    match rejection {
+        HangarRejection::NoHangar => "no selected unit has a hangar",
+        HangarRejection::Full => "the hangar holds its most members",
+        HangarRejection::QueueFull => "the hangar's build queue is full",
+        HangarRejection::Minerals => "not enough minerals",
+        HangarRejection::Gas => "not enough gas",
+        HangarRejection::NothingQueued => "no build is queued to cancel",
+        HangarRejection::NoAutoBuildSwitch => "its automatic builds cannot be switched",
+    }
+}
+
+/// Appends why the simulation refused an economy, construction, transport or hangar command.
 pub fn write_game_reason(output: &mut String, error: &GameCommandError) {
     let reason = match error {
         GameCommandError::MatchOver => "the match is over",
@@ -294,6 +309,7 @@ pub fn write_game_reason(output: &mut String, error: &GameCommandError) {
         }
         GameCommandError::RallyWaypointsFull => "the rally holds its most waypoints",
         GameCommandError::Transport(error) => transport_reason(error),
+        GameCommandError::Hangar(rejection) => hangar_reason(*rejection),
         GameCommandError::Production(error) => {
             write_production_reason(output, error);
             return;

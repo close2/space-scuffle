@@ -795,6 +795,7 @@ fn a_hangar_unit_is_presentable_only_with_its_members_media() -> TestResult {
         build_ticks: 214,
         queue_size: 5,
         auto_build: true,
+        auto_build_toggle: false,
         leash: sim_types::SimScalar::from_i32(12),
         on_death: sim_types::HangarDeath::KillMembers,
     });

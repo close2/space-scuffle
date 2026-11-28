@@ -18,6 +18,11 @@
 //! phase runs after vision and before acquisition, so a member launched or redirected this tick
 //! is acquired, moved and fires through the ordinary phases of the same tick.
 //!
+//! The player commands a hangar unit takes (build, cancel the newest build, switch automatic
+//! builds; plan `2026-12-01-death-spawns-and-hangar-commands` D-6, D-7) are admitted in
+//! [`commands`] through the economy's game-command path; the queueing rule they share with the
+//! phase's automatic builds is [`try_queue_build`].
+//!
 //! # Invariants
 //! - A docked member is a record, never an entity; each launch creates a new entity id.
 //! - `HangarState::launched` equals the number of living entities whose `hangar_link` names the
@@ -27,10 +32,14 @@
 //! - Hangars and members are visited in ascending entity id; nothing in the phase allocates in
 //!   steady state except the entity a launch creates.
 
+pub mod commands;
 mod launch;
 mod phase;
 
-use sim_types::{EntityId, PlayerId, SimScalar};
+use crate::world::PlayerResources;
+use sim_types::{EntityId, HangarSpec, PlayerId, SimScalar};
+
+pub use commands::HangarRejection;
 
 pub(crate) use phase::HangarScratch;
 
@@ -53,20 +62,25 @@ pub struct HangarState {
     pub target: Option<EntityId>,
     /// The launch channel of the latest release, while it has tries left (D-4, D-5).
     pub channel: Option<LaunchChannel>,
+    /// Whether the hangar queues builds by itself while its owner can pay: the player's switch
+    /// (plan `2026-12-01-death-spawns-and-hangar-commands` D-7), set from
+    /// `HangarSpec::auto_build` at creation and by `UnitOrder::SetHangarAutoBuild` afterwards.
+    pub auto_build: bool,
 }
 
 impl HangarState {
-    /// An empty hangar with room for `max_count` docked records; the spawn stocks its free
-    /// start members (D-3).
+    /// An empty hangar of `spec` with room for its `max_count` docked records and its switch at
+    /// the spec's `auto_build`; the spawn stocks its free start members (D-3).
     #[must_use]
-    pub fn with_capacity(max_count: u8) -> Self {
+    pub fn new(spec: &HangarSpec) -> Self {
         Self {
-            docked: Vec::with_capacity(usize::from(max_count)),
+            docked: Vec::with_capacity(usize::from(spec.max_count)),
             launched: 0,
             queued: 0,
             build_progress: 0,
             target: None,
             channel: None,
+            auto_build: spec.auto_build,
         }
     }
 
@@ -75,6 +89,40 @@ impl HangarState {
     pub fn total(&self) -> usize {
         self.docked.len() + usize::from(self.launched) + usize::from(self.queued)
     }
+}
+
+/// Queues one member build in `state` if `spec` leaves room and `resources` can pay `cost`
+/// (minerals, gas), debiting the cost at once (plan `2026-12-01-death-spawns-and-hangar-commands`
+/// D-6): the one rule a player's build and the hangar phase's automatic builds share.
+///
+/// # Errors
+/// [`HangarRejection::Full`] when docked, launched and queued members reach `max_count`;
+/// [`HangarRejection::QueueFull`] when the queue holds `queue_size` builds;
+/// [`HangarRejection::Minerals`] or [`HangarRejection::Gas`] when the owner cannot pay. Nothing
+/// changes on an error.
+pub fn try_queue_build(
+    state: &mut HangarState,
+    spec: &HangarSpec,
+    resources: &mut PlayerResources,
+    cost: (u32, u32),
+) -> Result<(), HangarRejection> {
+    let (minerals, gas) = cost;
+    if state.total() >= usize::from(spec.max_count) {
+        return Err(HangarRejection::Full);
+    }
+    if state.queued >= spec.queue_size {
+        return Err(HangarRejection::QueueFull);
+    }
+    if resources.minerals < minerals {
+        return Err(HangarRejection::Minerals);
+    }
+    if resources.gas < gas {
+        return Err(HangarRejection::Gas);
+    }
+    resources.minerals -= minerals;
+    resources.gas -= gas;
+    state.queued += 1;
+    Ok(())
 }
 
 /// A docked member's vitals: what it takes back into the world at its next launch (D-3). Life
@@ -210,6 +258,7 @@ mod tests {
             build_ticks: 214,
             queue_size: 5,
             auto_build: true,
+            auto_build_toggle: false,
             leash: SimScalar::from_i32(12),
             on_death: HangarDeath::KillMembers,
         });
@@ -300,7 +349,7 @@ mod tests {
             .map(|e| e.id)
             .expect("a launched member");
         let base = world.compute_checksum();
-        let edits: [Edit; 9] = [
+        let edits: [Edit; 10] = [
             |s| s.docked[0].hp -= SimScalar::ONE,
             |s| s.docked[0].shields -= SimScalar::ONE,
             |s| s.docked[0].ticks_since_last_damage = 3,
@@ -317,6 +366,8 @@ mod tests {
             |s| {
                 s.docked.pop();
             },
+            // Plan `2026-12-01-death-spawns-and-hangar-commands` HC-9: the switch.
+            |s| s.auto_build = !s.auto_build,
         ];
         let saved = world.entities[&carrier].hangar.clone();
         for (index, edit) in edits.iter().enumerate() {

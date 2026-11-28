@@ -96,6 +96,9 @@ pub struct HudGeometry {
     pub queue_cancel: Option<egui::Rect>,
     /// The note saying why the site under the pointer is refused.
     pub site_note: Option<egui::Rect>,
+    /// The focused hangar unit's members line in the selection column (plan
+    /// `2026-12-01-death-spawns-and-hangar-commands` D-10).
+    pub hangar_line: Option<egui::Rect>,
     /// The window showing how the match ended.
     pub result: Option<egui::Rect>,
     /// The button of the result window that starts a new match.

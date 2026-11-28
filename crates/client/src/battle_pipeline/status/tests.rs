@@ -182,10 +182,19 @@ const fn game_error_slot(error: &GameCommandError) -> usize {
         GameCommandError::RallyWaypointsFull => 30,
         GameCommandError::UnselectableRecipient(_) => 31,
         GameCommandError::UntargetableTarget(_) => 32,
+        GameCommandError::Hangar(rejection) => match rejection {
+            HangarRejection::NoHangar => 33,
+            HangarRejection::Full => 34,
+            HangarRejection::QueueFull => 35,
+            HangarRejection::Minerals => 36,
+            HangarRejection::Gas => 37,
+            HangarRejection::NothingQueued => 38,
+            HangarRejection::NoAutoBuildSwitch => 39,
+        },
     }
 }
 
-fn game_errors() -> [GameCommandError; 33] {
+fn game_errors() -> [GameCommandError; 40] {
     let node = ResourceNodeId(7);
     [
         GameCommandError::MatchOver,
@@ -228,6 +237,13 @@ fn game_errors() -> [GameCommandError; 33] {
         GameCommandError::RallyWaypointsFull,
         GameCommandError::UnselectableRecipient(ID),
         GameCommandError::UntargetableTarget(ID),
+        GameCommandError::Hangar(HangarRejection::NoHangar),
+        GameCommandError::Hangar(HangarRejection::Full),
+        GameCommandError::Hangar(HangarRejection::QueueFull),
+        GameCommandError::Hangar(HangarRejection::Minerals),
+        GameCommandError::Hangar(HangarRejection::Gas),
+        GameCommandError::Hangar(HangarRejection::NothingQueued),
+        GameCommandError::Hangar(HangarRejection::NoAutoBuildSwitch),
     ]
 }
 

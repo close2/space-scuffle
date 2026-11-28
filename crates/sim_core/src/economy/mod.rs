@@ -167,6 +167,10 @@ pub enum GameCommandError {
     /// slot takes the target already holds a full route.
     #[error("every selected structure's rally holds its most waypoints")]
     RallyWaypointsFull,
+    /// A hangar command changed nothing; see the reason (plan
+    /// `2026-12-01-death-spawns-and-hangar-commands` D-6).
+    #[error(transparent)]
+    Hangar(#[from] crate::hangar::HangarRejection),
     /// The transport lifecycle refused the operation.
     #[error(transparent)]
     Transport(#[from] TransportAdmissionError),
@@ -401,7 +405,7 @@ impl SimWorld {
         self.economy.events.clear();
     }
 
-    /// Admits one economy, construction, cancellation, transport or rally command.
+    /// Admits one economy, construction, cancellation, transport, rally or hangar command.
     pub(crate) fn admit_game_command(
         &mut self,
         cmd: &PlayerCommand,
@@ -424,6 +428,11 @@ impl SimWorld {
             UnitOrder::UnloadAll => self.admit_unload(player, recipients, cmd.queue),
             UnitOrder::SetRally { target, slot } => {
                 self.admit_set_rally(player, recipients, target, slot, cmd.queue)
+            }
+            UnitOrder::HangarBuild
+            | UnitOrder::HangarCancelLast
+            | UnitOrder::SetHangarAutoBuild { .. } => {
+                self.admit_hangar_command(player, recipients, &cmd.order)
             }
             _ => Err(GameCommandError::UnsupportedOrder),
         }

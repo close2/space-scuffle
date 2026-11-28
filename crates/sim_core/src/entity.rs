@@ -911,7 +911,7 @@ impl Entity {
             hangar: archetype
                 .capabilities
                 .hangar
-                .map(|spec| crate::hangar::HangarState::with_capacity(spec.max_count)),
+                .map(|spec| crate::hangar::HangarState::new(&spec)),
             hangar_link: None,
             strike_magazine: archetype
                 .capabilities
@@ -1884,7 +1884,10 @@ mod order_walks_tests {
             | UnitOrder::CancelConstruction
             | UnitOrder::Research { .. }
             | UnitOrder::CancelProduction { .. }
-            | UnitOrder::SetRally { .. } => false,
+            | UnitOrder::SetRally { .. }
+            | UnitOrder::HangarBuild
+            | UnitOrder::HangarCancelLast
+            | UnitOrder::SetHangarAutoBuild { .. } => false,
         }
     }
 
@@ -1947,6 +1950,9 @@ mod order_walks_tests {
                 target: EntityId(99),
                 kind: FollowKind::Move,
             },
+            UnitOrder::HangarBuild,
+            UnitOrder::HangarCancelLast,
+            UnitOrder::SetHangarAutoBuild { enabled: false },
         ];
         let entity = world.entities.get_mut(&unit).ok_or("unit")?;
         for order in orders {
@@ -2078,6 +2084,9 @@ mod weapon_target_tests {
                 target: EntityId(99),
                 kind: FollowKind::Move,
             },
+            UnitOrder::HangarBuild,
+            UnitOrder::HangarCancelLast,
+            UnitOrder::SetHangarAutoBuild { enabled: false },
         ];
         for order in &orders {
             match order {
@@ -2100,7 +2109,10 @@ mod weapon_target_tests {
                 | UnitOrder::Load { .. }
                 | UnitOrder::UnloadAll
                 | UnitOrder::SetRally { .. }
-                | UnitOrder::Follow { .. } => {}
+                | UnitOrder::Follow { .. }
+                | UnitOrder::HangarBuild
+                | UnitOrder::HangarCancelLast
+                | UnitOrder::SetHangarAutoBuild { .. } => {}
             }
         }
         orders
