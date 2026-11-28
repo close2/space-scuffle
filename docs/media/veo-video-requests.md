@@ -338,9 +338,10 @@ have no provenance. A dry run over all 59 plans 134 clips, but it fails validati
 - Two keyframes are square legacy JPEGs that cannot pin a loop.
 
 `DESIGN.md` records these identities as waiting for a later batch (`grav_harvester`, `nectar_worker`) or out of scope
-(most of the Cosmic Enclave and Sylvan Swarm). Each needs prompts written and vetted by a plan before any clip is made.
-**Do not generate clips for them from this document.** If the owner asks for them later, a new request document will
-list their exact prompts and pins.
+(most of the Cosmic Enclave and Sylvan Swarm). The budget was the reason, and your generations cost this project
+nothing, so they are now requested: **see [`veo-video-requests-batch-2.md`](veo-video-requests-batch-2.md)**. Batch 2
+gives every one of them vetted prompts (now in the catalog, so the dry run validates all 134 clips), a start picture to
+generate first, and an order of work. Do not generate them from this document.
 
 The identities with no media are: `amber_pollen_dome`, `ancient_tree_dome`, `apex_spire_dome`, `astral_vagrant`,
 `behemoth_den_dome`, `burrow_spire_dome`, `canopy_grove_dome`, `carapace_mound_dome`, `caustic_nursery_dome`,
@@ -355,5 +356,5 @@ The identities with no media are: `amber_pollen_dome`, `ancient_tree_dome`, `ape
 `thorn_lasher_dome`, `thorn_viper`, `tongue_chameleon`, `tripod_annihilator`, `void_goliath`, `void_sanctuary_dome`,
 `volatile_tick`, `warp_gate_dome`, `warp_strider`.
 
-The polish pass that the owner's answers to Q0131 and Q0133 deferred, which would redo the Carrier's, interceptor's,
-Brood Lord analogue's and Broodling's imperfect loops, is not planned yet, so it is not requested here either.
+The polish pass that the owner's answers to Q0131 and Q0133 deferred, which redoes the Carrier's, interceptor's,
+Brood Lord analogue's and Broodling's imperfect loops, is requested at the lowest priority in batch 2, §8.
