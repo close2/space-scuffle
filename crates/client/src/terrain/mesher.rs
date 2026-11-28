@@ -67,10 +67,12 @@
 //! through the low cells' corners, wholly on the high side (plan
 //! `docs/plans/2026-12-01-straight-diagonal-cliffs.md`, owner question Q0136, answer (c); tested
 //! by `tests/diagonal_cliff_tests.rs`; module `diagonal`):
-//! - **The predicate ([`full_cut`], D-1)** reads the 3x3 block of cells around a cell `X`: `X` is
-//!   convex at its corner `C`, the three cells behind the opposite corner `O` are high, at least
-//!   one of `C`'s neighbouring corners is a concave corner with ground below, and no cell of the
-//!   block is a ramp. A cell has at most one cut, over a run of thresholds.
+//! - **The predicate ([`full_cut`], D-1)** is `sim_map::diagonal`'s, the one rule the simulation
+//!   reads too (plan `docs/plans/2026-12-02-diagonal-cliff-walkability.md` D-1). It reads the 3x3
+//!   block of cells around a cell `X`: `X` is convex at its corner `C`, the three cells behind the
+//!   opposite corner `O` are high, at least one of `C`'s neighbouring corners is a concave corner
+//!   with ground below, and no cell of the block is a ramp. A cell has at most one cut, over a run
+//!   of thresholds.
 //! - **The 4x4 block:** a dual cell without a ramp corner reads the 4x4 block of cells around it
 //!   once and learns its corner cells' cuts. It is a cut's `C` (the cut cell's bit is cleared), an
 //!   end `P` of its foot (the chamfer runs through the dual cell's centre to a mitred junction), or
@@ -2371,130 +2373,9 @@ mod tests {
         const { assert!(WALL_JITTER_AMPLITUDE <= FOOT_WIDTH) };
     }
 
-    /// A 3x3 map whose cell `(i, j)` has level `levels[j][i]` (-1 abyss), with `ramp` (if any)
-    /// turned into a level-0 north-ascending ramp cell. The block of cell `(1, 1)` is the map.
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "block indices are below 3 and levels between 0 and 4"
-    )]
-    fn block_map(levels: [[i32; 3]; 3], ramp: Option<(u32, u32)>) -> GameMap {
-        let mut map = GameMap::new(3, 3, MapCell::default_ground(CliffLevel(0)))
-            .expect("invariant: 3x3 is a valid map size");
-        for (j, row) in levels.iter().enumerate() {
-            for (i, &level) in row.iter().enumerate() {
-                let cell = map
-                    .cell_mut(i as u32, j as u32)
-                    .expect("invariant: the cell lies on the 3x3 map");
-                if level < 0 {
-                    cell.terrain_kind = TerrainKind::Abyss;
-                } else {
-                    cell.cliff_level = CliffLevel(level as u8);
-                }
-            }
-        }
-        if let Some((x, y)) = ramp {
-            let cell = map
-                .cell_mut(x, y)
-                .expect("invariant: the ramp lies on the 3x3 map");
-            cell.cliff_level = CliffLevel(0);
-            cell.ramp = Some(RampDir::North);
-        }
-        map
-    }
-
-    /// A staircase step for direction `(1, 1)`, rows `j = 0..3` bottom to top: `X = (1, 1)` at 1,
-    /// its low neighbours `L1 = (2, 1)` and `L2 = (1, 2)` and the diagonal `K = (2, 2)` at 0,
-    /// everything else at 1, so both neighbouring corners are ground concave corners.
-    const RUN_CELL: [[i32; 3]; 3] = [[1, 1, 1], [1, 1, 0], [1, 0, 0]];
-
-    /// T-S2 (plan `2026-12-01-straight-diagonal-cliffs` §4.1): the full cut follows its 3x3 block.
-    /// Each case names the block, the direction, the thresholds at which the cut holds, and why.
-    /// One case of T-S2: why, the block, the direction, and the thresholds at which it is cut.
-    type BlockCase = (&'static str, [[i32; 3]; 3], (i32, i32), &'static [i32]);
-
-    #[test]
-    fn full_cut_follows_the_block() {
-        let mut run_end = RUN_CELL;
-        run_end[2][0] = 0;
-        let mut rectangle = RUN_CELL;
-        rectangle[2][0] = 0;
-        rectangle[0][2] = 0;
-        let void_only = [[1, 1, 1], [1, 1, -1], [1, -1, -1]];
-        let mut open_behind = RUN_CELL;
-        open_behind[0][0] = 0;
-        let mut saddle = RUN_CELL;
-        saddle[2][2] = 1;
-        let stacked = [[2, 2, 2], [2, 2, 0], [2, 1, 0]];
-        let low_backing = [[2, 2, 2], [2, 3, 0], [3, 0, 0]];
-        let cases: [BlockCase; 10] = [
-            (
-                "a run cell: two ground concave corners",
-                RUN_CELL,
-                (1, 1),
-                &[1],
-            ),
-            (
-                "a run's end at a straight wall: one concave corner",
-                run_end,
-                (1, 1),
-                &[1],
-            ),
-            (
-                "a rectangle corner: no concave corner beside it",
-                rectangle,
-                (1, 1),
-                &[],
-            ),
-            (
-                "a void-only run: no concave corner has ground below",
-                void_only,
-                (1, 1),
-                &[],
-            ),
-            (
-                "the corner opposite C is not interior (a ridge)",
-                open_behind,
-                (1, 1),
-                &[],
-            ),
-            ("a saddle: K is high", saddle, (1, 1), &[1]),
-            ("the run's direction only", RUN_CELL, (-1, -1), &[]),
-            ("the run's direction only", RUN_CELL, (1, -1), &[]),
-            (
-                "stacked: the cut run is max(L1, L2) < t <= level(X)",
-                stacked,
-                (1, 1),
-                &[2],
-            ),
-            ("the backing caps the cut run", low_backing, (1, 1), &[1, 2]),
-        ];
-        let mut failures = Vec::new();
-        for (why, levels, dir, holds) in cases {
-            let map = block_map(levels, None);
-            for t in 0..=4 {
-                let expected = holds.contains(&t);
-                if full_cut(&map, (1, 1), dir, t) != expected {
-                    failures.push(format!("{why}: dir {dir:?} t {t}: expected {expected}"));
-                }
-            }
-        }
-        for y in 0..3 {
-            for x in 0..3 {
-                let map = block_map(RUN_CELL, Some((x, y)));
-                if full_cut(&map, (1, 1), (1, 1), 1) {
-                    failures.push(format!(
-                        "a ramp at ({x}, {y}) of the block: expected no cut"
-                    ));
-                }
-            }
-        }
-        // The control: the same block without a ramp is cut, so the ramp cases test the ramp.
-        if !full_cut(&block_map(RUN_CELL, None), (1, 1), (1, 1), 1) {
-            failures.push("the run cell without a ramp: expected a cut".to_owned());
-        }
-        assert!(failures.is_empty(), "{}", failures.join("\n"));
-    }
+    // T-S2's table of 3x3 blocks moved with the predicate to `sim_map::diagonal` (unit test
+    // `the_cut_follows_its_block`, plan `2026-12-02-diagonal-cliff-walkability` T-D1); the
+    // fixture half stays in `tests/diagonal_cliff_tests.rs`.
 
     /// The four diagonal unit normals `(±1, ±1)/√2`.
     fn diagonal_normals() -> [Vec2; 4] {

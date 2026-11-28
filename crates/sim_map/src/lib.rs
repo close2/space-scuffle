@@ -17,6 +17,7 @@
 #![warn(missing_docs)]
 #![deny(clippy::unreachable)]
 
+pub mod diagonal;
 pub mod error;
 pub mod footprint;
 pub mod grid;
@@ -27,6 +28,7 @@ pub mod traversal;
 pub mod validation;
 pub mod vision;
 
+pub use diagonal::{marching_level, BlockLevels, DiagonalCut};
 pub use error::{MapError, PlacementFailureReason, ResourceFootprintFailure, Result};
 pub use footprint::{
     FootprintOccupant, PlacedFootprint, ResourceFootprint, ResourceFootprints, StructureFootprint,

@@ -12,6 +12,11 @@
 //! Symmetry tests compare a map with its own mirror image, so they need no hand-computed
 //! expected values and cannot share a bias with the implementation.
 
+#[path = "support/arena.rs"]
+#[allow(dead_code, reason = "this binary loads the showcase canyon only")]
+mod arena;
+#[path = "support/diagonal.rs"]
+mod diagonal;
 #[path = "support/radii.rs"]
 mod radii;
 use radii::{LARGE_RADIUS, MEDIUM_RADIUS, SMALL_RADIUS};
@@ -459,4 +464,70 @@ fn a_contours_clearance_never_exceeds_the_true_clearance() -> TestResult {
     // The bound is not vacuous: the contours leave cells whose field underestimates.
     assert!(cut_cells > 0);
     Ok(())
+}
+
+/// T-C1 (plan `2026-12-02-diagonal-cliff-walkability` §6.1, B-251): the clearance field of a cut
+/// cell never claims more than the largest disc centred in the cell's closed half behind its
+/// foot, found by an exact enumeration of centres on the `1/64` lattice against every wall after
+/// the clip (cell-edge walls and the feet of all cuts within two cells).
+#[expect(
+    clippy::many_single_char_names,
+    reason = "cells, points and distances keep the plan's names"
+)]
+fn assert_cut_cells_never_overstate_clearance(name: &str, map: &GameMap) {
+    let pathfinder = Pathfinder::new(map);
+    let cuts = diagonal::independent_cuts(map);
+    assert!(!cuts.is_empty(), "premise: {name} has cuts");
+    let mut failures = Vec::new();
+    for cut in &cuts {
+        let (x, y) = cut.cell;
+        let walls = diagonal::walls_after_clip(map, x, y, 2);
+        let mut best_sq = 0.0_f64;
+        for j in 0..=64_i64 {
+            for i in 0..=64_i64 {
+                let p = diagonal::raw_point(
+                    (i64::from(x) << 32) + i * (1 << 26),
+                    (i64::from(y) << 32) + j * (1 << 26),
+                );
+                if diagonal::foot_side_raw(cut, p) > 0 {
+                    continue;
+                }
+                let q = diagonal::to_f64(p);
+                let d = walls
+                    .iter()
+                    .map(|&w| diagonal::segment_distance(q, w))
+                    .fold(f64::INFINITY, f64::min);
+                best_sq = best_sq.max(d * d);
+            }
+        }
+        // The largest e with (e/8)² <= best², exactly on the binary fractions involved.
+        let mut eighths = 0_u8;
+        while f64::from(eighths + 1).powi(2) / 64.0 <= best_sq + 1e-12 {
+            eighths += 1;
+        }
+        let field = pathfinder.clearance_at(x, y);
+        if field > eighths {
+            failures.push(format!(
+                "{name} cut cell ({x}, {y}): clearance {field} eighths, the closed half behind \
+                 the foot holds at most {eighths}"
+            ));
+        }
+    }
+    println!("{name}: {} cut cells checked", cuts.len());
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+#[ignore = "diagonal-walk WP2 (B-251): red until the clearance field marks each cut cell's centre"]
+fn cut_cells_never_overstate_clearance_diagonal_fixture() {
+    assert_cut_cells_never_overstate_clearance("diagonal_fixture", &diagonal::diagonal_fixture());
+}
+
+#[test]
+#[ignore = "diagonal-walk WP2 (B-251): red until the clearance field marks each cut cell's centre"]
+fn cut_cells_never_overstate_clearance_showcase_canyon() {
+    assert_cut_cells_never_overstate_clearance(
+        "showcase_canyon",
+        &arena::load_game_map(arena::SHOWCASE_CANYON_FILE),
+    );
 }
