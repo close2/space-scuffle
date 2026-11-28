@@ -83,6 +83,7 @@ impl SimWorld {
         let (UnitOrder::AttackTarget { target, .. }
         | UnitOrder::Follow { target, .. }
         | UnitOrder::Load { carrier: target }
+        | UnitOrder::LoadUnit { passenger: target }
         | UnitOrder::CastAbility {
             target_entity: Some(target),
             ..
@@ -194,6 +195,7 @@ impl SimWorld {
                 | UnitOrder::CancelProduction { .. }
                 | UnitOrder::Load { .. }
                 | UnitOrder::UnloadAll
+                | UnitOrder::LoadUnit { .. }
                 | UnitOrder::SetRally { .. }
                 | UnitOrder::HangarBuild
                 | UnitOrder::HangarCancelLast

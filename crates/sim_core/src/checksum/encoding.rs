@@ -1151,6 +1151,11 @@ impl Canonical for UnitOrder {
                 22_u8.encode(encoder);
                 enabled.encode(encoder);
             }
+            // Plan `2026-12-03-movement-work-on-solver` WP-T1: a transport's pickup of a unit.
+            Self::LoadUnit { passenger } => {
+                23_u8.encode(encoder);
+                passenger.encode(encoder);
+            }
         }
     }
 }

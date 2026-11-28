@@ -2173,12 +2173,20 @@ fn presentable_type(
         .expect("the catalog ships a presentable unit of this role")
 }
 
+/// Least distance, in world units, from the second transport to the lone soldier it picks up:
+/// its flight outlasts the warm-up and the window (plan `2026-12-03-movement-work-on-solver`
+/// WP-T1).
+const PICKUP_GAP: f32 = 20.0;
+
 /// The group of the mixed click: two ground soldiers and an armed air unit beside the local
-/// workers, and the transport well away from them, so the walk to board lasts past the window.
+/// workers, and the transport well away from them, so the walk to board lasts past the window;
+/// and a second transport with a lone soldier well away from it, which it picks up.
 struct MixedGroup {
     soldiers: [EntityId; 2],
     flyer: EntityId,
     carrier: EntityId,
+    picker: EntityId,
+    pickup: EntityId,
 }
 
 /// Spawns the [`MixedGroup`] for the local player, before the scene settles.
@@ -2211,6 +2219,12 @@ fn stage_mixed_group(harness: &mut Harness) -> MixedGroup {
         })
         .expect("open ground far from the soldiers");
     spots.push(far);
+    let hangar = harness.open_ground(origin, 12.0);
+    let lone = [20.0, 24.0, 28.0, 32.0, 36.0]
+        .into_iter()
+        .map(|distance| harness.open_ground(hangar, distance))
+        .find(|at| hangar.distance(*at) >= PICKUP_GAP)
+        .expect("open ground far from the second transport");
     let mut spawn = |unit_type, at: Vec2| {
         harness
             .world_mut()
@@ -2221,6 +2235,8 @@ fn stage_mixed_group(harness: &mut Harness) -> MixedGroup {
         soldiers: [spawn(soldier_type, spots[0]), spawn(soldier_type, spots[1])],
         flyer: spawn(flyer_type, spots[2]),
         carrier: spawn(carrier_type, spots[3]),
+        picker: spawn(carrier_type, hangar),
+        pickup: spawn(soldier_type, lone),
     };
     // The skirmish opens paused: a few running frames publish the new bubbles.
     harness.resume();
@@ -2241,8 +2257,10 @@ fn marker_pool(harness: &mut Harness) -> usize {
 /// P-6: a selection of two soldiers, an armed air unit and the base right-clicks the transport:
 /// the soldiers board it, the air unit follows it and the base rallies to it, three commands in
 /// one tick (D-1 gives at most two unit entries on any shipped target, so the third is the
-/// rally). After the marker has shown, [`SMART_MIXED_FRAMES`] running frames, in which the
-/// boarders walk and the follower flies, add, modify (beyond the bubble materials of redrawn
+/// rally). A second transport then right-clicks a lone soldier, which it flies to pick up (plan
+/// `2026-12-03-movement-work-on-solver` WP-T1). After the marker has shown,
+/// [`SMART_MIXED_FRAMES`] running frames, in which the boarders walk, the follower and the second
+/// transport fly, add, modify (beyond the bubble materials of redrawn
 /// units) and remove no asset, spawn and despawn no entity, keep every retained buffer, and keep
 /// the order marker pool at its size.
 #[test]
@@ -2273,6 +2291,18 @@ fn frames_after_a_mixed_right_click_create_modify_and_remove_nothing() {
         harness.pending_orders(),
         3,
         "board, follow and rally: {}",
+        harness.status()
+    );
+    // The second transport's right click on the lone soldier: a pickup in flight.
+    harness.look_at(harness.simulated_position(group.picker));
+    harness.select(group.picker);
+    harness.look_at(harness.simulated_position(group.pickup));
+    let at = harness.unit_on_screen(group.pickup);
+    harness.click(MouseButton::Right, at);
+    assert_eq!(
+        harness.pending_orders(),
+        4,
+        "and the pickup: {}",
         harness.status()
     );
     harness.look_at(harness.simulated_position(group.soldiers[0]));
@@ -2313,6 +2343,14 @@ fn frames_after_a_mixed_right_click_create_modify_and_remove_nothing() {
         world.entities[&group.flyer].order_queue.front(),
         Some(sim_types::UnitOrder::Follow { target, .. }) if *target == group.carrier
     ));
+    assert_eq!(
+        world.entities[&group.picker].order_queue.front(),
+        Some(&sim_types::UnitOrder::LoadUnit {
+            passenger: group.pickup
+        }),
+        "the pickup is still in flight"
+    );
+    assert!(!world.entities[&group.pickup].is_loaded_in_transport());
     let tally = tallies(&harness);
     let bubbles = type_name::<Assets<BubbleDomeMaterial>>();
     assert_eq!(

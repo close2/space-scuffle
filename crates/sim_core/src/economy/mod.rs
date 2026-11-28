@@ -426,6 +426,9 @@ impl SimWorld {
             }
             UnitOrder::Load { carrier } => self.admit_load(player, recipients, carrier, cmd.queue),
             UnitOrder::UnloadAll => self.admit_unload(player, recipients, cmd.queue),
+            UnitOrder::LoadUnit { passenger } => {
+                self.admit_load_unit(player, recipients, passenger, cmd.queue)
+            }
             UnitOrder::SetRally { target, slot } => {
                 self.admit_set_rally(player, recipients, target, slot, cmd.queue)
             }
@@ -565,6 +568,7 @@ impl SimWorld {
                 Some(UnitOrder::Construct { foundation }) => self.step_construct(id, foundation),
                 Some(UnitOrder::Load { carrier }) => self.step_load(id, carrier),
                 Some(UnitOrder::UnloadAll) => self.step_unload(id),
+                Some(UnitOrder::LoadUnit { passenger }) => self.step_load_unit(id, passenger),
                 _ => {}
             }
         }

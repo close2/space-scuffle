@@ -922,6 +922,12 @@ fn capable(
                 && MovementLayer::from_mover(archetype.mover_type) == MovementLayer::Ground
         }
         UnitOrder::UnloadAll => archetype.capabilities.transport_capacity > 0,
+        // A transport's pickup of a unit (5.0.14 `CAbilTransport` `AllowSmartCmd 1`; plan
+        // `2026-12-03-movement-work-on-solver` WP-T1): a mobile carrier other than the unit;
+        // whether the unit boards and fits is the simulation's typed answer.
+        UnitOrder::LoadUnit { passenger } => {
+            mobile && entity.id != *passenger && archetype.capabilities.transport_capacity > 0
+        }
         // The hangar commands go to every selected hangar unit (plan
         // `2026-12-01-death-spawns-and-hangar-commands` D-6); whether its hangar has room, a
         // build to cancel or a switch is the simulation's typed answer.
@@ -1055,7 +1061,8 @@ pub(crate) fn order_subject<'w>(
         | UnitOrder::Follow { .. }
         | UnitOrder::HangarBuild
         | UnitOrder::HangarCancelLast
-        | UnitOrder::SetHangarAutoBuild { .. } => return Ok(None),
+        | UnitOrder::SetHangarAutoBuild { .. }
+        | UnitOrder::LoadUnit { .. } => return Ok(None),
     };
     let entity = entity.ok_or(SubmissionError::InvalidTarget(aimed_at))?;
     world
