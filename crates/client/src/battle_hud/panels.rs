@@ -34,8 +34,9 @@ use crate::battle_input::command_mode::CommandMode;
 use crate::battle_pipeline::session::BattleSession;
 use crate::lab_ui::LabState;
 use crate::media::ClientMediaStatus;
+use crate::minimap::panel::MinimapHud;
 use crate::minimap::style::MinimapStyleStatus;
-use crate::minimap::{panel as minimap_panel, MinimapFrame};
+use crate::minimap::{panel as minimap_panel, MinimapFrame, MinimapIntent};
 use crate::player_presentation::PresentationStatus;
 
 /// Height of the resource bar, in egui points.
@@ -122,10 +123,30 @@ pub fn battle_hud_system(
     session: Res<'_, BattleSession>,
     media: Option<Res<'_, ClientMediaStatus>>,
     owner_status: Res<'_, PresentationStatus>,
-    minimap: Option<Res<'_, MinimapFrame>>,
-    minimap_status: Option<Res<'_, MinimapStyleStatus>>,
+    minimap: MinimapHud<'_>,
 ) {
     *geometry = HudGeometry::default();
+    let MinimapHud {
+        frame: minimap,
+        status: minimap_status,
+        intent: mut minimap_intent,
+        keyboard,
+        alerts: minimap_alerts,
+    } = minimap;
+    let press = minimap_panel::PressModifiers {
+        mode_armed: *mode != CommandMode::Normal,
+        shift: crate::input_bindings::any_pressed(
+            &keyboard,
+            &crate::input_bindings::SHIFT_MODIFIERS,
+        ),
+        ping: crate::input_bindings::any_pressed(&keyboard, &crate::input_bindings::ALT_MODIFIERS)
+            || minimap_alerts
+                .as_deref()
+                .is_some_and(crate::minimap::alerts::AlertLog::ping_armed),
+    };
+    if let Some(intent) = minimap_intent.as_deref_mut() {
+        *intent = MinimapIntent::default();
+    }
     // `lab_ui_system` reports a live window without a context.
     let Some(ctx) = contexts.try_ctx_mut() else {
         return;
@@ -167,10 +188,20 @@ pub fn battle_hud_system(
                 .is_some_and(|structure| cancel_pending(&session, structure)),
             minimap: minimap.as_deref().filter(|_| layout.minimap),
         };
-        if layout.command_panel {
-            draw_command_panel(ctx, &surfaces, &mut intent, &mut geometry);
-        } else if let Some(frame) = surfaces.minimap {
-            geometry.minimap = minimap_panel::draw_alone(ctx, frame);
+        let response = if layout.command_panel {
+            draw_command_panel(ctx, &surfaces, &mut intent, &mut geometry)
+        } else {
+            surfaces
+                .minimap
+                .and_then(|frame| minimap_panel::draw_alone(ctx, frame))
+        };
+        geometry.minimap = response.as_ref().map(|response| response.rect);
+        if let (Some(response), Some(frame), Some(target)) = (
+            response.as_ref(),
+            surfaces.minimap,
+            minimap_intent.as_deref_mut(),
+        ) {
+            *target = minimap_panel::read_intent(response, frame, press);
         }
         draw_feed(ctx, &feed, &mut geometry);
         if let Some(reason) = preview.refusal() {
@@ -292,13 +323,14 @@ struct CommandSurfaces<'a> {
 }
 
 /// Draws the command panel: the minimap in its left part, then three columns, selection, queue
-/// and card.
+/// and card. Returns the minimap image's response, if it was drawn.
 fn draw_command_panel(
     ctx: &egui::Context,
     surfaces: &CommandSurfaces<'_>,
     intent: &mut HudIntent,
     geometry: &mut HudGeometry,
-) {
+) -> Option<egui::Response> {
+    let mut minimap = None;
     let panel = egui::TopBottomPanel::bottom("battle_command")
         .exact_height(COMMAND_PANEL_HEIGHT)
         .resizable(false)
@@ -308,7 +340,7 @@ fn draw_command_panel(
                 surfaces.minimap.map(MinimapFrame::side_points),
             );
             if let (Some(left), Some(frame)) = (left, surfaces.minimap) {
-                geometry.minimap = minimap_panel::draw_in_panel(ui, frame, left);
+                minimap = minimap_panel::draw_in_panel(ui, frame, left);
             }
             ui.allocate_new_ui(egui::UiBuilder::new().max_rect(rest), |ui| {
                 ui.columns_const(|[selection, queue, card]| {
@@ -322,6 +354,7 @@ fn draw_command_panel(
             });
         });
     geometry.bottom = Some(panel.response.rect);
+    minimap
 }
 
 /// Draws what the selected structures are making, or how far a foundation has come.

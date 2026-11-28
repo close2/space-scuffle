@@ -9,14 +9,18 @@
 //! absorbed damage this tick, and where spell missiles landed this tick (plan
 //! `2026-11-17-effect-snapshot-identity` D-6). It also holds each player's attack snapshots:
 //! the attackers that struck that player's units from where it did not see them, each in the pose
-//! of its last such strike (plan `2026-11-24-attacker-snapshot` D-1, D-4).
+//! of its last such strike (plan `2026-11-24-attacker-snapshot` D-1, D-4), and each player's
+//! remembered structures: every structure of another player it was shown, as it last saw it
+//! (`StarCraft` II's `FogVisibility Snapshot`; plan `2026-12-01-minimap` Amendment 1, D-16).
 //!
 //! # How it fits
 //! Combat resolution asks [`weapon_source`] when a weapon releases and records projectile
 //! sources; the effect engine records each spell missile's landing; the snapshot writer (tick
 //! phase 10) reads the rest and drains the landings into events. Combat records attack
 //! snapshots as strikes land (phase 7), the vision phase drops those their viewer has seen
-//! again (phase 3), and `SimWorld::write_player_view` publishes a viewer's own.
+//! again (phase 3), and `SimWorld::write_player_view` publishes a viewer's own. The remembered
+//! structures are refreshed and dropped once per tick, after the last phase that changes an
+//! entity (`SimWorld::update_remembered_structures`), and published beside them.
 //! Nothing here names a unit, mode or effect: modes and abilities are indices into the source
 //! archetype's own lists, and burrowing is the catalog flag `UnitModeSpec::burrowed`.
 //!
@@ -30,6 +34,9 @@
 //! - Attack snapshots are sorted by `(viewer, attacker)`, at most one per pair, and in fixed
 //!   point. They last across ticks, but they are presentation like the rest: no tick decision
 //!   reads them, which a paired-world test pins (plan `2026-11-24-attacker-snapshot` P-9).
+//! - Remembered structures are sorted by `(viewer, structure)`, at most one per pair, in fixed
+//!   point, and read by no tick decision either (plan `2026-12-01-minimap` R-8). They are not the
+//!   hashed `known_blocked_cells`, which pathing reads.
 
 use crate::catalog::UnitArchetype;
 use crate::entity::{Entity, ATTACK_DASH_BUFF_ID, OVERCLOCK_BUFF_ID};
@@ -92,6 +99,24 @@ pub(crate) struct SnapshotPose {
     pub(crate) shield_fraction: SimScalar,
 }
 
+/// One player's memory of a structure of another player it was shown: the structure as it last
+/// saw it (plan `2026-12-01-minimap` Amendment 1, D-16; `StarCraft` II's `FogVisibility
+/// Snapshot`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RememberedStructureRecord {
+    /// The player who remembers it.
+    pub(crate) viewer: PlayerId,
+    /// The structure. It may since have died, morphed or lifted off.
+    pub(crate) structure: EntityId,
+    /// The last tick on which the viewer was shown it.
+    pub(crate) seen: Tick,
+    /// How it stood then: the attacker snapshot's pose.
+    pub(crate) pose: SnapshotPose,
+    /// A foundation's build progress and its construction health share then, both in `0..=1`;
+    /// `None` on a finished structure.
+    pub(crate) construction: Option<(SimScalar, SimScalar)>,
+}
+
 // PERFORMANCE RATIONALE:
 // Why: Projectile provenance is needed when a projectile lands or a frame is written, but
 // must stay out of the hashed `ActiveProjectile`.
@@ -118,6 +143,14 @@ pub(crate) struct PresentationWorkspace {
     // players times attackers, with no allocation once the list holds its high-water mark.
     /// Attack snapshots, sorted by `(viewer, attacker)`, at most one per pair.
     attack_snapshots: Vec<AttackSnapshotRecord>,
+    // PERFORMANCE RATIONALE:
+    // Why: Every tick refreshes the record of each structure each player is shown, prunes the
+    // list and every view reads one player's run; none of it may allocate once warm.
+    // What: The attack snapshots' shape: one `Vec` sorted by `(viewer, structure)`, binary-search
+    // upserts and one `retain` pass.
+    // Trade-off: O(n) element moves on an insertion, for n at most players times structures.
+    /// Remembered structures, sorted by `(viewer, structure)`, at most one per pair.
+    remembered_structures: Vec<RememberedStructureRecord>,
 }
 
 impl PresentationWorkspace {
@@ -213,6 +246,46 @@ impl PresentationWorkspace {
     #[cfg(test)]
     pub(crate) fn forget_attack_snapshots(&mut self) {
         self.attack_snapshots.clear();
+    }
+
+    /// Records `record`, replacing the entry of the same viewer and structure if there is one.
+    pub(crate) fn remember_structure(&mut self, record: RememberedStructureRecord) {
+        let key = (record.viewer, record.structure);
+        match self
+            .remembered_structures
+            .binary_search_by_key(&key, |entry| (entry.viewer, entry.structure))
+        {
+            Ok(index) => self.remembered_structures[index] = record,
+            Err(index) => self.remembered_structures.insert(index, record),
+        }
+    }
+
+    /// Keeps only the remembered structures `keep` accepts, in order, keeping the capacity.
+    pub(crate) fn prune_remembered_structures(
+        &mut self,
+        keep: impl FnMut(&RememberedStructureRecord) -> bool,
+    ) {
+        self.remembered_structures.retain(keep);
+    }
+
+    /// The structures `viewer` remembers, sorted by structure.
+    pub(crate) fn remembered_structures_of(
+        &self,
+        viewer: PlayerId,
+    ) -> impl Iterator<Item = &RememberedStructureRecord> + '_ {
+        let start = self
+            .remembered_structures
+            .partition_point(|entry| entry.viewer < viewer);
+        self.remembered_structures[start..]
+            .iter()
+            .take_while(move |entry| entry.viewer == viewer)
+    }
+
+    /// Forgets every remembered structure: the test hook of plan `2026-12-01-minimap` R-8, which
+    /// shows that no tick decision reads them.
+    #[cfg(test)]
+    pub(crate) fn forget_remembered_structures(&mut self) {
+        self.remembered_structures.clear();
     }
 }
 
@@ -463,6 +536,45 @@ mod tests {
 
     /// D-4: records are kept sorted by viewer and attacker whatever order they arrive in, and
     /// one viewer's run lists only its own.
+    fn remembered(viewer: u8, structure: u32, tick: u32) -> RememberedStructureRecord {
+        RememberedStructureRecord {
+            viewer: PlayerId(viewer),
+            structure: EntityId(structure),
+            seen: Tick(tick),
+            pose: snap(viewer, structure, tick, 1).pose,
+            construction: None,
+        }
+    }
+
+    #[test]
+    fn remembered_structures_are_sorted_upserted_and_pruned_in_place() {
+        let mut workspace = PresentationWorkspace::default();
+        for (viewer, structure) in [(1, 9), (0, 4), (1, 2), (0, 7)] {
+            workspace.remember_structure(remembered(viewer, structure, 3));
+        }
+        workspace.remember_structure(remembered(1, 9, 8));
+        let of_one: Vec<_> = workspace
+            .remembered_structures_of(PlayerId(1))
+            .map(|entry| (entry.structure.0, entry.seen.0))
+            .collect();
+        assert_eq!(of_one, [(2, 3), (9, 8)]);
+        let capacity = workspace.remembered_structures.capacity();
+        let address = workspace.remembered_structures.as_ptr();
+        workspace.prune_remembered_structures(|entry| entry.viewer == PlayerId(0));
+        assert_eq!(workspace.remembered_structures_of(PlayerId(1)).count(), 0);
+        assert_eq!(workspace.remembered_structures_of(PlayerId(0)).count(), 2);
+        assert_eq!(workspace.remembered_structures.capacity(), capacity);
+        workspace.remember_structure(remembered(1, 2, 4));
+        workspace.remember_structure(remembered(1, 9, 4));
+        assert_eq!(
+            workspace.remembered_structures.as_ptr(),
+            address,
+            "refilled in place"
+        );
+        workspace.forget_remembered_structures();
+        assert_eq!(workspace.remembered_structures_of(PlayerId(0)).count(), 0);
+    }
+
     #[test]
     fn attack_snapshots_are_sorted_by_viewer_then_attacker() {
         let mut workspace = PresentationWorkspace::default();

@@ -44,8 +44,9 @@
 //!   They hold a spell caster's image beside it: an enemy caster on another cliff stormed a
 //!   local unit below it, and the storm ended before the session began, so the pool holds two
 //!   images, one of each cause (plan `2026-11-27-launch-and-spell-visibility` V-25). The
-//!   running live child also runs the minimap's frame systems (layout, marks rebuilt on every
-//!   tick, fog bytes on every refill; plan `2026-12-01-minimap` M-S2).
+//!   running live child also runs the minimap's frame systems (the alert log, layout, marks
+//!   rebuilt on every tick with the held snapshot's square, fog bytes on every refill; plan
+//!   `2026-12-01-minimap` M-S2).
 //! - `brood_cycle_live_frames` and `brood_cycle_baseline_frames` are the same pair on the default
 //!   battle with every mobile unit killed and a Brood Lord analogue attacking a durable unarmed
 //!   target, so Broodlings arrive and expire on their own clocks; one 40 ms tick a frame, a
@@ -428,6 +429,63 @@ fn hold_attack_snapshot(simulation: &mut sim_core::SimWorld) -> TestResult {
     Err("the enemy on the cliff never struck unseen".into())
 }
 
+/// Holds a remembered structure (plan `2026-12-01-minimap` M-S2′): a local scout beside the
+/// enemy's start structure shows it, then dies, and ticks run until the view remembers it. Nothing
+/// of the local player sees that spot again in the window, so the image is held unchanged and the
+/// view writer, the fog refill, the pool and the marks builder draw it every tick.
+fn hold_remembered_structure(simulation: &mut sim_core::SimWorld) -> TestResult {
+    let viewer = attack_snapshot_stage::LOCAL_PLAYER;
+    let (structure, at) = simulation
+        .map
+        .structures()
+        .keys()
+        .find_map(|id| {
+            let unit = simulation.entities.get(id)?;
+            (unit.owner == attack_snapshot_stage::ENEMY).then_some((*id, unit.position))
+        })
+        .ok_or("the enemy starts with a structure")?;
+    let kind = simulation
+        .entities
+        .values()
+        .find(|unit| unit.owner == viewer && !unit.is_immobile)
+        .ok_or("a local unit")?
+        .unit_type_id;
+    let scout = [(0, 5), (5, 0), (0, -5), (-5, 0), (4, 4), (-4, -4)]
+        .into_iter()
+        .find_map(|(dx, dy)| {
+            simulation
+                .spawn_unit(kind, viewer, at + sim_types::SimVec2::from_i32(dx, dy))
+                .ok()
+        })
+        .ok_or("open ground beside the enemy's structure")?;
+    let step = |simulation: &mut sim_core::SimWorld| {
+        simulation.step(&sim_types::TickBundle {
+            tick: sim_types::Tick(simulation.current_tick),
+            commands: Vec::new(),
+            state_checksum: None,
+        });
+    };
+    step(simulation);
+    simulation
+        .entities
+        .get_mut(&scout)
+        .ok_or("the scout lives")?
+        .hp = sim_types::SimScalar::ZERO;
+    let mut view = sim_types::PlayerView::default();
+    for _ in 0..10 {
+        step(simulation);
+        simulation.write_player_view(viewer, &mut view);
+        if view
+            .remembered_structures
+            .iter()
+            .any(|entry| entry.entity == structure)
+        {
+            return Ok(());
+        }
+    }
+    Err("the view never remembered the enemy's structure".into())
+}
+
 /// Adds a spell caster's image to the held one (plan `2026-11-27-launch-and-spell-visibility`
 /// V-25): an enemy caster on another cliff storms a local unit below it, and ticks run until the
 /// storm has ended, so its `Hidden` pulses are over and the image is held unchanged.
@@ -511,9 +569,10 @@ fn add_snapshot_presentation(app: &mut App) {
 /// Side of the minimap image the running live child stands in for egui, in pixels and points.
 const MINIMAP_SIDE: u32 = 172;
 
-/// Adds the minimap's frame systems after the fog refill: the layout and cells, the marks
-/// rebuilt on every tick and the fog bytes rebuilt on every refill (plan `2026-12-01-minimap`
-/// M-S2). The map's billboards are stood in for with one record per node, as the battle scene
+/// Adds the minimap's frame systems after the fog refill: the alert log fed by the published
+/// strikes, the layout and cells, the marks rebuilt on every tick (with the held attack snapshot's
+/// square) and the fog bytes rebuilt on every refill (plan `2026-12-01-minimap` M-S2, extended in
+/// WP4). The map's billboards are stood in for with one record per node, as the battle scene
 /// makes them, so resource squares are listed too. No renderer and no egui run here.
 fn add_minimap(app: &mut App) -> TestResult {
     let root = app.world().resource::<client::ResolvedAssetsRoot>().clone();
@@ -544,6 +603,7 @@ fn add_minimap(app: &mut App) -> TestResult {
             side_points,
         ))
         .init_resource::<client::minimap::MinimapSettings>()
+        .init_resource::<client::minimap::alerts::AlertLog>()
         .insert_resource(client::terrain::TerrainState::new(map))
         .insert_resource(client::runtime_battle::MapPresentation {
             objects,
@@ -553,12 +613,14 @@ fn add_minimap(app: &mut App) -> TestResult {
         .add_systems(
             Update,
             (
+                client::minimap::collect_alerts,
                 client::minimap::prepare_minimap_frame,
                 client::minimap::build_minimap_marks,
                 client::minimap::refresh_minimap_fog,
             )
                 .chain()
-                .after(refresh_snapshot_fog),
+                .after(refresh_snapshot_fog)
+                .after(publish_combat_events),
         );
     Ok(())
 }
@@ -576,6 +638,18 @@ fn check_minimap(app: &App, rebuilds_before: u64) -> TestResult {
     let frame = app.world().resource::<client::minimap::MinimapFrame>();
     if frame.marks().is_empty() || frame.fog().is_empty() {
         return Err("the minimap built no marks or no fog in the window".into());
+    }
+    let images = frame
+        .subjects()
+        .iter()
+        .filter(|subject| **subject == client::minimap::marks::MarkSubject::Image)
+        .count();
+    if images < 2 {
+        return Err(format!(
+            "the held attack snapshot and remembered structure have {images} squares on the \
+             minimap, not 2"
+        )
+        .into());
     }
     if frame.marks_generation() <= rebuilds_before + 2 {
         return Err(format!(
@@ -800,6 +874,7 @@ fn stage_variant(
     let crew = if variant.is_running() {
         let crew = add_gas_crew(simulation)?;
         hold_attack_snapshot(simulation)?;
+        hold_remembered_structure(simulation)?;
         Some(crew)
     } else {
         None
@@ -1697,24 +1772,27 @@ fn check_brood_window(app: &App, frames: u32, before: &BroodWatch, ticked: u32) 
     Ok(())
 }
 
-/// The running live child's check after its window: the fog lists the two held images (a strike's
-/// and a spell caster's) and the pool draws each on one visible entity.
+/// The running live child's check after its window: the fog lists the two held attack images (a
+/// strike's and a spell caster's) and the held remembered structure (plan `2026-12-01-minimap`
+/// M-S2′), and the pool draws each on one visible entity.
 fn check_held_snapshot(app: &mut App) -> TestResult {
-    let listed = app
+    let fog = app
         .world()
-        .resource::<client::battle_pipeline::fog::BattleFog>()
-        .attack_snapshots()
-        .len();
+        .resource::<client::battle_pipeline::fog::BattleFog>();
+    let listed = fog.attack_snapshots().len();
+    let remembered = fog.remembered_structures().len();
     let world = app.world_mut();
     let shown = world
         .query_filtered::<&Visibility, With<client::battle_hud::attack_snapshots::AttackSnapshotBubble>>()
         .iter(world)
         .filter(|visibility| **visibility != Visibility::Hidden)
         .count();
-    // A strike's image and a spell caster's (plan `2026-11-27-launch-and-spell-visibility` V-25).
-    if (listed, shown) != (2, 2) {
+    // A strike's image and a spell caster's (plan `2026-11-27-launch-and-spell-visibility` V-25),
+    // and the enemy's start structure remembered.
+    if (listed, remembered, shown) != (2, 1, 3) {
         return Err(format!(
-            "the window must hold two attack images, each drawn once: {listed} listed, {shown} shown"
+            "the window must hold two attack images and one remembered structure, each drawn \
+             once: {listed} and {remembered} listed, {shown} shown"
         )
         .into());
     }
